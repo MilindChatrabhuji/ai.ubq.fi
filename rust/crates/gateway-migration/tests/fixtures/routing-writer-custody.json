@@ -1,0 +1,257 @@
+{
+  "source_sha": "9cf5f956995d832489fd694ebed17ab2f57712ea",
+  "source_tree": "1cca8c0f12544c3bb7f94444adbd332af1b12147",
+  "executed_command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--target",
+    "aarch64-apple-darwin",
+    "-p",
+    "gateway-routing-runtime",
+    "--lib",
+    "custody::tests",
+    "--",
+    "--nocapture"
+  ],
+  "exit": 0,
+  "passed": 5,
+  "log": "/tmp/ai-rust-wasm-20261018/mac-receipts/m34-local-9cf5f956995d-v1/0-custody-writer-pairs.log",
+  "log_sha256": "c3f5321c806e46116e6e25d7d6b4d9dcd9822163a481c9eea32e2aaf05a942c9",
+  "parent_pipeline_ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/846fb474-053a-4c56-8fc4-3f8336938771",
+  "parent_pipeline_scope": "Custody5 and local11 passed; separate strict native failed on new test support unused pool helpers, no custody/product failure; WASM not yet run",
+  "fixtures": [
+    {
+      "v": 1,
+      "rows": [
+        {
+          "key": "tuple-v1:02756f735f61690002726f7574696e675f72756e74696d6500027631000270656e64696e670002637573746f64792d7265717565737400",
+          "record": {
+            "schema_version": 1,
+            "value_encoding": "json",
+            "revision": "actual-writer-1:pending",
+            "value": {
+              "request_id": "custody-request"
+            },
+            "expires_at_ms": null
+          }
+        },
+        {
+          "key": "tuple-v1:02756f735f61690002726f7574696e675f72756e74696d6500027631000273657373696f6e0002637573746f64792d7265717565737400",
+          "record": {
+            "schema_version": 1,
+            "value_encoding": "json",
+            "revision": "actual-writer-1",
+            "value": {
+              "v": 1,
+              "context": {
+                "request_id": "custody-request",
+                "principal": "fixture-principal",
+                "key_id": null,
+                "route": "responses",
+                "started_at_ms": 1800000000000
+              },
+              "input_digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "api": null,
+              "kernel": null,
+              "cursor": 0,
+              "attempts": [],
+              "active": null,
+              "model_sibling_retries": 0,
+              "refreshed_versions": [],
+              "recovery_attempted": false,
+              "claude_unavailable": false,
+              "semantic_committed": false,
+              "terminal_intent": null,
+              "finished": false,
+              "recovering": false,
+              "lease_expires_at_ms": 1800000060000,
+              "updated_at_ms": 1800000000000,
+              "extras_family": null,
+              "extras_child_count": null,
+              "extras_dispatch": null,
+              "children": [],
+              "kernel_override": null
+            },
+            "expires_at_ms": null
+          }
+        }
+      ]
+    },
+    {
+      "v": 1,
+      "phase": "finished",
+      "rows": [
+        {
+          "key": "tuple-v1:02756f735f61690002726f7574696e675f72756e74696d6500027631000273657373696f6e0002637573746f64792d7265717565737400",
+          "record": {
+            "schema_version": 1,
+            "value_encoding": "json",
+            "revision": "actual-writer-2",
+            "value": {
+              "v": 1,
+              "context": {
+                "request_id": "custody-request",
+                "principal": "fixture-principal",
+                "key_id": null,
+                "route": "responses",
+                "started_at_ms": 1800000000000
+              },
+              "input_digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "api": null,
+              "kernel": null,
+              "cursor": 0,
+              "attempts": [],
+              "active": null,
+              "model_sibling_retries": 0,
+              "refreshed_versions": [],
+              "recovery_attempted": false,
+              "claude_unavailable": false,
+              "semantic_committed": false,
+              "terminal_intent": {
+                "semantic_terminal": null,
+                "reader_termination": null,
+                "body": null,
+                "delivery": "unobserved"
+              },
+              "finished": true,
+              "recovering": false,
+              "lease_expires_at_ms": 1800000060000,
+              "updated_at_ms": 1800000000001,
+              "extras_family": null,
+              "extras_child_count": null,
+              "extras_dispatch": null,
+              "children": [],
+              "kernel_override": null
+            },
+            "expires_at_ms": 1831536000000
+          }
+        }
+      ]
+    },
+    {
+      "v": 2,
+      "rows": [
+        {
+          "key": "tuple-v1:02756f735f61690002726f7574696e675f72756e74696d6500027631000270656e64696e670002637573746f64792d7265717565737400",
+          "record": {
+            "schema_version": 1,
+            "value_encoding": "json",
+            "revision": "actual-writer-1:pending",
+            "value": {
+              "request_id": "custody-request"
+            },
+            "expires_at_ms": null
+          }
+        },
+        {
+          "key": "tuple-v1:02756f735f61690002726f7574696e675f72756e74696d6500027631000273657373696f6e0002637573746f64792d7265717565737400",
+          "record": {
+            "schema_version": 1,
+            "value_encoding": "json",
+            "revision": "actual-writer-1",
+            "value": {
+              "v": 2,
+              "context": {
+                "request_id": "custody-request",
+                "principal": "fixture-principal",
+                "key_id": null,
+                "route": "responses",
+                "started_at_ms": 1800000000000
+              },
+              "input_digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "api": null,
+              "kernel": null,
+              "cursor": 0,
+              "attempts": [],
+              "active": null,
+              "model_sibling_retries": 0,
+              "refreshed_versions": [],
+              "recovery_attempted": false,
+              "claude_unavailable": false,
+              "semantic_committed": false,
+              "terminal_intent": null,
+              "finished": false,
+              "recovering": false,
+              "lease_expires_at_ms": 1800000060000,
+              "updated_at_ms": 1800000000000,
+              "extras_family": null,
+              "extras_child_count": null,
+              "extras_dispatch": null,
+              "children": [],
+              "kernel_override": null,
+              "local_work": {
+                "kind": "codex_responses_compaction",
+                "owner_nonce": "fixture-local-owner",
+                "binding_version": 2,
+                "phase": "running",
+                "terminal": null
+              }
+            },
+            "expires_at_ms": null
+          }
+        }
+      ]
+    },
+    {
+      "v": 2,
+      "phase": "finished",
+      "rows": [
+        {
+          "key": "tuple-v1:02756f735f61690002726f7574696e675f72756e74696d6500027631000273657373696f6e0002637573746f64792d7265717565737400",
+          "record": {
+            "schema_version": 1,
+            "value_encoding": "json",
+            "revision": "actual-writer-2",
+            "value": {
+              "v": 2,
+              "context": {
+                "request_id": "custody-request",
+                "principal": "fixture-principal",
+                "key_id": null,
+                "route": "responses",
+                "started_at_ms": 1800000000000
+              },
+              "input_digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "api": null,
+              "kernel": null,
+              "cursor": 0,
+              "attempts": [],
+              "active": null,
+              "model_sibling_retries": 0,
+              "refreshed_versions": [],
+              "recovery_attempted": false,
+              "claude_unavailable": false,
+              "semantic_committed": false,
+              "terminal_intent": null,
+              "finished": true,
+              "recovering": false,
+              "lease_expires_at_ms": 1800000060000,
+              "updated_at_ms": 1800000000001,
+              "extras_family": null,
+              "extras_child_count": null,
+              "extras_dispatch": null,
+              "children": [],
+              "kernel_override": null,
+              "local_work": {
+                "kind": "codex_responses_compaction",
+                "owner_nonce": "fixture-local-owner",
+                "binding_version": 2,
+                "phase": "terminal",
+                "terminal": {
+                  "semantic": "incomplete",
+                  "reader_termination": null,
+                  "body": null,
+                  "delivery": "unobserved"
+                }
+              }
+            },
+            "expires_at_ms": 1831536000000
+          }
+        }
+      ]
+    }
+  ],
+  "authority": "Actual journal::create/change emitted data only. No handle/currentness permission, retention renewal or live source claim."
+}
