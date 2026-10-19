@@ -25,6 +25,10 @@ redeemed: shadow persists a decision but never consumes it. Both outcomes now qu
 overage probe when the account's `Allow overage spending` setting is on. The per-account allow setting remains a hard
 gate; `live_armed`, a completed live redemption, and fence or configuration failures still never fall back.
 
+A durable reset record stuck at local `claimed` without a provider submission likewise returns
+`unsubmitted_transaction`. Reconciliation cannot advance that record and no external reset was consumed, so the same
+bounded overage probe may proceed. In-progress, live-armed, submitted, unknown, and ambiguous states remain ineligible.
+
 Reason: an exhausted account with overage enabled remained stuck behind an existing shadow decision and fell through to
 paid routing, even though shadow mode could not spend the reset it observed.
 

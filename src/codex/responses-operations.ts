@@ -127,6 +127,9 @@ const OVERAGE_FALLBACK_REASONS: ReadonlySet<string> = new Set([
   // the same single bounded overage probe as any other no-redemption outcome.
   "shadow_selected",
   "already_would_spend_once",
+  // A stale local claim was never submitted to the provider. Reconciliation
+  // cannot advance it, so it proves no external reset was consumed.
+  "unsubmitted_transaction",
 ]);
 
 /**
@@ -137,15 +140,15 @@ const OVERAGE_FALLBACK_REASONS: ReadonlySet<string> = new Set([
  * failures are not in the reason set and never fall back.
  */
 const planOverageFallback = (
-  evaluated: Awaited<ReturnType<typeof evaluateCodexBankedResetPool>>,
+  reason: string,
+  selectedSlot: number | undefined,
   blockedAccounts: readonly CodexBlockedRoutingAccount[],
   activeSnapshot: CodexActiveAccountSnapshot,
   currentPoolEntry: Awaited<ReturnType<typeof getAuthPoolEntry>>,
   requestedModel: string | null
 ): PendingOverageFallback | null => {
-  if (!OVERAGE_FALLBACK_REASONS.has(evaluated.reason)) return null;
+  if (!OVERAGE_FALLBACK_REASONS.has(reason)) return null;
   const active = activeSnapshot.selection;
-  const selectedSlot = evaluated.selected?.slot;
   const blocked =
     (selectedSlot === undefined ? undefined : blockedAccounts.find((account) => account.slot === selectedSlot)) ??
     (active === null ? undefined : blockedAccounts.find((account) => account.accountIdHash === active.account_id_hash && account.slot === active.slot)) ??
@@ -155,7 +158,7 @@ const planOverageFallback = (
   // redeem a reset must not spend overage when the operator left it off.
   if (!overageUsageAllowedSync(blocked.accountIdHash)) return null;
   const routing: RoutingAccount = { ...blocked, probeRequired: true, probeCircuit: "quota", overageFallback: true, requestedModel };
-  return { reason: evaluated.reason, accountEntry: { ...currentPoolEntry, auth: blocked.auth, routing }, routing };
+  return { reason, accountEntry: { ...currentPoolEntry, auth: blocked.auth, routing }, routing };
 };
 
 /**
@@ -473,7 +476,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
       if (reset.reason === "verified_routing_generation_stale") {
         return { kind: "evaluated", evaluated: { candidate, reset, staleVerified: true, originalActive } };
       }
-      if (reset.reason !== "no_existing_transaction") return { kind: "blocked" };
+      if (reset.reason !== "no_existing_transaction") return { kind: "blocked", reason: reset.reason };
     }
     return { kind: "none" };
   });
@@ -606,7 +609,17 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     );
 
     const preexisting = await ctx.preexistingBankedReset(localCandidates, originalActive, cohort);
-    if (preexisting.kind === "blocked") return null;
+    if (preexisting.kind === "blocked") {
+      ctx.overageFallbackPending = planOverageFallback(
+        preexisting.reason,
+        undefined,
+        blockedAccounts,
+        routedPool.activeSnapshot,
+        currentPoolEntry,
+        ctx.requestedModel ?? null
+      );
+      return null;
+    }
     if (preexisting.kind === "evaluated") return preexisting.evaluated;
 
     const poolCandidates = localCandidates.map((candidate) => ({
@@ -623,7 +636,14 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
       candidate_count: poolCandidates.length,
       selected_slot: evaluated.selected === null ? null : evaluated.selected.slot + 1,
     });
-    ctx.overageFallbackPending = planOverageFallback(evaluated, blockedAccounts, routedPool.activeSnapshot, currentPoolEntry, ctx.requestedModel ?? null);
+    ctx.overageFallbackPending = planOverageFallback(
+      evaluated.reason,
+      evaluated.selected?.slot,
+      blockedAccounts,
+      routedPool.activeSnapshot,
+      currentPoolEntry,
+      ctx.requestedModel ?? null
+    );
     return ctx.selectedBankedResetCandidate(evaluated, localCandidates, originalActive);
   });
 

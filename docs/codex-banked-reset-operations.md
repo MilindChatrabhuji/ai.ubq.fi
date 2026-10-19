@@ -90,7 +90,8 @@ never redeems, and never mutates banked-reset state.
 
 Shadow-only outcomes count as no redemption because shadow mode never consumes a credit. `shadow_selected` and a
 duplicate `already_would_spend_once` therefore permit the same one bounded overage probe when the account setting is on;
-live arming and completed live redemption remain ineligible.
+an unsubmitted local reset claim (`unsubmitted_transaction`) also permits it because no provider submission occurred.
+Live arming, submitted, unknown, in-progress, and completed live redemption remain ineligible.
 
 The fallback claim reuses the probe-lease machinery (one live attempt at a time) under a scoped pre-transport lease
 fence, so it never weakens the durable routing fences. The choice is per account; one subscription's switch never
