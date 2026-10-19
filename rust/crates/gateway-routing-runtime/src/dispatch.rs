@@ -32,7 +32,7 @@ impl<
             .iter()
             .find(|a| {
                 a.id == attempt.id
-                    && a.provider == attempt.request.provider
+                    && a.provider == attempt.request.provider()
                     && a.fence == attempt.credential
                     && a.paid == attempt.paid
             })

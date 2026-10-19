@@ -389,7 +389,7 @@ impl RoutingHost for Host {
     ) -> Result<PublishedCredential, GatewayError> {
         if let Some(admission) = input.codex {
             let source = self.store.read(&source_key()).await?.unwrap();
-            Ok(PublishedCredential {
+            Ok(PublishedCredential::Scalar {
                 material: AuthMaterial {
                     secret: "fixture-access-only".into(),
                     account_id: Some("fixture-account".into()),
@@ -401,7 +401,7 @@ impl RoutingHost for Host {
                     source_revision: source.revision,
                     native_generation: "fixture-generation".into(),
                 },
-                options: PrepareOptions::default(),
+                options: Box::new(PrepareOptions::default()),
             })
         } else if matches!(
             input.provider,
@@ -411,7 +411,10 @@ impl RoutingHost for Host {
             let config = self.store.value(keys::paid_control_config());
             let mut published =
                 direct_credential(input.provider, &Secret::new("fixture-paid-secret".into()));
-            published.fence = CredentialFence::Paid {
+            let PublishedCredential::Scalar { fence, .. } = &mut published else {
+                unreachable!()
+            };
+            *fence = CredentialFence::Paid {
                 provider: input.provider,
                 owner_id: config["owner_id"].as_str().unwrap_or_default().into(),
                 owner_epoch: config["owner_epoch"].as_str().unwrap_or_default().into(),

@@ -5,9 +5,7 @@ use crate::{
     types::*,
 };
 use gateway_authority::{AuthorityClock, TokenSource};
-use gateway_core::{
-    GatewayError, claude::ClaudeErrorEvidence, provider::UpstreamProvider, query::QueryStore,
-};
+use gateway_core::{GatewayError, claude::ClaudeErrorEvidence, query::QueryStore};
 
 impl<
     S: QueryStore + Clone,
@@ -163,7 +161,7 @@ impl<
             ClaudeOutcome::WorkspaceContinuation(publication) => {
                 // Disabled thinking preserves the original refusal without any
                 // re-encoding, dropped flag, or follow-up transport.
-                if gateway_core::source_serialization::member(&attempt.request.body, "thinking")
+                if gateway_core::source_serialization::member(attempt.request.body(), "thinking")
                     .and_then(|thinking| {
                         gateway_core::source_serialization::member(&thinking, "type")
                     })
@@ -313,7 +311,19 @@ fn workspace_attempt(
     attempt: &PreparedAttempt,
     publication: PublishedCredential,
 ) -> Result<PreparedAttempt, GatewayError> {
-    let (old_id, new_id, workspace) = match (&attempt.credential, &publication.fence) {
+    let (
+        PreparedWireRequest::Claude(body),
+        PublishedCredential::Claude {
+            fence,
+            body_options,
+        },
+    ) = (&attempt.request, &publication)
+    else {
+        return Err(journal::unavailable(
+            "Workspace continuation has no current owner binding.",
+        ));
+    };
+    let (old_id, new_id, workspace) = match (&attempt.credential, fence) {
         (
             CredentialFence::Claude {
                 account_id: old, ..
@@ -330,47 +340,15 @@ fn workspace_attempt(
             ));
         }
     };
-    if old_id != new_id
-        || attempt.request.provider != UpstreamProvider::ClaudeCode
-        || publication.material.workspace_id.as_ref() != Some(workspace)
-        || workspace.is_empty()
-    {
+    if old_id != new_id || body.kind() != body_options.kind || workspace.as_units().is_empty() {
         return Err(journal::unavailable(
             "Workspace continuation changed account or mismatched its owner.",
         ));
     }
-    let name = if publication.material.api_key {
-        "x-api-key"
-    } else {
-        "Authorization"
-    };
-    let old_auth = attempt
-        .request
-        .headers
-        .iter()
-        .find(|(key, _)| key.eq_ignore_ascii_case(name))
-        .map(|(_, value)| value.as_str());
-    let expected = if publication.material.api_key {
-        publication.material.secret.clone()
-    } else {
-        format!("Bearer {}", publication.material.secret)
-    };
-    if old_auth.map(|value| gateway_auth::crypto::sha256_hex(value.as_bytes()))
-        != Some(gateway_auth::crypto::sha256_hex(expected.as_bytes()))
-    {
-        return Err(journal::unavailable(
-            "Workspace continuation changed its actual credential.",
-        ));
-    }
+    // The selected physical binding remains in the host. Keep the existing
+    // prepared body and kind; host currentness and atomic revision checks bind
+    // the new workspace. Never fabricate headers or replay body preparation.
     let mut updated = attempt.clone();
-    updated.credential = publication.fence.clone();
-    updated
-        .request
-        .headers
-        .retain(|key, _| !key.eq_ignore_ascii_case("anthropic-workspace-id"));
-    updated
-        .request
-        .headers
-        .insert("anthropic-workspace-id".into(), workspace.clone());
+    updated.credential = publication.into_fence();
     Ok(updated)
 }
