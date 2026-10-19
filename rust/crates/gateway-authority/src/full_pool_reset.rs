@@ -299,7 +299,7 @@ pub(crate) async fn capture_reconciliation_candidates<S: AuthorityStore, I: Toke
     proof: &CohortProof,
     original: &RequestContext,
 ) -> Result<Vec<crate::reset::ResetCandidate>, GatewayError> {
-    Ok(facts::capture(tx, proof, original)
+    Ok(facts::capture_reconciliation(tx, proof, original)
         .await?
         .members
         .into_iter()
