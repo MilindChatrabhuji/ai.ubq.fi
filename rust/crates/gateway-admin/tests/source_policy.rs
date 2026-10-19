@@ -612,6 +612,7 @@ fn export_writer_records(store: &Store, family: &str, keys: &[RecordKey]) {
         .create_new(true)
         .open(&path)
         .unwrap();
-    file.write_all(&serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+    file.write_all(&serde_json::to_vec_pretty(&receipt).unwrap())
+        .unwrap();
     println!("M45_ACTUAL_WRITER_RECORDS={}", path.display());
 }
