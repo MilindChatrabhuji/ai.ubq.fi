@@ -98,6 +98,14 @@ pub(super) fn merge_rollup(
     if !quota.is_finite() || !spend.is_finite() {
         return Err(crate::invalid("Paid backfill rollup overflow."));
     }
+    // Source JSON.stringify emits safe integral numbers without a decimal suffix.
+    // Preserve that representation for the existing live settlement DTO; retain
+    // genuine fractional/large source spend rather than rounding or inventing it.
+    let spend = if spend.fract() == 0.0 && spend <= MAX_SAFE_INTEGER as f64 {
+        json!(spend as i64)
+    } else {
+        json!(spend)
+    };
     Ok(json!({
         "v":1,
         "bucket_start_at_ms":existing.map(|value| value["bucket_start_at_ms"].clone()).unwrap_or(json!(bucket)),

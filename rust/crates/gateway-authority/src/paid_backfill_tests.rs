@@ -498,3 +498,37 @@ fn source_valid_rollup_preserves_identity_and_accumulates_exact_fields() {
         first
     );
 }
+
+#[test]
+fn generated_backfill_rollup_roundtrips_the_existing_live_settlement_dto() {
+    let store = Store::default();
+    store.put(key("a"), request("a", true));
+    assert_eq!(backfill(&store, 10).requests.rollups_written, 1);
+    let raw = store.value(&rollup_key("a"));
+    let typed: crate::paid::PaidRollup = serde_json::from_value(raw.clone()).unwrap();
+    assert_eq!(typed.provider_quota, 1.5);
+    assert_eq!(typed.spend_microcredits, 5);
+    let restored = serde_json::to_value(typed).unwrap();
+    assert_eq!(restored["quota_sum"].as_f64(), raw["quota_sum"].as_f64());
+    assert!(restored.get("provider_quota").is_none());
+    for field in [
+        "model",
+        "provider",
+        "request_count",
+        "input_tokens",
+        "cached_input_tokens",
+        "output_tokens",
+    ] {
+        assert_eq!(restored[field], raw[field], "{field}");
+    }
+}
+
+#[test]
+fn genuine_fractional_source_rollup_spend_is_not_rounded_to_fit_the_live_dto() {
+    let row: PaidAttempt = serde_json::from_value(request("a", true)).unwrap();
+    let mut existing = values::merge_rollup(None, &row, "model", "metered", 100, NOW).unwrap();
+    existing["spend_microcredits"] = json!(0.25);
+    let merged = values::merge_rollup(Some(&existing), &row, "model", "metered", 100, NOW).unwrap();
+    assert_eq!(merged["spend_microcredits"].as_f64(), Some(5.25));
+    assert_eq!(merged["quota_sum"].as_f64(), Some(3.0));
+}

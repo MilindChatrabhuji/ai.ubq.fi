@@ -141,7 +141,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             classification: None,
             inconclusive_reason: None,
         };
-        for index in 0..10 {
+        for (index, &slot) in SLOTS.iter().enumerate() {
             let current = self.fresh_time(now)?;
             if current >= deadline {
                 return Err(failed("Prompt-cache scope experiment cycle failed."));
@@ -197,7 +197,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }
             let sample_deadline = deadline.min(crate::add(self.fresh_time(now)?, SAMPLE_MS)?);
             let dispatch = self
-                .cache_dispatch(&session, &target, SLOTS[index], self.fresh_time(now)?)
+                .cache_dispatch(&session, &target, slot, self.fresh_time(now)?)
                 .await?;
             let conversation = if index == 7 || index == 8 {
                 &conversation_b
@@ -234,13 +234,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 return Err(error);
             }
             let read = io
-                .read(
-                    response,
-                    SLOTS[index],
-                    &target.model,
-                    index,
-                    sample_deadline,
-                )
+                .read(response, slot, &target.model, index, sample_deadline)
                 .await;
             let completed = read.as_ref().is_ok_and(|r| r.completed);
             let _ = self
