@@ -3,6 +3,7 @@ use crate::{ObservabilityHost, ObservabilityRuntime, counters, store};
 use gateway_auth::crypto::sha256_hex;
 use gateway_core::{
     GatewayError,
+    js_string::JsString16,
     query::QueryStore,
     state::{RecordKey, RecordMutation},
 };
@@ -38,7 +39,7 @@ pub const COUNTERS: [&str; 9] = [
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PromptEvent {
     pub provider: Option<String>,
-    pub model: Option<String>,
+    pub model: Option<JsString16>,
     pub route: String,
     pub status: u16,
     pub completed: bool,
@@ -71,12 +72,29 @@ pub(crate) fn known_release(release: &str) -> Option<String> {
         .then(|| s.to_ascii_lowercase())
 }
 pub(crate) fn model_text(value: Option<&str>) -> Option<&str> {
-    value.map(store::trim).filter(|v| {
-        !v.is_empty()
-            && v.encode_utf16().count() <= 256
-            && !v.chars().any(|c| c < '\u{20}' || c == '\u{7f}')
+    value
+        .map(store::trim)
+        .filter(|value| model_source(Some(&JsString16::from_utf8(value))).is_some())
+}
+fn model_source(value: Option<&JsString16>) -> Option<JsString16> {
+    value.map(crate::records::trim).filter(|value| {
+        !value.as_units().is_empty()
+            && value.as_units().len() <= 256
+            && !value
+                .as_units()
+                .iter()
+                .any(|unit| *unit < 0x20 || *unit == 0x7f)
     })
 }
+pub(crate) fn model_hash(value: Option<&JsString16>, domain: &str) -> Option<String> {
+    let model = model_source(value)?;
+    // sha256Hex in source utils.ts uses TextEncoder: ONLY this digest preimage
+    // performs USVString replacement. Raw observation models remain UTF16.
+    let mut bytes = domain.as_bytes().to_vec();
+    bytes.extend_from_slice(String::from_utf16_lossy(model.as_units()).as_bytes());
+    Some(sha256_hex(&bytes))
+}
+
 pub(crate) fn prefix(name: &str) -> RecordKey {
     store::key(json!(["uos_ai", "prompt_cache_analytics", "v2", name]))
 }
@@ -127,9 +145,11 @@ fn result(status: &str, reason: &str, bucket: Option<i64>) -> Value {
     json!({"status":status,"reason":reason,"bucket_start_at_ms":bucket})
 }
 fn cohort(event: &PromptEvent) -> Vec<Value> {
-    let hash = model_text(event.model.as_deref())
-        .map(|m| sha256_hex(format!("uos-prompt-cache-analytics-model-v2\0{m}").as_bytes()))
-        .unwrap_or_else(|| "unknown".into());
+    let hash = model_hash(
+        event.model.as_ref(),
+        "uos-prompt-cache-analytics-model-v2\0",
+    )
+    .unwrap_or_else(|| "unknown".into());
     let mode = event
         .prompt_cache_mode
         .as_deref()

@@ -51,7 +51,11 @@ pub async fn bind(
         }));
     }
     let row = store.row(&key).unwrap();
-    let original: RequestContext = serde_json::from_value(row.value["context"].clone()).unwrap();
+    let raw = gateway_core::source_control::decode_source_control_record(&row).unwrap();
+    let original: RequestContext = gateway_core::source_serialization::member(&raw, "context")
+        .unwrap()
+        .deserialize()
+        .unwrap();
     authority
         .bind_paid_original_request(receipt, &original, now)
         .await

@@ -181,10 +181,13 @@ impl<S: QueryStore, I: TokenSource> Authority<S, I> {
         now: i64,
     ) -> Result<RequestStep, GatewayError> {
         let mut tx = self.transaction(now)?;
-        let Some(mut raw): Option<Value> = tx.read(key).await? else {
+        let Some(mut raw): Option<gateway_core::source_json::SourceJson> =
+            tx.read_source_control(key).await?
+        else {
             return Ok(RequestStep::Missing);
         };
-        let row: PaidAttempt = serde_json::from_value(raw.clone())
+        let row: PaidAttempt = raw
+            .deserialize()
             .map_err(|_| crate::invalid("Malformed paid backfill request."))?;
         if row.v != 3
             || keys::paid_attempt(&row.reservation.key_id.0, &row.reservation.attempt_id.0) != *key
@@ -192,8 +195,12 @@ impl<S: QueryStore, I: TokenSource> Authority<S, I> {
             return Err(crate::invalid("Paid backfill request identity conflicts."));
         }
         let expiry = values::expiry(row.reservation.created_at_ms, now)?;
-        if raw["usage_rollup_at_ms"].is_number() {
-            tx.put(key, &raw, Some(expiry))?;
+        if gateway_core::source_serialization::member(&raw, "usage_rollup_at_ms")
+            .as_ref()
+            .and_then(gateway_core::source_serialization::number)
+            .is_some()
+        {
+            tx.put_source_control(key, &raw, Some(expiry))?;
             return Ok(if tx.commit().await.unwrap_or(false) {
                 RequestStep::Retained
             } else {
@@ -203,29 +210,45 @@ impl<S: QueryStore, I: TokenSource> Authority<S, I> {
         if !may_fold {
             return Ok(RequestStep::Budget);
         }
-        let model = gateway_schema::util::js_trim(&row.model);
+        let model = gateway_core::model::ModelId::from_source(
+            gateway_schema::reasoning::js_trim_source(row.model.as_js_string()),
+        );
         let eligible = row.billing_state == gateway_core::lifecycle::BillingState::Settled
             && row.provider_quota.is_some()
             && row.spend_microcredits.is_some()
-            && !model.is_empty();
-        raw["usage_rollup_at_ms"] = json!(now);
-        raw["updated_at_ms"] = json!(now);
-        tx.put(key, &raw, Some(expiry))?;
+            && !model.as_js_string().as_units().is_empty();
+        let mut fields = gateway_core::source_serialization::entries(&raw)
+            .ok_or_else(|| crate::invalid("Malformed paid backfill request."))?;
+        for name in ["usage_rollup_at_ms", "updated_at_ms"] {
+            let next = gateway_core::source_json::SourceJson::from_serializable(&now)?;
+            if let Some((_, value)) = fields
+                .iter_mut()
+                .find(|(key, _)| key.as_units().iter().copied().eq(name.encode_utf16()))
+            {
+                *value = next;
+            } else {
+                fields.push((name.into(), next));
+            }
+        }
+        raw = gateway_core::source_serialization::object_keys(fields)?;
+        tx.put_source_control(key, &raw, Some(expiry))?;
         if eligible {
             let bucket = row.reservation.created_at_ms / 3_600_000 * 3_600_000;
             let provider = match row.reservation.provider {
                 gateway_core::provider::PaidProvider::Surplus => "surplus",
                 gateway_core::provider::PaidProvider::Metered => "metered",
             };
-            let rollup_key = keys::paid_rollup(
+            let rollup_key = keys::paid_rollup_model(
                 bucket,
-                model,
+                &model,
                 provider,
                 crate::paid::rollup_shard(&row.reservation.attempt_id.0),
             );
-            let old: Option<Value> = tx.read(&rollup_key).await?;
-            let rollup = values::merge_rollup(old.as_ref(), &row, model, provider, bucket, now)?;
-            tx.put(&rollup_key, &rollup, None)?;
+            let old: Option<gateway_core::source_json::SourceJson> =
+                tx.read_source_control(&rollup_key).await?;
+            let rollup =
+                values::merge_source_rollup(old.as_ref(), &row, &model, provider, bucket, now)?;
+            tx.put_source_control(&rollup_key, &rollup, None)?;
         }
         Ok(if tx.commit().await? {
             RequestStep::Processed(eligible)

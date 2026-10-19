@@ -56,7 +56,7 @@ impl ChatCollector {
             ("id", s::text(&self.plan.response_id)),
             ("object", s::text("chat.completion.chunk")),
             ("created", s::generated(&self.plan.created_at)),
-            ("model", s::text(&self.plan.model)),
+            ("model", s::quoted(self.plan.model.as_js_string())),
             (
                 "choices",
                 s::array(&[s::object(vec![
@@ -342,7 +342,7 @@ impl ChatCollector {
                         ("id", s::text(&self.plan.response_id)),
                         ("object", s::text("chat.completion.chunk")),
                         ("created", s::generated(&self.plan.created_at)),
-                        ("model", s::text(&self.plan.model)),
+                        ("model", s::quoted(self.plan.model.as_js_string())),
                         ("choices", s::array(&[])),
                         ("usage", s::generated(&usage)),
                     ])));

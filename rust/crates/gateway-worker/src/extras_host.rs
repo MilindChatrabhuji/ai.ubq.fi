@@ -97,8 +97,7 @@ impl Host {
         let prepared = call.prepared();
         let target = PinnedDestination::new(&prepared.url)
             .map_err(|error| DispatchFailure::gateway(error, true))?;
-        let bytes = serde_json::to_vec(&prepared.body)
-            .map_err(|_| DispatchFailure::gateway(invalid(), true))?;
+        let bytes = prepared.body.as_bytes().to_vec();
         let cancellation = self
             .platform
             .cancellation

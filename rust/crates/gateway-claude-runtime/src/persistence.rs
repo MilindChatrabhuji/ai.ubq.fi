@@ -11,6 +11,7 @@ use gateway_auth::{
 };
 use gateway_core::{
     GatewayError,
+    model::ModelId,
     state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck, StoredRecord},
 };
 use serde_json::json;
@@ -100,7 +101,7 @@ pub(crate) async fn rotate<S: AuthorityStore, H: ClaudePoolHost>(
     view: &PoolView,
     expected: &AccountBinding,
     next_id: &str,
-    model: &str,
+    model: &ModelId,
 ) -> Result<bool, GatewayError> {
     for _ in 0..12 {
         let Some(mut current) = claude::read_roster(store, now(host)?).await? else {
@@ -170,7 +171,7 @@ pub(crate) async fn persist<S: AuthorityStore, H: ClaudePoolHost>(
     store: &S,
     host: &H,
     binding: &AccountBinding,
-    model: &str,
+    model: &ModelId,
     response: &ResponseObservation,
     classification: &Classification,
     observation: Option<&quota::QuotaObservation>,

@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 use gateway_core::GatewayError;
 use gateway_core::identity::{ApiKeyId, RequestId};
+use gateway_core::model::ModelId;
 use gateway_core::provider::UpstreamProvider;
 use gateway_core::state::AuthorityStore;
 use serde::{Deserialize, Serialize};
@@ -24,8 +25,9 @@ pub struct ApiKeyPolicy {
     pub paid_fallback_limit_microcredits: i64,
     pub paid_fallback_quota_per_credit: i64,
     pub paid_fallback_pricing_checked_at_ms: i64,
-    pub paid_fallback_models: Vec<String>,
-    pub paid_fallback_max_exposure_microcredits: BTreeMap<String, i64>,
+    pub paid_fallback_models: Vec<ModelId>,
+    #[serde(with = "crate::paid_types::model_map")]
+    pub paid_fallback_max_exposure_microcredits: BTreeMap<ModelId, i64>,
 }
 
 impl ApiKeyPolicy {
@@ -219,12 +221,12 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         text(route)?;
         for _ in 0..5 {
             let mut tx = self.transaction(now)?;
-            let policy: ApiKeyPolicy =
-                tx.read(&keys::api_policy(&key_id.0))
-                    .await?
-                    .ok_or_else(|| {
-                        GatewayError::new(401, "API key is unavailable.", Some("invalid_api_key"))
-                    })?;
+            let policy: ApiKeyPolicy = tx
+                .read_source_control(&keys::api_policy(&key_id.0))
+                .await?
+                .ok_or_else(|| {
+                    GatewayError::new(401, "API key is unavailable.", Some("invalid_api_key"))
+                })?;
             policy.validate(key_id, now)?;
             let (start, reset) = policy.current_window(now)?;
             let reservation = ApiReservation {
@@ -360,7 +362,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 for _ in 0..5 {
                     let mut tx = self.transaction(now)?;
                     let policy: ApiKeyPolicy = tx
-                        .read(&keys::api_policy(&key_id.0))
+                        .read_source_control(&keys::api_policy(&key_id.0))
                         .await?
                         .ok_or_else(|| {
                             unavailable(

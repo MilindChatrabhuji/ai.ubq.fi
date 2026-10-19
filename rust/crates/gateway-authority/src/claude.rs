@@ -1,14 +1,17 @@
 //! Current source Claude roster and quota evidence, never a caller-supplied authorization.
 use std::collections::BTreeSet;
 
-use gateway_core::GatewayError;
 use gateway_core::state::{AuthorityStore, RevisionCheck};
 use gateway_core::value::PortableValue;
+use gateway_core::{
+    GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
+    source_serialization as source,
+};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::store::Transaction;
-use crate::{Authority, TokenSource, invalid, keys, positive, text, unavailable};
+use crate::{Authority, TokenSource, invalid, keys, positive, unavailable};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Binding {
@@ -29,13 +32,13 @@ struct Binding {
 #[derive(Clone, Debug)]
 pub struct ClaudeCohortProof {
     checks: Vec<RevisionCheck>,
-    model: String,
+    model: ModelId,
     active_account_id: String,
     bindings: Vec<Binding>,
 }
 
 impl ClaudeCohortProof {
-    pub fn model(&self) -> &str {
+    pub fn model(&self) -> &ModelId {
         &self.model
     }
 
@@ -204,39 +207,71 @@ fn roster(value: &Value) -> Result<Option<View>, GatewayError> {
     }))
 }
 
-fn applicable(value: &Value, binding: &Binding, model: &str, now: i64) -> bool {
-    if !value["updated_at_ms"]
-        .as_f64()
-        .is_some_and(|value| value.is_finite() && value > 0.0)
+fn applicable(value: &SourceJson, binding: &Binding, model: &ModelId, now: i64) -> bool {
+    let get = |value: &SourceJson, name: &str| source::member(value, name);
+    let positive_time = |value: &SourceJson| {
+        source::number(value)
+            .filter(|number| {
+                number.is_finite()
+                    && number.fract() == 0.0
+                    && *number > 0.0
+                    && *number <= gateway_core::identity::MAX_SAFE_INTEGER as f64
+            })
+            .map(|n| n as i64)
+    };
+    if !get(value, "updated_at_ms")
+        .as_ref()
+        .and_then(source::number)
+        .is_some_and(|n| n.is_finite() && n > 0.0)
     {
         return false;
     }
-    value["pool_proofs"].as_object().is_some_and(|proofs| {
-        proofs.values().any(|proof| {
-            let Some(observed) =
-                safe_integer(&proof["observed_at_ms"]).filter(|value| positive(*value).is_ok())
-            else {
-                return false;
-            };
-            let Some(expires) =
-                safe_integer(&proof["expires_at_ms"]).filter(|value| positive(*value).is_ok())
-            else {
-                return false;
-            };
-            observed <= now
-                && expires > now
-                && expires > observed
-                && proof["evidence_generation"].as_str()
-                    == Some(binding.evidence_generation.as_str())
-                && match proof["kind"].as_str() {
-                    Some("auth_invalid") => proof.get("model_id") == Some(&Value::Null),
-                    Some("quota_exhausted") => proof["model_id"]
-                        .as_str()
-                        .is_some_and(|id| !id.is_empty() && id == model),
-                    _ => false,
-                }
+    get(value, "pool_proofs")
+        .as_ref()
+        .and_then(source::entries)
+        .is_some_and(|proofs| {
+            proofs.iter().any(|(_, proof)| {
+                let Some(observed) = get(proof, "observed_at_ms")
+                    .as_ref()
+                    .and_then(positive_time)
+                else {
+                    return false;
+                };
+                let Some(expires) = get(proof, "expires_at_ms").as_ref().and_then(positive_time)
+                else {
+                    return false;
+                };
+                observed <= now
+                    && expires > now
+                    && expires > observed
+                    && get(proof, "evidence_generation")
+                        .as_ref()
+                        .and_then(source::string)
+                        .is_some_and(|s| {
+                            s.as_units()
+                                .iter()
+                                .copied()
+                                .eq(binding.evidence_generation.encode_utf16())
+                        })
+                    && match get(proof, "kind")
+                        .as_ref()
+                        .and_then(source::string)
+                        .and_then(|s| s.try_utf8().ok())
+                        .as_deref()
+                    {
+                        Some("auth_invalid") => {
+                            get(proof, "model_id").is_some_and(|v| v.as_str() == "null")
+                        }
+                        Some("quota_exhausted") => get(proof, "model_id")
+                            .as_ref()
+                            .and_then(source::string)
+                            .is_some_and(|id| {
+                                !id.as_units().is_empty() && &ModelId::from_source(id) == model
+                            }),
+                        _ => false,
+                    }
+            })
         })
-    })
 }
 
 fn property<'a>(value: &'a PortableValue, name: &str) -> Option<&'a PortableValue> {
@@ -253,27 +288,30 @@ fn property<'a>(value: &'a PortableValue, name: &str) -> Option<&'a PortableValu
     }
 }
 
-fn proof_fields(value: &PortableValue, names: &[&str]) -> serde_json::Map<String, Value> {
-    names
-        .iter()
-        .filter_map(|&name| {
-            let scalar = match property(value, name)? {
-                PortableValue::Null => Value::Null,
-                PortableValue::String(value) => Value::String(value.clone()),
-                PortableValue::StringUtf16(value) => Value::String(value.try_utf8().ok()?),
-                value @ PortableValue::NumberBits(_) => {
-                    Value::Number(serde_json::Number::from_f64(value.number_value()?)?)
-                }
-                _ => return None,
-            };
-            Some((name.to_owned(), scalar))
-        })
-        .collect()
+fn proof_fields(value: &PortableValue, names: &[&str]) -> SourceJson {
+    source::object(
+        names
+            .iter()
+            .filter_map(|&name| {
+                let scalar = match property(value, name)? {
+                    PortableValue::Null => SourceJson::parse("null").ok()?,
+                    PortableValue::String(value) => SourceJson::from_serializable(value).ok()?,
+                    PortableValue::StringUtf16(value) => value.to_source_json().ok()?,
+                    value @ PortableValue::NumberBits(_) => {
+                        SourceJson::from_serializable(&value.number_value()?).ok()?
+                    }
+                    _ => return None,
+                };
+                Some((name, scalar))
+            })
+            .collect(),
+    )
+    .expect("finite proof metadata")
 }
-
-/// Project proof inputs only. Operator values and Object.values keys are not JSON inputs.
-pub(crate) fn quota_proof_metadata(value: &PortableValue) -> Value {
-    let mut row = proof_fields(value, &["updated_at_ms"]);
+/// Project the existing finite proof inputs only, preserving source model units.
+/// Unrelated native extras and Object.values keys remain outside proof inputs.
+pub(crate) fn quota_proof_metadata(value: &PortableValue) -> SourceJson {
+    let row = proof_fields(value, &["updated_at_ms"]);
     let fields = [
         "kind",
         "model_id",
@@ -284,30 +322,36 @@ pub(crate) fn quota_proof_metadata(value: &PortableValue) -> Value {
     let values: Vec<_> = match property(value, "pool_proofs") {
         Some(PortableValue::Object(items)) => items
             .iter()
-            .map(|(_, value)| Value::Object(proof_fields(value, &fields)))
+            .map(|(_, value)| proof_fields(value, &fields))
             .collect(),
         Some(PortableValue::ObjectUtf16(items)) => items
             .iter()
-            .map(|(_, value)| Value::Object(proof_fields(value, &fields)))
+            .map(|(_, value)| proof_fields(value, &fields))
             .collect(),
-        _ => return Value::Object(row),
+        _ => return row,
     };
-    row.insert(
-        "pool_proofs".to_owned(),
-        Value::Object(
-            values
-                .into_iter()
-                .enumerate()
-                .map(|(index, value)| (index.to_string(), value))
-                .collect(),
+    let proofs = source::object_keys(
+        values
+            .into_iter()
+            .enumerate()
+            .map(|(i, value)| (JsString16::from_utf8(&i.to_string()), value))
+            .collect(),
+    )
+    .expect("finite proof inputs");
+    source::object(vec![
+        (
+            "updated_at_ms",
+            source::member(&row, "updated_at_ms")
+                .unwrap_or_else(|| SourceJson::parse("null").expect("null")),
         ),
-    );
-    Value::Object(row)
+        ("pool_proofs", proofs),
+    ])
+    .expect("finite proof metadata")
 }
 
 async fn read_view<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
-    model: &str,
+    model: &ModelId,
 ) -> Result<Option<View>, GatewayError> {
     let Some(raw) = tx.read::<Value>(&keys::claude_accounts()).await? else {
         return Ok(None);
@@ -332,10 +376,15 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Missing, empty, no-active, or incompletely proven pools are never exhaustion proof.
     pub async fn prove_claude_unavailable(
         &self,
-        model: &str,
+        model: &ModelId,
         now: i64,
     ) -> Result<Option<ClaudeCohortProof>, GatewayError> {
-        text(model)?;
+        if gateway_schema::reasoning::js_trim_source(model.as_js_string())
+            .as_units()
+            .is_empty()
+        {
+            return Err(invalid("Missing authority model."));
+        }
         for _ in 0..128 {
             let mut tx = self.transaction(self.fresh_time(now)?)?;
             let _ = read_view(&mut tx, model).await?;
@@ -345,7 +394,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             };
             let proof = ClaudeCohortProof {
                 checks: tx.checks(),
-                model: model.to_owned(),
+                model: model.clone(),
                 active_account_id: view.active_account_id,
                 bindings: view.bindings,
             };
@@ -363,7 +412,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         &self,
         tx: &mut Transaction<'_, S, I>,
         proof: &ClaudeCohortProof,
-        model: &str,
+        model: &ModelId,
         now: i64,
     ) -> Result<(), GatewayError> {
         let fail = || {
@@ -372,7 +421,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 "Claude full-pool proof is stale, expired, or not applicable.",
             )
         };
-        if proof.model != model || proof.bindings.is_empty() {
+        if &proof.model != model || proof.bindings.is_empty() {
             return Err(fail());
         }
         tx.now = self.fresh_time(tx.now.max(now))?;
