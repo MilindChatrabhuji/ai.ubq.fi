@@ -8,74 +8,22 @@ pub fn normalize_breakpoint(
     value: Option<&Value>,
     param: &str,
 ) -> Result<Option<Value>, GatewayError> {
-    let Some(value) = value else { return Ok(None) };
-    if !value.is_object() {
-        return Err(invalid(format!("{param} must be an object"), Some(param)));
-    }
-    if let Some(key) = unknown_key(value, &["mode"]) {
-        return Err(invalid(
-            format!("Unknown cache breakpoint field: {key}"),
-            Some(&format!("{param}.{key}")),
-        ));
-    }
-    if value.get("mode").and_then(Value::as_str) != Some("explicit") {
-        return Err(invalid(
-            format!("{param}.mode must be explicit"),
-            Some(&format!("{param}.mode")),
-        ));
-    }
-    Ok(Some(json!({"mode":"explicit"})))
+    let value = value
+        .map(gateway_core::source_json::SourceJson::from_serializable)
+        .transpose()?;
+    crate::source_request::normalize_breakpoint(value.as_ref(), param)
+        .map_err(crate::source_request::SourceRequestError::into_scalar)?
+        .map(|value| value.deserialize())
+        .transpose()
 }
+
 pub fn validate_prompt_cache_controls(body: &Value) -> Result<(), GatewayError> {
-    if body.get("prompt_cache_key").is_some_and(|v| !v.is_string()) {
-        return Err(invalid(
-            "prompt_cache_key must be a string",
-            Some("prompt_cache_key"),
-        ));
-    }
-    if let Some(options) = body.get("prompt_cache_options") {
-        if !options.is_object() {
-            return Err(invalid(
-                "prompt_cache_options must be an object",
-                Some("prompt_cache_options"),
-            ));
-        }
-        if let Some(key) = unknown_key(options, &["mode", "ttl"]) {
-            return Err(invalid(
-                format!("Unknown prompt cache option: {key}"),
-                Some(&format!("prompt_cache_options.{key}")),
-            ));
-        }
-        if options
-            .get("mode")
-            .is_some_and(|v| !matches!(v.as_str(), Some("implicit" | "explicit")))
-        {
-            return Err(invalid(
-                "prompt_cache_options.mode must be implicit or explicit",
-                Some("prompt_cache_options.mode"),
-            ));
-        }
-        if options
-            .get("ttl")
-            .is_some_and(|v| v.as_str() != Some("30m"))
-        {
-            return Err(invalid(
-                "prompt_cache_options.ttl must be 30m",
-                Some("prompt_cache_options.ttl"),
-            ));
-        }
-    }
-    if body
-        .get("prompt_cache_retention")
-        .is_some_and(|v| !matches!(v.as_str(), Some("in_memory" | "24h")))
-    {
-        return Err(invalid(
-            "prompt_cache_retention must be in_memory or 24h",
-            Some("prompt_cache_retention"),
-        ));
-    }
-    Ok(())
+    crate::source_request::validate_prompt_cache_controls(
+        &gateway_core::source_json::SourceJson::from_serializable(body)?,
+    )
+    .map_err(crate::source_request::SourceRequestError::into_scalar)
 }
+
 fn enum_list(value: &Value, allowed: Option<&[&str]>, filter: bool) -> Option<Vec<Value>> {
     let values = value.as_array()?;
     let mut result = Vec::new();

@@ -1,7 +1,22 @@
 //! Ordinary-request data views; no provider dispatch or authority is implemented here.
+mod chat_engine;
+mod content_engine;
+mod controls;
 mod error;
+mod fields;
+mod normalized;
+mod ordinary;
+mod reasoning;
+mod value;
 pub use error::SourceRequestError;
+pub use fields::{
+    parse_chat_stream_options, parse_max_completion_tokens, validate_cache_control,
+    validate_prompt_cache_controls, validate_request_fields,
+};
 use gateway_core::{js_string::JsString16, source_json::SourceJson};
+pub use normalized::*;
+pub use ordinary::OrdinarySourceRequest;
+pub use reasoning::{parse_effort, parse_reasoning};
 
 pub const MAX_ACCEPTED_JSON_BODY_BYTES: usize = 32 * 1024 * 1024;
 
@@ -38,6 +53,19 @@ impl SourceRequestDocument {
     }
     pub fn original_source(&self) -> &SourceJson {
         &self.original
+    }
+    pub fn for_surface(&self, surface: crate::request::RequestSurface) -> OrdinarySourceRequest {
+        OrdinarySourceRequest::new(self.clone(), surface)
+    }
+    pub fn validate_fields(
+        &self,
+        surface: crate::request::RequestSurface,
+        extensions: &crate::request::RequestExtensions,
+    ) -> Result<(), SourceRequestError> {
+        validate_request_fields(&self.original, surface, extensions)
+    }
+    pub fn reasoning(&self) -> Result<Option<SourceJson>, SourceRequestError> {
+        parse_reasoning(member(&self.original, "reasoning")?.as_ref())
     }
     pub fn model_request(&self) -> Result<SourceModelRequest, SourceRequestError> {
         model_request(member(&self.original, "model")?.as_ref())
