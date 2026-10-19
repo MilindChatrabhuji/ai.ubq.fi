@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import assert from "node:assert/strict";
+import { runPrincipalControlCases } from "./principal-control-cases.mjs";
 const sourceDirectory = dirname(fileURLToPath(import.meta.url)),
   root = resolve(sourceDirectory, "../../..");
 assert.equal(process.cwd(), root, "fixture must execute from its own repository root");
@@ -34,9 +35,10 @@ assert.deepEqual(versions, { node: "v24.21.0", miniflare: "5.20261012.1-beta", w
 const scratch = join(root, ".tmp", "native-authority-" + randomUUID(), "fixtures"),
   directory = dirname(scratch);
 await mkdir(scratch, { recursive: true, mode: 0o700 });
-for (const file of ["fixture-worker.mjs", "bun-client.ts"]) await writeFile(join(scratch, file), await readFile(join(sourceDirectory, file)));
+for (const file of ["fixture-worker.mjs", "bun-client.ts", "principal-control-sources.mjs"])
+  await writeFile(join(scratch, file), await readFile(join(sourceDirectory, file)));
 const fixtureHashes = {};
-for (const file of ["fixture-worker.mjs", "bun-client.ts", "mixed-client-workerd.mjs"])
+for (const file of ["fixture-worker.mjs", "bun-client.ts", "mixed-client-workerd.mjs", "principal-control-cases.mjs", "principal-control-sources.mjs"])
   fixtureHashes[file] = createHash("sha256")
     .update(await readFile(join(sourceDirectory, file)))
     .digest("hex");
@@ -68,6 +70,7 @@ function assertFixtureImports(source) {
     "../../../src/authority/native-authority.ts",
     "../../../src/authority/native-codex-contracts.ts",
     "../../../src/authority/native-paid.ts",
+    "./principal-control-sources.mjs",
     "cloudflare:workers",
   ]);
   return imports;
@@ -128,7 +131,10 @@ const options = () =>
     cf: false,
     telemetry: { enabled: false },
     resourcePersistencePath: persistence,
-    durableObjects: { AUTHORITY: { className: "SharedNativeAuthority", useSQLite: true } },
+    durableObjects: {
+      AUTHORITY: { className: "SharedNativeAuthority", useSQLite: true },
+      PRINCIPAL: { className: "PrincipalNativeAuthority", useSQLite: true },
+    },
     bindings: { FIXTURE_OWNER: fixtureOwner, ...(upstreamOrigin ? { SYNTHETIC_UPSTREAM: upstreamOrigin } : {}) },
     outboundService: async (request) => {
       const url = new URL(request.url);
@@ -203,8 +209,8 @@ const crash = async (name) => {
   console.log(JSON.stringify({ phase: name, durableRows: after.rows }));
   report.phases.push({ name, incarnationBefore: before.incarnation, incarnationAfter: after.incarnation, projection: after });
 };
-const bunCall = async (principal, operations, scenario = null) => {
-  const url = String(await runtime.ready).replace(/\/$/, "") + (scenario ? "/review/" + scenario : "");
+const bunCall = async (principal, operations, scenario = null, extra = {}) => {
+  const url = String(await runtime.ready).replace(/\/$/, "") + (extra.controlCase ? "/control/" + extra.controlCase : scenario ? "/review/" + scenario : "");
   const child = spawn(bun, ["--no-env-file", "--no-install", join(scratch, "bun-client.ts")], {
     cwd: root,
     env: { PATH: dirname(bun) + ":/usr/bin:/bin", BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
@@ -217,14 +223,17 @@ const bunCall = async (principal, operations, scenario = null) => {
   child.stdout.on("data", (chunk) => (stdout += chunk));
   child.stderr.on("data", (chunk) => (stderr += chunk));
   try {
-    child.stdin.end(JSON.stringify({ url, principal, epoch, operations }));
+    child.stdin.end(JSON.stringify({ url, principal, epoch, operations, ...extra }));
     const [code] = await once(child, "close");
     assert.equal(code, 0, stderr);
     const result = JSON.parse(stdout);
     assert.equal(result.runtime, "1.4.0");
-    report.actualBunHttpClients++;
+    if (extra.surface !== "native-bindings") report.actualBunHttpClients++;
     const failure = result.results.find((item) => item?.fixtureError);
-    if (failure) throw Object.assign(new Error(failure.fixtureError.code), { fixtureRefusal: true, code: failure.fixtureError.code });
+    if (failure)
+      throw Object.assign(new Error(failure.fixtureError.code), { fixtureRefusal: true, code: failure.fixtureError.code, status: failure.fixtureError.status });
+    const fault = result.results.find((item) => item?.fixtureFault);
+    if (fault) throw Object.assign(new Error(fault.fixtureFault.message), { fixtureFault: true });
     return result.results;
   } finally {
     activeChildren.delete(child);
@@ -851,6 +860,45 @@ try {
   });
   assert.equal(report.reviews.length, 22);
   assert.equal(providerCalls, 5);
+  report.originalActualBunHttpClients = report.actualBunHttpClients;
+  const nativeBindings = (await bunCall("control", [], null, { surface: "native-bindings" }))[0];
+  report.nativeBindingVerificationClients = 1;
+  for (const path of [
+    "src/api-keys.ts",
+    "src/paid-fallback/index.ts",
+    "src/auth/local-development-key.ts",
+    "src/provider/metered.ts",
+    "src/authority/native-principal-contracts.ts",
+  ])
+    hashes[path] = createHash("sha256")
+      .update(await readFile(join(root, path)))
+      .digest("hex");
+  report.control = await runPrincipalControlCases({
+    epoch,
+    nativeBindings,
+    owner: async (id, action, body = {}) => {
+      const response = await dispatch("/control/" + id + "/__fixture/" + action, body, true);
+      assert.equal(response.status, 200);
+      return await response.json();
+    },
+    remote: async ({ id, surface, profile, command, client, raw }) => {
+      if (client === "bun")
+        return (await bunCall(profile, [command], null, { controlCase: id, ...(surface === "principal" ? { surface: "principal" } : {}), raw }))[0];
+      const path = surface === "principal" ? (raw ? "control-raw" : "control-client") : "client";
+      const response = await dispatch("/control/" + id + "/" + path + "/" + profile, command);
+      assert.equal(response.status, 200);
+      const reply = await response.json();
+      if (raw) return reply;
+      if (reply.error) throw Object.assign(new Error(reply.error.code), { fixtureRefusal: true, code: reply.error.code, status: reply.error.status });
+      if (reply.fixtureFault) throw Object.assign(new Error(reply.fixtureFault.message), { fixtureFault: true });
+      return reply.result;
+    },
+    restart: async () => {
+      await runtime.dispose();
+      runtime = new Miniflare(options());
+    },
+  });
+  assert.equal(providerCalls, 5, "principal-control acceptance must not add provider I/O");
   report.reviewIsolation = "named synthetic test namespaces; each Bun/Worker pair shares one persistent SQLite DO; no live owner publisher acceptance";
   report.final = await inspect();
   report.providerCalls = providerCalls;
