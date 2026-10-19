@@ -179,7 +179,7 @@ pub(super) async fn capture<S: AuthorityStore, I: TokenSource>(
             candidate: ResetCandidate {
                 binding: binding.clone(),
                 quota_reset_at_ms: block.blocked_until_ms,
-                request_started_at_ms: original.started_at_ms,
+                request_started_at_ms: tx.now,
                 proof: proof.clone(),
             },
             administrative_hash: account.admin_account_hash.0.clone(),
