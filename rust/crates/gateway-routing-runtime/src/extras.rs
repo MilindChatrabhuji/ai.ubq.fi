@@ -184,20 +184,33 @@ impl<
             let mut account = match selection {
                 gateway_authority::routing::RouteSelection::Eligible(account) => account,
                 gateway_authority::routing::RouteSelection::QuotaBlocked { proof, .. } => {
-                    if proof.full_cohort_exhausted()
-                        && matches!(
-                            self.host.recover_codex(&proof, &model).await?,
-                            CodexRecovery::Reselect
+                    let recovery = if proof.full_cohort_exhausted() {
+                        self.host.recover_codex(&proof, &model).await?
+                    } else {
+                        CodexRecovery::Declined
+                    };
+                    match recovery {
+                        CodexRecovery::Recovered(account) => {
+                            if account.requested_model != model
+                                || account.quota_class != crate::policy::class(&model)
+                                || account.probe_required
+                                || account.probe.is_none()
+                            {
+                                return Err(journal::unavailable("The elected image recovery admission does not match this child.").into());
+                            }
+                            self.authority()
+                                .ensure_admission_current(&account, self.clock.now_ms()?)
+                                .await?;
+                            account
+                        }
+                        CodexRecovery::Reselect => continue,
+                        CodexRecovery::Declined => return Err(GatewayError::new(
+                            429,
+                            "Codex subscriptions have no applicable capacity for this image child.",
+                            Some("codex_quota_blocked"),
                         )
-                    {
-                        continue;
+                        .into()),
                     }
-                    return Err(GatewayError::new(
-                        429,
-                        "Codex subscriptions have no applicable capacity for this image child.",
-                        Some("codex_quota_blocked"),
-                    )
-                    .into());
                 }
                 gateway_authority::routing::RouteSelection::CredentialsInvalid { .. } => {
                     return Err(GatewayError::new(
