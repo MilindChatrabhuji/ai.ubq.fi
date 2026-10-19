@@ -20,7 +20,6 @@ use gateway_core::{
 use gateway_providers::Headers;
 use gateway_schema::selection::ProviderSelection;
 use serde::Serialize;
-use serde_json::Value;
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
@@ -197,11 +196,7 @@ impl ClaudePoolSession {
                         source::member(row, "supported_reasoning_levels")
                             .as_ref()
                             .and_then(source::array)
-                            .map(|a| {
-                                a.iter()
-                                    .filter_map(|value| source::string(&value))
-                                    .collect()
-                            })
+                            .map(|a| a.iter().filter_map(source::string).collect())
                             .unwrap_or_default(),
                     );
                     options.supports_native_effort = options

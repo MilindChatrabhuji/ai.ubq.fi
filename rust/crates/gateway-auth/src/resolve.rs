@@ -307,13 +307,20 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 .await?;
             if let Some(row) = row {
                 row.validate_version()?;
-                if row.json_value()?.get("revoked_at_ms") == Some(&Value::Null)
+                // This one named ID row can now hold source name/model
+                // metadata. Keep the original peer/origin gate and separate
+                // model-free hash policy read; data decoding grants no role.
+                let metadata = gateway_core::source_control::decode_source_control_record(&row)?;
+                if gateway_core::source_serialization::member(&metadata, "revoked_at_ms")
+                    .is_some_and(|value| value.as_str() == "null")
                     && let (Some(hash), Some(id)) = (
-                        row.json_value()?.get("hash").and_then(Value::as_str),
-                        row.json_value()?.get("id").and_then(Value::as_str),
+                        gateway_core::source_serialization::member(&metadata, "hash")
+                            .and_then(|value| value.deserialize::<String>().ok()),
+                        gateway_core::source_serialization::member(&metadata, "id")
+                            .and_then(|value| value.deserialize::<String>().ok()),
                     )
                 {
-                    let hash_row = self.store.read(&api_keys::hash_key(hash)).await?;
+                    let hash_row = self.store.read(&api_keys::hash_key(&hash)).await?;
                     if let Some(hash_row) = hash_row {
                         hash_row.validate_version()?;
                         let record = serde_json::from_value(hash_row.json_value()?.clone())

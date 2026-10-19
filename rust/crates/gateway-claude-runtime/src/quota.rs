@@ -10,7 +10,7 @@ use gateway_core::{
     state::StoredRecord,
     value::{PortableValue, ValueEncoding},
 };
-use gateway_schema::util::{js_trim, json_stringify};
+use gateway_schema::util::js_trim;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -600,10 +600,6 @@ pub(crate) fn clear(previous: Option<&QuotaState>, now: i64) -> QuotaState {
     next.last_error = None;
     next.updated_at_ms = now as f64;
     next
-}
-pub(crate) fn source_value(value: &impl Serialize) -> Value {
-    let value = serde_json::to_value(value).expect("finite source quota data");
-    serde_json::from_str(&json_stringify(&value)).expect("source JSON serialization")
 }
 
 #[cfg(test)]
