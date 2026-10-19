@@ -768,7 +768,7 @@ fn replacement_during_pending_refresh_cannot_return_old_identity_snapshot() {
     assert_eq!(host.requests.borrow().len(), 3);
     host.configure(CatalogProvider::Openlux, "replacement");
     gate.set(true);
-    let result = run(pending).unwrap();
+    let result = scalar_response(run(pending).unwrap());
     assert_eq!(
         result.body["data"]["openlux"],
         json!({"models":0,"updated_at_ms":null})
@@ -823,7 +823,7 @@ fn cold_picker_starts_three_normal_discoveries_concurrently_and_only_schedules_e
         }
     )));
     gate.set(true);
-    let result = run(pending).unwrap();
+    let result = scalar_response(run(pending).unwrap());
     let ids = result.body["data"]["models"]
         .as_array()
         .unwrap()
@@ -1012,7 +1012,7 @@ fn actual_admin_source_documents_publish_opaque_models_source_labels_and_whiteli
     assert!(host.requests.borrow().is_empty());
     println!(
         "M42_ADMIN_SOURCE_WRITER_FIXTURE={}",
-        serde_json::to_string(&(catalog_store::codex_snapshot_key(), snapshot)).unwrap()
+        serde_json::to_string(&(catalog_store::codex_snapshot_key().0, snapshot)).unwrap()
     );
 }
 
