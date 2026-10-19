@@ -7,7 +7,12 @@ use crate::{
     quota::{ApiReservation, ApiUsageRequest, ApiUsageState, KernelReservation},
     store::Transaction,
 };
-use gateway_core::{GatewayError, identity::RequestContext, state::AuthorityStore};
+use gateway_core::{
+    GatewayError,
+    identity::RequestContext,
+    local_work::{LocalWorkPhase, journal_local_work},
+    state::AuthorityStore,
+};
 use serde_json::Value;
 
 pub(super) async fn require_current<S: AuthorityStore, I: TokenSource>(
@@ -37,10 +42,16 @@ pub(super) async fn require_current<S: AuthorityStore, I: TokenSource>(
         &original.request_id.0,
     ]);
     let journal = tx.read::<Value>(&key).await?.ok_or_else(error)?;
+    // This shared data-only parser is not ownership permission; all checks below still apply.
+    if journal_local_work(&journal)
+        .map_err(|_| error())?
+        .is_some_and(|local| local.phase != LocalWorkPhase::ProviderPlanned)
+    {
+        return Err(error());
+    }
     let context: RequestContext =
         serde_json::from_value(journal["context"].clone()).map_err(|_| error())?;
-    if journal["v"].as_u64() != Some(1)
-        || &context != original
+    if &context != original
         || journal["finished"].as_bool() != Some(false)
         || journal["recovering"].as_bool() != Some(false)
         || journal["semantic_committed"].as_bool() != Some(false)
