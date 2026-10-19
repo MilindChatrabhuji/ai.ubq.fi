@@ -12,6 +12,7 @@ pub mod http_server;
 pub mod live_bridge;
 #[cfg(unix)]
 pub mod managed_publication_http;
+pub mod native_import;
 #[cfg(unix)]
 pub mod nonce_sqlite;
 pub mod owner_control;
