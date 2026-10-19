@@ -1,4 +1,3 @@
-mod support;
 use gateway_authority::{
     full_pool_reset::*,
     keys,
@@ -15,7 +14,7 @@ use gateway_core::{
 };
 use serde_json::{Value, json};
 use std::cmp::Ordering;
-use support::*;
+use crate::support::*;
 
 struct Collation;
 impl SourceCreditCollation for Collation {
@@ -388,7 +387,7 @@ fn source_golden_collation_controls_selection_and_utf16_credit_hashes() {
             Ok(self.0.comparison.cmp(&0))
         }
     }
-    let source = SourceJson::parse(include_str!("fixtures/full-pool-source-v1.json")).unwrap();
+    let source = SourceJson::parse(include_str!("../fixtures/full-pool-source-v1.json")).unwrap();
     let rows = source
         .object_entries()
         .unwrap()
