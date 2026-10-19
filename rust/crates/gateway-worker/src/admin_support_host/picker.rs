@@ -192,7 +192,10 @@ mod tests {
     #[test]
     fn picker_keeps_roster_and_unknown_sources_without_claiming_gateway_capacity() {
         let result = project(
-            &json!({"models":[{"providers":[{"id":"codex"}]}],"sources":{}}),
+            &SourceJson::from_serializable(
+                &json!({"models":[{"providers":[{"id":"codex"}]}],"sources":{}}),
+            )
+            .unwrap(),
             vec![],
             &BTreeMap::from([("cerebras".into(), "fixture".into())]),
         )

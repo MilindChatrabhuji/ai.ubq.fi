@@ -317,6 +317,11 @@ pub(super) fn append_cursor(url: &mut worker::Url, cursor: &JsString16) {
         .append_pair("after_id", &String::from_utf16_lossy(cursor.as_units()));
 }
 
+fn physical_failure() -> GatewayError {
+    // No upstream response exists; do not classify source construction as provider evidence.
+    GatewayError::new(500, "Internal Server Error", None).with_type("server_error")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,9 +349,4 @@ mod tests {
         append_cursor(&mut url, &JsString16::from_units(vec![0xd83d, 0xde00]));
         assert_eq!(url.query(), Some("after_id=%F0%9F%98%80"));
     }
-}
-
-fn physical_failure() -> GatewayError {
-    // No upstream response exists; do not classify source construction as provider evidence.
-    GatewayError::new(500, "Internal Server Error", None).with_type("server_error")
 }

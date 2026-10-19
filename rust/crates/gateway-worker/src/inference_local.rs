@@ -161,8 +161,7 @@ async fn start_inner(
                 permit.take(),
             )
             .await
-            .map(Start::Response)
-            .map_err(Into::into);
+            .map(Start::Response);
         }
     };
     let successful = outcome.is_ok();
@@ -198,7 +197,6 @@ async fn start_inner(
     )
     .await
     .map(Start::Response)
-    .map_err(Into::into)
 }
 async fn fallback(local: Local) -> Result<Start, RoutingError> {
     RoutingSession::from_local_admission(local.resume_original().await?)
