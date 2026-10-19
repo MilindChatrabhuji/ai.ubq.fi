@@ -69,19 +69,19 @@ impl RequestHost {
         }
         let identity = self.build_identity()?;
         identity.validate()?;
-        let prepared = gateway_authority::Authority::with_clock(
-            self.store.clone(),
-            crate::host::PlatformTokens,
-            crate::host::PlatformClock,
-        )
-        .prepare_cache_experiment(&identity.git_sha, self.now_ms())
-        .await?;
+        let prepared =
+            crate::cache_experiment_host::prepare(self.store.clone(), &identity.git_sha).await?;
         let target = CacheExperimentTarget {
             provider: prepared.telemetry_provider().into(),
             model: prepared.model().into(),
         };
         *self.prepared_cache_target.borrow_mut() = Some(prepared);
         Ok(target)
+    }
+    pub(super) async fn run_cache_experiment(&self) -> Result<serde_json::Value, GatewayError> {
+        let actor = self.admin_actor()?;
+        let target = self.take_cache_target()?;
+        crate::cache_experiment_host::run(target, &self.platform, actor).await
     }
     /// Take once after Stage 0; the authority still rechecks target, cohort, release and leases.
     pub(crate) fn take_cache_target(
