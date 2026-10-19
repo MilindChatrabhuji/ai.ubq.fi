@@ -6,7 +6,9 @@ use crate::{
 use gateway_core::{
     GatewayError,
     identity::MAX_SAFE_INTEGER,
+    model::ModelId,
     provider::{PaidProvider, UpstreamProvider},
+    source_control::decode_source_control_record,
     state::{RecordKey, StoredRecord},
     tuple_key::{DecodedKeyPart, TupleKey},
 };
@@ -23,6 +25,16 @@ fn text(value: &str) -> Result<(), GatewayError> {
         Err(invalid())
     } else {
         Ok(())
+    }
+}
+fn model_text(value: &ModelId) -> Result<(), GatewayError> {
+    if value.as_js_string().as_units().iter().any(|unit| {
+        char::from_u32(u32::from(*unit))
+            .is_none_or(|character| !gateway_schema::util::js_whitespace(character))
+    }) {
+        Ok(())
+    } else {
+        Err(invalid())
     }
 }
 fn time(value: i64) -> Result<(), GatewayError> {
@@ -74,7 +86,7 @@ pub fn validate_pending_journal_row(
 ) -> Result<(), GatewayError> {
     let id = pending_identity(pending_key, pending)?;
     validate_journal_row(session_key, session)?;
-    let row = Journal::decode(session.json_value()?).map_err(|_| invalid())?;
+    let row = Journal::decode(&decode_source_control_record(session)?).map_err(|_| invalid())?;
     if row.finished
         || row.context.request_id.0 != id
         || session_key != &journal::key(&id)
@@ -133,7 +145,7 @@ pub fn validate_journal_rows<'a>(
         }
     }
     for (id, (key, record)) in sessions {
-        let row = Journal::decode(record.json_value()?).map_err(|_| invalid())?;
+        let row = Journal::decode(&decode_source_control_record(record)?).map_err(|_| invalid())?;
         match (row.finished, pending.remove(&id)) {
             (true, None) => {}
             (false, Some((pending_key, pending))) => {
@@ -151,16 +163,14 @@ pub fn validate_journal_rows<'a>(
 /// Validate the complete current stored schema without returning a Journal,
 /// admission or proof. Absolute expiry is checked, not renewed or interpreted as live.
 pub fn validate_journal_row(key: &RecordKey, record: &StoredRecord) -> Result<(), GatewayError> {
-    let value = record.json_value()?;
+    let value = decode_source_control_record(record)?;
     text(&record.revision)?;
     TupleKey::from_record_key(key)?.validate_stored_key()?;
-    let row = Journal::decode(value).map_err(|_| invalid())?;
+    let row = Journal::decode(&value).map_err(|_| invalid())?;
     // Option/default fields and unknown nested members may not be silently lost
     // during private rollback. This is the current writer's full exact shape.
-    if serde_json::to_value(&row).map_err(|_| invalid())? != *value
-        || !matches!(row.v, 1 | 2)
-        || journal::key(&row.context.request_id.0) != *key
-    {
+    // Journal::decode owns complete shape equality and the ONE shared phase/version parser.
+    if journal::key(&row.context.request_id.0) != *key {
         return Err(invalid());
     }
     text(&row.context.request_id.0)?;
@@ -230,7 +240,7 @@ pub fn validate_journal_row(key: &RecordKey, record: &StoredRecord) -> Result<()
     let mut attempts = BTreeSet::new();
     for attempt in &row.attempts {
         text(&attempt.id)?;
-        text(&attempt.model)?;
+        model_text(&attempt.model)?;
         if !attempts.insert(&attempt.id) || (attempt.known_not_started && attempt.transport_started)
         {
             return Err(invalid());
@@ -461,7 +471,10 @@ mod tests {
     fn writer_rows(version: u32) -> (Writer, Vec<(RecordKey, StoredRecord)>) {
         let writer = Writer::default();
         let (_, record) = row(false);
-        let mut model = Journal::decode(&record.value).unwrap();
+        let mut model = Journal::decode(
+            &gateway_core::source_json::SourceJson::from_serializable(&record.value).unwrap(),
+        )
+        .unwrap();
         model.v = version;
         if version == 2 {
             model.local_work = Some(LocalWorkRecord {

@@ -3,7 +3,7 @@ use crate::{
     types::{PublishedCredential, RoutingInput, RoutingResult},
 };
 use gateway_core::{
-    js_string::JsString16, provider::UpstreamProvider, source_json::SourceJson,
+    js_string::JsString16, model::ModelId, provider::UpstreamProvider, source_json::SourceJson,
     source_serialization as source,
 };
 use gateway_providers::{ClientSurface, OrdinaryPreparationContext, prepare_source_request};
@@ -32,7 +32,7 @@ pub(crate) fn prepare(
     conversation_id: &str,
     now: i64,
     provider: UpstreamProvider,
-    model: &str,
+    model: &ModelId,
     publication: &PublishedCredential,
     nonce: &str,
 ) -> RoutingResult<gateway_providers::PreparedRequest> {
@@ -54,24 +54,24 @@ pub(crate) fn prepare(
     );
     // src/openai.ts getDefaultReasoningEffort: runtime default, otherwise the
     // existing source default `medium`, never a selected model's default tier.
-    let default_effort = input
-        .runtime
-        .as_ref()
-        .and_then(|runtime| runtime.get("default_reasoning_effort"))
-        .and_then(serde_json::Value::as_str)
-        .map(gateway_schema::util::js_trim)
-        .filter(|effort| !effort.is_empty())
-        .unwrap_or("medium");
+    let default_effort = match input.runtime.as_ref() {
+        None => JsString16::from_utf8("medium"),
+        Some(runtime) => source::member(runtime, "default_reasoning_effort")
+            .and_then(|value| source::string(&value))
+            .filter(|value| !value.as_units().is_empty())
+            .ok_or_else(|| {
+                gateway_core::GatewayError::unavailable(
+                    "The validated runtime default reasoning control is unavailable.",
+                    "runtime_config_invalid",
+                )
+            })?,
+    };
     options.ordinary_preparation = Some(OrdinaryPreparationContext::from_metadata(
         &metadata,
-        default_effort,
+        &default_effort,
     ));
     let mut raw = input.raw.clone();
-    set(
-        &mut raw,
-        "model",
-        source::quoted(&JsString16::from_utf8(model))?,
-    )?;
+    set(&mut raw, "model", model.to_source_json()?)?;
     // Common-envelope validation belongs to planning. M35's one coordinator owns
     // ordinary input -> selected cache capability -> reasoning/instructions/effort.
     // No early effort parsing or duplicate content normalization is permitted here.

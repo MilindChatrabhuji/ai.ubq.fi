@@ -13,10 +13,9 @@ use gateway_authority::{
     routing::{AdmittedAccount, RouteSelection},
 };
 use gateway_core::{
-    GatewayError, identity::ApiKeyId, provider::UpstreamProvider, query::QueryStore,
+    GatewayError, identity::ApiKeyId, model::ModelId, provider::UpstreamProvider, query::QueryStore,
 };
 use gateway_providers::policy::{LithosWindows, WaitBudget};
-use serde_json::Value;
 use std::cell::RefCell;
 
 pub struct RoutingSession<S, I, C, H> {
@@ -288,7 +287,7 @@ impl<
     pub(crate) async fn credential(
         &self,
         provider: UpstreamProvider,
-        model: &str,
+        model: &ModelId,
         codex: Option<AdmittedAccount>,
     ) -> Result<PublishedCredential, GatewayError> {
         let publication = self
@@ -346,7 +345,7 @@ impl<
     pub(crate) fn prepare(
         &self,
         provider: UpstreamProvider,
-        model: &str,
+        model: &ModelId,
         publication: &PublishedCredential,
         nonce: &str,
     ) -> RoutingResult<gateway_providers::PreparedRequest> {
@@ -364,10 +363,10 @@ impl<
         &self,
         provider: gateway_core::provider::PaidProvider,
         synthetic: bool,
-    ) -> PaidRequestContext {
+    ) -> RoutingResult<PaidRequestContext> {
         let mut body = self.input.raw.clone();
-        body["model"] = Value::String(self.plan.model.clone());
-        PaidRequestContext {
+        crate::wire::set(&mut body, "model", self.plan.model.to_source_json()?)?;
+        Ok(PaidRequestContext {
             original_model: self.plan.model.clone(),
             body,
             surface: self.input.surface,
@@ -375,7 +374,7 @@ impl<
                 gateway_core::provider::PaidProvider::Surplus => PaidSyntheticHop::Surplus,
                 gateway_core::provider::PaidProvider::Metered => PaidSyntheticHop::Openlux,
             }),
-        }
+        })
     }
     pub(crate) fn check_paid_credential(
         fence: &CredentialFence,

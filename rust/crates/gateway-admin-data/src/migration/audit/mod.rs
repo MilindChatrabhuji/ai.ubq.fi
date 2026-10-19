@@ -1,9 +1,10 @@
 //! Audits complete supplied source-schema inventories; does not adopt them as authority state.
 mod keys;
 mod paid;
+mod source_fields;
 mod usage;
-pub use keys::{inspect_key_pairs, valid_key_policy};
-pub use paid::inspect_paid;
+pub use keys::{AuditedKeyPair, inspect_key_pairs, valid_key_policy, valid_source_key_policy};
+pub use paid::{inspect_paid, valid_source_paid_request};
 pub use usage::{inspect_api_usage, inspect_kernel};
 
 use super::{ObservedRow, starts};
@@ -216,14 +217,12 @@ pub fn inspect_source_rows(
         ));
     }
     let (pairs, mut audit) = inspect_key_pairs(rows)?;
-    let known: std::collections::BTreeSet<String> = pairs
-        .iter()
-        .filter_map(|(id, _)| text(id, "id").map(str::to_owned))
-        .collect();
+    let known: std::collections::BTreeSet<String> =
+        pairs.iter().map(|pair| pair.key_id.clone()).collect();
     let unlimited: std::collections::BTreeSet<String> = pairs
         .iter()
-        .filter(|(id, _)| id["paid_fallback_limit_microcredits"] == -1)
-        .filter_map(|(id, _)| text(id, "id").map(str::to_owned))
+        .filter(|pair| pair.unlimited_paid)
+        .map(|pair| pair.key_id.clone())
         .collect();
     audit.merge(inspect_api_usage(rows, &known)?);
     audit.merge(inspect_kernel(rows)?);
@@ -245,20 +244,33 @@ pub fn inspect_source_rows(
             "legacy combined kernel quota records remain: repo={repo} org={org}"
         ));
     }
-    for (record, hash) in pairs {
-        let id = text(&record, "id").unwrap_or("");
-        if record["usage_quota_version"] != 3 || hash["usage_quota_version"] != 3 {
+    for pair in pairs {
+        let record = &pair.id;
+        let hash = &pair.hash;
+        let id = pair.key_id.as_str();
+        if !source_fields::equals(record, "usage_quota_version", &json!(3))
+            || !source_fields::equals(hash, "usage_quota_version", &json!(3))
+        {
             audit
                 .errors
                 .push(format!("api key quota ledger version is not V3: {id}"));
             continue;
         }
-        if record["usage_limit_requests"] != -1 {
-            let clock = super::counter::migration_policy_now(&record, now)
-                .ok_or_else(|| crate::error("Invalid API-key migration clock."))?;
-            let span = integer(&record, "window_ms")
+        if !source_fields::equals(record, "usage_limit_requests", &json!(-1)) {
+            // Same revoked-clock rule as counter::migration_policy_now, without
+            // converting the complete model-bearing source policy into Value.
+            let clock = if source_fields::member(record, "revoked_at_ms")
+                .is_some_and(|value| value.as_str() == "null")
+            {
+                now
+            } else {
+                source_fields::integer(record, "usage_reset_at_ms")
+                    .map(|reset| (reset - 1).max(0))
+                    .ok_or_else(|| crate::error("Invalid API-key migration clock."))?
+            };
+            let span = source_fields::integer(record, "window_ms")
                 .ok_or_else(|| crate::error("Invalid API-key window."))?;
-            let initial = integer(&record, "usage_reset_at_ms")
+            let initial = source_fields::integer(record, "usage_reset_at_ms")
                 .ok_or_else(|| crate::error("Invalid API-key reset."))?
                 - span;
             let start = if clock < initial + span {
@@ -320,17 +332,26 @@ pub fn inspect_source_rows(
                 ));
             }
         }
-        if let Some(request) = record
-            .get("paid_fallback_reservation_request_id")
-            .filter(|v| !v.is_null())
+        if let Some(request) = source_fields::member(record, "paid_fallback_reservation_request_id")
+            .filter(|value| value.as_str() != "null")
             && !rows.iter().any(|row| {
                 under(&row.parts, &["uos_ai", "paid_fallback", "ledger"])
-                    && row.record.json_value().is_ok_and(|v| {
-                        v["key_id"] == id
-                            && v["id"] == *request
-                            && (v["billing_status"] == "pending"
-                                || v["billing_status"] == "unresolved")
-                    })
+                    && gateway_core::source_control::decode_source_control_record(&row.record)
+                        .is_ok_and(|value| {
+                            source_fields::text(&value, "key_id").as_deref() == Some(id)
+                                && source_fields::member(&value, "id").is_some_and(|actual| {
+                                    source_fields::same_value(&actual, &request)
+                                })
+                                && (source_fields::equals(
+                                    &value,
+                                    "billing_status",
+                                    &json!("pending"),
+                                ) || source_fields::equals(
+                                    &value,
+                                    "billing_status",
+                                    &json!("unresolved"),
+                                ))
+                        })
             })
         {
             audit.errors.push(format!(
