@@ -1,9 +1,13 @@
 //! Fixed free provider GETs with one actual request cancellation and absolute deadline.
 use super::{RequestHost, unavailable};
-use crate::transport::outbound::{Cancellation, Deadline, PinnedDestination, send_http};
+use crate::transport::outbound::{
+    Cancellation, Deadline, PinnedDestination, send_constructed, send_http,
+};
 use gateway_admin_runtime::claude;
 use gateway_auth::provider_credentials::{self as codex, CodexSourceAccount};
-use gateway_core::{GatewayError, js_string::JsString16};
+use gateway_core::{
+    GatewayError, js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use gateway_observability::{HealthEvent, HealthTarget, host_types::*};
 use std::collections::BTreeMap;
 use worker::{Method, Response};
@@ -98,6 +102,47 @@ impl RequestHost {
             _deadline: guard,
         })
     }
+    async fn fixed_claude_get(
+        &self,
+        account: &claude::AccountBinding,
+        deadline: i64,
+    ) -> Result<Reply, GatewayError> {
+        // Same bounded observational phase as fixed_get; no account/credential refetch.
+        let remaining = deadline.saturating_sub(crate::storage::now_ms()?);
+        if remaining <= 0 {
+            return Err(unavailable("Observational GET deadline expired."));
+        }
+        if self.platform.cancellation.signal().aborted() {
+            return Err(GatewayError::unavailable(
+                "Observational request cancelled.",
+                "observability_request_cancelled",
+            ));
+        }
+        let cancellation = self.platform.cancellation.child()?;
+        let guard = cancellation.set_timeout_ms(
+            i32::try_from(remaining)
+                .map_err(|_| unavailable("Observational GET deadline is invalid."))?,
+        )?;
+        let request = crate::claude_host::models_probe_request(account)?;
+        let response = send_constructed(request, &cancellation, || async { Ok(()) })
+            .await
+            .map_err(|failure| {
+                if self.platform.cancellation.signal().aborted() {
+                    GatewayError::unavailable(
+                        "Observational request cancelled.",
+                        "observability_request_cancelled",
+                    )
+                } else {
+                    failure.error
+                }
+            })?;
+        Ok(Reply {
+            response,
+            cancellation,
+            _deadline: guard,
+        })
+    }
+
     pub(super) async fn monitoring_get(
         &self,
         deadline: i64,
@@ -232,10 +277,7 @@ impl RequestHost {
             }
             if (200..300).contains(&status) {
                 let bytes = reply.response.bytes().await.ok();
-                let parsed = bytes
-                    .as_deref()
-                    .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok());
-                if parsed.as_ref().is_some_and(|v| v["models"].is_array()) {
+                if bytes.as_deref().is_some_and(has_models_array) {
                     contributed = true;
                 }
             }
@@ -302,7 +344,7 @@ impl RequestHost {
     async fn claude_probe(
         &self,
         deadline: i64,
-    ) -> Result<(Option<ActiveProbe>, Option<serde_json::Value>), GatewayError> {
+    ) -> Result<(Option<ActiveProbe>, Option<SourceJson>), GatewayError> {
         let at = crate::storage::now_ms()?;
         let Some(roster) = claude::read_roster(&self.store, at).await? else {
             return Ok((None, None));
@@ -310,36 +352,29 @@ impl RequestHost {
         let Some(account) = claude::active_binding(&roster.roster).cloned() else {
             return Ok((None, None));
         };
-        let mut headers = BTreeMap::from([
-            ("Content-Type".into(), "application/json".into()),
-            ("Accept".into(), "application/json".into()),
-            ("anthropic-version".into(), "2023-06-01".into()),
-        ]);
-        match account.credential.kind {
-            claude::CredentialKind::ApiKey => {
-                headers.insert(
-                    "x-api-key".into(),
-                    account.credential.secret.expose().into(),
-                );
-            }
-            claude::CredentialKind::Oauth => {
-                headers.insert(
-                    "Authorization".into(),
-                    format!("Bearer {}", account.credential.secret.expose()),
-                );
-                headers.insert("anthropic-beta".into(), "oauth-2025-04-20".into());
-            }
+        #[derive(serde::Serialize)]
+        struct Workspace<'a> {
+            id: Option<&'a JsString16>,
+            name: Option<&'a JsString16>,
+            source: Option<&'a str>,
+            pinned_by_env: bool,
+            account_id: &'a str,
+            account_cohort_id: &'a str,
         }
-        if let Some(workspace) = account.workspace.as_ref() {
-            headers.insert("anthropic-workspace-id".into(), workspace.id.clone());
-        }
-        let workspace = Some(
-            serde_json::json!({"id":account.workspace.as_ref().map(|w|&w.id),"name":account.workspace.as_ref().and_then(|w|w.name.as_ref()),"source":account.workspace.as_ref().map(|w|&w.source),"pinned_by_env":crate::host::provider_secret(&self.platform.env,"CLAUDE_CODE_WORKSPACE_ID").is_some(),"account_id":account.account_id,"account_cohort_id":account.account_cohort_id}),
-        );
+        let workspace = Some(SourceJson::from_serializable(&Workspace {
+            id: account.workspace.as_ref().map(|w| &w.id),
+            name: account.workspace.as_ref().and_then(|w| w.name.as_ref()),
+            source: account.workspace.as_ref().map(|w| w.source.as_str()),
+            pinned_by_env: crate::host::provider_secret(
+                &self.platform.env,
+                "CLAUDE_CODE_WORKSPACE_ID",
+            )
+            .is_some(),
+            account_id: &account.account_id,
+            account_cohort_id: &account.account_cohort_id,
+        })?);
         let result = async {
-            let mut reply = self
-                .fixed_get("https://api.anthropic.com/v1/models", &headers, deadline)
-                .await?;
+            let mut reply = self.fixed_claude_get(&account, deadline).await?;
             let status = reply.response.status_code();
             let content_type = reply.response.headers().get("content-type").ok().flatten();
             if (200..300).contains(&status) {
@@ -525,5 +560,28 @@ impl RequestHost {
             None
         };
         Ok(CapacityProbe::Http { status, json })
+    }
+}
+
+fn has_models_array(bytes: &[u8]) -> bool {
+    SourceJson::parse_bytes(bytes)
+        .ok()
+        .and_then(|document| source::member(&document, "models"))
+        .and_then(|models| source::array(&models))
+        .is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_models_array;
+
+    #[test]
+    fn models_probe_retains_source_units_and_original_shape_predicate() {
+        assert!(has_models_array(br#"{"models":[{"id":"model-\ud800"}]}"#));
+        assert!(has_models_array(br#"{"models":null,"models":[]}"#));
+        assert!(!has_models_array(br#"{"models":[],"models":null}"#));
+        assert!(!has_models_array(br#"{"models":{}}"#));
+        assert!(!has_models_array(b"not JSON"));
+        assert!(!has_models_array(b"{\"models\":[\"\xff\"]}"));
     }
 }

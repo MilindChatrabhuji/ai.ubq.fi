@@ -7,13 +7,12 @@ use crate::{
         outbound::{self, Cancellation, DispatchAttempt, PinnedDestination},
     },
 };
-use gateway_core::GatewayError;
+use gateway_core::{GatewayError, model::ModelId, source_json::SourceJson};
 use gateway_extras_runtime::{DispatchFailure, DispatchFailureOrigin, ImageKind, UpstreamResponse};
 use gateway_providers::{decode_response, policy::HopFailure};
 use gateway_routing_runtime::{
     AttemptFailure, ChildScope, DispatchTicket, RefusalDecision, TransportState,
 };
-use serde_json::Value;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -30,19 +29,20 @@ pub struct Images {
     admission: Handle,
     platform: PlatformHost,
     children: RefCell<Option<(ImageKind, Vec<Rc<Child>>)>>,
-    model: Option<String>,
+    model: Option<ModelId>,
 }
 impl Images {
-    pub fn new(admission: Handle, platform: PlatformHost, default_model: Option<String>) -> Self {
+    pub fn new(admission: Handle, platform: PlatformHost, default_model: Option<ModelId>) -> Self {
         Self {
             admission,
             model: crate::host::provider_secret(&platform.env, "IMAGE_BASE_MODEL")
+                .map(ModelId::from)
                 .or(default_model),
             platform,
             children: RefCell::new(None),
         }
     }
-    pub fn model(&self) -> Option<String> {
+    pub fn model(&self) -> Option<ModelId> {
         self.model.clone()
     }
     pub async fn begin(&self, kind: ImageKind, count: usize) -> Result<(), GatewayError> {
@@ -148,7 +148,7 @@ impl Images {
         index: usize,
         kind: ImageKind,
         request_id: String,
-        raw: Value,
+        raw: SourceJson,
     ) -> Result<UpstreamResponse, DispatchFailure> {
         let child = self
             .child(index, Some(kind))
@@ -173,8 +173,7 @@ impl Images {
                 })?;
             let target = PinnedDestination::new(&attempt.request.url)
                 .map_err(|error| DispatchFailure::gateway(error, true))?;
-            let wire = serde_json::to_vec(&attempt.request.body)
-                .map_err(|_| DispatchFailure::gateway(invalid(), true))?;
+            let wire = attempt.request.body.as_bytes().to_vec();
             let ticket = RefCell::new(None);
             let result = outbound::send_http(
                 &target,
@@ -283,8 +282,7 @@ impl Images {
             return Ok(UpstreamResponse {
                 status: decoded.status,
                 headers,
-                body: serde_json::to_vec(&decoded.body)
-                    .map_err(|_| DispatchFailure::gateway(invalid(), false))?,
+                body: decoded.body.as_bytes().to_vec(),
                 semantic_terminal: decoded.terminal,
                 usage: decoded.usage,
             });

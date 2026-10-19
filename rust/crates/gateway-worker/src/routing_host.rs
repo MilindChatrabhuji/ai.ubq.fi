@@ -18,7 +18,6 @@ use gateway_routing_runtime::{
     ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest, PublishedCredential,
     RefreshOutcome, RoutingHost, direct_credential,
 };
-use serde_json::Value;
 use worker::Env;
 
 use crate::{authority::RemoteAuthorityStore, host::PlatformHost, storage::now_ms};
@@ -44,6 +43,11 @@ fn provider_name(provider: UpstreamProvider) -> Option<&'static str> {
 
 impl RoutingHost for Host {
     type ClaudeHead = crate::claude_host::Head;
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        crate::source_collator::shared()
+    }
     fn cancelled(&self) -> bool {
         self.platform.cancellation.signal().aborted()
     }
@@ -112,7 +116,7 @@ impl RoutingHost for Host {
                 })
                 .ok_or_else(|| unavailable("The admitted Codex credential was replaced."))?;
             let native_generation = current.identity().native_generation_hash;
-            return Ok(PublishedCredential {
+            return Ok(PublishedCredential::Scalar {
                 material: AuthMaterial {
                     secret: current.access_token.expose().to_owned(),
                     account_id: Some(current.account_id),
@@ -124,7 +128,7 @@ impl RoutingHost for Host {
                     source_revision: snapshot.revision,
                     native_generation,
                 },
-                options: PrepareOptions::default(),
+                options: Box::new(PrepareOptions::default()),
             });
         }
         Err(unavailable(
@@ -135,7 +139,7 @@ impl RoutingHost for Host {
         &self,
         fence: &CredentialFence,
         principal: &AuthPrincipal,
-        model: &str,
+        model: &gateway_core::model::ModelId,
     ) -> Result<(), GatewayError> {
         match fence {
             CredentialFence::Claude { .. } => {
@@ -144,7 +148,7 @@ impl RoutingHost for Host {
             CredentialFence::Direct { provider } if provider_name(*provider).is_some() => {
                 self.credential(CredentialRequest {
                     provider: *provider,
-                    model: String::new(),
+                    model: model.clone(),
                     codex: None,
                 })
                 .await?;
@@ -185,7 +189,7 @@ impl RoutingHost for Host {
                 credential_binding,
             } => {
                 let current = self.paid_credential(*provider).await?;
-                match current.fence {
+                match current.into_fence() {
                     CredentialFence::Paid {
                         owner_id: actual_owner,
                         owner_epoch: actual_epoch,
@@ -218,15 +222,18 @@ impl RoutingHost for Host {
     async fn select_claude(
         &self,
         principal: &AuthPrincipal,
-        model: &str,
-        raw: &Value,
+        model: &gateway_core::model::ModelId,
+        raw: &gateway_core::source_json::SourceJson,
+        effective_effort: Option<&gateway_core::js_string::JsString16>,
     ) -> Result<ClaudeSelection, GatewayError> {
-        self.claude.select(principal, model, raw).await
+        self.claude
+            .select(principal, model, raw, effective_effort)
+            .await
     }
     async fn observe_claude_response(
         &self,
         fence: &CredentialFence,
-        model: &str,
+        model: &gateway_core::model::ModelId,
         response: gateway_routing_runtime::ResponseHead,
     ) -> Result<Self::ClaudeHead, GatewayError> {
         self.claude.observe(fence, model, response).await
@@ -240,12 +247,19 @@ impl RoutingHost for Host {
     }
     async fn recover_codex(
         &self,
-        _proof: &CohortProof,
-        _model: &str,
+        proof: &CohortProof,
+        model: &gateway_core::model::ModelId,
     ) -> Result<CodexRecovery, GatewayError> {
-        Err(unavailable(
-            "The native reset/redemption capability is not yet configured.",
-        ))
+        crate::codex_admin_host::recover_full_pool(
+            &self.store,
+            &self.platform,
+            &self.platform.original,
+            &crate::host::auth_config(&self.platform.env),
+            &self.original,
+            proof,
+            model,
+        )
+        .await
     }
     async fn lookup_paid(
         &self,
@@ -256,6 +270,31 @@ impl RoutingHost for Host {
 }
 
 impl Host {
+    pub(crate) fn physical_claude(
+        &self,
+        attempt: &gateway_routing_runtime::PreparedAttempt,
+    ) -> Result<crate::transport::outbound::ConstructedRequest, gateway_routing_runtime::RoutingError>
+    {
+        if attempt.original_request_id != self.original.request_id.0 {
+            return Err(GatewayError::new(
+                400,
+                "Claude request belongs to another original lifetime.",
+                Some("claude_code_request_invalid"),
+            )
+            .into());
+        }
+        let gateway_routing_runtime::PreparedWireRequest::Claude(body) = &attempt.request else {
+            return Err(GatewayError::new(
+                400,
+                "Claude request has another prepared kind.",
+                Some("claude_code_request_invalid"),
+            )
+            .into());
+        };
+        self.claude
+            .physical_request(&attempt.credential, &body.decode().model, body)
+    }
+
     pub fn new(
         store: RemoteAuthorityStore,
         platform: PlatformHost,
@@ -358,7 +397,7 @@ impl Host {
                 ));
             }
         }
-        Ok(PublishedCredential {
+        Ok(PublishedCredential::Scalar {
             material: AuthMaterial {
                 secret,
                 ..Default::default()
@@ -370,7 +409,7 @@ impl Host {
                 configuration_generation: configuration.generation,
                 credential_binding: binding,
             },
-            options: PrepareOptions::default(),
+            options: Box::new(PrepareOptions::default()),
         })
     }
 }

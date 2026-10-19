@@ -10,12 +10,13 @@ use gateway_auth::{AuthMethod, AuthPrincipal};
 use gateway_claude_runtime::{
     ClaudePoolSession, OutcomeDecision, PoolConfig, PoolSelection, SelectedAccount, SelectionInput,
 };
-use gateway_core::{GatewayError, claude::ClaudeErrorEvidence};
+use gateway_core::{
+    GatewayError, claude::ClaudeErrorEvidence, model::ModelId, source_json::SourceJson,
+};
 use gateway_routing_runtime::{
     ClaudeOutcome, ClaudeSelection, CredentialFence, PublishedCredential, ResponseHead,
 };
 use gateway_schema::selection::ProviderSelection;
-use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
 
 thread_local! {
@@ -30,8 +31,9 @@ pub fn generation() -> StateGeneration {
 struct RequestState {
     principal: String,
     key_id: String,
-    model: String,
-    raw: Value,
+    model: ModelId,
+    raw: SourceJson,
+    effective_effort: Option<gateway_core::js_string::JsString16>,
     session: ClaudePoolSession,
     selected: RefCell<Option<SelectedAccount>>,
 }
@@ -72,10 +74,10 @@ impl Binding {
     fn selected(
         &self,
         fence: &CredentialFence,
-        model: &str,
+        model: &ModelId,
     ) -> Result<(Rc<RequestState>, SelectedAccount), GatewayError> {
         let request = self.request()?;
-        if request.model != model {
+        if &request.model != model {
             return Err(invalid("Claude model changed within the request."));
         }
         let selected = request
@@ -83,7 +85,9 @@ impl Binding {
             .borrow()
             .clone()
             .ok_or_else(|| invalid("The request has no selected Claude account."))?;
-        if &credential(&selected).fence != fence {
+        if &credential_fence(&selected) != fence
+            || selected.effective_effort() != request.effective_effort.as_ref()
+        {
             return Err(invalid(
                 "Claude credential fence belongs to another attempt.",
             ));
@@ -93,13 +97,14 @@ impl Binding {
     pub async fn select(
         &self,
         principal: &AuthPrincipal,
-        model: &str,
-        raw: &Value,
+        model: &ModelId,
+        raw: &SourceJson,
+        effective_effort: Option<&gateway_core::js_string::JsString16>,
     ) -> Result<ClaudeSelection, GatewayError> {
         let AuthMethod::KvApiKey { key_id, .. } = &principal.method else {
             return Ok(ClaudeSelection::NotApplicable);
         };
-        if !gateway_providers::anthropic::is_claude(model) {
+        if !gateway_providers::anthropic::is_claude_model(model) {
             return Ok(ClaudeSelection::NotApplicable);
         }
         let selection = gateway_catalog_runtime::state::read_json(
@@ -118,15 +123,10 @@ impl Binding {
             &self.store,
             &self.host.platform,
             &allowed_key_ids,
-            &crate::admin_host::compare_labels,
+            &|left, right| crate::source_collator::shared().compare(left, right),
         )
         .await?;
-        if !access
-            .policy
-            .allowed_key_ids
-            .iter()
-            .any(|allowed| allowed == key_id)
-        {
+        if !access.policy.allows_scalar(key_id) {
             return Ok(ClaudeSelection::NotApplicable);
         }
         let principal_id = crate::lifecycle::principal_id(principal);
@@ -135,8 +135,9 @@ impl Binding {
             Some(request) => {
                 if request.principal != principal_id
                     || request.key_id != *key_id
-                    || request.model != model
+                    || &request.model != model
                     || &request.raw != raw
+                    || request.effective_effort.as_ref() != effective_effort
                 {
                     return Err(invalid(
                         "Claude selection inputs changed within the request.",
@@ -155,8 +156,9 @@ impl Binding {
                 let request = Rc::new(RequestState {
                     principal: principal_id.clone(),
                     key_id: key_id.clone(),
-                    model: model.into(),
+                    model: model.clone(),
                     raw: raw.clone(),
+                    effective_effort: effective_effort.cloned(),
                     session: ClaudePoolSession::new(config),
                     selected: RefCell::default(),
                 });
@@ -165,8 +167,9 @@ impl Binding {
                 let chosen = self.state.borrow_mut().get_or_insert(request).clone();
                 if chosen.principal != principal_id
                     || chosen.key_id != *key_id
-                    || chosen.model != model
+                    || &chosen.model != model
                     || &chosen.raw != raw
+                    || chosen.effective_effort.as_ref() != effective_effort
                 {
                     return Err(invalid("Concurrent Claude selection inputs changed."));
                 }
@@ -182,6 +185,7 @@ impl Binding {
                     key_id: &request.key_id,
                     model,
                     raw: &request.raw,
+                    effective_effort: request.effective_effort.clone(),
                     selection: selection.as_ref(),
                 },
             )
@@ -206,11 +210,24 @@ impl Binding {
             }
         }
     }
+    /// Physical material stays inside this same request-owned selected snapshot.
+    pub(crate) fn physical_request(
+        &self,
+        fence: &CredentialFence,
+        model: &ModelId,
+        body: &gateway_providers::PreparedClaudeBody,
+    ) -> Result<crate::transport::outbound::ConstructedRequest, gateway_routing_runtime::RoutingError>
+    {
+        let (_request, selected) = self.selected(fence, model)?;
+        platform::physical_request(selected.binding(), body)
+            .map_err(|_| crate::inference_local_lifecycle::wrapper_error())
+    }
+
     pub async fn ensure_current(
         &self,
         fence: &CredentialFence,
         principal: &AuthPrincipal,
-        model: &str,
+        model: &ModelId,
     ) -> Result<(), GatewayError> {
         let (request, selected) = self.selected(fence, model)?;
         let AuthMethod::KvApiKey { key_id, .. } = &principal.method else {
@@ -236,7 +253,7 @@ impl Binding {
     pub async fn observe(
         &self,
         fence: &CredentialFence,
-        model: &str,
+        model: &ModelId,
         response: ResponseHead,
     ) -> Result<Head, GatewayError> {
         let (request, selected) = self.selected(fence, model)?;
@@ -290,26 +307,46 @@ impl Binding {
     }
 }
 
-fn credential(selected: &SelectedAccount) -> PublishedCredential {
+fn credential_fence(selected: &SelectedAccount) -> CredentialFence {
     let account = selected.binding();
-    PublishedCredential {
-        material: selected.auth_material(),
-        options: selected.prepare_options(Default::default()),
-        fence: CredentialFence::Claude {
-            account_id: account.account_id.clone(),
-            cohort_id: account.account_cohort_id.clone(),
-            credential_fingerprint: account.credential_fingerprint.clone(),
-            evidence_generation: account.evidence_generation.clone(),
-            workspace_id: account
-                .workspace
-                .as_ref()
-                .map(|workspace| workspace.id.clone()),
-            checks: selected.checks().iter().map(Into::into).collect(),
+    CredentialFence::Claude {
+        account_id: account.account_id.clone(),
+        cohort_id: account.account_cohort_id.clone(),
+        credential_fingerprint: account.credential_fingerprint.clone(),
+        evidence_generation: account.evidence_generation.clone(),
+        workspace_id: account
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.id.clone()),
+        checks: selected.checks().iter().map(Into::into).collect(),
+    }
+}
+fn credential(selected: &SelectedAccount) -> PublishedCredential {
+    let kind = platform::credential_kind(&selected.binding().credential);
+    let options = selected.prepare_options(Default::default());
+    PublishedCredential::Claude {
+        fence: credential_fence(selected),
+        body_options: gateway_providers::ClaudeBodyOptions {
+            native_reasoning_efforts: options.native_reasoning_efforts,
+            supports_disabled_thinking: options.supports_disabled_thinking,
+            ..gateway_providers::ClaudeBodyOptions::new(kind)
         },
     }
 }
 fn invalid(message: &str) -> GatewayError {
     GatewayError::new(400, message, Some("claude_code_request_invalid"))
+}
+
+/// Closed observational models target using the exact caller's read binding.
+pub(crate) fn models_probe_request(
+    account: &gateway_admin_runtime::claude::AccountBinding,
+) -> Result<crate::transport::outbound::ConstructedRequest, GatewayError> {
+    let headers = platform::headers(account, true)
+        .map_err(|_| *crate::inference_local_lifecycle::wrapper_error().error)?;
+    let target =
+        crate::transport::outbound::PinnedDestination::new("https://api.anthropic.com/v1/models")?;
+    crate::transport::outbound::construct_request(&target, worker::Method::Get, headers, &[])
+        .map_err(|_| *crate::inference_local_lifecycle::wrapper_error().error)
 }
 
 pub use catalog::{fetch_catalog, publication};

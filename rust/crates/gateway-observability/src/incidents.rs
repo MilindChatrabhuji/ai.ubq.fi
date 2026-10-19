@@ -7,6 +7,7 @@ use crate::{
 use gateway_auth::{AuthResponse, crypto::sha256_hex};
 use gateway_core::{
     GatewayError,
+    js_string::JsString16,
     query::{QueryRequest, QuerySelector, QueryStore},
     source_json::SourceJson,
     state::{RecordKey, StoredRecord},
@@ -88,8 +89,8 @@ pub struct IncidentObservation {
     pub framing_valid: bool,
     pub terminal_type: Option<String>,
     pub provider: Option<String>,
-    pub model: Option<String>,
-    pub reasoning: Option<String>,
+    pub model: Option<JsString16>,
+    pub reasoning: Option<JsString16>,
     pub failure_kind: Option<String>,
 }
 impl IncidentObservation {
@@ -142,13 +143,18 @@ impl IncidentObservation {
     }
     fn latest(&self) -> Latest {
         let bounded = |v: &Option<String>, max| v.as_ref().filter(|s| slug(s, max)).cloned();
+        let source_slug = |v: &Option<JsString16>, max| {
+            v.as_ref()
+                .and_then(|s| s.try_utf8().ok())
+                .filter(|s| slug(s, max))
+        };
         Latest {
             observed_at_ms: self.observed_at_ms as f64,
             revision: full_sha(&self.git_sha).then(|| self.git_sha.clone()),
             provider: bounded(&self.provider, 128),
             route: endpoint(&self.endpoint).into(),
-            model: bounded(&self.model, 128),
-            reasoning: bounded(&self.reasoning, 32),
+            model: source_slug(&self.model, 128),
+            reasoning: source_slug(&self.reasoning, 32),
             failure_kind: bounded(&self.failure_kind, 128),
             terminal: self.terminal(),
             status: f64::from(self.status),

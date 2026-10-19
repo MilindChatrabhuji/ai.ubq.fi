@@ -944,9 +944,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-compaction"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "gateway-core",
+ "regress",
+ "ryu-js",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-core"
 version = "0.1.0"
 dependencies = [
+ "ryu-js",
  "serde",
  "serde_json",
 ]
@@ -991,6 +1004,8 @@ dependencies = [
  "gateway-claude-runtime",
  "gateway-core",
  "gateway-native",
+ "gateway-observability",
+ "gateway-routing-runtime",
  "gateway-schema",
  "rusqlite",
  "serde",
@@ -1050,6 +1065,7 @@ name = "gateway-providers"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+ "gateway-schema",
  "serde",
  "serde_json",
  "url",
@@ -1087,6 +1103,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "gateway-core",
+ "indexmap 2.14.2",
  "ryu-js",
  "serde",
  "serde_json",
@@ -1105,6 +1122,7 @@ dependencies = [
  "gateway-authority",
  "gateway-catalog-runtime",
  "gateway-claude-runtime",
+ "gateway-compaction",
  "gateway-core",
  "gateway-extras-runtime",
  "gateway-live-runtime",

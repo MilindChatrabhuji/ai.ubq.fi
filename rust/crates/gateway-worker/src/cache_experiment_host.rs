@@ -104,6 +104,12 @@ impl Drop for Host<'_> {
 }
 struct ClockHost;
 impl ObservabilityHost for ClockHost {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        crate::source_collator::shared()
+    }
+
     fn now_ms(&self) -> i64 {
         now_ms().unwrap_or(i64::MAX)
     }
@@ -338,6 +344,9 @@ impl ExperimentIo for Host<'_> {
                 }
             })
             .await;
+            if head.cancellation.signal().aborted() {
+                return Err(failed("Prompt-cache scope experiment stream failed."));
+            }
             let eof = next.is_none();
             let frames = match next {
                 Some(Ok(bytes)) => parser.push(&bytes),

@@ -1,8 +1,13 @@
 //! First-class image, Voyage and System One protocol adapters; persistence remains external.
 use crate::types::*;
-use gateway_core::{GatewayError, provider::UpstreamProvider};
+use gateway_core::{
+    GatewayError, js_string::JsString16, model::ModelId, provider::UpstreamProvider,
+    source_json::SourceJson, source_serialization as source,
+};
+use gateway_schema::source_request::{SourceRequestError, source_value::Value};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value as ScalarValue;
+macro_rules! json { ({$($key:literal:$value:expr),*$(,)?})=>{Value::object(vec![$((JsString16::from_utf8($key),Value::from_serializable(&$value).expect("generated source field"))),*])}; ($value:expr)=>{Value::from_serializable(&$value).expect("generated source value")}; }
 
 fn js_whitespace(c: char) -> bool {
     matches!(c, '\u{0009}'..='\u{000d}' | ' ' | '\u{00a0}' | '\u{1680}'
@@ -18,7 +23,7 @@ fn prepared(
     options: &PrepareOptions,
     decode: ResponseDecode,
 ) -> PreparedRequest {
-    let model = body["model"].as_str().unwrap_or("").to_owned();
+    let model = ModelId::from_source(body["model"].as_text().expect("validated model").core());
     PreparedRequest {
         provider,
         url: url.into(),
@@ -31,79 +36,94 @@ fn prepared(
             ("Content-Type".into(), "application/json".into()),
             ("Accept".into(), "application/json".into()),
         ]),
-        body,
+        body: source::canonical(&body.source().expect("prepared source body"))
+            .expect("prepared source serialization"),
         decode: DecodePlan {
             provider,
             surface,
             decode,
-            model: raw["model"].as_str().unwrap_or(&model).into(),
+            model: raw["model"]
+                .as_text()
+                .map(|text| ModelId::from_source(text.core()))
+                .unwrap_or_else(|| model.clone()),
             upstream_model: model,
             response_id: options.response_id.clone(),
             created_at: options.created_at,
             stream: false,
-            request: raw.clone(),
+            request: raw.source().expect("original source request"),
             tool_names: ToolMap::new(),
             reasoning_summary: None,
         },
         warnings: vec![],
     }
 }
-pub fn prepare_systemone(
+fn systemone_view(
     raw: &Value,
     options: &PrepareOptions,
-) -> Result<PreparedRequest, GatewayError> {
-    let object = raw.as_object().ok_or_else(|| {
-        GatewayError::new(400, "Invalid JSON body", Some("invalid_request_error"))
-    })?;
-    if let Some(key) = object
-        .keys()
-        .find(|k| !["state", "questions", "model"].contains(&k.as_str()))
-    {
-        return Err(GatewayError::new(
-            400,
-            format!("Unsupported key: {key}"),
-            Some("invalid_request_error"),
-        ));
+) -> Result<PreparedRequest, SourceRequestError> {
+    let object = raw
+        .as_object()
+        .ok_or_else(|| scalar_error(400, "Invalid JSON body", Some("invalid_request_error")))?;
+    if let Some((key, _)) = object.iter().find(|(key, _)| {
+        !["state", "questions", "model"]
+            .iter()
+            .any(|name| key_is(key, name))
+    }) {
+        return Err(keyed_error("Unsupported key: ", key, "", false));
     }
     if !raw["state"].is_object() {
-        return Err(GatewayError::new(
+        return Err(scalar_error(
             400,
             "state must be an object",
             Some("invalid_request_error"),
         ));
     }
     let questions = raw["questions"].as_object().ok_or_else(|| {
-        GatewayError::new(
+        scalar_error(
             400,
             "questions must be an object",
             Some("invalid_request_error"),
         )
     })?;
     if questions.is_empty() || questions.len() > 24 {
-        return Err(GatewayError::new(
+        return Err(scalar_error(
             400,
             "questions must hold between 1 and 24 questions",
             Some("invalid_request_error"),
         ));
     }
     if questions.iter().any(|(name, q)| {
-        name.trim_matches(js_whitespace).is_empty()
-            || name.encode_utf16().count() > 120
+        gateway_schema::reasoning::js_trim_source(name)
+            .as_units()
+            .is_empty()
+            || name.as_units().len() > 120
             || !q.is_object()
             || !matches!(q["type"].as_str(), Some("noul" | "choice" | "score"))
     }) {
-        return Err(GatewayError::new(
+        return Err(scalar_error(
             400,
             "questions must be typed noul, choice, or score objects",
             Some("invalid_request_error"),
         ));
     }
-    let model = raw
-        .get("model")
-        .map_or(Some("~typesafe/jev-latest"), Value::as_str)
-        .ok_or_else(|| {
-            GatewayError::new(400, "model must be a string", Some("invalid_request_error"))
-        })?;
+    let model_value = raw.get("model");
+    if model_value.is_some_and(|value| !value.is_string()) {
+        return Err(scalar_error(
+            400,
+            "model must be a string",
+            Some("invalid_request_error"),
+        ));
+    }
+    let model = model_value
+        .map(Value::as_str)
+        .unwrap_or(Some("~typesafe/jev-latest"));
+    let Some(model) = model else {
+        return Err(scalar_error(
+            400,
+            "model must be a typesafe model id",
+            Some("invalid_request_error"),
+        ));
+    };
     let base = model.strip_prefix('~').unwrap_or(model);
     let suffix = base.strip_prefix("typesafe/").unwrap_or("");
     if model.len() > 80
@@ -117,7 +137,7 @@ pub fn prepare_systemone(
             .next()
             .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
     {
-        return Err(GatewayError::new(
+        return Err(scalar_error(
             400,
             "model must be a typesafe model id",
             Some("invalid_request_error"),
@@ -138,7 +158,7 @@ pub fn prepare_systemone(
         ResponseDecode::SystemOne,
     ))
 }
-pub fn decode_systemone(value: &Value) -> Result<Value, GatewayError> {
+pub fn decode_systemone(value: &ScalarValue) -> Result<ScalarValue, GatewayError> {
     if !value["answers"].is_object() {
         return Err(GatewayError::new(
             502,
@@ -148,10 +168,10 @@ pub fn decode_systemone(value: &Value) -> Result<Value, GatewayError> {
     }
     Ok(value.clone())
 }
-pub fn systemone_usage(value: &Value) -> Option<Value> {
+pub fn systemone_usage(value: &ScalarValue) -> Option<ScalarValue> {
     let input = value["input_tokens"].as_f64()?;
     let output = value["output_tokens"].as_f64()?;
-    let mut usage = json!({"input_tokens":input,"output_tokens":output,"total_tokens":input+output,"input_tokens_details":{"cached_tokens":0}});
+    let mut usage = serde_json::json!({"input_tokens":input,"output_tokens":output,"total_tokens":input+output,"input_tokens_details":{"cached_tokens":0}});
     if value["cost"].is_number() {
         usage["cost"] = value["cost"].clone();
     }
@@ -160,7 +180,7 @@ pub fn systemone_usage(value: &Value) -> Option<Value> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EmbeddingsProfile {
     pub model: String,
-    pub inputs: Vec<String>,
+    pub inputs: Vec<JsString16>,
     pub input_type: String,
     pub dimensions: u64,
     pub encoding_format: String,
@@ -168,11 +188,11 @@ pub struct EmbeddingsProfile {
     pub cache_profile_key: String,
     pub total_chars: usize,
 }
-pub fn parse_embeddings(raw: &Value, job: bool) -> Result<EmbeddingsProfile, GatewayError> {
-    let object = raw.as_object().ok_or_else(|| {
-        GatewayError::new(400, "Invalid JSON body", Some("invalid_request_error"))
-    })?;
-    for key in object.keys() {
+fn embeddings_view(raw: &Value, job: bool) -> Result<EmbeddingsProfile, SourceRequestError> {
+    let object = raw
+        .as_object()
+        .ok_or_else(|| scalar_error(400, "Invalid JSON body", Some("invalid_request_error")))?;
+    for (key, _) in object {
         if ![
             "dimensions",
             "encoding_format",
@@ -181,29 +201,36 @@ pub fn parse_embeddings(raw: &Value, job: bool) -> Result<EmbeddingsProfile, Gat
             "model",
             "truncation",
         ]
-        .contains(&key.as_str())
-            && (key != "user" || job)
+        .iter()
+        .any(|name| key_is(key, name))
+            && (!key_is(key, "user") || job)
         {
-            return Err(GatewayError::new(
-                400,
-                format!("Unrecognized request argument supplied: {key}"),
-                Some("invalid_request_error"),
+            return Err(keyed_error(
+                "Unrecognized request argument supplied: ",
+                key,
+                "",
+                false,
             ));
         }
     }
     let model = raw
         .get("model")
-        .and_then(Value::as_str)
+        .and_then(Value::as_text)
         .filter(|s| !s.trim_matches(js_whitespace).is_empty())
         .ok_or_else(|| invalid("model is required and must be a non-empty string", "model"))?;
-    if model != "voyage-4-large" {
-        return Err(GatewayError::new(
+    if model.core() != JsString16::from_utf8("voyage-4-large") {
+        return Err(SourceRequestError::new(
             400,
-            format!("Unsupported embedding model: {model}"),
+            crate::source::concat(&[
+                &JsString16::from_utf8("Unsupported embedding model: "),
+                &model.core(),
+            ]),
+            "invalid_request_error",
             Some("model_not_found"),
-        )
-        .with_param(Some("model")));
+            Some(Some("model".into())),
+        ));
     }
+    let model = "voyage-4-large";
     let dimensions = match raw.get("dimensions") {
         None => 1024,
         Some(value) => {
@@ -222,9 +249,21 @@ pub fn parse_embeddings(raw: &Value, job: bool) -> Result<EmbeddingsProfile, Gat
     };
     let encoding = match raw.get("encoding_format") {
         None => "float",
-        Some(value) => value
-            .as_str()
-            .ok_or_else(|| invalid("encoding_format must be a string", "encoding_format"))?,
+        Some(value) => {
+            if !value.is_string() {
+                return Err(invalid(
+                    "encoding_format must be a string",
+                    "encoding_format",
+                ));
+            }
+            let Some(text) = value.as_str() else {
+                return Err(invalid(
+                    "encoding_format must be one of: \"float\", \"base64\"",
+                    "encoding_format",
+                ));
+            };
+            text
+        }
     };
     if !["float", "base64"].contains(&encoding) {
         return Err(invalid(
@@ -267,14 +306,14 @@ pub fn parse_embeddings(raw: &Value, job: bool) -> Result<EmbeddingsProfile, Gat
         return Err(invalid("user must be a string", "user"));
     }
     let input_error = || invalid("input must be a string or an array of strings", "input");
-    let inputs = if let Some(input) = raw["input"].as_str() {
-        vec![input.to_owned()]
+    let inputs = if let Some(input) = raw["input"].as_text() {
+        vec![input.core()]
     } else {
         raw["input"]
             .as_array()
             .ok_or_else(input_error)?
             .iter()
-            .map(|v| v.as_str().map(str::to_owned).ok_or_else(input_error))
+            .map(|v| v.as_text().map(|text| text.core()).ok_or_else(input_error))
             .collect::<Result<Vec<_>, _>>()?
     };
     if inputs.is_empty() {
@@ -291,7 +330,7 @@ pub fn parse_embeddings(raw: &Value, job: bool) -> Result<EmbeddingsProfile, Gat
     }
     let mut total = 0;
     for input in &inputs {
-        let len = input.encode_utf16().count();
+        let len = input.as_units().len();
         if len > 20_000 {
             return Err(invalid(
                 format!("Input too large: {len} chars (max 20000)"),
@@ -305,17 +344,17 @@ pub fn parse_embeddings(raw: &Value, job: bool) -> Result<EmbeddingsProfile, Gat
                 "input",
             ));
         }
-        if input.len().div_ceil(4) > 10_000 {
+        if String::from_utf16_lossy(input.as_units()).len().div_ceil(4) > 10_000 {
             return Err(invalid(
                 format!(
                     "Input too large for embeddings provider: ~{} tokens (max 10000).",
-                    input.len().div_ceil(4)
+                    String::from_utf16_lossy(input.as_units()).len().div_ceil(4)
                 ),
                 "input",
             ));
         }
     }
-    let cache_profile_key = json!([
+    let cache_profile_key = serde_json::json!([
         "voyage-profile-v2",
         model,
         input_type,
@@ -336,11 +375,11 @@ pub fn parse_embeddings(raw: &Value, job: bool) -> Result<EmbeddingsProfile, Gat
         total_chars: total,
     })
 }
-pub fn prepare_embeddings(
+fn prepare_embeddings_view(
     raw: &Value,
     options: &PrepareOptions,
-) -> Result<PreparedRequest, GatewayError> {
-    let profile = parse_embeddings(raw, false)?;
+) -> Result<PreparedRequest, SourceRequestError> {
+    let profile = embeddings_view(raw, false)?;
     let input = if profile.inputs.len() == 1 {
         json!(profile.inputs[0])
     } else {
@@ -357,41 +396,7 @@ pub fn prepare_embeddings(
         ResponseDecode::Voyage,
     ))
 }
-pub fn decode_embeddings(value: &Value, plan: &DecodePlan) -> Result<Value, GatewayError> {
-    let profile = parse_embeddings(&plan.request, false)?;
-    let rows = value["data"]
-        .as_array()
-        .ok_or_else(|| malformed("Voyage embeddings returned invalid JSON."))?;
-    if rows.len() != profile.inputs.len() {
-        return Err(malformed(
-            "Voyage embeddings returned a different vector count.",
-        ));
-    }
-    let mut data = vec![];
-    for (index, row) in rows.iter().enumerate() {
-        let vector = row["embedding"]
-            .as_array()
-            .filter(|v| v.len() == profile.dimensions as usize && v.iter().all(Value::is_number))
-            .ok_or_else(|| malformed("Voyage embedding dimensions or values are invalid."))?;
-        let embedding = if profile.encoding_format == "base64" {
-            let mut bytes = vec![];
-            for value in vector {
-                bytes.extend_from_slice(&(value.as_f64().unwrap_or(0.0) as f32).to_le_bytes());
-            }
-            json!(base64_encode(&bytes))
-        } else {
-            json!(vector)
-        };
-        data.push(json!({"object":"embedding","index":index,"embedding":embedding}));
-    }
-    let total = value["usage"]["total_tokens"]
-        .as_f64()
-        .filter(|v| v.is_finite())
-        .map(|v| v.max(0.0).trunc());
-    Ok(
-        json!({"object":"list","model":profile.model,"data":data,"usage":{"prompt_tokens":total,"total_tokens":total}}),
-    )
-}
+pub use crate::source_embeddings::decode_embeddings;
 pub fn base64_encode(bytes: &[u8]) -> String {
     const CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = String::new();
@@ -414,419 +419,6 @@ pub fn base64_encode(bytes: &[u8]) -> String {
     }
     result
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ImagePlan {
-    pub responses: Value,
-    pub count: u64,
-    pub request_ids: Vec<String>,
-    pub codex_only: bool,
-}
-pub fn prepare_image(
-    raw: &Value,
-    base_model: &str,
-    edit: bool,
-    request_id: &str,
-) -> Result<ImagePlan, GatewayError> {
-    prepare_image_inner(raw, base_model, edit, request_id, false)
-}
-fn validate_image_scalars(
-    raw: &Value,
-    edit: bool,
-    multipart: bool,
-) -> Result<(Value, u64), GatewayError> {
-    let mut body = raw.clone();
-    let object = body
-        .as_object_mut()
-        .ok_or_else(|| image_invalid("Image requests must use an object body.", ""))?;
-    for key in object.keys() {
-        let shared = [
-            "model",
-            "prompt",
-            "n",
-            "size",
-            "quality",
-            "background",
-            "output_format",
-            "output_compression",
-            "stream",
-            "partial_images",
-            "user",
-        ];
-        let valid = shared.contains(&key.as_str())
-            || if edit {
-                ["images", "mask", "input_fidelity"].contains(&key.as_str())
-                    || (!multipart && key == "moderation")
-                    || (multipart && key == "response_format")
-            } else {
-                ["moderation", "response_format", "style"].contains(&key.as_str())
-            };
-        if !valid {
-            return Err(image_invalid(
-                format!(
-                    "Unsupported image {} field: {key}.",
-                    if edit { "edits" } else { "generations" }
-                ),
-                key,
-            ));
-        }
-    }
-    for key in [
-        "model",
-        "n",
-        "size",
-        "quality",
-        "background",
-        "output_format",
-        "output_compression",
-        "input_fidelity",
-        "moderation",
-        "response_format",
-        "stream",
-        "partial_images",
-        "style",
-    ] {
-        if object.get(key).is_some_and(Value::is_null) {
-            object.remove(key);
-        }
-    }
-    if body.get("style").is_some() {
-        return Err(image_invalid(
-            "style is not supported because this gateway uses the Responses image-generation tool.",
-            "style",
-        ));
-    }
-    let prompt = body["prompt"]
-        .as_str()
-        .filter(|s| !s.trim_matches(js_whitespace).is_empty())
-        .ok_or_else(|| image_invalid("Image requests must include a prompt.", "prompt"))?;
-    if prompt.chars().count() > 32_000 {
-        return Err(image_invalid(
-            "prompt must contain no more than 32000 characters.",
-            "prompt",
-        ));
-    }
-    if body.get("model").is_some_and(|v| {
-        v.as_str()
-            .is_none_or(|s| s.trim_matches(js_whitespace).is_empty())
-    }) {
-        return Err(image_invalid("model must be a non-empty string.", "model"));
-    }
-    if body.get("user").is_some_and(|v| !v.is_string()) {
-        return Err(image_invalid("user must be a string.", "user"));
-    }
-    let count = body
-        .get("n")
-        .map_or(Some(1.0), Value::as_f64)
-        .filter(|n| n.fract() == 0.0 && *n >= 1.0 && *n <= 10.0)
-        .map(|n| n as u64)
-        .ok_or_else(|| image_invalid("n must be an integer from 1 to 10.", "n"))?;
-    if body.get("output_compression").is_some_and(|v| {
-        !v.as_f64()
-            .is_some_and(|n| n.fract() == 0.0 && (0.0..=100.0).contains(&n))
-    }) {
-        return Err(image_invalid(
-            "output_compression must be an integer from 0 to 100.",
-            "output_compression",
-        ));
-    }
-    if body.get("size").is_some_and(|v| {
-        v.as_str()
-            .is_none_or(|s| s.trim_matches(js_whitespace).is_empty())
-    }) {
-        return Err(image_invalid("size must be a non-empty string.", "size"));
-    }
-    for (key, allowed) in [
-        ("quality", ["low", "medium", "high", "auto"].as_slice()),
-        ("background", ["transparent", "opaque", "auto"].as_slice()),
-        ("output_format", ["png", "jpeg", "webp"].as_slice()),
-        ("moderation", ["low", "auto"].as_slice()),
-        ("input_fidelity", ["low", "high"].as_slice()),
-    ] {
-        if body
-            .get(key)
-            .is_some_and(|v| v.as_str().is_none_or(|v| !allowed.contains(&v)))
-        {
-            return Err(image_invalid(
-                match key {
-                    "quality" => format!(
-                        "quality must be low, medium, high, or auto{}.",
-                        if edit { " for image edits" } else { "" }
-                    ),
-                    "background" => "background must be transparent, opaque, or auto.".into(),
-                    "output_format" => "output_format must be png, jpeg, or webp.".into(),
-                    "moderation" => "moderation must be low or auto.".into(),
-                    _ => "input_fidelity must be low or high.".into(),
-                },
-                key,
-            ));
-        }
-    }
-    if body.get("stream").is_some_and(|v| !v.is_boolean()) {
-        return Err(image_invalid("stream must be a boolean.", "stream"));
-    }
-    if body["stream"] == true || body.get("partial_images").is_some() {
-        return Err(image_invalid(
-            "Streaming image responses are not supported by this gateway.",
-            if body["stream"] == true {
-                "stream"
-            } else {
-                "partial_images"
-            },
-        ));
-    }
-    if body.get("response_format").is_some_and(|v| v != "b64_json") {
-        return Err(image_invalid(
-            "response_format must be b64_json.",
-            "response_format",
-        ));
-    }
-    Ok((body, count))
-}
-fn validate_multipart_scalars(raw: &Value) -> Result<(), GatewayError> {
-    validate_image_scalars(raw, true, true).map(|_| ())
-}
-fn parse_image_inner(
-    raw: &Value,
-    edit: bool,
-    multipart: bool,
-) -> Result<ParsedImageRequest, GatewayError> {
-    let (mut body, count) = validate_image_scalars(raw, edit, multipart)?;
-    if edit {
-        let images = body["images"]
-            .as_array()
-            .filter(|v| !v.is_empty() && v.len() <= 16)
-            .ok_or_else(|| {
-                image_invalid(
-                    "images must contain from 1 to 16 image references.",
-                    "images",
-                )
-            })?;
-        if !multipart {
-            let normalized = images
-                .iter()
-                .map(|v| normalize_image_reference(v, false))
-                .collect::<Result<Vec<_>, _>>()?;
-            body["images"] = json!(normalized);
-            if let Some(mask) = body.get("mask") {
-                body["mask"] = normalize_image_reference(mask, true)?;
-            }
-        }
-    }
-    let input_bytes = image_input_bytes(&body);
-    if input_bytes > 50 * 1024 * 1024 / count as usize {
-        return Err(image_invalid(
-            if multipart {
-                "n and multipart image inputs exceed the 50 MiB request work limit."
-            } else {
-                "n and inline image inputs exceed the 50 MiB request work limit."
-            },
-            "n",
-        ));
-    }
-    Ok(ParsedImageRequest {
-        body,
-        count,
-        input_bytes,
-        edit,
-    })
-}
-
-/// Opaque validated image input; a host model is selected only after parsing.
-#[derive(Clone, Debug)]
-pub struct ParsedImageRequest {
-    body: Value,
-    count: u64,
-    input_bytes: usize,
-    edit: bool,
-}
-impl ParsedImageRequest {
-    pub fn count(&self) -> u64 {
-        self.count
-    }
-    pub fn input_bytes(&self) -> usize {
-        self.input_bytes
-    }
-}
-pub fn parse_image(raw: &Value, edit: bool) -> Result<ParsedImageRequest, GatewayError> {
-    parse_image_inner(raw, edit, false)
-}
-fn prepare_image_inner(
-    raw: &Value,
-    base_model: &str,
-    edit: bool,
-    request_id: &str,
-    multipart: bool,
-) -> Result<ImagePlan, GatewayError> {
-    let parsed = parse_image_inner(raw, edit, multipart)?;
-    Ok(prepare_parsed_image(&parsed, base_model, request_id))
-}
-pub fn prepare_parsed_image(
-    parsed: &ParsedImageRequest,
-    base_model: &str,
-    request_id: &str,
-) -> ImagePlan {
-    let edit = parsed.edit;
-    let body = &parsed.body;
-    let count = parsed.count;
-    let prompt = body["prompt"].as_str().expect("validated image prompt");
-    let mut tool = json!({"type":"image_generation","action":if edit{"edit"}else{"generate"}});
-    if let Some(model) = body["model"].as_str() {
-        tool["model"] = json!(model.trim_matches(js_whitespace));
-    } else if edit {
-        tool["model"] = json!("gpt-image-1.5");
-    }
-    for key in [
-        "size",
-        "quality",
-        "background",
-        "output_format",
-        "output_compression",
-        "moderation",
-    ] {
-        if let Some(value) = body.get(key) {
-            tool[key] = value.clone();
-        }
-    }
-    let input = if edit {
-        let mut content = vec![json!({"type":"input_text","text":prompt})];
-        for image in body["images"].as_array().expect("validated image inputs") {
-            content.push(json!({"type":"input_image","image_url":image["image_url"]}));
-        }
-        if let Some(mask) = body.get("mask") {
-            tool["input_image_mask"] = mask.clone();
-        }
-        if let Some(value) = body.get("input_fidelity") {
-            tool["input_fidelity"] = value.clone();
-        }
-        json!([{"role":"user","content":content}])
-    } else {
-        json!(prompt)
-    };
-    let mut responses = json!({"model":base_model,"input":input,"tools":[tool],"tool_choice":{"type":"image_generation"}});
-    if let Some(user) = body.get("user") {
-        responses["user"] = user.clone();
-    }
-    let kind = if edit { "edits" } else { "generations" };
-    let request_ids = (0..count)
-        .map(|i| {
-            if i == 0 {
-                request_id.into()
-            } else {
-                format!("{request_id}:image:{kind}:{}", i + 1)
-            }
-        })
-        .collect();
-    ImagePlan {
-        responses,
-        count,
-        request_ids,
-        codex_only: true,
-    }
-}
-fn image_invalid(message: impl Into<String>, param: &str) -> GatewayError {
-    GatewayError::new(400, message, Some("invalid_request_error"))
-        .with_param((!param.is_empty()).then_some(param))
-}
-
-pub fn normalize_image_reference(value: &Value, mask: bool) -> Result<Value, GatewayError> {
-    let failure = || {
-        image_invalid(
-            if mask {
-                "mask.image_url must be a supported base64 PNG data URL; remote URLs and file_id are unsupported by this gateway."
-            } else {
-                "Each image must contain one image_url with a fully qualified HTTP(S) URL or supported base64 data URL; file_id is unsupported by this gateway."
-            },
-            if mask { "mask" } else { "images" },
-        )
-    };
-    let object = value
-        .as_object()
-        .filter(|o| o.keys().all(|k| k == "image_url"))
-        .ok_or_else(failure)?;
-    let original = object
-        .get("image_url")
-        .and_then(Value::as_str)
-        .filter(|s| s.encode_utf16().count() <= 20_971_520)
-        .ok_or_else(failure)?;
-    let url = original.trim_matches(js_whitespace);
-    if url.is_empty() {
-        return Err(failure());
-    }
-    if url
-        .get(..5)
-        .is_some_and(|v| v.eq_ignore_ascii_case("data:"))
-    {
-        let (media, encoded) = url[5..].split_once(';').ok_or_else(failure)?;
-        if media.contains(',')
-            || !encoded
-                .get(..7)
-                .is_some_and(|s| s.eq_ignore_ascii_case("base64,"))
-        {
-            return Err(failure());
-        }
-        let payload = &encoded[7..];
-        let media = match media
-            .trim_matches(js_whitespace)
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "image/png" | "image/x-png" => "image/png",
-            "image/jpeg" | "image/jpg" => "image/jpeg",
-            "image/webp" => "image/webp",
-            _ => return Err(failure()),
-        };
-        let content = payload.trim_end_matches('=');
-        let padding = payload.len() - content.len();
-        if payload.is_empty()
-            || payload.len() % 4 != 0
-            || padding > 2
-            || !content
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'/'))
-        {
-            return Err(failure());
-        }
-        let bytes = payload.len() / 4 * 3 - padding;
-        if bytes == 0 || bytes >= 50 * 1024 * 1024 || (mask && media != "image/png") {
-            return Err(failure());
-        }
-        Ok(json!({"image_url":format!("data:{media};base64,{payload}")}))
-    } else if !mask {
-        if !["http://", "https://"].iter().any(|scheme| {
-            url.get(..scheme.len())
-                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
-        }) {
-            return Err(failure());
-        }
-        let parsed = url::Url::parse(url).map_err(|_| failure())?;
-        if !["http", "https"].contains(&parsed.scheme()) || parsed.host_str().is_none() {
-            return Err(failure());
-        }
-        Ok(json!({"image_url":url}))
-    } else {
-        Err(failure())
-    }
-}
-pub fn extract_images(payload: &Value) -> Vec<Value> {
-    payload["output"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|v| v["type"] == "image_generation_call")
-        .filter_map(|v| {
-            v["result"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .map(|result| {
-                    let mut image = json!({"b64_json":result});
-                    if let Some(prompt) = v["revised_prompt"].as_str() {
-                        image["revised_prompt"] = json!(prompt);
-                    }
-                    image
-                })
-        })
-        .collect()
-}
 #[derive(Clone, Debug)]
 pub struct MultipartFile {
     pub name: String,
@@ -834,163 +426,185 @@ pub struct MultipartFile {
     pub content_type: String,
     pub bytes: Vec<u8>,
 }
+
+#[path = "extras_image.rs"]
+mod image;
+pub use image::{ImagePlan, ParsedImageRequest, prepare_parsed_image};
+fn key_is(key: &JsString16, name: &str) -> bool {
+    key.as_units().iter().copied().eq(name.encode_utf16())
+}
+fn scalar_error(status: u16, message: impl Into<String>, code: Option<&str>) -> SourceRequestError {
+    SourceRequestError::from_gateway(GatewayError::new(status, message, code))
+}
+fn invalid(message: impl Into<String>, param: &str) -> SourceRequestError {
+    SourceRequestError::from_gateway(
+        GatewayError::new(400, message, Some("invalid_request_error")).with_param(Some(param)),
+    )
+}
+fn keyed_error(prefix: &str, key: &JsString16, suffix: &str, param: bool) -> SourceRequestError {
+    let message = crate::source::concat(&[
+        &JsString16::from_utf8(prefix),
+        key,
+        &JsString16::from_utf8(suffix),
+    ]);
+    SourceRequestError::new(
+        400,
+        message,
+        "invalid_request_error",
+        Some("invalid_request_error"),
+        param.then(|| Some(key.clone())),
+    )
+}
+fn lift(raw: &ScalarValue) -> SourceJson {
+    SourceJson::from_serializable(raw).expect("actual scalar input")
+}
+pub fn prepare_source_systemone(
+    raw: &SourceJson,
+    options: &PrepareOptions,
+) -> Result<PreparedRequest, SourceRequestError> {
+    systemone_view(&Value::from_source(raw.clone()), options)
+}
+pub fn parse_source_embeddings(
+    raw: &SourceJson,
+    job: bool,
+) -> Result<EmbeddingsProfile, SourceRequestError> {
+    embeddings_view(&Value::from_source(raw.clone()), job)
+}
+pub fn prepare_source_embeddings(
+    raw: &SourceJson,
+    options: &PrepareOptions,
+) -> Result<PreparedRequest, SourceRequestError> {
+    prepare_embeddings_view(&Value::from_source(raw.clone()), options)
+}
+pub fn parse_source_image(
+    raw: &SourceJson,
+    edit: bool,
+) -> Result<ParsedImageRequest, SourceRequestError> {
+    image::parse_image_view(&Value::from_source(raw.clone()), edit)
+}
+pub fn parse_source_multipart_image(
+    raw: &SourceJson,
+    files: &[MultipartFile],
+) -> Result<ParsedImageRequest, SourceRequestError> {
+    image::parse_multipart_image_view(&Value::from_source(raw.clone()), files)
+}
+pub fn prepare_systemone(
+    raw: &ScalarValue,
+    options: &PrepareOptions,
+) -> Result<PreparedRequest, GatewayError> {
+    prepare_source_systemone(&lift(raw), options).map_err(crate::source::scalar_error)
+}
+pub fn parse_embeddings(raw: &ScalarValue, job: bool) -> Result<EmbeddingsProfile, GatewayError> {
+    parse_source_embeddings(&lift(raw), job).map_err(crate::source::scalar_error)
+}
+pub fn prepare_embeddings(
+    raw: &ScalarValue,
+    options: &PrepareOptions,
+) -> Result<PreparedRequest, GatewayError> {
+    prepare_source_embeddings(&lift(raw), options).map_err(crate::source::scalar_error)
+}
+pub fn parse_image(raw: &ScalarValue, edit: bool) -> Result<ParsedImageRequest, GatewayError> {
+    parse_source_image(&lift(raw), edit).map_err(crate::source::scalar_error)
+}
+pub fn parse_multipart_image(
+    raw: &ScalarValue,
+    files: &[MultipartFile],
+) -> Result<ParsedImageRequest, GatewayError> {
+    parse_source_multipart_image(&lift(raw), files).map_err(crate::source::scalar_error)
+}
+pub fn prepare_image(
+    raw: &ScalarValue,
+    model: &str,
+    edit: bool,
+    id: &str,
+) -> Result<ImagePlan, GatewayError> {
+    image::prepare_image_view(&Value::from_source(lift(raw)), &model.into(), edit, id)
+        .map_err(crate::source::scalar_error)
+}
+pub fn prepare_multipart_image(
+    raw: &ScalarValue,
+    files: &[MultipartFile],
+    model: &str,
+    id: &str,
+) -> Result<ImagePlan, GatewayError> {
+    image::prepare_multipart_image_view(&Value::from_source(lift(raw)), files, &model.into(), id)
+        .map_err(crate::source::scalar_error)
+}
+pub fn normalize_image_reference(
+    raw: &ScalarValue,
+    mask: bool,
+) -> Result<ScalarValue, GatewayError> {
+    let value = image::normalize_image_reference_view(&Value::from_source(lift(raw)), mask)
+        .map_err(crate::source::scalar_error)?;
+    value
+        .source()
+        .and_then(|raw| raw.deserialize())
+        .map_err(|_| {
+            GatewayError::new(
+                400,
+                "Invalid scalar image reference",
+                Some("invalid_request_error"),
+            )
+        })
+}
 pub fn multipart_image_references(
     files: &[MultipartFile],
-) -> Result<(Vec<Value>, Option<Value>), GatewayError> {
-    let mut images = vec![];
-    let mut mask = None;
-    let mut total = 0;
-    for file in files {
-        total += file.bytes.len();
-        if file.bytes.is_empty() || file.bytes.len() >= 50 * 1024 * 1024 || total > 50 * 1024 * 1024
-        {
-            return Err(image_invalid(
-                "Image files exceed the 50 MiB input limit",
-                "image",
-            ));
-        }
-        let declared = file
-            .content_type
-            .split(';')
-            .next()
-            .unwrap_or("")
-            .trim_matches(js_whitespace)
-            .to_lowercase();
-        let declared = if declared.is_empty() || declared == "application/octet-stream" {
-            let filename = file.filename.trim_matches(js_whitespace).to_lowercase();
-            if filename.ends_with(".png") {
-                "image/png".into()
-            } else if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
-                "image/jpeg".into()
-            } else if filename.ends_with(".webp") {
-                "image/webp".into()
-            } else {
-                declared
-            }
-        } else {
-            declared
-        };
-        let media = match declared
-            .split(';')
-            .next()
-            .unwrap_or("")
-            .trim_matches(js_whitespace)
-            .to_lowercase()
-            .as_str()
-        {
-            "image/png" | "image/x-png" => "image/png",
-            "image/jpeg" | "image/jpg" => "image/jpeg",
-            "image/webp" => "image/webp",
-            _ => return Err(image_invalid("Unsupported image media type", "image")),
-        };
-        let reference =
-            json!({"image_url":format!("data:{media};base64,{}",base64_encode(&file.bytes))});
-        match file.name.as_str() {
-            "image" | "image[]" => images.push(reference),
-            "mask" if mask.is_none() && media == "image/png" => mask = Some(reference),
-            _ => return Err(image_invalid("Invalid multipart image field", "image")),
-        }
-    }
-    if images.is_empty() || images.len() > 16 {
-        return Err(image_invalid(
-            "image must contain from 1 to 16 files.",
-            "image",
-        ));
-    }
-    Ok((images, mask))
+) -> Result<(Vec<ScalarValue>, Option<ScalarValue>), GatewayError> {
+    let (images, mask) =
+        image::multipart_image_references(files).map_err(crate::source::scalar_error)?;
+    Ok((
+        images
+            .iter()
+            .map(|image| image.source().unwrap().deserialize().unwrap())
+            .collect(),
+        mask.map(|mask| mask.source().unwrap().deserialize().unwrap()),
+    ))
 }
-
-fn image_input_bytes(body: &Value) -> usize {
-    body["images"]
+pub fn extract_source_images(raw: &SourceJson) -> Vec<SourceJson> {
+    let payload = Value::from_source(raw.clone());
+    payload["output"]
         .as_array()
         .into_iter()
         .flatten()
-        .chain(body.get("mask"))
-        .map(|v| {
-            let url = v["image_url"].as_str().unwrap_or("");
-            if let Some((_, payload)) = url.split_once(";base64,") {
-                payload.len() / 4 * 3 - payload.chars().rev().take_while(|c| *c == '=').count()
-            } else {
-                url.len()
-            }
+        .filter(|value| value["type"].as_str() == Some("image_generation_call"))
+        .filter_map(|value| {
+            value["result"]
+                .as_text()
+                .filter(|text| !text.is_empty())
+                .map(|result| {
+                    let mut image = json!({"b64_json":result});
+                    if let Some(prompt) = value["revised_prompt"].as_text() {
+                        image["revised_prompt"] = json!(prompt)
+                    }
+                    image.source().expect("source generated image")
+                })
         })
-        .sum()
+        .collect()
 }
-pub fn parse_multipart_image(
-    raw: &Value,
-    files: &[MultipartFile],
-) -> Result<ParsedImageRequest, GatewayError> {
-    let raw = raw
-        .as_object()
-        .ok_or_else(|| image_invalid("Image edits must include valid multipart form data.", ""))?;
-    let allowed = [
-        "model",
-        "prompt",
-        "n",
-        "size",
-        "quality",
-        "background",
-        "output_format",
-        "output_compression",
-        "stream",
-        "partial_images",
-        "user",
-        "input_fidelity",
-        "response_format",
-    ];
-    let mut body = Value::Object(raw.clone());
-    for file in files {
-        if !["image", "image[]", "mask"].contains(&file.name.as_str()) {
-            return Err(image_invalid(
-                format!("Unsupported image edit field: {}.", file.name),
-                &file.name,
-            ));
-        }
-    }
-    for (key, value) in raw {
-        if !allowed.contains(&key.as_str()) {
-            return Err(image_invalid(
-                format!("Unsupported image edit field: {key}."),
-                key,
-            ));
-        }
-        if let Some(text) = value.as_str() {
-            let trimmed = text.trim_matches(js_whitespace);
-            if ["n", "partial_images"].contains(&key.as_str()) {
-                if !trimmed.is_empty()
-                    && trimmed.bytes().all(|v| v.is_ascii_digit())
-                    && (trimmed == "0" || !trimmed.starts_with('0'))
-                    && let Ok(value) = serde_json::from_str::<Value>(trimmed)
-                {
-                    body[key] = value;
-                }
-            } else if key == "output_compression" {
-                if let Ok(value) = serde_json::from_str::<Value>(trimmed)
-                    && value.is_number()
-                {
-                    body[key] = value;
-                }
-            } else if key == "stream" && ["true", "false"].contains(&trimmed) {
-                body[key] = json!(trimmed == "true");
-            }
-        }
-    }
-    // Scalar validation precedes file selection in the source. Images are not
-    // required until after scalar validation, so use the same private front end.
-    validate_multipart_scalars(&body)?;
-    let (images, mask) = multipart_image_references(files)?;
-    body["images"] = json!(images);
-    if let Some(mask) = mask {
-        body["mask"] = mask;
-    }
-    parse_image_inner(&body, true, true)
+pub fn extract_images(payload: &ScalarValue) -> Vec<ScalarValue> {
+    extract_source_images(&lift(payload))
+        .into_iter()
+        .map(|image| image.deserialize().expect("actual scalar image response"))
+        .collect()
 }
-pub fn prepare_multipart_image(
-    raw: &Value,
-    files: &[MultipartFile],
-    base_model: &str,
-    request_id: &str,
-) -> Result<ImagePlan, GatewayError> {
-    let parsed = parse_multipart_image(raw, files)?;
-    Ok(prepare_parsed_image(&parsed, base_model, request_id))
+pub fn decode_source_systemone(raw: &SourceJson) -> Result<SourceJson, GatewayError> {
+    let value = Value::from_source(raw.clone());
+    if !value["answers"].is_object() {
+        return Err(GatewayError::new(
+            502,
+            "System One upstream invalid response",
+            Some("openrouter_upstream_invalid_response"),
+        ));
+    }
+    Ok(raw.clone())
+}
+pub fn source_systemone_usage(raw: &SourceJson) -> Option<ScalarValue> {
+    let value = Value::from_source(raw.clone());
+    let input = value["input_tokens"].as_f64()?;
+    let output = value["output_tokens"].as_f64()?;
+    let mut usage = serde_json::json!({"input_tokens":input,"output_tokens":output,"total_tokens":input+output,"input_tokens_details":{"cached_tokens":0}});
+    if let Some(cost) = value["cost"].as_f64() {
+        usage["cost"] = serde_json::json!(cost)
+    }
+    Some(usage)
 }

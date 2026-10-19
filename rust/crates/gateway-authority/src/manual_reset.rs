@@ -533,18 +533,19 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }
             let mut models = Vec::new();
             if routing::capacity_headroom_for_observation(usage, None).unwrap_or(0.0) > 0.0 {
-                models.push("standard".to_owned());
+                models.push(gateway_core::model::ModelId::from_scalar("standard"));
             }
             for limit in &usage.additional_rate_limits {
+                let model = gateway_core::model::ModelId::from_scalar(&limit.limit_name);
                 if !matches!(
-                    routing::model_quota_class(&limit.limit_name),
+                    routing::model_quota_class(&model),
                     gateway_core::provider::CodexQuotaClass::Standard
                         | gateway_core::provider::CodexQuotaClass::Unknown
-                ) && routing::capacity_headroom_for_observation(usage, Some(&limit.limit_name))
+                ) && routing::capacity_headroom_for_observation(usage, Some(&model))
                     .unwrap_or(0.0)
                     > 0.0
                 {
-                    models.push(limit.limit_name.clone());
+                    models.push(model);
                 }
             }
             if models.is_empty() {

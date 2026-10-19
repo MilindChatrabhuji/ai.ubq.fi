@@ -142,7 +142,7 @@ fn claude_profile_v2_proofs_reserve_paid_without_reencoding_operator_values() {
             store.seed_record(claude_key(&roster, slot), record.clone());
         }
         let authority = authority(&store);
-        let proof = run(authority.prove_claude_unavailable("paid-model", NOW))
+        let proof = run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
             .unwrap()
             .unwrap();
         assert_eq!(proof.selected_count(), 2);
@@ -233,7 +233,7 @@ fn claude_profile_proof_fields_remain_strict_and_missing_model_is_not_null() {
         let record = StoredRecord::profile_v2("fault-quota", value, None).unwrap();
         store.seed_record(claude_key(&roster, slot), record.clone());
         assert!(
-            run(authority(&store).prove_claude_unavailable("paid-model", NOW))
+            run(authority(&store).prove_claude_unavailable(&"paid-model".into(), NOW))
                 .unwrap()
                 .is_none(),
             "{fault}"
@@ -284,7 +284,7 @@ fn claude_quota_encoding_is_explicit_and_other_authority_reads_stay_json_only() 
             claude_key(&roster, 1)
         };
         store.seed_record(key.clone(), record.clone());
-        let result = run(authority(&store).prove_claude_unavailable("paid-model", NOW));
+        let result = run(authority(&store).prove_claude_unavailable(&"paid-model".into(), NOW));
         if fault == "json-tag" {
             assert!(result.unwrap().is_none());
         } else {
@@ -311,7 +311,7 @@ fn claude_typed_quota_revisions_generation_and_absolute_ttl_still_fence_paid_use
             );
         }
         let authority = authority(&store);
-        let proof = run(authority.prove_claude_unavailable("paid-model", NOW))
+        let proof = run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
             .unwrap()
             .unwrap();
         match fault {
@@ -355,7 +355,7 @@ fn claude_typed_quota_revisions_generation_and_absolute_ttl_still_fence_paid_use
     }
     store.jump_on_read(claude_key(&roster, 1), NOW + 1);
     assert!(
-        run(authority(&store).prove_claude_unavailable("paid-model", NOW))
+        run(authority(&store).prove_claude_unavailable(&"paid-model".into(), NOW))
             .unwrap()
             .is_none()
     );
@@ -366,10 +366,10 @@ fn claude_current_mixed_cohort_authorizes_once_without_exposing_secrets() {
     let store = MemoryStore::default();
     claude_setup(&store);
     let authority = authority(&store);
-    let proof = run(authority.prove_claude_unavailable("paid-model", NOW))
+    let proof = run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
         .unwrap()
         .unwrap();
-    assert_eq!(proof.model(), "paid-model");
+    assert!(proof.model().matches_scalar("paid-model"));
     assert_eq!(proof.selected_count(), 2);
     assert!(!format!("{proof:?}").contains("fixture-only-claude-key"));
     let input = paid_request("claude-paid", PaidProvider::Surplus);
@@ -398,7 +398,7 @@ fn claude_absent_empty_and_no_active_pools_never_fabricate_exhaustion() {
     let store = MemoryStore::default();
     let authority = authority(&store);
     assert!(
-        run(authority.prove_claude_unavailable("paid-model", NOW))
+        run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
             .unwrap()
             .is_none()
     );
@@ -406,14 +406,14 @@ fn claude_absent_empty_and_no_active_pools_never_fabricate_exhaustion() {
     roster["active_account_id"] = serde_json::Value::Null;
     store.seed(keys::claude_accounts(), &roster);
     assert!(
-        run(authority.prove_claude_unavailable("paid-model", NOW))
+        run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
             .unwrap()
             .is_none()
     );
     roster["accounts"] = serde_json::json!([]);
     store.seed(keys::claude_accounts(), &roster);
     assert!(
-        run(authority.prove_claude_unavailable("paid-model", NOW))
+        run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
             .unwrap()
             .is_none()
     );
@@ -450,7 +450,7 @@ fn claude_only_current_applicable_fresh_source_pool_proofs_count() {
         }
         store.seed(claude_key(&roster, 1), &quota);
         assert!(
-            run(authority.prove_claude_unavailable("paid-model", NOW))
+            run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
                 .unwrap()
                 .is_none(),
             "{fault}"
@@ -483,7 +483,7 @@ fn claude_roster_fingerprint_validation_fails_closed() {
         }
         store.seed(keys::claude_accounts(), &roster);
         assert!(
-            run(authority.prove_claude_unavailable("paid-model", NOW)).is_err(),
+            run(authority.prove_claude_unavailable(&"paid-model".into(), NOW)).is_err(),
             "{field}"
         );
     }
@@ -504,7 +504,7 @@ fn claude_proof_fences_every_roster_and_quota_revision() {
         let store = MemoryStore::default();
         let mut roster = claude_setup(&store);
         let authority = authority(&store);
-        let proof = run(authority.prove_claude_unavailable("paid-model", NOW))
+        let proof = run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
             .unwrap()
             .unwrap();
         match fault {
@@ -566,7 +566,7 @@ fn claude_check_only_and_paid_cas_races_never_admit_stale_proof() {
     let empty = serde_json::json!({"updated_at_ms":NOW,"pool_proofs":{}});
     store.race(claude_key(&roster, 1), &empty);
     assert!(
-        run(authority.prove_claude_unavailable("paid-model", NOW))
+        run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
             .unwrap()
             .is_none()
     );
@@ -574,7 +574,7 @@ fn claude_check_only_and_paid_cas_races_never_admit_stale_proof() {
         claude_key(&roster, 1),
         &claude_quota(&roster, 1, "quota_exhausted"),
     );
-    let proof = run(authority.prove_claude_unavailable("paid-model", NOW))
+    let proof = run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
         .unwrap()
         .unwrap();
     store.race(claude_key(&roster, 0), &empty);
@@ -602,12 +602,12 @@ fn claude_expiry_crossing_async_reads_never_reserves_paid_exposure() {
     let authority = authority(&store);
     store.jump_on_read(claude_key(&roster, 1), NOW + 300_000);
     assert!(
-        run(authority.prove_claude_unavailable("paid-model", NOW))
+        run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
             .unwrap()
             .is_none()
     );
     store.clock(NOW);
-    let proof = run(authority.prove_claude_unavailable("paid-model", NOW))
+    let proof = run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
         .unwrap()
         .unwrap();
     store.jump_on_read(keys::paid_deletion("key-a"), NOW + 300_000);
@@ -633,11 +633,11 @@ fn claude_model_scope_clock_and_current_paid_policy_remain_required() {
     let store = MemoryStore::default();
     claude_setup(&store);
     let authority = authority(&store);
-    let proof = run(authority.prove_claude_unavailable("paid-model", NOW))
+    let proof = run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
         .unwrap()
         .unwrap();
     let mut input = paid_request("claude-wrong-model", PaidProvider::Surplus);
-    input.model = "gpt-test".to_owned();
+    input.model = "gpt-test".into();
     assert!(
         run(reserve_paid(
             &authority,
@@ -662,7 +662,7 @@ fn claude_model_scope_clock_and_current_paid_policy_remain_required() {
     assert!(store.row(&keys::paid_gate()).is_none());
     let no_clock = gateway_authority::Authority::new(store.clone(), Tokens::default());
     assert_eq!(
-        run(no_clock.prove_claude_unavailable("paid-model", NOW))
+        run(no_clock.prove_claude_unavailable(&"paid-model".into(), NOW))
             .unwrap_err()
             .envelope
             .error
@@ -687,11 +687,11 @@ fn claude_json_integer_representations_and_codex_precedence_match_source() {
             serde_json::json!((NOW + 300_000) as f64);
         store.seed(claude_key(&roster, slot), &quota);
     }
-    let proof = run(authority.prove_claude_unavailable("gpt-test", NOW))
+    let proof = run(authority.prove_claude_unavailable(&"gpt-test".into(), NOW))
         .unwrap()
         .unwrap();
     let mut input = paid_request("claude-codex", PaidProvider::Surplus);
-    input.model = "gpt-test".to_owned();
+    input.model = "gpt-test".into();
     let error = run(reserve_paid(
         &authority,
         &input,
@@ -711,7 +711,7 @@ fn claude_existing_pending_attempt_cannot_reuse_expired_authorization() {
     let store = MemoryStore::default();
     claude_setup(&store);
     let authority = authority(&store);
-    let proof = run(authority.prove_claude_unavailable("paid-model", NOW))
+    let proof = run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
         .unwrap()
         .unwrap();
     let authorization = PaidAuthorization::ClaudeSubscriptionUnavailable(proof);
@@ -734,4 +734,39 @@ fn claude_existing_pending_attempt_cannot_reuse_expired_authorization() {
     .unwrap();
     assert_eq!(window.pending_count, 1);
     assert_eq!(window.reserved_microcredits, 1_000);
+}
+
+#[test]
+fn claude_model_proof_retains_lone_units_and_never_matches_escape_text_or_other_model() {
+    use gateway_core::{
+        model::ModelId, source_control::encode_source_control_record, source_json::SourceJson,
+    };
+    let store = MemoryStore::default();
+    let roster = claude_setup(&store);
+    let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));
+    let generation = roster["accounts"][1]["evidence_generation"]
+        .as_str()
+        .unwrap();
+    let row = SourceJson::parse(&format!(r#"{{"updated_at_ms":{NOW},"pool_proofs":{{"model:\ud800":{{"kind":"quota_exhausted","model_id":"\ud800","observed_at_ms":{NOW},"expires_at_ms":{},"evidence_generation":"{generation}"}}}}}}"#, NOW + 300_000)).unwrap();
+    let record = encode_source_control_record("opaque-model-proof", &row, None).unwrap();
+    store.seed_record(claude_key(&roster, 1), record.clone());
+    let authority = authority(&store);
+    let proof = run(authority.prove_claude_unavailable(&model, NOW))
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.model(), &model);
+    assert!(
+        run(authority.prove_claude_unavailable(&r"\ud800".into(), NOW))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        run(authority.prove_claude_unavailable(
+            &ModelId::from_source(JsString16::from_units(vec![0xdc00])),
+            NOW
+        ))
+        .unwrap()
+        .is_none()
+    );
+    assert_eq!(store.row(&claude_key(&roster, 1)).as_ref(), Some(&record));
 }

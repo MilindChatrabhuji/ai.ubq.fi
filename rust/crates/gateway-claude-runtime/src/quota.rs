@@ -3,10 +3,14 @@ use gateway_admin_runtime::claude::AccountBinding;
 use gateway_core::{
     GatewayError,
     js_string::JsString16,
+    model::ModelId,
+    source_control::{encode_source_control_record, source_json_tree},
+    source_json::SourceJson,
+    source_serialization as source,
     state::StoredRecord,
     value::{PortableValue, ValueEncoding},
 };
-use gateway_schema::util::{js_trim, json_stringify};
+use gateway_schema::util::js_trim;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -63,7 +67,7 @@ pub struct QuotaError {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PoolProof {
     pub kind: String,
-    pub model_id: Option<String>,
+    pub model_id: Option<ModelId>,
     pub observed_at_ms: f64,
     pub expires_at_ms: f64,
     pub evidence_generation: String,
@@ -71,7 +75,8 @@ pub struct PoolProof {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct QuotaState {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pool_proofs: Option<BTreeMap<String, PoolProof>>,
+    #[serde(default, with = "proof_map")]
+    pub pool_proofs: Option<BTreeMap<JsString16, PoolProof>>,
     pub windows: BTreeMap<String, QuotaWindow>,
     pub standard: BTreeMap<String, StandardWindow>,
     pub representative_claim: Option<String>,
@@ -87,7 +92,7 @@ pub struct Exhaustion {
     pub reset_at_ms: Option<f64>,
 }
 pub(crate) struct Outcome<'a> {
-    pub model: &'a str,
+    pub model: &'a ModelId,
     pub observed_at_ms: i64,
     pub observation: Option<&'a QuotaObservation>,
     pub exhaustion: Option<&'a Exhaustion>,
@@ -158,20 +163,18 @@ fn error(value: &Value) -> Option<QuotaError> {
         at_ms: number(value.get("at_ms")).filter(|n| *n > 0.0)?.trunc(),
     })
 }
-fn proof(value: &Value) -> Option<PoolProof> {
+fn proof_with_model(value: &Value, model_id: Option<ModelId>) -> Option<PoolProof> {
     let kind = value.get("kind")?.as_str()?;
     let observed = number(value.get("observed_at_ms"))?;
     let expires = number(value.get("expires_at_ms"))?;
     if !safe_integer(observed) || observed <= 0.0 || !safe_integer(expires) || expires <= observed {
         return None;
     }
-    let model_id = match value.get("model_id")? {
-        Value::Null => None,
-        Value::String(s) => Some(s.clone()),
-        _ => return None,
-    };
     if (kind == "auth_invalid" && model_id.is_some())
-        || (kind == "quota_exhausted" && model_id.as_ref().is_none_or(String::is_empty))
+        || (kind == "quota_exhausted"
+            && model_id
+                .as_ref()
+                .is_none_or(|id| id.as_js_string().as_units().is_empty()))
         || !["auth_invalid", "quota_exhausted"].contains(&kind)
     {
         return None;
@@ -184,6 +187,55 @@ fn proof(value: &Value) -> Option<PoolProof> {
         evidence_generation: value.get("evidence_generation")?.as_str()?.into(),
     })
 }
+fn proof(value: &Value) -> Option<PoolProof> {
+    let model = match value.get("model_id")? {
+        Value::Null => None,
+        Value::String(model) => Some(ModelId::from_scalar(model)),
+        _ => return None,
+    };
+    proof_with_model(value, model)
+}
+// Ordinary object keys, not serde's Unicode-scalar map-key serializer.
+mod proof_map {
+    use super::*;
+    pub fn serialize<S: serde::Serializer>(
+        value: &Option<BTreeMap<JsString16, PoolProof>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let Some(rows) = value else {
+            return serializer.serialize_none();
+        };
+        source::object_keys(
+            rows.iter()
+                .map(|(key, value)| {
+                    SourceJson::from_serializable(value).map(|value| (key.clone(), value))
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(serde::ser::Error::custom)?,
+        )
+        .map_err(serde::ser::Error::custom)?
+        .serialize(serializer)
+    }
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<BTreeMap<JsString16, PoolProof>>, D::Error> {
+        let value = <SourceJson as Deserialize>::deserialize(deserializer)?;
+        if value.as_str() == "null" {
+            return Ok(None);
+        }
+        source::entries(&value)
+            .ok_or_else(|| serde::de::Error::custom("quota proofs require an object"))?
+            .into_iter()
+            .map(|(key, value)| {
+                value
+                    .deserialize()
+                    .map(|value| (key, value))
+                    .map_err(serde::de::Error::custom)
+            })
+            .collect::<Result<_, _>>()
+            .map(Some)
+    }
+}
 /// Malformed optional observations are skipped exactly as the source reader does.
 pub fn parse_state(value: &Value) -> Option<QuotaState> {
     value.as_object()?;
@@ -192,7 +244,7 @@ pub fn parse_state(value: &Value) -> Option<QuotaState> {
             raw.as_object()
                 .into_iter()
                 .flatten()
-                .filter_map(|(k, v)| proof(v).map(|v| (k.clone(), v)))
+                .filter_map(|(k, v)| proof(v).map(|v| (JsString16::from_utf8(k), v)))
                 .collect()
         }),
         windows: WINDOWS
@@ -297,31 +349,6 @@ fn parse_profile_state(value: &PortableValue) -> Option<QuotaState> {
             .collect();
         root[field] = Value::Object(rows);
     }
-    if let Some(proofs) = profile_member(value, "pool_proofs") {
-        let columns = [
-            "kind",
-            "model_id",
-            "observed_at_ms",
-            "expires_at_ms",
-            "evidence_generation",
-        ];
-        let rows = match proofs {
-            PortableValue::Object(rows) => rows
-                .iter()
-                .map(|(key, row)| (key.clone(), profile_fields(row, &columns)))
-                .collect(),
-            PortableValue::ObjectUtf16(rows) => rows
-                .iter()
-                .filter_map(|(key, row)| {
-                    key.try_utf8()
-                        .ok()
-                        .map(|key| (key, profile_fields(row, &columns)))
-                })
-                .collect(),
-            _ => serde_json::Map::new(),
-        };
-        root["pool_proofs"] = Value::Object(rows);
-    }
     let error = profile_member(value, "last_error");
     let mut message = None;
     if let Some(error) = error {
@@ -333,6 +360,42 @@ fn parse_profile_state(value: &PortableValue) -> Option<QuotaState> {
         };
     }
     let mut state = parse_state(&root)?;
+    state.pool_proofs = profile_member(value, "pool_proofs").map(|proofs| {
+        let rows: Vec<(JsString16, &PortableValue)> = match proofs {
+            PortableValue::Object(rows) => rows
+                .iter()
+                .map(|(key, value)| (JsString16::from_utf8(key), value))
+                .collect(),
+            PortableValue::ObjectUtf16(rows) => rows
+                .iter()
+                .map(|(key, value)| (key.clone(), value))
+                .collect(),
+            _ => vec![],
+        };
+        rows.into_iter()
+            .filter_map(|(key, row)| {
+                let model = match profile_member(row, "model_id")? {
+                    PortableValue::Null => None,
+                    PortableValue::String(value) => Some(ModelId::from_scalar(value)),
+                    PortableValue::StringUtf16(value) => Some(ModelId::from_source(value.clone())),
+                    _ => return None,
+                };
+                proof_with_model(
+                    &profile_fields(
+                        row,
+                        &[
+                            "kind",
+                            "observed_at_ms",
+                            "expires_at_ms",
+                            "evidence_generation",
+                        ],
+                    ),
+                    model,
+                )
+                .map(|proof| (key, proof))
+            })
+            .collect()
+    });
     if let Some(error) = &mut state.last_error {
         error.message = message;
     }
@@ -356,39 +419,17 @@ pub(crate) fn stored_state(
     state: &QuotaState,
     revision: String,
 ) -> Result<StoredRecord, GatewayError> {
-    let mut numeric = state.clone();
-    let message = numeric
-        .last_error
-        .as_mut()
-        .and_then(|error| error.message.take());
-    let mut value = PortableValue::from_json(
-        &serde_json::to_value(&numeric).expect("finite source quota fields"),
-    );
-    if let Some(message) = message {
-        let PortableValue::Object(fields) = &mut value else {
-            unreachable!("QuotaState serializes as an object");
-        };
-        let error = fields
-            .iter_mut()
-            .find(|(key, _)| key == "last_error")
-            .map(|(_, value)| value)
-            .expect("QuotaState has last_error");
-        let PortableValue::Object(fields) = error else {
-            unreachable!("QuotaState has a nonempty error");
-        };
-        let text = fields
-            .iter_mut()
-            .find(|(key, _)| key == "message")
-            .map(|(_, value)| value)
-            .expect("QuotaError has message");
-        *text = PortableValue::StringUtf16(message);
-    }
-    StoredRecord::profile_v2(revision, value, None)
+    encode_source_control_record(revision, &SourceJson::from_serializable(state)?, None)
 }
+/// Source JSON adapter for the same quota schema, not a new authority constructor.
+pub fn parse_source_state(value: &SourceJson) -> Option<QuotaState> {
+    parse_profile_state(&source_json_tree(value).ok()?)
+}
+
 pub fn applicable_proof<'a>(
     state: Option<&'a QuotaState>,
     binding: &AccountBinding,
-    model: &str,
+    model: &ModelId,
     now: i64,
 ) -> Option<&'a PoolProof> {
     state?.pool_proofs.as_ref()?.values().find(|p| {
@@ -400,7 +441,7 @@ pub fn applicable_proof<'a>(
             && p.expires_at_ms > p.observed_at_ms
             && p.expires_at_ms > now as f64
             && (p.kind == "auth_invalid"
-                || (p.kind == "quota_exhausted" && p.model_id.as_deref() == Some(model)))
+                || (p.kind == "quota_exhausted" && p.model_id.as_ref() == Some(model)))
     })
 }
 pub fn blocked(state: Option<&QuotaState>, now: i64) -> bool {
@@ -491,7 +532,7 @@ pub(crate) fn merge(
         p.expires_at_ms > now as f64
             && !(input.served
                 && p.observed_at_ms <= input.observed_at_ms as f64
-                && (p.kind == "auth_invalid" || p.model_id.as_deref() == Some(input.model)))
+                && (p.kind == "auth_invalid" || p.model_id.as_ref() == Some(input.model)))
     });
     let expiry = if input.auth_invalid {
         Some((input.observed_at_ms + AUTH_INVALID_PROOF_TTL_MS) as f64)
@@ -502,13 +543,18 @@ pub(crate) fn merge(
             .filter(|at| *at > input.observed_at_ms as f64)
             .map(|at| at + RESET_MARGIN_MS as f64)
     };
-    if !input.model.is_empty()
+    if !input.model.as_js_string().as_units().is_empty()
         && let Some(expires) = expiry.filter(|at| *at > now as f64)
     {
         let key = if input.auth_invalid {
-            "credential".into()
+            JsString16::from_utf8("credential")
         } else {
-            format!("model:{}", input.model)
+            JsString16::from_units(
+                "model:"
+                    .encode_utf16()
+                    .chain(input.model.as_js_string().as_units().iter().copied())
+                    .collect(),
+            )
         };
         if proofs
             .get(&key)
@@ -523,7 +569,7 @@ pub(crate) fn merge(
                         "quota_exhausted"
                     }
                     .into(),
-                    model_id: (!input.auth_invalid).then(|| input.model.into()),
+                    model_id: (!input.auth_invalid).then(|| input.model.clone()),
                     observed_at_ms: input.observed_at_ms as f64,
                     expires_at_ms: expires,
                     evidence_generation: binding.evidence_generation.clone(),
@@ -555,7 +601,51 @@ pub(crate) fn clear(previous: Option<&QuotaState>, now: i64) -> QuotaState {
     next.updated_at_ms = now as f64;
     next
 }
-pub(crate) fn source_value(value: &impl Serialize) -> Value {
-    let value = serde_json::to_value(value).expect("finite source quota data");
-    serde_json::from_str(&json_stringify(&value)).expect("source JSON serialization")
+
+#[cfg(test)]
+mod source_control_tests {
+    use super::*;
+    #[test]
+    fn real_quota_writer_and_reader_retain_model_keys_and_reject_escape_text_identity() {
+        let source = SourceJson::parse(r#"{"updated_at_ms":1000,"pool_proofs":{"model:\ud800":{"kind":"quota_exhausted","model_id":"\ud800","observed_at_ms":1000,"expires_at_ms":3000,"evidence_generation":"fixture-generation"}},"last_error":{"kind":"forbidden","message":"credit \udc00","status":403,"at_ms":1000}}"#).unwrap();
+        let state = parse_source_state(&source).unwrap();
+        let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));
+        let (key, proof) = state
+            .pool_proofs
+            .as_ref()
+            .unwrap()
+            .first_key_value()
+            .unwrap();
+        assert_eq!(key.as_units(), &[109, 111, 100, 101, 108, 58, 0xd800]);
+        assert_eq!(proof.model_id.as_ref(), Some(&model));
+        assert_ne!(
+            proof.model_id.as_ref(),
+            Some(&ModelId::from_scalar(r"\ud800"))
+        );
+        let record = stored_state(&state, "writer-fixture-revision".into()).unwrap();
+        assert_eq!(record.value_encoding, ValueEncoding::ProfileV2);
+        assert_eq!(record.revision, "writer-fixture-revision");
+        assert_eq!(record.expires_at_ms, None);
+        assert_eq!(parse_record(&record, 1001).unwrap(), Some(state));
+        let encoded = gateway_core::source_control::decode_source_control_record(&record).unwrap();
+        assert!(encoded.as_str().contains(r"\ud800"));
+        assert!(encoded.as_str().contains(r"\udc00"));
+        assert!(encoded.deserialize::<Value>().is_err());
+        println!(
+            "M35_CLAUDE_WRITER_FIXTURE={}",
+            serde_json::to_string(&record).unwrap()
+        );
+        let mut expired = record.clone();
+        expired.expires_at_ms = Some(1001);
+        assert!(parse_record(&expired, 1001).unwrap().is_none());
+    }
+    #[test]
+    fn scalar_quota_writer_remains_json_and_malformed_optional_proofs_stay_absent() {
+        let source = SourceJson::parse(r#"{"updated_at_ms":1000,"pool_proofs":{"bad":{"kind":"quota_exhausted","model_id":null,"observed_at_ms":1000,"expires_at_ms":3000,"evidence_generation":"fixture"},"good":{"kind":"auth_invalid","model_id":null,"observed_at_ms":1000,"expires_at_ms":3000,"evidence_generation":"fixture"}}}"#).unwrap();
+        let state = parse_source_state(&source).unwrap();
+        assert_eq!(state.pool_proofs.as_ref().unwrap().len(), 1);
+        let record = stored_state(&state, "scalar-fixture".into()).unwrap();
+        assert_eq!(record.value_encoding, ValueEncoding::Json);
+        assert_eq!(parse_record(&record, 1000).unwrap(), Some(state));
+    }
 }

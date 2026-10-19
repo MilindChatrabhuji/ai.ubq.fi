@@ -1,17 +1,19 @@
+use crate::source_input as input;
 use gateway_auth::{
     AuthResponse, api_keys, invalid,
     passkeys::{PasskeyUser, user_wire},
     store,
 };
+use gateway_core::source_json::SourceJson;
 use gateway_core::{
     GatewayError,
     query::{QueryRequest, QuerySelector, QueryStore},
     state::{RecordKey, StoredRecord},
 };
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::{
-    audit::{KeyChange, RETENTION_MS},
+    audit::{self, RETENTION_MS},
     keys::{ApiKeyRecord, public_record},
 };
 
@@ -20,7 +22,7 @@ async fn prefix_rows<S: QueryStore>(
     store: &S,
     prefix: RecordKey,
     now: i64,
-) -> Result<Vec<StoredRecord>, GatewayError> {
+) -> Result<Vec<(RecordKey, StoredRecord)>, GatewayError> {
     let mut rows = Vec::new();
     let mut cursor = None;
     loop {
@@ -40,7 +42,7 @@ async fn prefix_rows<S: QueryStore>(
         for entry in page.entries {
             entry.record.validate_version()?;
             if entry.record.expires_at_ms.is_none_or(|expiry| expiry > now) {
-                rows.push(entry.record);
+                rows.push((entry.key, entry.record));
             }
         }
         let Some(next) = page.next_cursor else {
@@ -63,7 +65,7 @@ pub async fn passkey_users<S: QueryStore>(
 ) -> Result<AuthResponse, GatewayError> {
     let rows = prefix_rows(store, store::key(json!(["uos_ai", "auth", "users"])), now).await?;
     let mut users = Vec::new();
-    for row in rows {
+    for (_, row) in rows {
         let user: PasskeyUser =
             serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
                 GatewayError::unavailable("Passkey user state is corrupt", "auth_state_corrupt")
@@ -81,7 +83,7 @@ pub async fn effective_key_record<S: QueryStore>(
     store: &S,
     record: &ApiKeyRecord,
     now: i64,
-) -> Result<Value, GatewayError> {
+) -> Result<SourceJson, GatewayError> {
     let mut value = public_record(record);
     let (start, reset) = api_keys::current_window(
         record.policy.usage_reset_at_ms,
@@ -119,8 +121,8 @@ pub async fn effective_key_record<S: QueryStore>(
             usage.committed_requests
         }
     };
-    value["usage_requests"] = json!(committed);
-    value["usage_reset_at_ms"] = json!(reset);
+    input::set(&mut value, "usage_requests", input::json(&committed));
+    input::set(&mut value, "usage_reset_at_ms", input::json(&reset));
     let paid = store
         .read(&gateway_authority::keys::paid_window(
             &record.policy.id,
@@ -146,29 +148,54 @@ pub async fn effective_key_record<S: QueryStore>(
                 "paid_fallback_unavailable",
             ));
         }
-        value["paid_fallback_spent_credits"] =
-            json!(paid.settled_microcredits as f64 / 1_000_000.0);
-        value["paid_fallback_reserved_credits"] =
-            json!(paid.reserved_microcredits as f64 / 1_000_000.0);
+        input::set(
+            &mut value,
+            "paid_fallback_spent_credits",
+            input::json(&(paid.settled_microcredits as f64 / 1_000_000.0)),
+        );
+        input::set(
+            &mut value,
+            "paid_fallback_reserved_credits",
+            input::json(&(paid.reserved_microcredits as f64 / 1_000_000.0)),
+        );
     }
-    value["paid_fallback_limit_credits"] =
-        json!(if record.policy.paid_fallback_limit_microcredits == -1 {
+    input::set(
+        &mut value,
+        "paid_fallback_limit_credits",
+        input::json(&if record.policy.paid_fallback_limit_microcredits == -1 {
             -1.0
         } else {
             record.policy.paid_fallback_limit_microcredits as f64 / 1_000_000.0
-        });
-    value["effective_limits"] = json!({"counted_requests":committed,"request_limit":record.policy.usage_limit_requests,"remaining_requests":if record.policy.usage_limit_requests== -1{Value::Null}else{json!((record.policy.usage_limit_requests-committed).max(0))},"resets_at_ms":reset});
+        }),
+    );
+    input::set(
+        &mut value,
+        "effective_limits",
+        input::object(vec![
+            ("counted_requests", input::json(&committed)),
+            (
+                "request_limit",
+                input::json(&record.policy.usage_limit_requests),
+            ),
+            (
+                "remaining_requests",
+                input::json(&if record.policy.usage_limit_requests == -1 {
+                    None
+                } else {
+                    Some((record.policy.usage_limit_requests - committed).max(0))
+                }),
+            ),
+            ("resets_at_ms", input::json(&reset)),
+        ]),
+    );
     Ok(value)
 }
 
 pub async fn api_keys<S: QueryStore>(store: &S, now: i64) -> Result<AuthResponse, GatewayError> {
     let rows = prefix_rows(store, store::key(json!(["ubq_ai", "api_keys", "id"])), now).await?;
     let mut records = Vec::new();
-    for row in rows {
-        let record: ApiKeyRecord =
-            serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
-                GatewayError::unavailable("API key state is corrupt", "api_key_policy_invalid")
-            })?;
+    for (key, row) in rows {
+        let record = crate::keys::decode_id_record(&key, &row)?;
         records.push(record);
     }
     records.sort_by_key(|record| std::cmp::Reverse(record.created_at_ms));
@@ -176,9 +203,12 @@ pub async fn api_keys<S: QueryStore>(store: &S, now: i64) -> Result<AuthResponse
     for record in records {
         data.push(effective_key_record(store, &record, now).await?);
     }
-    Ok(AuthResponse::json(
+    Ok(AuthResponse::source_json(
         200,
-        json!({"object":"list","data":data}),
+        input::object(vec![
+            ("object", input::json("list")),
+            ("data", input::json(&data)),
+        ]),
     ))
 }
 
@@ -227,16 +257,12 @@ pub async fn key_changes<S: QueryStore>(
         .await?;
     let mut events = Vec::new();
     for entry in page.entries {
-        let event: KeyChange =
-            serde_json::from_value(entry.record.json_value()?.clone()).map_err(|_| {
-                GatewayError::unavailable("API key audit state is corrupt", "api_key_audit_invalid")
-            })?;
-        if event.at_ms >= now - RETENTION_MS {
+        if let Some(event) = audit::retained_event(&entry.record, now - RETENTION_MS)? {
             events.push(event);
         }
     }
-    Ok(AuthResponse::json(
+    Ok(AuthResponse::source_json(
         200,
-        json!({"object":"list","data":events,"next_cursor":page.next_cursor,"retention_days":90}),
+        audit::page(&events, page.next_cursor.as_deref())?,
     ))
 }

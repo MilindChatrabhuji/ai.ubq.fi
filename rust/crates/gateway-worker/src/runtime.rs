@@ -3,9 +3,8 @@ use std::rc::Rc;
 
 use gateway_admin::AdminService;
 use gateway_auth::{AuthPrincipal, AuthRequest, AuthResponse, AuthService};
-use gateway_core::{GatewayError, identity::RequestId};
+use gateway_core::{GatewayError, identity::RequestId, source_json::SourceJson};
 use gateway_schema::{catalog, catalog_cache::CatalogResponse};
-use serde_json::Value;
 use worker::{Context, Env, Method, Request, Response};
 
 use crate::{
@@ -25,7 +24,7 @@ pub async fn route(
     request_id: RequestId,
     native: crate::native_host::NativeBindings,
 ) -> Result<crate::GatewayResponse, GatewayError> {
-    now_ms()?;
+    let started_at_ms = now_ms()?;
     let path = crate::normalized_path(&request.path()).to_owned();
     if let Some(response) = crate::assets::handle(&request, &env, &path).await? {
         return Ok(response.into());
@@ -78,6 +77,38 @@ pub async fn route(
         if !matches!(request.method(), Method::Get | Method::Head) {
             auth_request.body = body::inference_bytes(&mut request).await?;
         }
+        // Custody is minted at the original authenticated boundary, never from
+        // the administrative module's normalized Context or a later timestamp.
+        let principal = auth.authenticate_admin(&auth_request).await?;
+        let original_context = gateway_core::identity::RequestContext {
+            request_id: request_id.clone(),
+            principal: gateway_core::identity::PrincipalId(
+                gateway_authority::native_control::actor::principal_id(&principal),
+            ),
+            key_id: match &principal.method {
+                gateway_auth::AuthMethod::KvApiKey { key_id, .. } => {
+                    Some(gateway_core::identity::ApiKeyId(key_id.clone()))
+                }
+                _ => None,
+            },
+            route: path.clone(),
+            started_at_ms,
+        };
+        let authority = gateway_authority::Authority::with_clock(
+            store.clone(),
+            crate::host::PlatformTokens,
+            crate::host::PlatformClock,
+        );
+        let actor = Rc::new(
+            gateway_authority::native_control::actor::authenticate_admin_actor(
+                &authority,
+                &host,
+                &config,
+                &auth_request,
+                &original_context,
+            )
+            .await?,
+        );
         // Retain a measured receipt from this exact raw request before the
         // administrative service parses JSON into its finite operation DTO.
         let bindings = crate::admin_host::Capabilities::new(
@@ -87,7 +118,8 @@ pub async fn route(
             store.clone(),
             &host,
             context.clone(),
-        );
+            actor,
+        )?;
         let runtime_config = crate::admin_host::config(&env);
         let capabilities = gateway_admin_runtime::AdminRuntime {
             store: &store,
@@ -251,13 +283,12 @@ pub async fn route(
         let catalog = CatalogState::load(&store, &env, &host, context.clone()).await?;
         let mut response = crate::extras::run(
             request,
-            route,
+            crate::extras::Target { route, request_id },
             inference::RequestResources { context, permit },
             &principal,
             store,
             catalog,
             &host,
-            request_id,
         )
         .await?;
         decorate_api_policy(&mut response, &principal)?;
@@ -350,7 +381,7 @@ async fn auth_response_with_native(
     }
 }
 
-fn json_response(value: Value) -> Result<Response, GatewayError> {
+fn json_response(value: SourceJson) -> Result<Response, GatewayError> {
     Response::from_json(&value).map_err(|_| invalid_url())
 }
 fn catalog_response(response: CatalogResponse) -> Result<Response, GatewayError> {

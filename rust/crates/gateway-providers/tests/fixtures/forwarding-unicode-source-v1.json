@@ -1,0 +1,142 @@
+{
+  "metadata": {
+    "source_head": "8170fbb9990d391e7c338e4795ee2e05e19d2c2a",
+    "source_sha256": {
+      "src/deepseek/chat-projection.ts": "3e7d3f01431619a405fd9aca69b63bfcf15cffacf2af93538104cfe07ed4905e",
+      "src/deepseek/forwarded-payload-policy.ts": "85c6f2c3ad80c5135c27a7976656bb841ce087a0e1e219c5cf0536b20001de23",
+      "src/deepseek/responses.ts": "596117d53fd1b06dd91a995685d20a1bc4b1c764abeb38ca37330af1f73ca8fc",
+      "tests/forwarded-payload-unicode.test.ts": "8cb9bc01a876b7849d21b31363f405e80ebb3980606732e0ca6a3bf07d025581"
+    },
+    "oracle": "exact source reducer/error/bound function bodies; no import, provider or runtime substitute",
+    "bun": "1.4.0"
+  },
+  "policy": {
+    "version": "deepseek-forwarded-payload/v1",
+    "mode": "bytes",
+    "perMessageLimit": 65536
+  },
+  "cases": [
+    {
+      "name": "initial surrogate cut",
+      "headUnits": 58981,
+      "headBytes": 58981,
+      "marker": "\n[gateway: deepseek-forwarded-payload/v1 elided 7581 bytes omitted; the model did not receive the elided bytes; this route forwards at most 65536 bytes per message because the provider counts forwarded payloads as text tokens]",
+      "contentSha256": "6a4597d3b7b644e39c09c6adcfe441d9eb43f229580b2ab6e11d7b5989f3ebbe",
+      "inputSha256": "3a3dc78f971807a06203c3c969a5dd3d8c808d7226c91a62219a92faadb89bea",
+      "elision": {
+        "path": "input[1].output",
+        "callId": "call_unicode",
+        "kind": "tool_output",
+        "originalBytes": 66562,
+        "forwardedBytes": 59207,
+        "omittedBytes": 7581
+      }
+    },
+    {
+      "name": "second UTF-8 byte-loop cut",
+      "headUnits": 53082,
+      "headBytes": 63082,
+      "marker": "\n[gateway: deepseek-forwarded-payload/v1 elided 13480 bytes omitted; the model did not receive the elided bytes; this route forwards at most 65536 bytes per message because the provider counts forwarded payloads as text tokens]",
+      "contentSha256": "a8d88f503e3dcdfe03dbde8295ff837e5889f93cef18eb1adc20822b989d1dbc",
+      "inputSha256": "7e06a52d498149745463eade3c60efb9f02a642d4a151a7bc069bfcd73c871b6",
+      "elision": {
+        "path": "input[1].output",
+        "callId": "call_unicode",
+        "kind": "tool_output",
+        "originalBytes": 76562,
+        "forwardedBytes": 63309,
+        "omittedBytes": 13480
+      }
+    },
+    {
+      "name": "marker-reservation surrogate cut",
+      "headUnits": 53082,
+      "headBytes": 59634,
+      "marker": "\n[gateway: deepseek-forwarded-payload/v1 elided 13480 bytes omitted; the model did not receive the elided bytes; this route forwards at most 65536 bytes per message because the provider counts forwarded payloads as text tokens]",
+      "contentSha256": "4c5052179c9dfec9611d146de948a30c1c816e9dffe555bb5bb3172c5bd0165e",
+      "inputSha256": "c7fc713d77a6f5c3668846eac3d499ddb13ea52caaef47914be59ed71222d9a9",
+      "elision": {
+        "path": "input[1].output",
+        "callId": "call_unicode",
+        "kind": "tool_output",
+        "originalBytes": 73114,
+        "forwardedBytes": 59861,
+        "omittedBytes": 13480
+      }
+    },
+    {
+      "name": "ordinary ASCII reduction",
+      "headUnits": 58982,
+      "headBytes": 58982,
+      "marker": "\n[gateway: deepseek-forwarded-payload/v1 elided 7578 bytes omitted; the model did not receive the elided bytes; this route forwards at most 65536 bytes per message because the provider counts forwarded payloads as text tokens]",
+      "contentSha256": "3420d35c938924e6d25d318893ceb358ba064057ae47eaddffc37f4cf58ecac3",
+      "inputSha256": "cd69d3887c6af9264b100d7b7602331335d9aa7e3bd7c30cdc6d6f4bfbb3c888",
+      "elision": {
+        "path": "input[1].output",
+        "callId": "call_unicode",
+        "kind": "tool_output",
+        "originalBytes": 66560,
+        "forwardedBytes": 59208,
+        "omittedBytes": 7578
+      }
+    },
+    {
+      "name": "ordinary BMP reduction",
+      "headUnits": 31343,
+      "headBytes": 62686,
+      "marker": "\n[gateway: deepseek-forwarded-payload/v1 elided 70434 bytes omitted; the model did not receive the elided bytes; this route forwards at most 65536 bytes per message because the provider counts forwarded payloads as text tokens]",
+      "contentSha256": "c1e19c1e18a69125348e5103dc0c9f5f17788cc4ea10d93c3d7887a73e8e72f8",
+      "inputSha256": "02d73394da921cb624516148ef647d6c14a67ea4dca81710529d6d2bb15353d6",
+      "elision": {
+        "path": "input[1].output",
+        "callId": "call_unicode",
+        "kind": "tool_output",
+        "originalBytes": 133120,
+        "forwardedBytes": 62913,
+        "omittedBytes": 70434
+      }
+    }
+  ],
+  "lone": [
+    {
+      "name": "leading lone high",
+      "headUnits": 58982,
+      "headBytes": 58984,
+      "marker": "\n[gateway: deepseek-forwarded-payload/v1 elided 7579 bytes omitted; the model did not receive the elided bytes; this route forwards at most 65536 bytes per message because the provider counts forwarded payloads as text tokens]",
+      "contentSha256": "7090266c6220735de9e9877b5f76bad6171c893ce2c688d67029060818e00b94",
+      "inputSha256": "9b4b89e86565117617fce36a02d21c57f73f5de94f016b2b7ce524c625b82625",
+      "elision": {
+        "path": "input[1].output",
+        "callId": "call_unicode",
+        "kind": "tool_output",
+        "originalBytes": 66563,
+        "forwardedBytes": 59210,
+        "omittedBytes": 7579
+      }
+    },
+    {
+      "name": "leading lone low",
+      "headUnits": 58982,
+      "headBytes": 58984,
+      "marker": "\n[gateway: deepseek-forwarded-payload/v1 elided 7579 bytes omitted; the model did not receive the elided bytes; this route forwards at most 65536 bytes per message because the provider counts forwarded payloads as text tokens]",
+      "contentSha256": "7090266c6220735de9e9877b5f76bad6171c893ce2c688d67029060818e00b94",
+      "inputSha256": "9b4b89e86565117617fce36a02d21c57f73f5de94f016b2b7ce524c625b82625",
+      "elision": {
+        "path": "input[1].output",
+        "callId": "call_unicode",
+        "kind": "tool_output",
+        "originalBytes": 66563,
+        "forwardedBytes": 59210,
+        "omittedBytes": 7579
+      }
+    }
+  ],
+  "disabled": {
+    "ok": false,
+    "message": "input item input[1].output (tool call call_unicode) carries 73114 bytes; this route forwards at most 65536 bytes per message under deepseek-forwarded-payload/v1, and the request set truncation 'disabled', so the gateway will not reduce it. Reduce the payload or send truncation 'auto' to allow the declared reduction.",
+    "param": "input[1].output",
+    "code": "context_length_exceeded"
+  },
+  "inBudgetLoneUnits": [97, 55296, 98, 56320],
+  "credentialEnvironmentKeys": []
+}

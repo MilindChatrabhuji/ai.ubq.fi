@@ -1,5 +1,7 @@
 use gateway_schema::{catalog::*, metadata::MetadataHint};
 use serde_json::{Value, json};
+#[path = "support/source_catalog.rs"]
+mod support;
 
 #[test]
 fn configured_deepseek_replaces_same_id_at_original_slot_and_preserves_envelope() {
@@ -13,7 +15,9 @@ fn configured_deepseek_replaces_same_id_at_original_slot_and_preserves_envelope(
         },
     );
     let stored = json!({"future":"kept","models":[{"slug":"other","future":1},{"slug":" deepseek-v4-flash ","future":2},{"slug":"\u{00a0}","id":"\u{feff} deepseek-flash ","future":3}]});
-    let output = native_catalog(Some(&stored), &input);
+    let output = native_catalog(Some(&support::json(&stored)), &input)
+        .deserialize::<Value>()
+        .unwrap();
     assert_eq!(output["future"], "kept");
     assert_eq!(output["models"][0], stored["models"][0]);
     for (index, id) in [(1, "deepseek-v4-flash"), (2, "deepseek-flash")] {
@@ -70,7 +74,7 @@ fn public_provider_declaration_overwrites_discovery_enrichment_only_on_collision
             ..Default::default()
         },
     );
-    input.providers.insert("surplus".into(),ProviderCatalog{configured:true,available:true,models:vec![json!({"id":"deepseek-v4-flash","created":123,"owned_by":"other","supported_endpoint_types":["openai-response"]}),json!({"id":"unrelated","created":124,"owned_by":"other","supported_endpoint_types":["openai-response"]})],..Default::default()});
+    input.providers.insert("surplus".into(),ProviderCatalog{configured:true,available:true,models:vec![support::json(&json!({"id":"deepseek-v4-flash","created":123,"owned_by":"other","supported_endpoint_types":["openai-response"]})),support::json(&json!({"id":"unrelated","created":124,"owned_by":"other","supported_endpoint_types":["openai-response"]}))],..Default::default()});
     input.enrichment.insert(
         "deepseek-v4-flash".into(),
         MetadataHint::provider(1_048_576, &["third-party"], "third-party"),
@@ -79,7 +83,10 @@ fn public_provider_declaration_overwrites_discovery_enrichment_only_on_collision
         "unrelated".into(),
         MetadataHint::provider(123_456, &["retained-custom"], "retained-custom"),
     );
-    let output = build_catalog_snapshot(&input);
+    let output = build_catalog_snapshot(&input, &support::Collator::captured())
+        .unwrap()
+        .deserialize::<Value>()
+        .unwrap();
     let rows = output["models"].as_array().unwrap();
     let collision = rows
         .iter()

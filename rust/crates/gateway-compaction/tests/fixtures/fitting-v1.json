@@ -1,0 +1,260 @@
+{
+  "version": 1,
+  "pattern": "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+  "prompt": "You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM.",
+  "cases": [
+    {
+      "recipe": {
+        "name": "floor_accepted",
+        "kind": "floor",
+        "text": 5100000,
+        "result": 3000000,
+        "mode": "drop"
+      },
+      "inputTokens": 1531690,
+      "asks": 1,
+      "expected": {
+        "kind": "success",
+        "status": 200,
+        "contentType": "application/json",
+        "headers": {
+          "x-jev-compaction": "summary; kept=0; results_dropped=0; calls_dropped=1; pinned=0; chars_before=8100100; chars_after=5101361; floor=1"
+        },
+        "chars": 5101361,
+        "summary": [
+          "# fast-jev-compaction memory summary\nTool calls and results below were classified by TypeSafe Jev (keep / truncate).\nA dropped call keeps its provenance line and a bounded head of its result; nothing is erased\noutright. Text kept verbatim is copied from the original transcript; this memory is text only, so\nstructured tool-call replay and opaque items (encrypted reasoning or compaction payloads) are not restored.\n\n[user]\nGoal: finish the large-session check.\n\n[tool call big] shell \u2014 drop_call\ninput: {\"command\":\"cat /tmp/big.log\"}\n\n[tool result big \u2014 truncated (call dropped), original was 3000000 chars]\nalpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform vict\n[fast-jev-compaction truncated 2999700 chars of this tool result; re-run the tool if needed]\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\nFinal goal: keep the exact state.\n\n[fast-jev-compaction stats] items=12 excluded_prompt_chars=93 excluded_prompt_reason=known-prompt opaque_items=0 calls=1 kept=0 results_dropped=0 calls_dropped=1 pinned=0 chars_before=8100100 chars_after=5100070 requests=1 stage=texts abridged"
+        ]
+      }
+    },
+    {
+      "recipe": {
+        "name": "floor_refused",
+        "kind": "floor",
+        "text": 3900000,
+        "result": 250000,
+        "mode": "drop"
+      },
+      "inputTokens": 785041,
+      "asks": 1,
+      "expected": {
+        "kind": "failure",
+        "failure": "summary-too-large"
+      }
+    },
+    {
+      "recipe": {
+        "name": "oversized_refused",
+        "kind": "oversized",
+        "mode": "drop"
+      },
+      "inputTokens": 250774,
+      "asks": 1,
+      "expected": {
+        "kind": "failure",
+        "failure": "summary-too-large"
+      }
+    },
+    {
+      "recipe": {
+        "name": "cap_fits_lowest_first",
+        "kind": "fit",
+        "mode": "ranked"
+      },
+      "inputTokens": 300548,
+      "asks": 1,
+      "expected": {
+        "kind": "success",
+        "status": 200,
+        "contentType": "application/json",
+        "headers": {
+          "x-jev-compaction": "summary; kept=1; results_dropped=1; calls_dropped=0; pinned=3; chars_before=1800152; chars_after=1441623; fitted=1"
+        },
+        "chars": 1441623,
+        "summary": [
+          "# fast-jev-compaction memory summary\nTool calls and results below were classified by TypeSafe Jev (keep / truncate).\nA dropped call keeps its provenance line and a bounded head of its result; nothing is erased\noutright. Text kept verbatim is copied from the original transcript; this memory is text only, so\nstructured tool-call replay and opaque items (encrypted reasoning or compaction payloads) are not restored.\n\n[user]\nGoal: keep the release evidence.\n\n[tool call old_a] shell \u2014 drop_result\ninput: {\"command\":\"cat /tmp/a\"}\n\n[tool result old_a \u2014 truncated, original was 360000 chars]\n",
+          ["A", 300],
+          "\n[fast-jev-compaction truncated 359700 chars of this tool result; re-run the tool if needed]\n\n[tool call old_b] shell \u2014 keep\ninput: {\"command\":\"cat /tmp/b\"}\n\n[tool result old_b \u2014 kept verbatim]\n",
+          ["B", 360000],
+          "\n\n[tool call old_c] shell \u2014 keep\ninput: {\"command\":\"cat /tmp/c\"}\n\n[tool result old_c \u2014 kept verbatim]\n",
+          ["C", 360000],
+          "\n\n[tool call old_d] shell \u2014 keep\ninput: {\"command\":\"cat /tmp/d\"}\n\n[tool result old_d \u2014 kept verbatim]\n",
+          ["D", 360000],
+          "\n\n[tool call old_e] shell \u2014 keep\ninput: {\"command\":\"cat /tmp/e\"}\n\n[tool result old_e \u2014 kept verbatim]\n",
+          ["E", 360000],
+          "\n\n[fast-jev-compaction stats] items=11 excluded_prompt_chars=93 excluded_prompt_reason=known-prompt opaque_items=0 calls=5 kept=2 results_dropped=0 calls_dropped=0 pinned=3 chars_before=1800152 chars_after=1800152 requests=1 stage=full"
+        ]
+      }
+    },
+    {
+      "recipe": {
+        "name": "equal_scores_keep_source_order",
+        "kind": "fit",
+        "mode": "equal"
+      },
+      "inputTokens": 300548,
+      "asks": 1,
+      "expected": {
+        "kind": "success",
+        "status": 200,
+        "contentType": "application/json",
+        "headers": {
+          "x-jev-compaction": "summary; kept=1; results_dropped=1; calls_dropped=0; pinned=3; chars_before=1800152; chars_after=1441623; fitted=1"
+        },
+        "chars": 1441623,
+        "summary": [
+          "# fast-jev-compaction memory summary\nTool calls and results below were classified by TypeSafe Jev (keep / truncate).\nA dropped call keeps its provenance line and a bounded head of its result; nothing is erased\noutright. Text kept verbatim is copied from the original transcript; this memory is text only, so\nstructured tool-call replay and opaque items (encrypted reasoning or compaction payloads) are not restored.\n\n[user]\nGoal: keep the release evidence.\n\n[tool call old_a] shell \u2014 drop_result\ninput: {\"command\":\"cat /tmp/a\"}\n\n[tool result old_a \u2014 truncated, original was 360000 chars]\n",
+          ["A", 300],
+          "\n[fast-jev-compaction truncated 359700 chars of this tool result; re-run the tool if needed]\n\n[tool call old_b] shell \u2014 keep\ninput: {\"command\":\"cat /tmp/b\"}\n\n[tool result old_b \u2014 kept verbatim]\n",
+          ["B", 360000],
+          "\n\n[tool call old_c] shell \u2014 keep\ninput: {\"command\":\"cat /tmp/c\"}\n\n[tool result old_c \u2014 kept verbatim]\n",
+          ["C", 360000],
+          "\n\n[tool call old_d] shell \u2014 keep\ninput: {\"command\":\"cat /tmp/d\"}\n\n[tool result old_d \u2014 kept verbatim]\n",
+          ["D", 360000],
+          "\n\n[tool call old_e] shell \u2014 keep\ninput: {\"command\":\"cat /tmp/e\"}\n\n[tool result old_e \u2014 kept verbatim]\n",
+          ["E", 360000],
+          "\n\n[fast-jev-compaction stats] items=11 excluded_prompt_chars=93 excluded_prompt_reason=known-prompt opaque_items=0 calls=5 kept=2 results_dropped=0 calls_dropped=0 pinned=3 chars_before=1800152 chars_after=1800152 requests=1 stage=full"
+        ]
+      }
+    },
+    {
+      "recipe": {
+        "name": "fit_before_no_reduction",
+        "kind": "fit",
+        "mode": "keep"
+      },
+      "inputTokens": 300548,
+      "asks": 1,
+      "expected": {
+        "kind": "success",
+        "status": 200,
+        "contentType": "application/json",
+        "headers": {
+          "x-jev-compaction": "summary; kept=1; results_dropped=1; calls_dropped=0; pinned=3; chars_before=1800152; chars_after=1441623; fitted=1"
+        },
+        "chars": 1441623,
+        "summary": [
+          "# fast-jev-compaction memory summary\nTool calls and results below were classified by TypeSafe Jev (keep / truncate).\nA dropped call keeps its provenance line and a bounded head of its result; nothing is erased\noutright. Text kept verbatim is copied from the original transcript; this memory is text only, so\nstructured tool-call replay and opaque items (encrypted reasoning or compaction payloads) are not restored.\n\n[user]\nGoal: keep the release evidence.\n\n[tool call old_a] shell \u2014 drop_result\ninput: {\"command\":\"cat /tmp/a\"}\n\n[tool result old_a \u2014 truncated, original was 360000 chars]\n",
+          ["A", 300],
+          "\n[fast-jev-compaction truncated 359700 chars of this tool result; re-run the tool if needed]\n\n[tool call old_b] shell \u2014 keep\ninput: {\"command\":\"cat /tmp/b\"}\n\n[tool result old_b \u2014 kept verbatim]\n",
+          ["B", 360000],
+          "\n\n[tool call old_c] shell \u2014 keep\ninput: {\"command\":\"cat /tmp/c\"}\n\n[tool result old_c \u2014 kept verbatim]\n",
+          ["C", 360000],
+          "\n\n[tool call old_d] shell \u2014 keep\ninput: {\"command\":\"cat /tmp/d\"}\n\n[tool result old_d \u2014 kept verbatim]\n",
+          ["D", 360000],
+          "\n\n[tool call old_e] shell \u2014 keep\ninput: {\"command\":\"cat /tmp/e\"}\n\n[tool result old_e \u2014 kept verbatim]\n",
+          ["E", 360000],
+          "\n\n[fast-jev-compaction stats] items=11 excluded_prompt_chars=93 excluded_prompt_reason=known-prompt opaque_items=0 calls=5 kept=2 results_dropped=0 calls_dropped=0 pinned=3 chars_before=1800152 chars_after=1800152 requests=1 stage=full"
+        ]
+      }
+    },
+    {
+      "recipe": {
+        "name": "floor_after_fitting_kept",
+        "kind": "floor",
+        "text": 5100000,
+        "result": 3000000,
+        "mode": "keep"
+      },
+      "inputTokens": 1531690,
+      "asks": 1,
+      "expected": {
+        "kind": "success",
+        "status": 200,
+        "contentType": "application/json",
+        "headers": {
+          "x-jev-compaction": "summary; kept=0; results_dropped=1; calls_dropped=0; pinned=0; chars_before=8100100; chars_after=5101348; fitted=1; floor=1"
+        },
+        "chars": 5101348,
+        "summary": [
+          "# fast-jev-compaction memory summary\nTool calls and results below were classified by TypeSafe Jev (keep / truncate).\nA dropped call keeps its provenance line and a bounded head of its result; nothing is erased\noutright. Text kept verbatim is copied from the original transcript; this memory is text only, so\nstructured tool-call replay and opaque items (encrypted reasoning or compaction payloads) are not restored.\n\n[user]\nGoal: finish the large-session check.\n\n[tool call big] shell \u2014 drop_result\ninput: {\"command\":\"cat /tmp/big.log\"}\n\n[tool result big \u2014 truncated, original was 3000000 chars]\nalpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform vict\n[fast-jev-compaction truncated 2999700 chars of this tool result; re-run the tool if needed]\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\n",
+          [
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ",
+            3887
+          ],
+          "alpha bravo charlie delta echo f\n\n[user]\nFinal goal: keep the exact state.\n\n[fast-jev-compaction stats] items=12 excluded_prompt_chars=93 excluded_prompt_reason=known-prompt opaque_items=0 calls=1 kept=1 results_dropped=0 calls_dropped=0 pinned=0 chars_before=8100100 chars_after=8100100 requests=1 stage=texts abridged"
+        ]
+      }
+    }
+  ],
+  "source_ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/686589d4-731b-4228-a29d-f0ec98dbc8b9",
+  "source_sha256": {
+    "src/jev_compaction/compaction.ts": "5cd274fc8234f869273729b6547b393295b0439d6b98c1b41b7c2b220aae9379",
+    "lib/jev_compaction/state.ts": "a36b5521525bd195e58a1edba4fef2198accc525cc34050a41d07c3b839c9a10",
+    "tests/jev-compaction.test.ts": "c2d89b4346793d3a159dca544621b88af3a35fc8e7b2d63434ed06e705d7710a"
+  }
+}

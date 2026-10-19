@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { captureUnexpectedStatus } from "./failure-capture.ts";
 import { MATRIX_MODELS } from "../fixtures/provider-matrix.mjs";
 import { assertSingleAdmission, dispatches, object, post, responseObject, selectProviders, settled, type MatrixContext } from "./contracts.ts";
 
 export async function progressiveBody(response: Response): Promise<string> {
+  await captureUnexpectedStatus(response, 200);
   assert.equal(response.status, 200);
   assert(response.headers.get("content-type")?.startsWith("text/event-stream"));
   assert(response.body);

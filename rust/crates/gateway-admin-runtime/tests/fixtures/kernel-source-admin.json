@@ -1,0 +1,1896 @@
+{
+  "provenance": {
+    "actual_source_sha": "8214a7eeba7657b6798b19ae8f79debdbca6bed3",
+    "oracle_output_sha256": "e40dbb5d9d636d129ecc011032045d46bdb672a25fe33dc8f91a6c8e0a147c48",
+    "query_note": "Finite HTTP query strings parsed only from actual captured URLSearchParams serialization; raw JSON label units retained independently."
+  },
+  "cases": [
+    {
+      "id": "scalar_repo",
+      "scope": "repo",
+      "labels": [
+        {
+          "owner": "owner",
+          "repo": "repo"
+        }
+      ],
+      "writes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "owner",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "owner",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            }
+          }
+        }
+      ],
+      "policy": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "owner",
+        "repo": "repo",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "window": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "owner",
+        "repo": "repo",
+        "usage_requests": 0,
+        "reserved_requests": 0,
+        "usage_reset_at_ms": 1800000060000,
+        "applied_window_ms": 60000,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "policy_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f706f6c69637900026f776e657200027265706f00",
+      "window_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f77696e646f7700026f776e657200027265706f00",
+      "list": {
+        "ok": true,
+        "scope": "repo",
+        "limits": [
+          {
+            "owner": "owner",
+            "repo": "repo",
+            "usage_limit_requests": 7,
+            "usage_requests": 0,
+            "usage_reset_at_ms": 1800000060000,
+            "window_ms": 60000,
+            "expires_at_ms": -1,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        ]
+      },
+      "lookups": [
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "owner",
+            "repo": "repo"
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "repo": {
+              "owner": "owner",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "owner",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            },
+            "usage": null
+          }
+        },
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "repo": {
+              "owner": "org\ufffd",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ufffd",
+              "repo": "repo",
+              "usage_limit_requests": -1,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800604800000,
+              "window_ms": 604800000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "default"
+            },
+            "usage": null
+          }
+        }
+      ],
+      "deletes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "owner",
+              "repo": "repo"
+            },
+            "deleted": true
+          },
+          "window": {
+            "v": 2,
+            "scope": "repo",
+            "owner": "owner",
+            "repo": "repo",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        }
+      ]
+    },
+    {
+      "id": "scalar_org",
+      "scope": "org",
+      "labels": [
+        {
+          "owner": "owner",
+          "repo": null
+        }
+      ],
+      "writes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "org",
+            "org": {
+              "owner": "owner"
+            },
+            "limit": {
+              "owner": "owner",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            }
+          }
+        }
+      ],
+      "policy": {
+        "v": 2,
+        "scope": "org",
+        "owner": "owner",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "window": {
+        "v": 2,
+        "scope": "org",
+        "owner": "owner",
+        "usage_requests": 0,
+        "reserved_requests": 0,
+        "usage_reset_at_ms": 1800000060000,
+        "applied_window_ms": 60000,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "policy_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200026f72675f706f6c69637900026f776e657200",
+      "window_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200026f72675f77696e646f7700026f776e657200",
+      "list": {
+        "ok": true,
+        "scope": "org",
+        "limits": [
+          {
+            "owner": "owner",
+            "usage_limit_requests": 7,
+            "usage_requests": 0,
+            "usage_reset_at_ms": 1800000060000,
+            "window_ms": 60000,
+            "expires_at_ms": -1,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        ]
+      },
+      "lookups": [
+        {
+          "query": {
+            "scope": "org",
+            "owner": "owner"
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "org": {
+              "owner": "owner"
+            },
+            "limit": {
+              "owner": "owner",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            },
+            "usage": null
+          }
+        },
+        {
+          "query": {
+            "scope": "org",
+            "owner": "org\ufffd"
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "org": {
+              "owner": "org\ufffd"
+            },
+            "limit": {
+              "owner": "org\ufffd",
+              "usage_limit_requests": -1,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800604800000,
+              "window_ms": 604800000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "default"
+            },
+            "usage": null
+          }
+        }
+      ],
+      "deletes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "org",
+            "org": {
+              "owner": "owner"
+            },
+            "deleted": true
+          },
+          "window": {
+            "v": 2,
+            "scope": "org",
+            "owner": "owner",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        }
+      ]
+    },
+    {
+      "id": "lone_high_owner",
+      "scope": "repo",
+      "labels": [
+        {
+          "owner": "org\ud800",
+          "repo": "repo"
+        }
+      ],
+      "writes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "org\ud800",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ud800",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            }
+          }
+        }
+      ],
+      "policy": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "org\ud800",
+        "repo": "repo",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "window": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "org\ud800",
+        "repo": "repo",
+        "usage_requests": 0,
+        "reserved_requests": 0,
+        "usage_reset_at_ms": 1800000060000,
+        "applied_window_ms": 60000,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "policy_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f706f6c69637900026f7267efbfbd00027265706f00",
+      "window_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f77696e646f7700026f7267efbfbd00027265706f00",
+      "list": {
+        "ok": true,
+        "scope": "repo",
+        "limits": []
+      },
+      "lookups": [
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 500,
+          "body": {
+            "error": {
+              "message": "Failed to load kernel usage limit",
+              "type": "invalid_request_error",
+              "code": "server_error"
+            }
+          }
+        },
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 500,
+          "body": {
+            "error": {
+              "message": "Failed to load kernel usage limit",
+              "type": "invalid_request_error",
+              "code": "server_error"
+            }
+          }
+        }
+      ],
+      "deletes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "org\ud800",
+              "repo": "repo"
+            },
+            "deleted": true
+          },
+          "window": {
+            "v": 2,
+            "scope": "repo",
+            "owner": "org\ud800",
+            "repo": "repo",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        }
+      ]
+    },
+    {
+      "id": "lone_low_repo",
+      "scope": "repo",
+      "labels": [
+        {
+          "owner": "owner",
+          "repo": "repo\udc00"
+        }
+      ],
+      "writes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "owner",
+              "repo": "repo\udc00"
+            },
+            "limit": {
+              "owner": "owner",
+              "repo": "repo\udc00",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            }
+          }
+        }
+      ],
+      "policy": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "owner",
+        "repo": "repo\udc00",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "window": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "owner",
+        "repo": "repo\udc00",
+        "usage_requests": 0,
+        "reserved_requests": 0,
+        "usage_reset_at_ms": 1800000060000,
+        "applied_window_ms": 60000,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "policy_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f706f6c69637900026f776e657200027265706fefbfbd00",
+      "window_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f77696e646f7700026f776e657200027265706fefbfbd00",
+      "list": {
+        "ok": true,
+        "scope": "repo",
+        "limits": []
+      },
+      "lookups": [
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "owner",
+            "repo": "repo\ufffd"
+          },
+          "status": 500,
+          "body": {
+            "error": {
+              "message": "Failed to load kernel usage limit",
+              "type": "invalid_request_error",
+              "code": "server_error"
+            }
+          }
+        },
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "owner",
+            "repo": "repo\ufffd"
+          },
+          "status": 500,
+          "body": {
+            "error": {
+              "message": "Failed to load kernel usage limit",
+              "type": "invalid_request_error",
+              "code": "server_error"
+            }
+          }
+        }
+      ],
+      "deletes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "owner",
+              "repo": "repo\udc00"
+            },
+            "deleted": true
+          },
+          "window": {
+            "v": 2,
+            "scope": "repo",
+            "owner": "owner",
+            "repo": "repo\udc00",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        }
+      ]
+    },
+    {
+      "id": "replacement_owner",
+      "scope": "repo",
+      "labels": [
+        {
+          "owner": "org\ufffd",
+          "repo": "repo"
+        }
+      ],
+      "writes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "org\ufffd",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ufffd",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            }
+          }
+        }
+      ],
+      "policy": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "org\ufffd",
+        "repo": "repo",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "window": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "org\ufffd",
+        "repo": "repo",
+        "usage_requests": 0,
+        "reserved_requests": 0,
+        "usage_reset_at_ms": 1800000060000,
+        "applied_window_ms": 60000,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "policy_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f706f6c69637900026f7267efbfbd00027265706f00",
+      "window_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f77696e646f7700026f7267efbfbd00027265706f00",
+      "list": {
+        "ok": true,
+        "scope": "repo",
+        "limits": [
+          {
+            "owner": "org\ufffd",
+            "repo": "repo",
+            "usage_limit_requests": 7,
+            "usage_requests": 0,
+            "usage_reset_at_ms": 1800000060000,
+            "window_ms": 60000,
+            "expires_at_ms": -1,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        ]
+      },
+      "lookups": [
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "repo": {
+              "owner": "org\ufffd",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ufffd",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            },
+            "usage": null
+          }
+        },
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "repo": {
+              "owner": "org\ufffd",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ufffd",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            },
+            "usage": null
+          }
+        }
+      ],
+      "deletes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "org\ufffd",
+              "repo": "repo"
+            },
+            "deleted": true
+          },
+          "window": {
+            "v": 2,
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        }
+      ]
+    },
+    {
+      "id": "embedded_nul_owner",
+      "scope": "repo",
+      "labels": [
+        {
+          "owner": "org\u0000name",
+          "repo": "repo"
+        }
+      ],
+      "writes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "org\u0000name",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\u0000name",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            }
+          }
+        }
+      ],
+      "policy": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "org\u0000name",
+        "repo": "repo",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "window": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "org\u0000name",
+        "repo": "repo",
+        "usage_requests": 0,
+        "reserved_requests": 0,
+        "usage_reset_at_ms": 1800000060000,
+        "applied_window_ms": 60000,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "policy_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f706f6c69637900026f726700ff6e616d6500027265706f00",
+      "window_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f77696e646f7700026f726700ff6e616d6500027265706f00",
+      "list": {
+        "ok": true,
+        "scope": "repo",
+        "limits": [
+          {
+            "owner": "org\u0000name",
+            "repo": "repo",
+            "usage_limit_requests": 7,
+            "usage_requests": 0,
+            "usage_reset_at_ms": 1800000060000,
+            "window_ms": 60000,
+            "expires_at_ms": -1,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        ]
+      },
+      "lookups": [
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\u0000name",
+            "repo": "repo"
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "repo": {
+              "owner": "org\u0000name",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\u0000name",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            },
+            "usage": null
+          }
+        },
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "repo": {
+              "owner": "org\ufffd",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ufffd",
+              "repo": "repo",
+              "usage_limit_requests": -1,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800604800000,
+              "window_ms": 604800000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "default"
+            },
+            "usage": null
+          }
+        }
+      ],
+      "deletes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "org\u0000name",
+              "repo": "repo"
+            },
+            "deleted": true
+          },
+          "window": {
+            "v": 2,
+            "scope": "repo",
+            "owner": "org\u0000name",
+            "repo": "repo",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        }
+      ]
+    },
+    {
+      "id": "valid_surrogate_pair",
+      "scope": "repo",
+      "labels": [
+        {
+          "owner": "org\ud83d\ude00",
+          "repo": "repo"
+        }
+      ],
+      "writes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "org\ud83d\ude00",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ud83d\ude00",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            }
+          }
+        }
+      ],
+      "policy": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "org\ud83d\ude00",
+        "repo": "repo",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "window": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "org\ud83d\ude00",
+        "repo": "repo",
+        "usage_requests": 0,
+        "reserved_requests": 0,
+        "usage_reset_at_ms": 1800000060000,
+        "applied_window_ms": 60000,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "policy_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f706f6c69637900026f7267f09f988000027265706f00",
+      "window_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f77696e646f7700026f7267f09f988000027265706f00",
+      "list": {
+        "ok": true,
+        "scope": "repo",
+        "limits": [
+          {
+            "owner": "org\ud83d\ude00",
+            "repo": "repo",
+            "usage_limit_requests": 7,
+            "usage_requests": 0,
+            "usage_reset_at_ms": 1800000060000,
+            "window_ms": 60000,
+            "expires_at_ms": -1,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        ]
+      },
+      "lookups": [
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ud83d\ude00",
+            "repo": "repo"
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "repo": {
+              "owner": "org\ud83d\ude00",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ud83d\ude00",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            },
+            "usage": null
+          }
+        },
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "repo": {
+              "owner": "org\ufffd",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ufffd",
+              "repo": "repo",
+              "usage_limit_requests": -1,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800604800000,
+              "window_ms": 604800000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "default"
+            },
+            "usage": null
+          }
+        }
+      ],
+      "deletes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "org\ud83d\ude00",
+              "repo": "repo"
+            },
+            "deleted": true
+          },
+          "window": {
+            "v": 2,
+            "scope": "repo",
+            "owner": "org\ud83d\ude00",
+            "repo": "repo",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        }
+      ]
+    },
+    {
+      "id": "collision_high_then_low",
+      "scope": "repo",
+      "labels": [
+        {
+          "owner": "org\ud800",
+          "repo": "repo"
+        },
+        {
+          "owner": "org\udc00",
+          "repo": "repo"
+        }
+      ],
+      "writes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "org\ud800",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ud800",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            }
+          }
+        },
+        {
+          "status": 409,
+          "body": {
+            "error": {
+              "message": "Concurrent modification; retry",
+              "type": "invalid_request_error",
+              "code": "invalid_request_error"
+            }
+          }
+        }
+      ],
+      "policy": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "org\ud800",
+        "repo": "repo",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "window": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "org\ud800",
+        "repo": "repo",
+        "usage_requests": 0,
+        "reserved_requests": 0,
+        "usage_reset_at_ms": 1800000060000,
+        "applied_window_ms": 60000,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "policy_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f706f6c69637900026f7267efbfbd00027265706f00",
+      "window_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f77696e646f7700026f7267efbfbd00027265706f00",
+      "list": {
+        "ok": true,
+        "scope": "repo",
+        "limits": []
+      },
+      "lookups": [
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 500,
+          "body": {
+            "error": {
+              "message": "Failed to load kernel usage limit",
+              "type": "invalid_request_error",
+              "code": "server_error"
+            }
+          }
+        },
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 500,
+          "body": {
+            "error": {
+              "message": "Failed to load kernel usage limit",
+              "type": "invalid_request_error",
+              "code": "server_error"
+            }
+          }
+        },
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 500,
+          "body": {
+            "error": {
+              "message": "Failed to load kernel usage limit",
+              "type": "invalid_request_error",
+              "code": "server_error"
+            }
+          }
+        }
+      ],
+      "deletes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "org\ud800",
+              "repo": "repo"
+            },
+            "deleted": true
+          },
+          "window": {
+            "v": 2,
+            "scope": "repo",
+            "owner": "org\ud800",
+            "repo": "repo",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        },
+        {
+          "status": 404,
+          "body": {
+            "error": {
+              "message": "Kernel usage limit not found",
+              "type": "invalid_request_error",
+              "code": "not_found"
+            }
+          },
+          "window": {
+            "v": 2,
+            "scope": "repo",
+            "owner": "org\ud800",
+            "repo": "repo",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        }
+      ]
+    },
+    {
+      "id": "collision_high_then_replacement",
+      "scope": "repo",
+      "labels": [
+        {
+          "owner": "org\ud800",
+          "repo": "repo"
+        },
+        {
+          "owner": "org\ufffd",
+          "repo": "repo"
+        }
+      ],
+      "writes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "org\ud800",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ud800",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            }
+          }
+        },
+        {
+          "status": 409,
+          "body": {
+            "error": {
+              "message": "Concurrent modification; retry",
+              "type": "invalid_request_error",
+              "code": "invalid_request_error"
+            }
+          }
+        }
+      ],
+      "policy": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "org\ud800",
+        "repo": "repo",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "window": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "org\ud800",
+        "repo": "repo",
+        "usage_requests": 0,
+        "reserved_requests": 0,
+        "usage_reset_at_ms": 1800000060000,
+        "applied_window_ms": 60000,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "policy_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f706f6c69637900026f7267efbfbd00027265706f00",
+      "window_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f77696e646f7700026f7267efbfbd00027265706f00",
+      "list": {
+        "ok": true,
+        "scope": "repo",
+        "limits": []
+      },
+      "lookups": [
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 500,
+          "body": {
+            "error": {
+              "message": "Failed to load kernel usage limit",
+              "type": "invalid_request_error",
+              "code": "server_error"
+            }
+          }
+        },
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 500,
+          "body": {
+            "error": {
+              "message": "Failed to load kernel usage limit",
+              "type": "invalid_request_error",
+              "code": "server_error"
+            }
+          }
+        },
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 500,
+          "body": {
+            "error": {
+              "message": "Failed to load kernel usage limit",
+              "type": "invalid_request_error",
+              "code": "server_error"
+            }
+          }
+        }
+      ],
+      "deletes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "org\ud800",
+              "repo": "repo"
+            },
+            "deleted": true
+          },
+          "window": {
+            "v": 2,
+            "scope": "repo",
+            "owner": "org\ud800",
+            "repo": "repo",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        },
+        {
+          "status": 404,
+          "body": {
+            "error": {
+              "message": "Kernel usage limit not found",
+              "type": "invalid_request_error",
+              "code": "not_found"
+            }
+          },
+          "window": {
+            "v": 2,
+            "scope": "repo",
+            "owner": "org\ud800",
+            "repo": "repo",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        }
+      ]
+    },
+    {
+      "id": "collision_replacement_then_high",
+      "scope": "repo",
+      "labels": [
+        {
+          "owner": "org\ufffd",
+          "repo": "repo"
+        },
+        {
+          "owner": "org\ud800",
+          "repo": "repo"
+        }
+      ],
+      "writes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "org\ufffd",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ufffd",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            }
+          }
+        },
+        {
+          "status": 409,
+          "body": {
+            "error": {
+              "message": "Concurrent modification; retry",
+              "type": "invalid_request_error",
+              "code": "invalid_request_error"
+            }
+          }
+        }
+      ],
+      "policy": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "org\ufffd",
+        "repo": "repo",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "window": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "org\ufffd",
+        "repo": "repo",
+        "usage_requests": 0,
+        "reserved_requests": 0,
+        "usage_reset_at_ms": 1800000060000,
+        "applied_window_ms": 60000,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "policy_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f706f6c69637900026f7267efbfbd00027265706f00",
+      "window_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f77696e646f7700026f7267efbfbd00027265706f00",
+      "list": {
+        "ok": true,
+        "scope": "repo",
+        "limits": [
+          {
+            "owner": "org\ufffd",
+            "repo": "repo",
+            "usage_limit_requests": 7,
+            "usage_requests": 0,
+            "usage_reset_at_ms": 1800000060000,
+            "window_ms": 60000,
+            "expires_at_ms": -1,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        ]
+      },
+      "lookups": [
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "repo": {
+              "owner": "org\ufffd",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ufffd",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            },
+            "usage": null
+          }
+        },
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "repo": {
+              "owner": "org\ufffd",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ufffd",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            },
+            "usage": null
+          }
+        },
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "repo": {
+              "owner": "org\ufffd",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ufffd",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            },
+            "usage": null
+          }
+        }
+      ],
+      "deletes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "org\ufffd",
+              "repo": "repo"
+            },
+            "deleted": true
+          },
+          "window": {
+            "v": 2,
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        },
+        {
+          "status": 404,
+          "body": {
+            "error": {
+              "message": "Kernel usage limit not found",
+              "type": "invalid_request_error",
+              "code": "not_found"
+            }
+          },
+          "window": {
+            "v": 2,
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        }
+      ]
+    },
+    {
+      "id": "org_lone_high",
+      "scope": "org",
+      "labels": [
+        {
+          "owner": "org\ud800",
+          "repo": null
+        }
+      ],
+      "writes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "org",
+            "org": {
+              "owner": "org\ud800"
+            },
+            "limit": {
+              "owner": "org\ud800",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            }
+          }
+        }
+      ],
+      "policy": {
+        "v": 2,
+        "scope": "org",
+        "owner": "org\ud800",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "window": {
+        "v": 2,
+        "scope": "org",
+        "owner": "org\ud800",
+        "usage_requests": 0,
+        "reserved_requests": 0,
+        "usage_reset_at_ms": 1800000060000,
+        "applied_window_ms": 60000,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "policy_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200026f72675f706f6c69637900026f7267efbfbd00",
+      "window_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200026f72675f77696e646f7700026f7267efbfbd00",
+      "list": {
+        "ok": true,
+        "scope": "org",
+        "limits": []
+      },
+      "lookups": [
+        {
+          "query": {
+            "scope": "org",
+            "owner": "org\ufffd"
+          },
+          "status": 500,
+          "body": {
+            "error": {
+              "message": "Failed to load kernel org usage limit",
+              "type": "invalid_request_error",
+              "code": "server_error"
+            }
+          }
+        },
+        {
+          "query": {
+            "scope": "org",
+            "owner": "org\ufffd"
+          },
+          "status": 500,
+          "body": {
+            "error": {
+              "message": "Failed to load kernel org usage limit",
+              "type": "invalid_request_error",
+              "code": "server_error"
+            }
+          }
+        }
+      ],
+      "deletes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "org",
+            "org": {
+              "owner": "org\ud800"
+            },
+            "deleted": true
+          },
+          "window": {
+            "v": 2,
+            "scope": "org",
+            "owner": "org\ud800",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        }
+      ]
+    },
+    {
+      "id": "trimmed_admin_parts",
+      "scope": "repo",
+      "labels": [
+        {
+          "owner": "  owner  ",
+          "repo": "  repo  "
+        }
+      ],
+      "writes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "owner",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "owner",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            }
+          }
+        }
+      ],
+      "policy": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "owner",
+        "repo": "repo",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "window": {
+        "v": 2,
+        "scope": "repo",
+        "owner": "owner",
+        "repo": "repo",
+        "usage_requests": 0,
+        "reserved_requests": 0,
+        "usage_reset_at_ms": 1800000060000,
+        "applied_window_ms": 60000,
+        "created_at_ms": 1800000000000,
+        "updated_at_ms": 1800000000000
+      },
+      "policy_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f706f6c69637900026f776e657200027265706f00",
+      "window_key": "tuple-v1:02756f735f616900026b65726e656c5f71756f74610002763200027265706f5f77696e646f7700026f776e657200027265706f00",
+      "list": {
+        "ok": true,
+        "scope": "repo",
+        "limits": [
+          {
+            "owner": "owner",
+            "repo": "repo",
+            "usage_limit_requests": 7,
+            "usage_requests": 0,
+            "usage_reset_at_ms": 1800000060000,
+            "window_ms": 60000,
+            "expires_at_ms": -1,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        ]
+      },
+      "lookups": [
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "  owner  ",
+            "repo": "  repo  "
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "repo": {
+              "owner": "owner",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "owner",
+              "repo": "repo",
+              "usage_limit_requests": 7,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800000060000,
+              "window_ms": 60000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "kv"
+            },
+            "usage": null
+          }
+        },
+        {
+          "query": {
+            "scope": "repo",
+            "owner": "org\ufffd",
+            "repo": "repo"
+          },
+          "status": 200,
+          "body": {
+            "ok": true,
+            "repo": {
+              "owner": "org\ufffd",
+              "repo": "repo"
+            },
+            "limit": {
+              "owner": "org\ufffd",
+              "repo": "repo",
+              "usage_limit_requests": -1,
+              "usage_requests": 0,
+              "usage_reset_at_ms": 1800604800000,
+              "window_ms": 604800000,
+              "expires_at_ms": -1,
+              "created_at_ms": 1800000000000,
+              "updated_at_ms": 1800000000000,
+              "source": "default"
+            },
+            "usage": null
+          }
+        }
+      ],
+      "deletes": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "scope": "repo",
+            "repo": {
+              "owner": "owner",
+              "repo": "repo"
+            },
+            "deleted": true
+          },
+          "window": {
+            "v": 2,
+            "scope": "repo",
+            "owner": "owner",
+            "repo": "repo",
+            "usage_requests": 0,
+            "reserved_requests": 0,
+            "usage_reset_at_ms": 1800604800000,
+            "applied_window_ms": 604800000,
+            "created_at_ms": 1800000000000,
+            "updated_at_ms": 1800000000000
+          }
+        }
+      ]
+    }
+  ]
+}

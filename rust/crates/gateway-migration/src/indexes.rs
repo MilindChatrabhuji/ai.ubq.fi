@@ -146,9 +146,10 @@ pub(crate) fn bind(
                     let source = snapshot
                         .get(&window.0)
                         .ok_or_else(|| invalid("Kernel request window missing"))?;
-                    let source: KernelWindow = decode(source.json_value()?)?;
-                    if source.created_at_ms != request.window_created_at_ms
-                        || source.usage_reset_at_ms != request.window_reset_at_ms
+                    let source = source.json_value()?;
+                    if decode::<i64>(&source["created_at_ms"])? != request.window_created_at_ms
+                        || decode::<i64>(&source["usage_reset_at_ms"])?
+                            != request.window_reset_at_ms
                     {
                         return Err(invalid("Kernel reservation belongs to another window"));
                     }
@@ -159,7 +160,8 @@ pub(crate) fn bind(
                 }
             }
             Transform::PaidRequest => {
-                let attempt: PaidAttempt = decode(row.record.json_value()?)?;
+                let attempt =
+                    gateway_authority::paid::decode_paid_attempt_record(&row.key, &row.record)?;
                 if crate::projection::outstanding(&attempt) {
                     let window = keys::paid_window(
                         &attempt.reservation.key_id.0,
@@ -189,10 +191,12 @@ pub(crate) fn bind(
             }
             Transform::PaidPending => {
                 let marker: PendingPaid = decode(row.record.json_value()?)?;
+                let attempt_key = keys::paid_attempt(&marker.key_id.0, &marker.attempt_id.0);
                 let attempt = snapshot
-                    .get(&keys::paid_attempt(&marker.key_id.0, &marker.attempt_id.0).0)
+                    .get(&attempt_key.0)
                     .ok_or_else(|| invalid("Pending paid marker has missing or expired request"))?;
-                let attempt: PaidAttempt = decode(attempt.json_value()?)?;
+                let attempt =
+                    gateway_authority::paid::decode_paid_attempt_record(&attempt_key, attempt)?;
                 if !matches!(
                     attempt.billing_state,
                     BillingState::Pending | BillingState::Unresolved
@@ -221,11 +225,13 @@ pub(crate) fn bind(
                 row.record.value = json(&window)?;
             }
             Transform::KernelWindow => {
-                let mut window: KernelWindow = decode(row.record.json_value()?)?;
+                let reservations = kernel.remove(&row.key.0).unwrap_or_default();
+                let mut bound = row.record.json_value()?.clone();
+                bound["reservations"] = json(&reservations)?;
+                let window: KernelWindow = decode(&bound)?;
                 if keys::kernel_window(&window.owner, window.repo.as_deref()) != row.key {
                     return Err(invalid("Kernel window tuple identity conflict"));
                 }
-                window.reservations = kernel.remove(&row.key.0).unwrap_or_default();
                 if window.reserved_requests != window.reservations.len() as i64 {
                     return Err(invalid("Kernel reserved aggregate lacks exact source rows"));
                 }

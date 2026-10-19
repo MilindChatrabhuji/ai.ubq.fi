@@ -234,7 +234,7 @@ impl NativeCapture {
             .collect()
     }
 }
-pub fn prepare_native(capture: &NativeCapture) -> Result<PreparedAdoption, GatewayError> {
+pub fn prepare_native(capture: &NativeCapture) -> Result<PreparedAdoption, MigrationError> {
     let id = gateway_auth::crypto::sha256_hex(
         &serde_json::to_vec(capture).map_err(|_| invalid("Native capture cannot be encoded"))?,
     );

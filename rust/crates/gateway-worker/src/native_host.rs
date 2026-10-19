@@ -149,7 +149,8 @@ impl NativeBindings {
         let action = receiver
             .prepare_live_create_renewal(actor, selected)
             .await?;
-        self.complete_renewal(&action, &receiver, platform).await
+        self.complete_renewal(&action, &receiver, platform).await?;
+        Ok(())
     }
 
     pub(crate) async fn renew_live_mapped(
@@ -177,7 +178,8 @@ impl NativeBindings {
             platform,
         );
         let action = receiver.prepare_live_mapped_renewal(actor, call_id).await?;
-        self.complete_renewal(&action, &receiver, platform).await
+        self.complete_renewal(&action, &receiver, platform).await?;
+        Ok(())
     }
 
     pub(crate) async fn renew_cache_experiment(
@@ -186,7 +188,7 @@ impl NativeBindings {
         permit: &gateway_authority::cache_experiment::RefreshPermit,
         platform: &PlatformHost,
         config: &gateway_auth::AuthConfig,
-    ) -> Result<(), GatewayError> {
+    ) -> Result<gateway_core::identity::PoolVersionstamp, GatewayError> {
         let transport = self.transport()?;
         let authority = gateway_authority::Authority::with_clock(
             platform.store.clone(),
@@ -207,7 +209,10 @@ impl NativeBindings {
         let action = receiver
             .prepare_cache_experiment_renewal(actor, permit)
             .await?;
-        self.complete_renewal(&action, &receiver, platform).await
+        let verified = self.complete_renewal(&action, &receiver, platform).await?;
+        Ok(gateway_core::identity::PoolVersionstamp(
+            verified.source_revision,
+        ))
     }
 
     async fn complete_renewal(
@@ -220,7 +225,7 @@ impl NativeBindings {
             PlatformHost,
         >,
         platform: &PlatformHost,
-    ) -> Result<(), GatewayError> {
+    ) -> Result<gateway_authority::native_control::NativeRenewalFence, GatewayError> {
         use gateway_auth::native_control::{NativeControlDisposition, NativeControlRequest};
         let envelope = NativeControlEnvelope {
             v: NATIVE_WIRE_VERSION,
@@ -245,8 +250,7 @@ impl NativeBindings {
             .ok_or_else(unverified)?;
         receiver
             .verify_action_publication(action, &envelope.operation_id, publication)
-            .await?;
-        Ok(())
+            .await
     }
 
     pub async fn rpc(

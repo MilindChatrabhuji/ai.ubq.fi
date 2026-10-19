@@ -17,13 +17,15 @@ use gateway_authority::quota::KernelTerminal;
 use gateway_core::{
     GatewayError,
     identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},
+    model::ModelId,
+    source_json::SourceJson,
+    source_serialization as source,
 };
 use gateway_extras_runtime::{
     ExtrasRequest, ExtrasRoute, ExtrasRuntime, ImageKind, KernelDisposition,
 };
 use gateway_providers::ClientSurface;
 use gateway_routing_runtime::{ExtrasFamily, RoutingInput, RoutingSession};
-use serde_json::Value;
 use std::rc::Rc;
 use worker::{Method, Request, Response};
 
@@ -51,16 +53,21 @@ pub fn route(path: &str, method: Method) -> Result<Option<ExtrasRoute>, GatewayE
     }
 }
 
+pub struct Target {
+    pub route: ExtrasRoute,
+    pub request_id: RequestId,
+}
+
 pub async fn run(
     mut request: Request,
-    route: ExtrasRoute,
+    target: Target,
     resources: RequestResources,
     principal: &AuthPrincipal,
     store: RemoteAuthorityStore,
     catalog: CatalogState,
     platform: &PlatformHost,
-    request_id: RequestId,
 ) -> Result<Response, GatewayError> {
+    let Target { route, request_id } = target;
     let RequestResources { context, permit } = resources;
     let image = matches!(route, ExtrasRoute::Images(_));
     let edit = route == ExtrasRoute::Images(ImageKind::Edits);
@@ -102,11 +109,23 @@ pub async fn run(
         let (raw, files) = crate::multipart::parse(&request, &bytes).await?;
         (raw, Some(files))
     } else if matches!(route, ExtrasRoute::JobGet(_)) {
-        (Value::Null, None)
+        (
+            SourceJson::parse("null").expect("null is source JSON"),
+            None,
+        )
     } else if edit {
         (crate::multipart::image_json(&bytes)?, None)
     } else {
-        (gateway_schema::request::parse_json_body(&bytes)?, None)
+        let raw = match gateway_schema::source_request::parse_http_body(&bytes) {
+            Ok(raw) => raw,
+            Err(error) => {
+                return crate::runtime::auth_response(gateway_auth::AuthResponse::source_json(
+                    error.status,
+                    error.body().clone(),
+                ));
+            }
+        };
+        (raw, None)
     };
     let raw_body_bytes = bytes.len();
     drop(bytes);
@@ -131,9 +150,7 @@ pub async fn run(
     let default_model = catalog
         .runtime
         .as_ref()
-        .and_then(|value| value.get("default_model"))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
+        .and_then(runtime_default_model)
         .or_else(|| {
             catalog
                 .input
@@ -235,7 +252,7 @@ pub async fn run(
             drop(permit);
         })
     });
-    let bytes = serde_json::to_vec(&result.body).map_err(|_| invalid())?;
+    let bytes = result.body.as_bytes().to_vec();
     let source = Box::pin(futures_util::stream::iter([Ok::<_, worker::Error>(bytes)]));
     let mut response = ObservedStream::new(
         source,
@@ -257,9 +274,28 @@ pub async fn run(
     Ok(response)
 }
 
+fn runtime_default_model(runtime: &SourceJson) -> Option<ModelId> {
+    source::member(runtime, "default_model")
+        .as_ref()
+        .and_then(source::string)
+        .map(ModelId::from_source)
+}
+
 fn invalid() -> GatewayError {
     GatewayError::unavailable(
         "The source extras response could not be rendered.",
         "extras_response_unavailable",
     )
+}
+
+#[cfg(test)]
+mod source_tests {
+    #[test]
+    fn original_catalog_default_model_keeps_source_units_without_scalar_fallback() {
+        let runtime =
+            gateway_core::source_json::SourceJson::parse(r#"{"default_model":"model\ud800"}"#)
+                .unwrap();
+        let model = super::runtime_default_model(&runtime).unwrap();
+        assert!(model.as_js_string().as_units().contains(&0xd800));
+    }
 }

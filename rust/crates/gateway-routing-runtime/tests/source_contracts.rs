@@ -1,18 +1,55 @@
 mod support;
 use gateway_core::{
+    js_string::JsString16,
     lifecycle::{
         BodyOutcome, DeliveryOutcome, ReaderTermination, SemanticTerminal, TransportObservation,
     },
+    model::ModelId,
     provider::UpstreamProvider,
+    source_json::SourceJson,
+    source_serialization as source,
 };
 use gateway_providers::policy::HopFailure;
 use gateway_routing_runtime::{
-    AttemptFailure, AttemptUsage, RefusalDecision, RoutingSession, TransportState, classify,
-    policy, recover_pending,
+    AttemptFailure, AttemptUsage, PreparedWireRequest, RefusalDecision, RoutingHost, RoutingInput,
+    RoutingResult, RoutingSession, SourceRefusalBody, TransportState, classify, policy,
+    recover_pending,
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::atomic::Ordering};
 use support::*;
+
+fn fixture(value: &Value) -> SourceJson {
+    SourceJson::from_serializable(value).unwrap()
+}
+fn set_source(raw: &mut SourceJson, key: &str, value: Value) {
+    let mut fields = source::entries(raw).unwrap();
+    let key = JsString16::from_utf8(key);
+    if let Some((_, old)) = fields.iter_mut().find(|(name, _)| name == &key) {
+        *old = fixture(&value);
+    } else {
+        fields.push((key, fixture(&value)));
+    }
+    *raw = source::object_keys(fields).unwrap();
+}
+fn source_plan(input: &RoutingInput) -> RoutingResult<policy::RoutePlan> {
+    let collator = Host::new(&Store::new()).source_string_collator();
+    policy::plan(input, NOW, collator.as_ref())
+}
+#[test]
+fn fixture_collator_refuses_unproven_operands_even_when_equal() {
+    let collator = Host::new(&Store::new()).source_string_collator();
+    assert_eq!(
+        collator
+            .compare(&"unproven-model".into(), &"unproven-model".into())
+            .unwrap_err()
+            .envelope
+            .error
+            .code
+            .as_deref(),
+        Some("source_catalog_oracle_unknown_pair")
+    );
+}
 
 fn paid_input(store: &Store, id: &str, model: &str) -> gateway_routing_runtime::RoutingInput {
     use gateway_authority::{keys, paid_control::*};
@@ -21,10 +58,10 @@ fn paid_input(store: &Store, id: &str, model: &str) -> gateway_routing_runtime::
     let mut request = input(id, model, &["surplus", "openlux"]);
     let models = ["paid-model", "deepseek-v4.1-flash"]
         .map(|id| {
-            json!({
+            fixture(&json!({
                 "id":id,"supported_endpoint_types":["openai-response","openai"],
                 "supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002,
-            })
+            }))
         })
         .to_vec();
     for provider in ["surplus", "openlux"] {
@@ -183,12 +220,103 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() {
 }
 
 #[test]
+fn paid_original_api_release_prevents_new_paid_exposure() {
+    use gateway_authority::{Authority, keys, quota::ApiReservation};
+    use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+
+    run(async {
+        let store = Store::new();
+        seed_key(&store);
+        let id = "paid-original-released";
+        let session = RoutingSession::begin(
+            paid_input(&store, id, "paid-model"),
+            store.clone(),
+            Host::new(&store),
+            store.clone(),
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let journal_key = TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("routing_runtime"),
+            ScalarKeyPart::String("v1"),
+            ScalarKeyPart::String("session"),
+            ScalarKeyPart::String(id),
+        ])
+        .to_record_key();
+        let original_api: ApiReservation =
+            serde_json::from_value(store.value(journal_key)["api"].clone()).unwrap();
+        Authority::with_clock(store.clone(), store.clone(), store.clone())
+            .release_api_key(&original_api, true, "fixture_original_released", NOW)
+            .await
+            .unwrap();
+        assert!(session.next_attempt().await.is_err());
+        assert_eq!(
+            store.value(keys::paid_window("key-a", NOW + gateway_authority::DAY_MS)),
+            Value::Null,
+            "A stale original API owner must fail before any paid exposure is created"
+        );
+    });
+}
+
+#[test]
+fn paid_dispatch_missing_active_history_cannot_recreate_exposure() {
+    use gateway_authority::keys;
+    use gateway_core::state::{
+        AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
+    };
+
+    run(async {
+        let store = Store::new();
+        seed_key(&store);
+        let session = RoutingSession::begin(
+            paid_input(&store, "paid-active-history-missing", "paid-model"),
+            store.clone(),
+            Host::new(&store),
+            store.clone(),
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let attempt = session.next_attempt().await.unwrap().unwrap();
+        let paid = attempt.paid.as_ref().unwrap();
+        let key = keys::paid_attempt(&paid.key_id.0, &paid.attempt_id.0);
+        let record = store.read(&key).await.unwrap().unwrap();
+        let window_key = keys::paid_window("key-a", NOW + gateway_authority::DAY_MS);
+        let exposure = store.value(window_key.clone());
+        assert_ne!(exposure, Value::Null);
+        assert_eq!(
+            store
+                .commit(AtomicTransition {
+                    checks: vec![RevisionCheck {
+                        key: key.clone(),
+                        expected_revision: Some(record.revision),
+                    }],
+                    mutations: vec![RecordMutation::Delete { key: key.clone() }],
+                })
+                .await
+                .unwrap(),
+            CommitOutcome::Committed
+        );
+        assert!(session.before_dispatch(&attempt).await.is_err());
+        assert!(store.read(&key).await.unwrap().is_none());
+        assert_eq!(
+            store.value(window_key),
+            exposure,
+            "Existing-only dispatch must not reserve fresh exposure when history vanished"
+        );
+        assert_eq!(window(&store)["committed_requests"], 0);
+    });
+}
+
+#[test]
 fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity() {
     run(async {
         let store = Store::new();
         seed_key(&store);
         let mut request = paid_input(&store, "synthetic-paid", "ubiquity/deepseek-flash");
-        request.raw["reasoning"] = json!({"effort":"high"});
+        set_source(&mut request.raw, "reasoning", json!({"effort":"high"}));
         let session = RoutingSession::begin(
             request,
             store.clone(),
@@ -217,7 +345,7 @@ fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity()
             RefusalDecision::Continue
         );
         let second = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(second.request.provider, UpstreamProvider::Metered);
+        assert_eq!(second.request.provider(), UpstreamProvider::Metered);
         assert_ne!(
             first.paid.unwrap().attempt_id,
             second.paid.as_ref().unwrap().attempt_id
@@ -447,7 +575,7 @@ fn image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission()
         .unwrap();
         let handle = session.admission_handle();
         let child = handle.children(1).await.unwrap().remove(0);
-        let attempt=handle.prepare_image_child(&child,json!({"model":"gpt-test","input":"image fixture","tools":[{"type":"image_generation"}]})).await.unwrap();
+        let attempt=handle.prepare_image_child(&child,fixture(&json!({"model":"gpt-test","input":"image fixture","tools":[{"type":"image_generation"}]}))).await.unwrap();
         assert_eq!(attempt.request.provider, UpstreamProvider::ChatgptCodex);
         let ticket = handle.before_image_dispatch(&attempt).await.unwrap();
         handle.transport_started(&child, &ticket).await.unwrap();
@@ -559,34 +687,43 @@ fn paid_capability_endpoint_and_logical_model_stay_separate_from_wire_alias() {
     )
     .unwrap();
     assert_eq!(raw["model"], "gpt-5.6-sol");
-    assert_eq!(prepared.body["model"], "gpt-5.6-sol-low");
-    assert!(prepared.body.get("reasoning").is_none());
+    assert_eq!(
+        source::member(&prepared.body, "model").and_then(|value| source::string(&value)),
+        Some("gpt-5.6-sol-low".into())
+    );
+    assert!(source::member(&prepared.body, "reasoning").is_none());
 }
 
 #[test]
 fn source_availability_gate_preserves_full_compact_paid_and_reserve_cases() {
     let mut request = input("model-gate", "unknown-model", &[]);
-    assert_eq!(policy::plan(&request, NOW).unwrap_err().status, 404);
+    assert_eq!(source_plan(&request).unwrap_err().error.status, 404);
     request.catalog.snapshot = request.catalog.full_snapshot.take();
-    assert_eq!(policy::plan(&request, NOW).unwrap_err().status, 404);
+    assert_eq!(source_plan(&request).unwrap_err().error.status, 404);
     request.catalog.snapshot.as_mut().unwrap().models.clear();
-    assert!(policy::plan(&request, NOW).is_ok());
+    assert!(source_plan(&request).is_ok());
     request.catalog.snapshot = None;
-    assert!(policy::plan(&request, NOW).is_ok());
+    assert!(source_plan(&request).is_ok());
     let mut reserve = input("reserve-model", "gpt-reserve", &["surplus"]);
-    reserve.catalog.providers.get_mut("surplus").unwrap().models = vec![
-        json!({"id":"gpt-reserve","supported_endpoint_types":["openai-response"],"input_price_per_token":0.001,"output_price_per_token":0.002}),
-    ];
-    let plan = policy::plan(&reserve, NOW).unwrap();
+    reserve.catalog.providers.get_mut("surplus").unwrap().models = vec![fixture(
+        &json!({"id":"gpt-reserve","supported_endpoint_types":["openai-response"],"input_price_per_token":0.001,"output_price_per_token":0.002}),
+    )];
+    let plan = source_plan(&reserve).unwrap();
     assert!(!plan.paid.metered_only);
     assert!(matches!(plan.hops.get(1), Some(policy::RouteHop::Codex)));
     let mut paid = input("paid-endpoint", "paid-model", &["surplus"]);
-    paid.catalog.providers.get_mut("surplus").unwrap().models = vec![
-        json!({"id":"paid-model","supported_endpoint_types":["openai"],"input_price_per_token":0.001,"output_price_per_token":0.002}),
-    ];
-    assert_eq!(policy::plan(&paid, NOW).unwrap_err().status, 404);
+    paid.catalog.providers.get_mut("surplus").unwrap().models = vec![fixture(
+        &json!({"id":"paid-model","supported_endpoint_types":["openai"],"input_price_per_token":0.001,"output_price_per_token":0.002}),
+    )];
+    assert_eq!(source_plan(&paid).unwrap_err().error.status, 404);
     paid.surface = gateway_providers::ClientSurface::Chat;
-    assert!(policy::plan(&paid, NOW).is_ok());
+    // Keep the model/content/control intent in the actual Chat envelope.
+    paid.raw = fixture(&json!({
+        "model":"paid-model",
+        "messages":[{"role":"user","content":"source fixture"}],
+        "reasoning_effort":"none"
+    }));
+    assert!(source_plan(&paid).is_ok());
 }
 #[test]
 fn frozen_source_classifier_quota_classes_and_fallback_matrix() {
@@ -595,9 +732,9 @@ fn frozen_source_classifier_quota_classes_and_fallback_matrix() {
     assert_eq!(golden["quota"].as_array().unwrap().len(), 16);
     for case in golden["classes"].as_array().unwrap() {
         assert_eq!(
-            gateway_authority::routing::class_name(policy::class(
+            gateway_authority::routing::class_name(policy::class(&ModelId::from(
                 case["model"].as_str().unwrap_or("")
-            )),
+            ))),
             case["expected"].as_str().unwrap()
         );
     }
@@ -660,7 +797,7 @@ fn direct_dispatch_and_finish_count_api_once() {
         .await
         .unwrap();
         let attempt = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(attempt.request.provider, UpstreamProvider::Deepseek);
+        assert_eq!(attempt.request.provider(), UpstreamProvider::Deepseek);
         session.before_dispatch(&attempt).await.unwrap();
         assert!(session.before_dispatch(&attempt).await.is_err());
         session.transport_started(&attempt).await.unwrap();
@@ -766,7 +903,7 @@ fn synthetic_hops_share_original_admission_and_stop_after_semantic_commit() {
             "ubiquity/deepseek-flash",
             &["lithos", "deepseek"],
         );
-        request.raw["reasoning"] = json!({"effort":"high"});
+        set_source(&mut request.raw, "reasoning", json!({"effort":"high"}));
         let session = RoutingSession::begin(
             request,
             store.clone(),
@@ -777,7 +914,7 @@ fn synthetic_hops_share_original_admission_and_stop_after_semantic_commit() {
         .await
         .unwrap();
         let first = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(first.request.provider, UpstreamProvider::Lithos);
+        assert_eq!(first.request.provider(), UpstreamProvider::Lithos);
         session.before_dispatch(&first).await.unwrap();
         session.transport_started(&first).await.unwrap();
         assert_eq!(
@@ -788,7 +925,7 @@ fn synthetic_hops_share_original_admission_and_stop_after_semantic_commit() {
             RefusalDecision::Continue
         );
         let second = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(second.request.provider, UpstreamProvider::Deepseek);
+        assert_eq!(second.request.provider(), UpstreamProvider::Deepseek);
         assert_eq!(first.original_request_id, second.original_request_id);
         session.before_dispatch(&second).await.unwrap();
         session.transport_started(&second).await.unwrap();
@@ -814,7 +951,7 @@ fn codex_none_and_ultra_keep_source_wire_translation_and_one_conversation() {
         seed_key(&store);
         seed_pool(&store);
         let mut request = input("codex", "gpt-test", &[]);
-        request.raw["reasoning"] = json!({"effort":"ultra"});
+        set_source(&mut request.raw, "reasoning", json!({"effort":"ultra"}));
         let session = RoutingSession::begin(
             request,
             store.clone(),
@@ -825,8 +962,16 @@ fn codex_none_and_ultra_keep_source_wire_translation_and_one_conversation() {
         .await
         .unwrap();
         let first = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(first.request.body["reasoning"]["effort"], "max");
-        let conversation = first.request.headers["conversation_id"].clone();
+        assert_eq!(
+            source::member(first.request.body(), "reasoning")
+                .and_then(|reasoning| source::member(&reasoning, "effort"))
+                .and_then(|value| source::string(&value)),
+            Some("max".into())
+        );
+        let PreparedWireRequest::Ready(first_ready) = &first.request else {
+            panic!("expected scalar Ready")
+        };
+        let conversation = first_ready.headers["conversation_id"].clone();
         session.before_dispatch(&first).await.unwrap();
         session.transport_started(&first).await.unwrap();
         assert_eq!(
@@ -837,7 +982,10 @@ fn codex_none_and_ultra_keep_source_wire_translation_and_one_conversation() {
             RefusalDecision::Continue
         );
         let second = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(second.request.headers["conversation_id"], conversation);
+        let PreparedWireRequest::Ready(second_ready) = &second.request else {
+            panic!("expected scalar Ready")
+        };
+        assert_eq!(second_ready.headers["conversation_id"], conversation);
         assert_ne!(first.credential, second.credential);
         session.before_dispatch(&second).await.unwrap();
         session.transport_started(&second).await.unwrap();
@@ -1016,13 +1164,22 @@ fn source_deepseek_extension_uses_one_captured_route_selection() {
         seed_key(&store);
         let mut request = input("captured-selection", "deepseek-flash", &["deepseek"]);
         request.surface = gateway_providers::ClientSurface::Chat;
-        request.raw = json!({"model":"deepseek-flash","messages":[{"role":"user","content":"fixture"}],"thinking":{"type":"disabled"}});
+        request.raw = fixture(
+            &json!({"model":"deepseek-flash","messages":[{"role":"user","content":"fixture"}],"thinking":{"type":"disabled"}}),
+        );
         request.catalog.selection = gateway_schema::selection::ProviderSelection::normalize(
             &json!({"provider_ids":["cerebras"],"updated_at_ms":NOW}),
         );
-        let error = policy::plan(&request, NOW).unwrap_err();
-        assert_eq!(error.status, 400);
-        assert_eq!(error.envelope.error.param, Some(Some("thinking".into())));
+        let error = source_plan(&request).unwrap_err();
+        assert_eq!(error.error.status, 400);
+        let SourceRefusalBody::Json(body) = error.source_body.unwrap() else {
+            panic!("expected the original source request error body")
+        };
+        let source_error = source::member(&body, "error").unwrap();
+        assert_eq!(
+            source::member(&source_error, "param").map(|param| source::string(&param)),
+            Some(Some("thinking".into()))
+        );
         request.catalog.selection = None;
         let session = RoutingSession::begin(
             request.clone(),
@@ -1038,8 +1195,12 @@ fn source_deepseek_extension_uses_one_captured_route_selection() {
         );
         assert!(!request.catalog.enabled("deepseek"));
         let attempt = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(attempt.request.provider, UpstreamProvider::Deepseek);
-        assert_eq!(attempt.request.body["reasoning_effort"], "none");
+        assert_eq!(attempt.request.provider(), UpstreamProvider::Deepseek);
+        assert_eq!(
+            source::member(attempt.request.body(), "reasoning_effort")
+                .and_then(|value| source::string(&value)),
+            Some("none".into())
+        );
         session
             .finish(TransportObservation::default())
             .await
@@ -1097,7 +1258,7 @@ fn explicit_provider_504_survives_late_abort_and_local_deadline_never_advances()
             "ubiquity/deepseek-flash",
             &["lithos", "deepseek"],
         );
-        request.raw["reasoning"] = json!({"effort":"high"});
+        set_source(&mut request.raw, "reasoning", json!({"effort":"high"}));
         let session = RoutingSession::begin(
             request,
             store.clone(),
@@ -1127,7 +1288,7 @@ fn explicit_provider_504_survives_late_abort_and_local_deadline_never_advances()
             "ubiquity/deepseek-flash",
             &["lithos", "deepseek"],
         );
-        request.raw["reasoning"] = json!({"effort":"high"});
+        set_source(&mut request.raw, "reasoning", json!({"effort":"high"}));
         let session = RoutingSession::begin(
             request,
             store.clone(),

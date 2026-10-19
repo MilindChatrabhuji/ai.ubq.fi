@@ -64,7 +64,10 @@ pub(crate) fn mapping_checksum(
     ))
 }
 
-fn validate_source_inventories(rows: &[Row], now: i64) -> Result<(), GatewayError> {
+fn validate_source_inventories(
+    rows: &[Row],
+    now: i64,
+) -> Result<gateway_admin_data::migration::audit::Audit, GatewayError> {
     use gateway_admin_data::migration::{ObservedRow, audit};
     let observed: Vec<_> = rows
         .iter()
@@ -76,14 +79,11 @@ fn validate_source_inventories(rows: &[Row], now: i64) -> Result<(), GatewayErro
         })
         .collect();
     let (pairs, mut findings) = audit::inspect_key_pairs(&observed)?;
-    let known = pairs
-        .iter()
-        .filter_map(|(id, _)| id.get("id").and_then(Value::as_str).map(str::to_owned))
-        .collect();
+    let known = pairs.iter().map(|pair| pair.key_id.clone()).collect();
     let unlimited = pairs
         .iter()
-        .filter(|(id, _)| id["paid_fallback_limit_microcredits"] == -1)
-        .filter_map(|(id, _)| id["id"].as_str().map(str::to_owned))
+        .filter(|pair| pair.unlimited_paid)
+        .map(|pair| pair.key_id.clone())
         .collect();
     findings.merge(audit::inspect_api_usage(&observed, &known)?);
     findings.merge(audit::inspect_kernel(&observed)?);
@@ -92,20 +92,13 @@ fn validate_source_inventories(rows: &[Row], now: i64) -> Result<(), GatewayErro
     findings
         .errors
         .extend(audit::inspect_model_snapshot(&observed)?);
-    if findings.errors.is_empty() {
-        Ok(())
-    } else {
-        Err(invalid(format!(
-            "Complete source inventory validation failed: {}",
-            findings.errors.join("; ")
-        )))
-    }
+    Ok(findings)
 }
 
 pub fn prepare(
     capture: &PrivateCapture,
     host: &dyn SourceDateHost,
-) -> Result<PreparedAdoption, GatewayError> {
+) -> Result<PreparedAdoption, MigrationError> {
     let capture_id = gateway_auth::crypto::sha256_hex(
         &serde_json::to_vec(capture).map_err(|_| invalid("Capture cannot be encoded"))?,
     );
@@ -124,8 +117,11 @@ pub(crate) fn prepare_rows(
     source_git_sha: &str,
     captured_at_ms: i64,
     native_revision: Option<crate::NativeRevision>,
-) -> Result<PreparedAdoption, GatewayError> {
-    validate_source_inventories(&rows, captured_at_ms)?;
+) -> Result<PreparedAdoption, MigrationError> {
+    let audited = validate_source_inventories(&rows, captured_at_ms)?;
+    if !audited.errors.is_empty() {
+        return Err(MigrationError::SourceInventory(audited));
+    }
     for row in &mut rows {
         crate::projection::forward(row)?;
     }
@@ -138,7 +134,9 @@ pub(crate) fn prepare_rows(
                 .insert(key.0.clone(), digest(record)?)
                 .is_some()
         {
-            return Err(invalid("Derived schema key collides with source state"));
+            return Err(MigrationError::from(invalid(
+                "Derived schema key collides with source state",
+            )));
         }
     }
     for row in &mut rows {

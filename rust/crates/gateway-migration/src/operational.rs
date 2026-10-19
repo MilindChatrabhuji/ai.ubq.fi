@@ -1,8 +1,8 @@
 //! Finite private host operations. The host owns stopped-source and target isolation.
 //! A decoded request is data, never an ownership, publication or replay capability.
 use crate::{
-    AdoptionReceipt, ArtifactContext, NativeCapture, NativeRollbackBundle, adopt_empty,
-    export_native_rollback_bundle, prepare_native,
+    AdoptionReceipt, ArtifactContext, MigrationError, NativeCapture, NativeRollbackBundle,
+    adopt_empty, export_native_rollback_bundle, prepare_native,
 };
 use gateway_core::{GatewayError, identity::MAX_SAFE_INTEGER, query::QueryStore};
 use serde::{Deserialize, Serialize};
@@ -61,7 +61,7 @@ pub struct NativeMigrationResponse {
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum NativeResult {
     Adopted { receipt: AdoptionReceipt },
-    Exported { bundle: NativeRollbackBundle },
+    Exported { bundle: Box<NativeRollbackBundle> },
 }
 
 pub fn decode_native_request(bytes: &[u8]) -> Result<NativeMigrationRequest, GatewayError> {
@@ -84,9 +84,11 @@ pub fn encode_native_response(response: &NativeMigrationResponse) -> Result<Vec<
 pub async fn execute_native<S: QueryStore>(
     store: &S,
     request: NativeMigrationRequest,
-) -> Result<NativeMigrationResponse, GatewayError> {
+) -> Result<NativeMigrationResponse, MigrationError> {
     if request.v != 1 {
-        return Err(wire_error("Private migration version is unsupported"));
+        return Err(MigrationError::from(wire_error(
+            "Private migration version is unsupported",
+        )));
     }
     let response = match request.request {
         NativeOperation::AdoptNative { capture } => NativeResult::Adopted {
@@ -94,10 +96,14 @@ pub async fn execute_native<S: QueryStore>(
         },
         NativeOperation::ExportNativeRollback { now_ms, artifacts } => {
             if !(0..=MAX_SAFE_INTEGER).contains(&now_ms) {
-                return Err(wire_error("Private migration clock is invalid"));
+                return Err(MigrationError::from(wire_error(
+                    "Private migration clock is invalid",
+                )));
             }
             NativeResult::Exported {
-                bundle: export_native_rollback_bundle(store, now_ms, artifacts.into()).await?,
+                bundle: Box::new(
+                    export_native_rollback_bundle(store, now_ms, artifacts.into()).await?,
+                ),
             }
         }
     };

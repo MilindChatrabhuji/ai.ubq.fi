@@ -1,3 +1,4 @@
+use crate::replay_values::SourceObject;
 use crate::{
     Context, HealthProvider, HealthTarget, ObservabilityHost, ObservabilityRuntime,
     completion::Completion,
@@ -6,7 +7,7 @@ use crate::{
     store,
 };
 use gateway_auth::AuthResponse;
-use gateway_core::{GatewayError, query::QueryStore};
+use gateway_core::{GatewayError, query::QueryStore, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{cell::RefCell, rc::Rc};
 #[derive(Clone)]
@@ -98,11 +99,11 @@ fn quota_view(snapshot: Option<&Value>) -> Value {
     }
     out
 }
-fn credential_view(credential: &CredentialMetadata) -> Value {
-    let mut v = serde_json::to_value(credential).expect("metadata serializes");
-    v["expires_at_ms"] = Value::Null;
-    v["refresh_material_present"] = json!(false);
-    v
+fn credential_view(credential: &CredentialMetadata) -> Result<SourceJson, GatewayError> {
+    let mut document = SourceObject::parse(&SourceJson::from_serializable(credential)?)?;
+    document.set("expires_at_ms", &Option::<i64>::None)?;
+    document.set("refresh_material_present", &false)?;
+    document.source_json()
 }
 fn safe_quota(
     quota: &gateway_core::source_json::SourceJson,
@@ -195,8 +196,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         body["ubiquity"] =
             json!({"configured":inventory.ubiquity_configured,"health":gateway_health});
         let mut accounts = Vec::new();
-        let mut source_accounts = Vec::new();
-        let mut active_quota = None;
+        let mut active = None;
         for account in &inventory.claude.accounts {
             if account.target.provider != HealthProvider::ClaudeCode {
                 return Err(store::error("Claude health target provider mismatch"));
@@ -211,36 +211,47 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             } else {
                 unknown_health()
             };
-            accounts.push(json!({"account_id":account.account_id,"account_cohort_id":account.account_cohort_id,"label":account.label,"credential":credential_view(&account.credential),"workspace":account.workspace,"active":inventory.claude.active_account_id.as_ref()==Some(&account.account_id),"stale":!current,"quota":null,"health":health,"capabilities":{"identity_verified":false,"can_refresh":false,"can_reset_upstream_quota":false}}));
+            let mut document = SourceObject::parse(&SourceJson::from_serializable(
+                &json!({"account_id":account.account_id,"account_cohort_id":account.account_cohort_id,"active":inventory.claude.active_account_id.as_ref()==Some(&account.account_id),"stale":!current,"health":health,"capabilities":{"identity_verified":false,"can_refresh":false,"can_reset_upstream_quota":false}}),
+            )?)?;
+            document.set("label", &account.label)?;
+            document.set("credential", &credential_view(&account.credential)?)?;
+            document.set("workspace", &account.workspace)?;
             let quota = if current {
                 account.quota.as_ref().map(safe_quota).transpose()?
             } else {
                 None
             };
+            document.set("quota", &quota)?;
             if current && inventory.claude.active_account_id.as_ref() == Some(&account.account_id) {
-                active_quota = quota.clone();
+                active = Some(document.clone());
             }
-            let mut source = crate::replay_values::SourceObject::parse(
-                &gateway_core::source_json::SourceJson::from_serializable(
-                    accounts.last().expect("pushed account"),
-                )?,
-            )?;
-            source.set("quota", &quota)?;
-            source_accounts.push(source.source_json()?);
+            accounts.push(document.source_json()?);
         }
-        let active = accounts.iter().find(|a| {
-            a["account_id"].as_str() == inventory.claude.active_account_id.as_deref()
-                && a["stale"] != true
-        });
-        body["claude_code"] = json!({"configured":active.is_some(),"credential":active.map(|a|a["credential"].clone()),"workspace":active.map(|a|a["workspace"].clone()),"account_id":active.map(|a|a["account_id"].clone()),"account_cohort_id":active.map(|a|a["account_cohort_id"].clone()),"accounts":accounts,"active_account_id":inventory.claude.active_account_id,"active_reason":inventory.claude.active_reason,"account_scan":"ok","access":inventory.claude.access,"principal_allowlist_configured":inventory.claude.access.as_ref().is_some_and(|a|!a.allowed_key_ids.is_empty()),"enabled":inventory.claude.enabled,"quota":active.map(|a|a["quota"].clone()),"health":active.map(|a|a["health"].clone()).unwrap_or_else(unknown_health)});
-        let mut claude = crate::replay_values::SourceObject::parse(
-            &gateway_core::source_json::SourceJson::from_serializable(&body["claude_code"])?,
+        let mut claude = SourceObject::parse(&SourceJson::from_serializable(
+            &json!({"configured":active.is_some(),"active_account_id":inventory.claude.active_account_id,"account_scan":"ok","principal_allowlist_configured":inventory.claude.access.as_ref().is_some_and(|a|!a.allowed_key_ids.is_empty()),"enabled":inventory.claude.enabled}),
+        )?)?;
+        for field in [
+            "credential",
+            "workspace",
+            "account_id",
+            "account_cohort_id",
+            "quota",
+        ] {
+            claude.set(field, &active.as_ref().and_then(|a| a.get(field)))?;
+        }
+        claude.set(
+            "health",
+            &active
+                .as_ref()
+                .and_then(|a| a.get("health"))
+                .cloned()
+                .unwrap_or(SourceJson::from_serializable(&unknown_health())?),
         )?;
-        claude.set("accounts", &source_accounts)?;
-        claude.set("quota", &active_quota)?;
-        let mut source = crate::replay_values::SourceObject::parse(
-            &gateway_core::source_json::SourceJson::from_serializable(&body)?,
-        )?;
+        claude.set("accounts", &accounts)?;
+        claude.set("active_reason", &inventory.claude.active_reason)?;
+        claude.set("access", &inventory.claude.access)?;
+        let mut source = SourceObject::parse(&SourceJson::from_serializable(&body)?)?;
         source.set("claude_code", &claude.source_json()?)?;
         let mut response = AuthResponse::source_json(200, source.source_json()?);
         identity_headers(&mut response, self.host.build_identity()?)?;
@@ -295,7 +306,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 codex: &'a ActiveProbe,
                 metered_quota: &'a Option<ActiveProbe>,
                 claude_subscription: &'a Option<ActiveProbe>,
-                claude_workspace: &'a Option<Value>,
+                claude_workspace: &'a Option<SourceJson>,
             }
             #[derive(serde::Serialize)]
             struct Body<'a> {

@@ -1,13 +1,31 @@
 //! Buffered response validation and translation. Transport success is not semantic completion.
+use crate::source as s;
 use crate::{
     tools,
     types::*,
     usage,
     writer::{ResponseWriter, envelope, finish_disposition},
 };
+use gateway_core::source_json::SourceJson;
 use gateway_core::{GatewayError, lifecycle::SemanticTerminal, provider::UpstreamProvider};
 use serde_json::{Value, json};
-pub fn normalize_chat_completion(value: &Value, plan: &DecodePlan) -> Result<Value, GatewayError> {
+pub fn normalize_chat_completion(
+    value: &Value,
+    plan: &DecodePlan,
+) -> Result<SourceJson, GatewayError> {
+    let fields = normalize_chat_completion_fragment(value, plan)?;
+    Ok(chat_model_body(&fields, plan))
+}
+fn chat_model_body(fields: &Value, plan: &DecodePlan) -> SourceJson {
+    let mut body = s::generated(fields);
+    s::set(&mut body, "model", s::quoted(plan.model.as_js_string()));
+    body
+}
+/// Only actual scalar upstream fragments, without source-derived model/request fields.
+fn normalize_chat_completion_fragment(
+    value: &Value,
+    plan: &DecodePlan,
+) -> Result<Value, GatewayError> {
     let id = value["id"]
         .as_str()
         .filter(|s| !s.trim().is_empty())
@@ -98,7 +116,8 @@ pub fn normalize_chat_completion(value: &Value, plan: &DecodePlan) -> Result<Val
         }
         normalized.push(json!({"index":choice["index"].as_u64().unwrap_or(position as u64),"message":mapped,"finish_reason":finish}));
     }
-    let mut result = json!({"id":id,"object":"chat.completion","created":created,"model":plan.model,"choices":normalized});
+    let mut result =
+        json!({"id":id,"object":"chat.completion","created":created,"choices":normalized});
     if let Some(value) = value.get("usage").filter(|v| !v.is_null()) {
         if !value.is_object() {
             return Err(malformed("Upstream usage is not an object."));
@@ -111,7 +130,7 @@ pub fn chat_completion_to_responses(
     completion: &Value,
     plan: &DecodePlan,
     profile: ChatProfile,
-) -> Value {
+) -> SourceJson {
     let (reason, incomplete, error) =
         finish_disposition(completion["choices"][0]["finish_reason"].as_str());
     let status = match reason {
@@ -120,10 +139,16 @@ pub fn chat_completion_to_responses(
         _ => "failed",
     };
     let mut body = envelope(plan, status);
-    body["created_at"] = completion
-        .get("created")
-        .cloned()
-        .unwrap_or(json!(plan.created_at));
+    s::set(
+        &mut body,
+        "created_at",
+        s::generated(
+            &completion
+                .get("created")
+                .cloned()
+                .unwrap_or(json!(plan.created_at)),
+        ),
+    );
     let mut output = vec![];
     for (choice_index, choice) in completion["choices"]
         .as_array()
@@ -136,9 +161,12 @@ pub fn chat_completion_to_responses(
             .as_str()
             .or_else(|| message["reasoning"].as_str())
             .filter(|s| !s.is_empty())
-            && plan.reasoning_summary.as_deref() != Some("none")
+            && !plan
+                .reasoning_summary
+                .as_ref()
+                .is_some_and(|value| value.as_units().iter().copied().eq("none".encode_utf16()))
         {
-            output.push(json!({"id":format!("rs_{}_{choice_index}",plan.response_id),"type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":reason}]}));
+            output.push(s::generated(&json!({"id":format!("rs_{}_{choice_index}",plan.response_id),"type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":reason}]})));
         }
         let mut parts = vec![];
         if let Some(text) = message["content"].as_str().filter(|s| !s.is_empty()) {
@@ -148,7 +176,7 @@ pub fn chat_completion_to_responses(
             parts.push(json!({"type":"refusal","refusal":refusal}));
         }
         if !parts.is_empty() {
-            output.push(json!({"id":format!("msg_{}_{choice_index}",plan.response_id),"type":"message","status":"completed","role":"assistant","content":parts}));
+            output.push(s::generated(&json!({"id":format!("msg_{}_{choice_index}",plan.response_id),"type":"message","status":"completed","role":"assistant","content":parts})));
         }
         for (call_index, call) in message["tool_calls"]
             .as_array()
@@ -172,74 +200,32 @@ pub fn chat_completion_to_responses(
             ));
         }
     }
-    body["output"] = json!(output);
-    body["usage"] = usage::chat_to_responses(&completion["usage"], profile).unwrap_or(Value::Null);
+    s::set(&mut body, "output", s::array(&output));
+    s::set(
+        &mut body,
+        "usage",
+        s::generated(&usage::chat_to_responses(&completion["usage"], profile)),
+    );
     if let Some(incomplete) = incomplete {
-        body["incomplete_details"] = json!({"reason":incomplete});
+        s::set(
+            &mut body,
+            "incomplete_details",
+            s::generated(&json!({"reason":incomplete})),
+        );
     }
     if let Some(error) = error {
-        body["error"] =
-            json!({"code":error,"message":format!("Upstream stopped generating: {error}")});
+        s::set(
+            &mut body,
+            "error",
+            s::generated(
+                &json!({"code":error,"message":format!("Upstream stopped generating: {error}")}),
+            ),
+        );
     }
     body
 }
-pub fn response_to_chat(payload: &Value, plan: &DecodePlan) -> Result<Value, GatewayError> {
-    if payload["status"] != "completed" {
-        return Err(malformed(
-            "Upstream stream ended without response.completed.",
-        ));
-    }
-    let mut text = String::new();
-    let mut refusal = String::new();
-    let mut calls = vec![];
-    for item in payload["output"].as_array().into_iter().flatten() {
-        match item["type"].as_str().unwrap_or("") {
-            "message" => {
-                for part in item["content"].as_array().into_iter().flatten() {
-                    if let Some(value) = part["text"].as_str() {
-                        text.push_str(value);
-                    }
-                    if let Some(value) = part["refusal"].as_str() {
-                        refusal.push_str(value);
-                    }
-                }
-            }
-            "function_call" => {
-                let id = item["call_id"]
-                    .as_str()
-                    .ok_or_else(|| malformed("Upstream function call has no call_id."))?;
-                let name = item["name"]
-                    .as_str()
-                    .filter(|s| !s.trim().is_empty())
-                    .ok_or_else(|| malformed("Upstream function call has no name."))?;
-                let arguments = item["arguments"]
-                    .as_str()
-                    .ok_or_else(|| malformed("Upstream function call arguments are invalid."))?;
-                calls.push(json!({"id":id,"type":"function","function":{"name":name,"arguments":arguments}}));
-            }
-            _ => (),
-        }
-    }
-    if text.is_empty() && refusal.is_empty() && calls.is_empty() {
-        return Err(GatewayError::new(
-            502,
-            "Upstream response completed with no translated semantic output.",
-            Some("empty_upstream_completion"),
-        )
-        .with_type("server_error"));
-    }
-    let mut message = json!({"role":"assistant","content":if text.is_empty()&&(!calls.is_empty()||!refusal.is_empty()){Value::Null}else{json!(text)}});
-    if !refusal.is_empty() {
-        message["refusal"] = json!(refusal);
-    }
-    if !calls.is_empty() {
-        message["tool_calls"] = json!(calls);
-    }
-    let mut result = json!({"id":payload.get("id").cloned().unwrap_or(json!(plan.response_id)),"object":"chat.completion","created":payload.get("created_at").cloned().unwrap_or(json!(plan.created_at)),"model":plan.model,"choices":[{"index":0,"message":message,"finish_reason":if calls.is_empty(){"stop"}else{"tool_calls"}}]});
-    if let Some(usage) = usage::responses_to_chat(&payload["usage"]) {
-        result["usage"] = usage;
-    }
-    Ok(result)
+pub fn response_to_chat(payload: &Value, plan: &DecodePlan) -> Result<SourceJson, GatewayError> {
+    crate::source_response::to_chat(&s::generated(payload), plan)
 }
 fn replay_chat(completion: &Value, plan: &DecodePlan, profile: ChatProfile) -> Vec<ProviderEvent> {
     let mut writer = ResponseWriter::new(plan.clone());
@@ -256,7 +242,7 @@ fn replay_chat(completion: &Value, plan: &DecodePlan, profile: ChatProfile) -> V
 fn decode_anthropic(
     value: &Value,
     plan: &DecodePlan,
-) -> Result<(Value, Vec<ProviderEvent>), GatewayError> {
+) -> Result<(SourceJson, Vec<ProviderEvent>), GatewayError> {
     if value["type"] != "message" || value["role"] != "assistant" {
         return Err(malformed(
             "Anthropic Messages returned an invalid assistant message.",
@@ -334,8 +320,7 @@ fn decode_anthropic(
     );
     let body = events
         .last()
-        .and_then(|event| event.data.get("response"))
-        .cloned()
+        .and_then(|event| event.field("response"))
         .ok_or_else(|| malformed("Anthropic terminal is absent."))?;
     Ok((body, events))
 }
@@ -374,7 +359,7 @@ pub fn decode_response(
         return Ok(DecodedResponse {
             status,
             headers: output_headers,
-            body: serde_json::from_slice(bytes).unwrap_or(Value::Null),
+            body: s::generated(&serde_json::from_slice::<Value>(bytes).unwrap_or(Value::Null)),
             events: vec![],
             terminal: Some(SemanticTerminal::Error),
             usage: None,
@@ -389,17 +374,19 @@ pub fn decode_response(
         // The decoder stops at the first terminal. An error must not fall back to
         // an earlier response.created payload or the generic completed sentinel.
         if plan.surface == ClientSurface::Responses
-            && let Some(event) = events.iter().find(|event| event.data["type"] == "error")
+            && let Some(event) = events
+                .iter()
+                .find(|event| event.type_name().as_deref() == Some("error"))
         {
             let body = if plan.stream {
                 output_headers.insert("Content-Type".into(), "text/event-stream".into());
                 event.data.clone()
             } else {
-                json!({"error":{
-                    "message":event.data["message"].as_str().unwrap_or("Upstream Responses stream ended unexpectedly."),
+                s::generated(&json!({"error":{
+                    "message":s::control(&s::get(&event.data,"message")).unwrap_or_else(||"Upstream Responses stream ended unexpectedly.".into()),
                     "type":"invalid_request_error",
-                    "code":event.data["code"].as_str().unwrap_or("server_error")
-                }})
+                    "code":s::control(&s::get(&event.data,"code")).unwrap_or_else(||"server_error".into())
+                }}))
             };
             return Ok(DecodedResponse {
                 status: if plan.stream { status } else { 502 },
@@ -415,8 +402,8 @@ pub fn decode_response(
         let body = events
             .iter()
             .rev()
-            .find_map(|e| e.data.get("response").cloned())
-            .unwrap_or(Value::Null);
+            .find_map(|e| e.field("response"))
+            .unwrap_or_else(s::null);
         let mut body = if plan.surface == ClientSurface::Chat {
             collect_chat_events(&events, plan)?
         } else {
@@ -425,7 +412,7 @@ pub fn decode_response(
         if plan.surface == ClientSurface::Chat
             && let Some(usage) = decoder.observed_usage().and_then(usage::responses_to_chat)
         {
-            body["usage"] = usage;
+            s::set(&mut body, "usage", s::generated(&usage));
         }
         if plan.stream {
             output_headers.insert("Content-Type".into(), "text/event-stream".into());
@@ -435,7 +422,7 @@ pub fn decode_response(
                 .terminal_observed()
                 .then_some(SemanticTerminal::Completed)
         });
-        let usage = body.get("usage").filter(|v| !v.is_null()).cloned();
+        let usage = crate::source_collector::usage(&s::get(&body, "usage"));
         return Ok(DecodedResponse {
             status,
             headers: output_headers,
@@ -458,11 +445,11 @@ pub fn decode_response(
         return Ok(DecodedResponse {
             status,
             headers: output_headers,
-            body: if value["error"].is_object() {
+            body: s::generated(&if value["error"].is_object() {
                 value
             } else {
                 json!({"error":{"message":format!("Upstream request failed ({status})."),"type":"server_error","code":"upstream_error","param":null}})
-            },
+            }),
             events: vec![],
             terminal: Some(SemanticTerminal::Error),
             usage: None,
@@ -474,7 +461,7 @@ pub fn decode_response(
     let mut native_replay = None;
     let body = match plan.decode {
         ResponseDecode::Chat => {
-            let normalized = normalize_chat_completion(&value, plan)?;
+            let normalized = normalize_chat_completion_fragment(&value, plan)?;
             if plan.provider == UpstreamProvider::Cerebras
                 && !crate::policy::chat_has_answer(&normalized)
             {
@@ -483,7 +470,7 @@ pub fn decode_response(
             if plan.stream {
                 events = crate::finalize::buffered_chat_events(&normalized, plan);
             }
-            normalized
+            chat_model_body(&normalized, plan)
         }
         ResponseDecode::ChatToResponses(_) | ResponseDecode::AnthropicChatToResponses => {
             let profile = if plan.decode == ResponseDecode::AnthropicChatToResponses {
@@ -502,14 +489,16 @@ pub fn decode_response(
             } else {
                 value.clone()
             };
-            let completion = normalize_chat_completion(&projected, plan)?;
+            let completion = normalize_chat_completion_fragment(&projected, plan)?;
             if plan.provider == UpstreamProvider::Cerebras
                 && !crate::policy::chat_has_answer(&completion)
             {
                 return Err(cerebras_empty());
             }
             let body = chat_completion_to_responses(&completion, plan, profile);
-            if body["status"] == "completed" && !crate::policy::response_has_answer(&body) {
+            if s::is(&s::get(&body, "status"), "completed")
+                && !crate::source_policy::response_has_answer(&body)
+            {
                 return Err(GatewayError::new(
                     502,
                     "Upstream response completed with no translated semantic output.",
@@ -521,12 +510,12 @@ pub fn decode_response(
                 events = replay_chat(&completion, plan, profile);
             }
             if plan.decode == ResponseDecode::AnthropicChatToResponses
-                && body["status"] == "completed"
+                && s::is(&s::get(&body, "status"), "completed")
             {
                 native_replay = value["choices"][0].get("message").cloned();
             }
             if plan.surface == ClientSurface::Chat {
-                response_to_chat(&body, plan)?
+                crate::source_response::to_chat(&body, plan)?
             } else {
                 body
             }
@@ -534,11 +523,11 @@ pub fn decode_response(
         ResponseDecode::AnthropicToResponses => {
             let (body, translated) = decode_anthropic(&value, plan)?;
             events = if plan.stream { translated } else { vec![] };
-            if body["status"] == "completed" {
+            if s::is(&s::get(&body, "status"), "completed") {
                 native_replay = Some(json!({"role":"assistant","content":value["content"]}));
             }
             if plan.surface == ClientSurface::Chat {
-                response_to_chat(&body, plan)?
+                crate::source_response::to_chat(&body, plan)?
             } else {
                 body
             }
@@ -558,11 +547,11 @@ pub fn decode_response(
             if plan.decode == ResponseDecode::ResponsesToChat {
                 response_to_chat(&value, plan)?
             } else {
-                value
+                s::generated(&value)
             }
         }
         ResponseDecode::Voyage => crate::extras::decode_embeddings(&value, plan)?,
-        ResponseDecode::SystemOne => crate::extras::decode_systemone(&value)?,
+        ResponseDecode::SystemOne => s::generated(&crate::extras::decode_systemone(&value)?),
     };
     if plan.stream && !events.is_empty() {
         output_headers.insert("Content-Type".into(), "text/event-stream".into());
@@ -574,7 +563,7 @@ pub fn decode_response(
         )
         .then_some(SemanticTerminal::Completed)
     });
-    let usage = body.get("usage").filter(|v| !v.is_null()).cloned();
+    let usage = crate::source_collector::usage(&s::get(&body, "usage"));
     Ok(DecodedResponse {
         status,
         headers: output_headers,
@@ -601,79 +590,19 @@ fn cerebras_empty() -> GatewayError {
     )
     .with_type("server_error")
 }
-fn terminal_for(value: &Value) -> Option<SemanticTerminal> {
-    match value["status"].as_str() {
+fn terminal_for(value: &SourceJson) -> Option<SemanticTerminal> {
+    match s::control(&s::get(value, "status")).as_deref() {
         Some("completed") => Some(SemanticTerminal::Completed),
         Some("incomplete") => Some(SemanticTerminal::Incomplete),
         Some("failed") => Some(SemanticTerminal::Failed),
         _ => None,
     }
 }
-fn collect_chat_events(events: &[ProviderEvent], plan: &DecodePlan) -> Result<Value, GatewayError> {
-    let mut text = String::new();
-    let mut refusal = String::new();
-    let mut calls = std::collections::BTreeMap::<u64, Value>::new();
-    let mut usage = None;
-    let mut complete = false;
-    for event in events {
-        if event.data == "[DONE]" {
-            complete = true;
-            continue;
-        }
-        if event.data.get("error").is_some() {
-            return Err(malformed(
-                "Upstream stream ended without response.completed.",
-            ));
-        }
-        if let Some(value) = event.data.get("usage") {
-            usage = Some(value.clone());
-        }
-        for choice in event.data["choices"].as_array().into_iter().flatten() {
-            let delta = &choice["delta"];
-            if let Some(s) = delta["content"].as_str() {
-                text.push_str(s)
-            }
-            if let Some(s) = delta["refusal"].as_str() {
-                refusal.push_str(s)
-            }
-            for call in delta["tool_calls"].as_array().into_iter().flatten() {
-                let index = call["index"].as_u64().unwrap_or(0);
-                let row = calls.entry(index).or_insert_with(
-                    || json!({"id":"","type":"function","function":{"name":"","arguments":""}}),
-                );
-                if let Some(id) = call.get("id") {
-                    row["id"] = id.clone();
-                }
-                if let Some(name) = call["function"].get("name") {
-                    row["function"]["name"] = name.clone();
-                }
-                if let Some(args) = call["function"]["arguments"].as_str() {
-                    let previous = row["function"]["arguments"].as_str().unwrap_or("");
-                    row["function"]["arguments"] = json!(format!("{previous}{args}"));
-                }
-            }
-        }
-    }
-    if !complete {
-        return Err(malformed("Upstream Chat stream ended without sentinel."));
-    }
-    let mut message = json!({"role":"assistant","content":if text.is_empty()&&(!calls.is_empty()||!refusal.is_empty()){Value::Null}else{json!(text)}});
-    if !refusal.is_empty() {
-        message["refusal"] = json!(refusal);
-    }
-    let finish = if calls.is_empty() {
-        "stop"
-    } else {
-        "tool_calls"
-    };
-    if !calls.is_empty() {
-        message["tool_calls"] = json!(calls.into_values().collect::<Vec<_>>());
-    }
-    let mut body = json!({"id":plan.response_id,"object":"chat.completion","created":plan.created_at,"model":plan.model,"choices":[{"index":0,"message":message,"finish_reason":finish}]});
-    if let Some(usage) = usage {
-        body["usage"] = usage;
-    }
-    Ok(body)
+fn collect_chat_events(
+    events: &[ProviderEvent],
+    plan: &DecodePlan,
+) -> Result<SourceJson, GatewayError> {
+    crate::source_response::collect(events, plan)
 }
 
 pub(crate) fn native_response_id(id: &str, fallback: &str) -> String {

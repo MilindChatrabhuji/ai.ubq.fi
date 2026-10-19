@@ -65,9 +65,15 @@ impl<
                         self.cursor(row.cursor + 1).await?;
                         continue;
                     }
+                    let ordinary = self.claude_ordinary(&self.plan.model)?;
                     match self
                         .host
-                        .select_claude(&self.input.principal, &self.plan.model, &self.input.raw)
+                        .select_claude(
+                            &self.input.principal,
+                            &self.plan.model,
+                            &self.input.raw,
+                            ordinary.effective_effort(),
+                        )
                         .await?
                     {
                         ClaudeSelection::NotApplicable => {
@@ -113,7 +119,13 @@ impl<
                             continue;
                         }
                         ClaudeSelection::Eligible(credential) => {
-                            if !matches!(credential.fence, CredentialFence::Claude { .. }) {
+                            if !matches!(
+                                credential.as_ref(),
+                                PublishedCredential::Claude {
+                                    fence: CredentialFence::Claude { .. },
+                                    ..
+                                }
+                            ) {
                                 return Err(journal::unavailable(
                                     "Claude credential binding is invalid.",
                                 )
@@ -129,36 +141,85 @@ impl<
                     }
                 }
                 RouteHop::Codex => {
-                    let mut account = match self.authority().select_account(&self.plan.model, self.plan.quota_class, self.now()?).await? {
+                    let mut account = match self
+                        .authority()
+                        .select_account(&self.plan.model, self.plan.quota_class, self.now()?)
+                        .await?
+                    {
                         RouteSelection::Eligible(account) => account,
                         RouteSelection::QuotaBlocked { proof, .. } => {
-                            let recovery = if proof.full_cohort_exhausted() && !row.recovery_attempted {
-                                self.change(|journal| { journal.recovery_attempted = true; Ok(()) }).await?;
-                                self.host.recover_codex(&proof, &self.plan.model).await?
-                            } else { CodexRecovery::Declined };
+                            let recovery =
+                                if proof.full_cohort_exhausted() && !row.recovery_attempted {
+                                    self.change(|journal| {
+                                        journal.recovery_attempted = true;
+                                        Ok(())
+                                    })
+                                    .await?;
+                                    self.host.recover_codex(&proof, &self.plan.model).await?
+                                } else {
+                                    CodexRecovery::Declined
+                                };
                             match recovery {
                                 CodexRecovery::Recovered(account) => {
-                                    if account.requested_model != self.plan.model || account.quota_class != self.plan.quota_class || account.probe_required || account.probe.is_none() {
+                                    if account.requested_model != self.plan.model
+                                        || account.quota_class != self.plan.quota_class
+                                        || account.probe_required
+                                        || account.probe.is_none()
+                                    {
                                         return Err(journal::unavailable("The elected recovery admission does not match this request.").into());
                                     }
-                                    self.authority().ensure_admission_current(&account, self.now()?).await?;
+                                    self.authority()
+                                        .ensure_admission_current(&account, self.now()?)
+                                        .await?;
                                     account
                                 }
                                 CodexRecovery::Reselect => continue,
                                 CodexRecovery::Declined => {
-                                    if !proof.full_cohort_unavailable() { return Err(journal::unavailable("Subscription pool is not authoritatively unavailable.").into()); }
+                                    if !proof.full_cohort_unavailable() {
+                                        return Err(journal::unavailable(
+                                            "Subscription pool is not authoritatively unavailable.",
+                                        )
+                                        .into());
+                                    }
                                     self.cursor(row.cursor + 1).await?;
                                     continue;
                                 }
                             }
                         }
                         RouteSelection::CredentialsInvalid { proof } => {
-                            if !proof.full_cohort_unavailable() { return Err(journal::unavailable("Credential failure does not cover the current pool.").into()); }
+                            if !proof.full_cohort_unavailable() {
+                                return Err(journal::unavailable(
+                                    "Credential failure does not cover the current pool.",
+                                )
+                                .into());
+                            }
                             self.cursor(row.cursor + 1).await?;
                             continue;
                         }
-                        RouteSelection::ModelUnavailable { model, detail } => return Err(GatewayError::new(404, detail.unwrap_or_else(|| format!("The model '{model}' is not available for these subscriptions.")), Some("model_not_found")).into()),
-                        RouteSelection::RoutingUnavailable => return Err(journal::unavailable("The current subscription routing state is unavailable.").into()),
+                        RouteSelection::ModelUnavailable { model, detail } => {
+                            let detail = detail.unwrap_or_else(|| {
+                                let mut units = "The model '".encode_utf16().collect::<Vec<_>>();
+                                units.extend_from_slice(model.as_js_string().as_units());
+                                units.extend(
+                                    "' is not available for these subscriptions.".encode_utf16(),
+                                );
+                                gateway_core::js_string::JsString16::from_units(units)
+                            });
+                            return Err(gateway_schema::source_request::SourceRequestError::new(
+                                404,
+                                detail,
+                                "invalid_request_error",
+                                Some("model_not_found"),
+                                None,
+                            )
+                            .into());
+                        }
+                        RouteSelection::RoutingUnavailable => {
+                            return Err(journal::unavailable(
+                                "The current subscription routing state is unavailable.",
+                            )
+                            .into());
+                        }
                     };
                     if account.probe_required {
                         account = self
@@ -235,19 +296,20 @@ impl<
                             "/v1/responses"
                         }
                         .into(),
-                        stream: self.input.raw["stream"] == true,
-                        reasoning: self.input.raw["reasoning"]["effort"]
-                            .as_str()
-                            .or_else(|| self.input.raw["reasoning_effort"].as_str())
-                            .map(str::to_owned),
+                        stream: self.input.streamed(),
+                        reasoning: self.input.requested_reasoning(),
                         created_at_ms: self.input.context.started_at_ms,
                     };
-                    let context = self.paid_context(provider, synthetic);
+                    let context = self.paid_context(provider, synthetic)?;
                     let receipt = self
                         .authority()
                         .authorize_paid_route(&input, &context, self.now()?)
                         .await?;
-                    Self::check_paid_credential(&credential.fence, &receipt)?;
+                    let receipt = self
+                        .authority()
+                        .bind_paid_original_request(&receipt, &self.input.context, self.now()?)
+                        .await?;
+                    Self::check_paid_credential(credential.fence(), &receipt)?;
                     let reservation=match self.authority().reserve_paid(&input,&authorization,&receipt,self.now()?).await?{PaidAdmission::Reserved(r)=>r,PaidAdmission::Existing(_)=>return Err(journal::unavailable("A retained paid attempt cannot be redispatched without reconciliation.").into())};
                     (upstream, model, credential, Some(reservation))
                 }
@@ -261,7 +323,7 @@ impl<
                             .release_paid_before_transport(paid, self.now()?)
                             .await?;
                     }
-                    return Err(error.into());
+                    return Err(error);
                 }
             };
             let attempt = AttemptRecord {
@@ -269,7 +331,7 @@ impl<
                 provider,
                 model,
                 cursor: row.cursor,
-                fence: publication.fence.clone(),
+                fence: publication.fence().clone(),
                 paid: paid.clone(),
                 phase: Phase::Prepared,
                 transport_started: false,
@@ -303,10 +365,11 @@ impl<
                 }
                 return Err(error.into());
             }
+            self.admission.capture_attempt(attempt);
             return Ok(Some(PreparedAttempt {
                 id,
                 request,
-                credential: publication.fence,
+                credential: publication.into_fence(),
                 paid,
                 original_request_id: self.id().into(),
             }));

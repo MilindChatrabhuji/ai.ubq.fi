@@ -1,0 +1,584 @@
+{
+  "source_sha": "893c14045e9aaaf436fe135a0b7743d3ea3fd9ac",
+  "source_files": {
+    "src/utils.ts": "600174311bb74dda4729a26ee2fb34811d118db4ce882ed3d99ab10868317b7f",
+    "src/provider/claude-capacity-history.ts": "60ae8c46a8a952531f8c4ea619d216a404acb6c915b5aa79d804f28f685260a7",
+    "src/provider/claude-capacity-rollups.ts": "4f5fe0b11bfb536cf427e00361f8478df78252531391de4c6e89ff54ab7b76a4",
+    "src/provider/capacity-contract.ts": "93788d1f2308b832c8362e6e903a7e62b4730f2b2f569953855da54345003f4c"
+  },
+  "cases": [
+    {
+      "event": {
+        "v": 1,
+        "observation_id": "synthetic-observation",
+        "account_id": "synthetic-account",
+        "account_cohort_id": "synthetic-cohort",
+        "credential_kind": "oauth",
+        "workspace_id": "workspace-scalar",
+        "source_observed_at_ms": 7200000,
+        "sampled_at_ms": 7200000,
+        "response_status": 200,
+        "state": "available",
+        "observation": {
+          "windows": {
+            "5h": {
+              "status": "allowed",
+              "utilization": 0.25,
+              "reset_at_ms": 10800000,
+              "observed_at_ms": 7200000
+            },
+            "7d": {
+              "status": "allowed",
+              "utilization": 0.5,
+              "reset_at_ms": 14400000,
+              "observed_at_ms": 7200000
+            }
+          },
+          "standard": {
+            "requests": {
+              "limit": 100,
+              "remaining": 90,
+              "reset_at_ms": 10800000,
+              "observed_at_ms": 7200000
+            },
+            "input-tokens": {
+              "limit": 1000,
+              "remaining": 800,
+              "reset_at_ms": 10800000,
+              "observed_at_ms": 7200000
+            }
+          },
+          "representative_claim": "representative",
+          "observed_at_ms": 7200000
+        }
+      },
+      "rows": [
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "history",
+            7200000,
+            "synthetic-account",
+            "synthetic-cohort"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "synthetic-account",
+            "account_cohort_id": "synthetic-cohort",
+            "points": [
+              {
+                "v": 1,
+                "point_id": "0c6bbd5b804f73980ad5b817e44cf637d2e7a18d3488baca1febcc8f17a1966c",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7200000,
+                "source_observed_at_ms": 7200000,
+                "account_id": "synthetic-account",
+                "account_cohort_id": "synthetic-cohort",
+                "credential_kind": "oauth",
+                "workspace_id": "workspace-scalar",
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": {
+                    "status": "allowed",
+                    "used_percent": 25,
+                    "reset_at_ms": 10800000,
+                    "observed_at_ms": 7200000
+                  },
+                  "seven_day": {
+                    "status": "allowed",
+                    "used_percent": 50,
+                    "reset_at_ms": 14400000,
+                    "observed_at_ms": 7200000
+                  }
+                },
+                "standard": [
+                  {
+                    "family": "requests",
+                    "limit": 100,
+                    "remaining": 90,
+                    "reset_at_ms": 10800000,
+                    "observed_at_ms": 7200000
+                  },
+                  {
+                    "family": "input-tokens",
+                    "limit": 1000,
+                    "remaining": 800,
+                    "reset_at_ms": 10800000,
+                    "observed_at_ms": 7200000
+                  }
+                ]
+              }
+            ],
+            "flags": {
+              "normal": 1,
+              "unavailable": false,
+              "recovery": false,
+              "five_hour": false,
+              "seven_day": false
+            }
+          },
+          "expires_at_ms": 612900000
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "rollup",
+            7200000,
+            "synthetic-account",
+            "synthetic-cohort",
+            "five_hour",
+            10800000
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "synthetic-account",
+            "account_cohort_id": "synthetic-cohort",
+            "credential_kind": "oauth",
+            "workspace_id": "workspace-scalar",
+            "window": "five_hour",
+            "reset_at_ms": 10800000,
+            "samples": 1,
+            "available_sample_count": 1,
+            "unavailable_sample_count": 0,
+            "first_source_observed_at_ms": 7200000,
+            "last_source_observed_at_ms": 7200000,
+            "first_sampled_at_ms": 7200000,
+            "last_sampled_at_ms": 7200000,
+            "min_used_percent": 25,
+            "max_used_percent": 25,
+            "last_used_percent": 25,
+            "last_status": "allowed"
+          },
+          "expires_at_ms": null
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "rollup",
+            7200000,
+            "synthetic-account",
+            "synthetic-cohort",
+            "seven_day",
+            14400000
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "synthetic-account",
+            "account_cohort_id": "synthetic-cohort",
+            "credential_kind": "oauth",
+            "workspace_id": "workspace-scalar",
+            "window": "seven_day",
+            "reset_at_ms": 14400000,
+            "samples": 1,
+            "available_sample_count": 1,
+            "unavailable_sample_count": 0,
+            "first_source_observed_at_ms": 7200000,
+            "last_source_observed_at_ms": 7200000,
+            "first_sampled_at_ms": 7200000,
+            "last_sampled_at_ms": 7200000,
+            "min_used_percent": 50,
+            "max_used_percent": 50,
+            "last_used_percent": 50,
+            "last_status": "allowed"
+          },
+          "expires_at_ms": null
+        }
+      ]
+    },
+    {
+      "event": {
+        "v": 1,
+        "observation_id": "synthetic-observation",
+        "account_id": "synthetic-account",
+        "account_cohort_id": "synthetic-cohort",
+        "credential_kind": "oauth",
+        "workspace_id": "wrkspc_\ud800",
+        "source_observed_at_ms": 7200000,
+        "sampled_at_ms": 7200000,
+        "response_status": 200,
+        "state": "available",
+        "observation": {
+          "windows": {
+            "5h": {
+              "status": "allow\udc00",
+              "utilization": 0.25,
+              "reset_at_ms": 10800000,
+              "observed_at_ms": 7200000
+            },
+            "7d": {
+              "status": "allowed",
+              "utilization": 0.5,
+              "reset_at_ms": 14400000,
+              "observed_at_ms": 7200000
+            }
+          },
+          "standard": {
+            "requests": {
+              "limit": 100,
+              "remaining": 90,
+              "reset_at_ms": 10800000,
+              "observed_at_ms": 7200000
+            },
+            "input-tokens": {
+              "limit": 1000,
+              "remaining": 800,
+              "reset_at_ms": 10800000,
+              "observed_at_ms": 7200000
+            }
+          },
+          "representative_claim": "representative",
+          "observed_at_ms": 7200000
+        }
+      },
+      "rows": [
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "history",
+            7200000,
+            "synthetic-account",
+            "synthetic-cohort"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "synthetic-account",
+            "account_cohort_id": "synthetic-cohort",
+            "points": [
+              {
+                "v": 1,
+                "point_id": "7697869a7f51a5419a50dbd6247dc1ce630d7197fda41ccad369ba622e577c15",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7200000,
+                "source_observed_at_ms": 7200000,
+                "account_id": "synthetic-account",
+                "account_cohort_id": "synthetic-cohort",
+                "credential_kind": "oauth",
+                "workspace_id": "wrkspc_\ud800",
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": {
+                    "status": "allow\udc00",
+                    "used_percent": 25,
+                    "reset_at_ms": 10800000,
+                    "observed_at_ms": 7200000
+                  },
+                  "seven_day": {
+                    "status": "allowed",
+                    "used_percent": 50,
+                    "reset_at_ms": 14400000,
+                    "observed_at_ms": 7200000
+                  }
+                },
+                "standard": [
+                  {
+                    "family": "requests",
+                    "limit": 100,
+                    "remaining": 90,
+                    "reset_at_ms": 10800000,
+                    "observed_at_ms": 7200000
+                  },
+                  {
+                    "family": "input-tokens",
+                    "limit": 1000,
+                    "remaining": 800,
+                    "reset_at_ms": 10800000,
+                    "observed_at_ms": 7200000
+                  }
+                ]
+              }
+            ],
+            "flags": {
+              "normal": 1,
+              "unavailable": false,
+              "recovery": false,
+              "five_hour": false,
+              "seven_day": false
+            }
+          },
+          "expires_at_ms": 612900000
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "rollup",
+            7200000,
+            "synthetic-account",
+            "synthetic-cohort",
+            "five_hour",
+            10800000
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "synthetic-account",
+            "account_cohort_id": "synthetic-cohort",
+            "credential_kind": "oauth",
+            "workspace_id": "wrkspc_\ud800",
+            "window": "five_hour",
+            "reset_at_ms": 10800000,
+            "samples": 1,
+            "available_sample_count": 1,
+            "unavailable_sample_count": 0,
+            "first_source_observed_at_ms": 7200000,
+            "last_source_observed_at_ms": 7200000,
+            "first_sampled_at_ms": 7200000,
+            "last_sampled_at_ms": 7200000,
+            "min_used_percent": 25,
+            "max_used_percent": 25,
+            "last_used_percent": 25,
+            "last_status": "allow\udc00"
+          },
+          "expires_at_ms": null
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "rollup",
+            7200000,
+            "synthetic-account",
+            "synthetic-cohort",
+            "seven_day",
+            14400000
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "synthetic-account",
+            "account_cohort_id": "synthetic-cohort",
+            "credential_kind": "oauth",
+            "workspace_id": "wrkspc_\ud800",
+            "window": "seven_day",
+            "reset_at_ms": 14400000,
+            "samples": 1,
+            "available_sample_count": 1,
+            "unavailable_sample_count": 0,
+            "first_source_observed_at_ms": 7200000,
+            "last_source_observed_at_ms": 7200000,
+            "first_sampled_at_ms": 7200000,
+            "last_sampled_at_ms": 7200000,
+            "min_used_percent": 50,
+            "max_used_percent": 50,
+            "last_used_percent": 50,
+            "last_status": "allowed"
+          },
+          "expires_at_ms": null
+        }
+      ]
+    },
+    {
+      "event": {
+        "v": 1,
+        "observation_id": "synthetic-observation",
+        "account_id": "synthetic-account",
+        "account_cohort_id": "synthetic-cohort",
+        "credential_kind": "oauth",
+        "workspace_id": "workspace-reordered",
+        "source_observed_at_ms": 7200000,
+        "sampled_at_ms": 7200000,
+        "response_status": 200,
+        "state": "available",
+        "observation": {
+          "observed_at_ms": 7200000,
+          "representative_claim": "representative",
+          "standard": {
+            "input-tokens": {
+              "limit": 1000,
+              "remaining": 800,
+              "reset_at_ms": 10800000,
+              "observed_at_ms": 7200000
+            },
+            "requests": {
+              "limit": 100,
+              "remaining": 90,
+              "reset_at_ms": 10800000,
+              "observed_at_ms": 7200000
+            }
+          },
+          "windows": {
+            "5h": {
+              "status": "allowed",
+              "utilization": 0.25,
+              "reset_at_ms": 10800000,
+              "observed_at_ms": 7200000
+            },
+            "7d": {
+              "status": "allowed",
+              "utilization": 0.5,
+              "reset_at_ms": 14400000,
+              "observed_at_ms": 7200000
+            }
+          }
+        }
+      },
+      "rows": [
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "history",
+            7200000,
+            "synthetic-account",
+            "synthetic-cohort"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "synthetic-account",
+            "account_cohort_id": "synthetic-cohort",
+            "points": [
+              {
+                "v": 1,
+                "point_id": "1af4ebd417e2c92fadb9627acd8e958029972e64768bf5038cce5d72cd7895b7",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7200000,
+                "source_observed_at_ms": 7200000,
+                "account_id": "synthetic-account",
+                "account_cohort_id": "synthetic-cohort",
+                "credential_kind": "oauth",
+                "workspace_id": "workspace-reordered",
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": {
+                    "status": "allowed",
+                    "used_percent": 25,
+                    "reset_at_ms": 10800000,
+                    "observed_at_ms": 7200000
+                  },
+                  "seven_day": {
+                    "status": "allowed",
+                    "used_percent": 50,
+                    "reset_at_ms": 14400000,
+                    "observed_at_ms": 7200000
+                  }
+                },
+                "standard": [
+                  {
+                    "family": "input-tokens",
+                    "limit": 1000,
+                    "remaining": 800,
+                    "reset_at_ms": 10800000,
+                    "observed_at_ms": 7200000
+                  },
+                  {
+                    "family": "requests",
+                    "limit": 100,
+                    "remaining": 90,
+                    "reset_at_ms": 10800000,
+                    "observed_at_ms": 7200000
+                  }
+                ]
+              }
+            ],
+            "flags": {
+              "normal": 1,
+              "unavailable": false,
+              "recovery": false,
+              "five_hour": false,
+              "seven_day": false
+            }
+          },
+          "expires_at_ms": 612900000
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "rollup",
+            7200000,
+            "synthetic-account",
+            "synthetic-cohort",
+            "five_hour",
+            10800000
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "synthetic-account",
+            "account_cohort_id": "synthetic-cohort",
+            "credential_kind": "oauth",
+            "workspace_id": "workspace-reordered",
+            "window": "five_hour",
+            "reset_at_ms": 10800000,
+            "samples": 1,
+            "available_sample_count": 1,
+            "unavailable_sample_count": 0,
+            "first_source_observed_at_ms": 7200000,
+            "last_source_observed_at_ms": 7200000,
+            "first_sampled_at_ms": 7200000,
+            "last_sampled_at_ms": 7200000,
+            "min_used_percent": 25,
+            "max_used_percent": 25,
+            "last_used_percent": 25,
+            "last_status": "allowed"
+          },
+          "expires_at_ms": null
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "rollup",
+            7200000,
+            "synthetic-account",
+            "synthetic-cohort",
+            "seven_day",
+            14400000
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "synthetic-account",
+            "account_cohort_id": "synthetic-cohort",
+            "credential_kind": "oauth",
+            "workspace_id": "workspace-reordered",
+            "window": "seven_day",
+            "reset_at_ms": 14400000,
+            "samples": 1,
+            "available_sample_count": 1,
+            "unavailable_sample_count": 0,
+            "first_source_observed_at_ms": 7200000,
+            "last_source_observed_at_ms": 7200000,
+            "first_sampled_at_ms": 7200000,
+            "last_sampled_at_ms": 7200000,
+            "min_used_percent": 50,
+            "max_used_percent": 50,
+            "last_used_percent": 50,
+            "last_status": "allowed"
+          },
+          "expires_at_ms": null
+        }
+      ]
+    }
+  ]
+}
