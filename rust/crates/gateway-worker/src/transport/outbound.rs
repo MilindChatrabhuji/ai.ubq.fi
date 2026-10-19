@@ -199,15 +199,41 @@ where
             .set(name, value)
             .map_err(|_| configuration_error())?;
     }
+    let request = construct_request(destination, method, wire_headers, body)
+        .map_err(|_| configuration_error())?;
+    send_constructed(request, cancellation, before_dispatch).await
+}
+
+/// Actual native Request already constructed at the original fixed physical target.
+/// Private fields prevent a caller from manufacturing or serializing this value.
+pub(crate) struct ConstructedRequest(Request);
+
+pub(crate) fn construct_request(
+    destination: &PinnedDestination,
+    method: Method,
+    headers: Headers,
+    body: &[u8],
+) -> worker::Result<ConstructedRequest> {
     let mut init = RequestInit::new();
     init.with_method(method)
-        .with_headers(wire_headers)
+        .with_headers(headers)
         .with_redirect(RequestRedirect::Manual);
     if !body.is_empty() {
         init.with_body(Some(Uint8Array::from(body).into()));
     }
-    let request = Request::new_with_init(destination.url.as_str(), &init)
-        .map_err(|_| configuration_error())?;
+    Request::new_with_init(destination.url.as_str(), &init).map(ConstructedRequest)
+}
+
+pub(crate) async fn send_constructed<F, Fut>(
+    request: ConstructedRequest,
+    cancellation: &Cancellation,
+    before_dispatch: F,
+) -> Result<Response, DispatchFailure>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<(), GatewayError>>,
+{
+    let ConstructedRequest(request) = request;
     // Validate/build the request before recording dispatch. No await, retry,
     // fallback or destination change occurs between this hook and actual fetch.
     before_dispatch().await?;

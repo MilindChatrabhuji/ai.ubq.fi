@@ -34,10 +34,16 @@ impl Binding {
                 &self.catalog,
                 AdminCatalogOperation::Catalog,
             )
-            .await?;
+            .await
+            .map_err(catalogue_error)?;
         let subscriptions = picker::subscriptions(&self.catalog.store).await;
         picker::project(
-            &response.body["data"],
+            &gateway_core::source_serialization::member(&response.body, "data").unwrap_or_else(
+                || {
+                    gateway_core::source_json::SourceJson::parse("null")
+                        .expect("null is source JSON")
+                },
+            ),
             subscriptions,
             &crate::catalog_host::secrets(&self.catalog.env),
         )
@@ -154,4 +160,33 @@ impl Binding {
 }
 fn unavailable(message: &str) -> GatewayError {
     GatewayError::unavailable(message, "admin_support_unavailable")
+}
+
+// Only AdminCatalogOperation::Catalog reaches this helper. Its exact two errors
+// are admin.rs213/216 map_err(lift), lift73 = SourceRequestError::from_gateway.
+// Clone therefore preserves the actual original error body/status, not a fallback diagnostic.
+fn catalogue_error(error: gateway_schema::source_request::SourceRequestError) -> GatewayError {
+    error.diagnostic().clone()
+}
+
+#[cfg(test)]
+mod catalogue_tests {
+    #[test]
+    fn catalogue_lift_preserves_the_exact_original_gateway_error() {
+        let original =
+            gateway_core::GatewayError::new(409, "original catalog error", Some("catalog_fixture"))
+                .with_type("server_error")
+                .with_param(None);
+        let source =
+            gateway_schema::source_request::SourceRequestError::from_gateway(original.clone());
+        let expected = source.body().as_bytes().to_vec();
+        let actual = super::catalogue_error(source);
+        assert_eq!(actual, original);
+        assert_eq!(
+            gateway_core::source_json::SourceJson::from_serializable(&actual.envelope)
+                .unwrap()
+                .as_bytes(),
+            expected
+        );
+    }
 }
