@@ -295,6 +295,33 @@ fn source_inventory_fingerprints_and_nondefault_target_match_actual_typescript()
     assert_eq!(binding.model, "fixture-a");
 }
 #[test]
+fn unrelated_malformed_active_selection_never_blocks_or_changes_a_pinned_experiment() {
+    for quota in [false, true] {
+        let (store, authority, now) = setup();
+        let mut io = Io::new(&store);
+        io.unchanged = true;
+        io.quota_on_first = quota;
+        let malformed = json!({"v": 99, "unrelated": "active-election"});
+        store.seed(gateway_authority::keys::active(), &malformed);
+        let prepared = run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap();
+        let result = run(authority.run_cache_experiment(prepared, &io, now));
+        if quota {
+            assert_eq!(
+                result.unwrap_err().envelope.error.code.as_deref(),
+                Some("prompt_cache_scope_experiment_failed")
+            );
+            assert_eq!(io.calls.borrow().len(), 1);
+        } else {
+            assert_eq!(result.unwrap()["inconclusive_reason"], "refresh_unchanged");
+            assert_eq!(io.calls.borrow().len(), 5);
+        }
+        assert_eq!(
+            store.row(&gateway_authority::keys::active()).unwrap().value,
+            malformed
+        );
+    }
+}
+#[test]
 fn unverified_catalog_controls_never_create_a_probeable_target() {
     let (store, authority, now) = setup();
     let fixture: Value = serde_json::from_str(include_str!(
