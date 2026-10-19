@@ -30,7 +30,6 @@ pub struct Host {
     pub platform: PlatformHost,
     claude: crate::claude_host::Binding,
     original: gateway_core::identity::RequestContext,
-    source_collator: std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>,
 }
 
 fn provider_name(provider: UpstreamProvider) -> Option<&'static str> {
@@ -48,7 +47,7 @@ impl RoutingHost for Host {
     fn source_string_collator(
         &self,
     ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
-        self.source_collator.clone()
+        crate::source_collator::shared()
     }
     fn cancelled(&self) -> bool {
         self.platform.cancellation.signal().aborted()
@@ -282,9 +281,6 @@ impl Host {
             platform,
             claude,
             original,
-            source_collator: std::sync::Arc::new(
-                crate::source_collator::PlatformSourceStringCollator,
-            ),
         }
     }
     async fn wait_result(&self, milliseconds: i64) -> Result<(), GatewayError> {
