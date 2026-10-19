@@ -31,52 +31,80 @@ function record(value: unknown): void {
   text(value.value_encoding);
   assert(value.expires_at_ms === null || Number.isSafeInteger(value.expires_at_ms));
 }
-function request(value: unknown): string {
+function selector(value: unknown): void {
+  assert(object(value));
+  if (value.kind === "prefix") {
+    closed(value, ["kind", "prefix", "start", "end"]);
+    text(value.prefix);
+    for (const key of ["start", "end"]) assert(value[key] === null || typeof value[key] === "string");
+  } else {
+    closed(value, ["kind", "start", "end"]);
+    assert.equal(value.kind, "range");
+    text(value.start);
+    text(value.end);
+  }
+}
+function commitRequest(value: ObjectValue): void {
+  closed(value, ["operation", "checks", "mutations"]);
+  assert(Array.isArray(value.checks) && Array.isArray(value.mutations));
+  for (const check of value.checks) {
+    closed(check, ["key", "expected_revision"]);
+    text(check.key);
+    assert(check.expected_revision === null || typeof check.expected_revision === "string");
+  }
+  for (const mutation of value.mutations) {
+    assert(object(mutation));
+    if (mutation.operation === "put") {
+      closed(mutation, ["operation", "key", "record"]);
+      text(mutation.key);
+      assert(mutation.record !== null);
+      record(mutation.record);
+    } else {
+      closed(mutation, ["operation", "key"]);
+      assert.equal(mutation.operation, "delete");
+      text(mutation.key);
+    }
+  }
+}
+function request(value: unknown): void {
   assert(object(value));
   if (value.operation === "read") {
     closed(value, ["operation", "key"]);
     text(value.key);
-  } else if (value.operation === "commit") {
-    closed(value, ["operation", "checks", "mutations"]);
-    assert(Array.isArray(value.checks) && Array.isArray(value.mutations));
-    for (const check of value.checks) {
-      closed(check, ["key", "expected_revision"]);
-      text(check.key);
-      assert(check.expected_revision === null || typeof check.expected_revision === "string");
-    }
-    for (const mutation of value.mutations) {
-      assert(object(mutation));
-      if (mutation.operation === "put") {
-        closed(mutation, ["operation", "key", "record"]);
-        text(mutation.key);
-        assert(mutation.record !== null);
-        record(mutation.record);
-      } else {
-        closed(mutation, ["operation", "key"]);
-        assert.equal(mutation.operation, "delete");
-        text(mutation.key);
-      }
-    }
-  } else {
+  } else if (value.operation === "commit") commitRequest(value);
+  else {
     closed(value, ["operation", "selector", "reverse", "limit", "cursor", "now_ms"]);
     assert.equal(value.operation, "query");
-    assert(object(value.selector));
-    if (value.selector.kind === "prefix") {
-      closed(value.selector, ["kind", "prefix", "start", "end"]);
-      text(value.selector.prefix);
-      for (const key of ["start", "end"]) assert(value.selector[key] === null || typeof value.selector[key] === "string");
-    } else {
-      closed(value.selector, ["kind", "start", "end"]);
-      assert.equal(value.selector.kind, "range");
-      text(value.selector.start);
-      text(value.selector.end);
-    }
+    selector(value.selector);
     assert(typeof value.reverse === "boolean");
     integer(value.limit);
     integer(value.now_ms);
     assert(value.cursor === null || typeof value.cursor === "string");
   }
-  return String(value.operation);
+}
+function stringEnd(raw: string, start: number): number {
+  let cursor = start + 1;
+  while (cursor < raw.length) {
+    if (raw[cursor] === "\\") cursor += 2;
+    else if (raw[cursor++] === '"') return cursor;
+  }
+  throw new Error("Incomplete private JSON string.");
+}
+function valueEnd(raw: string, start: number): number {
+  let at = start;
+  let depth = 0;
+  while (at < raw.length) {
+    const char = raw[at];
+    if (char === '"') {
+      at = stringEnd(raw, at);
+      continue;
+    }
+    if ((char === "," || char === "}") && depth === 0) break;
+    if (char === "{" || char === "[") depth++;
+    else if (char === "}" || char === "]") depth--;
+    at++;
+  }
+  return at;
 }
 // Preserve the ORIGINAL request token, including escaped UTF16 and number spelling.
 // JSON.parse is validation only; it is never used to re-encode a Store request.
@@ -86,20 +114,12 @@ export function rawMember(raw: string, name: string): string {
   const space = (): void => {
     while (/\s/.test(raw[at] ?? "") && at < raw.length) at++;
   };
-  const stringEnd = (start: number): number => {
-    let cursor = start + 1;
-    while (cursor < raw.length) {
-      if (raw[cursor] === "\\") cursor += 2;
-      else if (raw[cursor++] === '"') return cursor;
-    }
-    throw new Error("Incomplete private JSON string.");
-  };
   assert.equal(raw[0], "{");
   while (at < raw.length) {
     space();
     if (raw[at] === "}") break;
     assert.equal(raw[at], '"');
-    const end = stringEnd(at);
+    const end = stringEnd(raw, at);
     const key: unknown = JSON.parse(raw.slice(at, end));
     text(key);
     at = end;
@@ -107,18 +127,7 @@ export function rawMember(raw: string, name: string): string {
     assert.equal(raw[at++], ":");
     space();
     const start = at;
-    let depth = 0;
-    while (at < raw.length) {
-      const char = raw[at];
-      if (char === '"') {
-        at = stringEnd(at);
-        continue;
-      }
-      if ((char === "," || char === "}") && depth === 0) break;
-      if (char === "{" || char === "[") depth++;
-      else if (char === "}" || char === "]") depth--;
-      at++;
-    }
+    at = valueEnd(raw, at);
     assert(!members.has(key), "Duplicate private field.");
     members.set(key, raw.slice(start, at).trim());
     if (raw[at] === ",") at++;
@@ -172,7 +181,7 @@ export async function* privateLines(stream: ReadableStream<Uint8Array>): AsyncGe
   const reader = stream.getReader();
   let pending = Buffer.alloc(0);
   try {
-    while (true) {
+    for (;;) {
       const chunk = await reader.read();
       if (chunk.done) {
         assert.equal(pending.length, 0, "Private fixture ended in a partial message.");
@@ -241,6 +250,8 @@ export function manifest(value: unknown, expected: string): Manifest {
   for (const key of ["runner", "profile", "graph", "key", "schema"]) fact(value.oracle[key]);
   assert(Array.isArray(value.oracle.files));
   for (const entry of value.oracle.files) fact(entry);
+  fact(value.native_fixture);
+  fact(value.workerd_binary);
   assert.equal(basename(value.native_fixture.path), "worker-custody-fixture");
   assert.equal(basename(value.workerd_binary.path), "workerd");
   return value as Manifest;
@@ -280,65 +291,65 @@ export async function settle(child: { exitCode: number | null; kill: (signal: No
   }
 }
 class NativePort {
-  private child;
-  private lines;
-  private id = 0;
-  readonly stderr: Promise<string>;
+  private _child;
+  private _lines;
+  private _id = 0;
   constructor(binary: string, workspace: string) {
-    this.child = Bun.spawn([binary], { cwd: workspace, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-    this.lines = privateLines(this.child.stdout)[Symbol.asyncIterator]();
-    this.stderr = new Response(this.child.stderr).text();
+    this._child = Bun.spawn([binary], { cwd: workspace, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    this._lines = privateLines(this._child.stdout)[Symbol.asyncIterator]();
   }
   async call(command: unknown, expected: string, origin?: string): Promise<ObjectValue> {
     const raw = JSON.stringify(command);
     assert(Buffer.byteLength(raw) < PRIVATE_WIRE_MAX_BYTES);
-    this.child.stdin.write(raw + "\n");
-    await this.child.stdin.flush();
+    await this._child.stdin.write(raw + "\n");
+    await this._child.stdin.flush();
     const timeout = new Promise<never>((_resolve, reject) => {
-      this.timer = setTimeout(() => reject(new Error("Native fixture phase exceeded twenty seconds.")), 20_000);
+      this._timer = setTimeout(() => {
+        reject(new Error("Native fixture phase exceeded twenty seconds."));
+      }, 20_000);
     });
     try {
-      while (true) {
-        const next = await Promise.race([this.lines.next(), timeout]);
+      for (;;) {
+        const next = await Promise.race([this._lines.next(), timeout]);
         assert(!next.done, "Native fixture closed before its phase receipt.");
         const value: unknown = JSON.parse(next.value);
         assert(object(value));
         if (value.operation === "store_request") {
           assert(origin, "Preparation unexpectedly requested common storage.");
-          const message = decodeStoreMessage(next.value, this.id);
-          this.id = message.id;
+          const message = decodeStoreMessage(next.value, this._id);
+          this._id = message.id;
           const response = await fetch(`${origin}/store`, {
             method: "POST",
             headers: { "content-type": "application/json", "x-fixture-wire-version": "1" },
             body: message.rawRequest,
           });
           assert.equal(response.status, 200, "The actual common DO refused the fixture Store RPC.");
-          this.child.stdin.write(storeResponse(message, await response.text()) + "\n");
-          await this.child.stdin.flush();
+          await this._child.stdin.write(storeResponse(message, await response.text()) + "\n");
+          await this._child.stdin.flush();
         } else {
           assert.equal(value.operation, expected, "Native fixture phase differs.");
           return value;
         }
       }
     } finally {
-      clearTimeout(this.timer);
+      clearTimeout(this._timer);
     }
   }
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  private _timer: ReturnType<typeof setTimeout> | undefined;
   async close(expectSuccess = false): Promise<void> {
-    this.child.stdin.end();
+    await this._child.stdin.end();
     if (expectSuccess) {
       const timer = setTimeout(() => {
-        if (this.child.exitCode === null) this.child.kill("SIGTERM");
+        if (this._child.exitCode === null) this._child.kill("SIGTERM");
       }, 3000);
       try {
-        assert.equal(await this.child.exited, 0, "Native fixture exited unsuccessfully.");
+        assert.equal(await this._child.exited, 0, "Native fixture exited unsuccessfully.");
       } finally {
         clearTimeout(timer);
       }
     }
-    await settle(this.child);
-    await this.stderr;
+    await settle(this._child);
+    await new Response(this._child.stderr).text();
   }
 }
 type Running = { origin: string; stop: () => Promise<void> };
@@ -476,6 +487,12 @@ function producer(value: ObjectValue, expected: string, cases: readonly string[]
 async function actualCase(input: Manifest): Promise<ObjectValue> {
   const workspace = input.run_directory;
   const cases: string[] = [];
+  await writeFile(join(workspace, "allowed-task-path-probe"), "fixed harmless state-controller probe\n", { flag: "wx" });
+  await assert.rejects(
+    writeFile(workspace + "-outside-task-probe", "fixed harmless state-controller probe\n", { flag: "wx" }),
+    (error: unknown) => object(error) && ["EPERM", "EACCES"].includes(String(error.code))
+  );
+  cases.push("actual_task_write_allowed_outside_task_write_denied");
   let running: Running | undefined;
   let native: NativePort | undefined;
   try {
@@ -631,6 +648,25 @@ async function load(path: string, expected: string): Promise<Manifest> {
   assert.equal(parent, resolve(dirname(input.run_directory)).replace(/^\/tmp\//, "/private/tmp/"));
   return input;
 }
+// Compose only a stricter write policy into the ORIGINAL network profile.
+// Its wrapper and detached-group lifetime remain byte-for-byte unchanged.
+export function stateFixtureArgv(child: readonly string[], directory: string): string[] {
+  assert.equal(process.platform, "darwin", "This scoped controller requires its verified Mac fixture boundary.");
+  const argv = testNetworkArgv(child);
+  assert.equal(argv.length, 6);
+  assert.deepEqual(argv.slice(0, 4), [process.execPath, "--no-env-file", "--no-install", "-e"]);
+  const encoded: unknown = JSON.parse(argv[5]);
+  assert(Array.isArray(encoded) && encoded.length === child.length + 3);
+  assert.equal(encoded[0], "/usr/bin/sandbox-exec");
+  assert.equal(encoded[1], "-p");
+  text(encoded[2]);
+  assert(encoded[2].includes("(deny network*)") && encoded[2].includes('(remote ip "localhost:*")'));
+  assert(isDeepStrictEqual(encoded.slice(3), child), "Existing fixture child argv differs.");
+  assert(directory.startsWith("/private/tmp/ai-rust-wasm-20261018/state-controller-2101/"));
+  encoded[2] += `\n(deny file-write*)\n(allow file-write* (subpath ${JSON.stringify(directory)}))`;
+  return [...argv.slice(0, 5), JSON.stringify(encoded)];
+}
+
 async function main(): Promise<void> {
   assert.equal(Bun.version, "1.4.0");
   const child = process.argv[2] === "--fixture-child";
@@ -645,14 +681,12 @@ async function main(): Promise<void> {
     return;
   }
   await assert.rejects(stat(input.run_directory), { code: "ENOENT" });
+  await assert.rejects(stat(input.run_directory + "-outside-task-probe"), { code: "ENOENT" });
   await mkdir(input.run_directory);
-  const profile = `(version 1)(allow default)(deny file-write*)(allow file-write* (subpath ${JSON.stringify(await realpath(input.run_directory))}))`;
-  const argv = [
-    "/usr/bin/sandbox-exec",
-    "-p",
-    profile,
-    ...testNetworkArgv([process.execPath, "--no-env-file", "--no-install", fileURLToPath(import.meta.url), "--fixture-child", expected, path]),
-  ];
+  const argv = stateFixtureArgv(
+    [process.execPath, "--no-env-file", "--no-install", fileURLToPath(import.meta.url), "--fixture-child", expected, path],
+    await realpath(input.run_directory)
+  );
   const processChild = Bun.spawn(argv, {
     cwd: ROOT,
     env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", TMPDIR: input.run_directory, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },

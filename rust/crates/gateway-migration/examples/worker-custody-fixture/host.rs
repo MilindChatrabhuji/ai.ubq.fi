@@ -123,7 +123,7 @@ impl Host {
     pub fn advance_managed_a(
         self,
         store: &super::port::Store,
-    ) -> Result<(Self, super::producers::Receipt), GatewayError> {
+    ) -> Result<(Self, super::producers::Receipt), gateway_migration::MigrationError> {
         use gateway_auth::{
             crypto::Secret,
             managed_access::ManagedAccessProjection,
@@ -139,7 +139,7 @@ impl Host {
             || snapshot.pool.accounts[0].account_id != "managed-a"
             || snapshot.pool.accounts[1].account_id != "managed-b"
         {
-            return Err(error("Original fixed owner order differs"));
+            return Err(error("Original fixed owner order differs").into());
         }
         let sibling = snapshot.pool.accounts[1].clone();
         let (home, old_fence) = self
@@ -166,7 +166,7 @@ impl Host {
         ))
         .is_ok()
         {
-            return Err(error("Stale native generation was accepted"));
+            return Err(error("Stale native generation was accepted").into());
         }
         let transport = UnixOwnerTransport::new(vec![NativeOwnerLocation::configured(
             old_fence.owner.clone(),
@@ -193,9 +193,7 @@ impl Host {
                     .ok_or_else(|| error("Managed source missing"))?
                     .generation_hash
         {
-            return Err(error(
-                "Original refresh-only generation distinction differs",
-            ));
+            return Err(error("Original refresh-only generation distinction differs").into());
         }
         let mut pool = snapshot.pool;
         let account = &mut pool.accounts[0];
@@ -212,7 +210,7 @@ impl Host {
             generation_hash: projection.native_source_generation().into(),
         });
         if pool.accounts[1] != sibling {
-            return Err(error("Sibling projection changed"));
+            return Err(error("Sibling projection changed").into());
         }
         let pool_key = codex_source_pool_key();
         if super::support_run(store.commit(AtomicTransition {
@@ -230,7 +228,7 @@ impl Host {
             }],
         }))? != CommitOutcome::Committed
         {
-            return Err(error("Current owner publication conflicted"));
+            return Err(error("Current owner publication conflicted").into());
         }
         let current = super::support_run(store.read(&pool_key))?
             .ok_or_else(|| error("Published source is missing"))?;
@@ -239,7 +237,7 @@ impl Host {
             store, 2400, &fixed,
         ))?;
         if std::fs::read(sibling_path).map_err(error)? != sibling_bytes {
-            return Err(error("Sibling physical auth changed"));
+            return Err(error("Sibling physical auth changed").into());
         }
         Ok((
             fixed,

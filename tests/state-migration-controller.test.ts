@@ -1,6 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
+  PRIVATE_WIRE_MAX_BYTES,
   compareLatest,
   decodeStoreMessage,
   manifest,
@@ -8,6 +9,7 @@ import {
   rawMember,
   settle,
   storeResponse,
+  stateFixtureArgv,
   verifyArtifactIdentity,
 } from "../tools/cloudflare/state-migration-conformance.ts";
 
@@ -57,8 +59,9 @@ test("state controller rejects mismatched/replayed ids, unknown operations and e
   assert.throws(() => decodeStoreMessage('{"operation":"store_request","id":1,"id":1,"request":{"operation":"read","key":"tuple-v1:00"}}', 0));
 });
 test("private raw-member scanning retains nested strings and refuses duplicate keys", () => {
-  const raw = '{"request":{"text":"\\\"},[","nested":[{},2]},"operation":"store_request","id":1}';
-  assert.equal(rawMember(raw, "request"), '{"text":"\\\"},[","nested":[{},2]}');
+  const nested = JSON.stringify({ text: '"},[', nested: [{}, 2] });
+  const raw = `{"request":${nested},"operation":"store_request","id":1}`;
+  assert.equal(rawMember(raw, "request"), nested);
   assert.throws(() => rawMember('{"x":1,"x":2}', "x"));
   assert.throws(() => rawMember('{"x":1}', "request"));
 });
@@ -138,15 +141,23 @@ test("latest comparison requires genuine changed rows/deletes and exact unchange
   const latest = capture([native(1, { graph: "actual latest" }), native(3, "unchanged")], "51");
   const receipt = { changed_keys: ["tuple-v1:01"], deleted_keys: ["tuple-v1:02"] };
   compareLatest(original, latest, [receipt]);
-  assert.throws(() => compareLatest(original, capture(original.entries, "51"), [receipt]));
-  assert.throws(() => compareLatest(original, { ...latest, data_revision: original.data_revision }, [receipt]));
-  assert.throws(() => compareLatest(original, capture([native(1, { graph: "latest" }), { ...native(3, "unchanged"), expiration_ms: 1 }], "51"), [receipt]));
-  assert.throws(() => compareLatest(original, capture([native(3, "unchanged")], "51"), [receipt]));
+  assert.throws(() => {
+    compareLatest(original, capture(original.entries, "51"), [receipt]);
+  });
+  assert.throws(() => {
+    compareLatest(original, { ...latest, data_revision: original.data_revision }, [receipt]);
+  });
+  assert.throws(() => {
+    compareLatest(original, capture([native(1, { graph: "latest" }), { ...native(3, "unchanged"), expiration_ms: 1 }], "51"), [receipt]);
+  });
+  assert.throws(() => {
+    compareLatest(original, capture([native(3, "unchanged")], "51"), [receipt]);
+  });
 });
 test("settlement awaits an already terminated child and signals/reaps only the supplied process", async () => {
   const signals: string[] = [];
-  let finish: (code: number) => void = () => {
-    throw new Error("No pending process.");
+  let finish: (code: number) => void = (code: number) => {
+    throw new Error(`No pending process: ${code}`);
   };
   const exited = new Promise<number>((resolveExit) => {
     finish = resolveExit;
@@ -164,4 +175,35 @@ test("settlement awaits an already terminated child and signals/reaps only the s
   assert.deepEqual(signals, ["SIGTERM"]);
   await settle(child);
   assert.deepEqual(signals, ["SIGTERM"]);
+});
+
+test("single-profile composition retains the original network boundary/child and adds only a task write restriction", async () => {
+  const { testNetworkArgv } = await import("../scripts/test-network.ts");
+  const child = [process.execPath, "--no-env-file", "--no-install", "-e", "0"];
+  const original = testNetworkArgv(child);
+  const directory = "/private/tmp/ai-rust-wasm-20261018/state-controller-2101/unused-unit";
+  const combined = stateFixtureArgv(child, directory);
+  assert.deepEqual(combined.slice(0, 5), original.slice(0, 5));
+  const before: unknown = JSON.parse(original[5]);
+  const after: unknown = JSON.parse(combined[5]);
+  assert(Array.isArray(before) && Array.isArray(after));
+  assert.deepEqual(after.slice(0, 2), before.slice(0, 2));
+  assert.deepEqual(after.slice(3), before.slice(3));
+  assert.equal(after[2], String(before[2]) + `\n(deny file-write*)\n(allow file-write* (subpath ${JSON.stringify(directory)}))`);
+  assert.throws(() => stateFixtureArgv(child, "/tmp/foreign"));
+});
+
+test("private stream refuses a line beyond the original native32MiB wire bound", async () => {
+  const bytes = new Uint8Array(PRIVATE_WIRE_MAX_BYTES + 1);
+  await assert.rejects(async () => {
+    for await (const line of privateLines(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      })
+    ))
+      assert(line);
+  });
 });
