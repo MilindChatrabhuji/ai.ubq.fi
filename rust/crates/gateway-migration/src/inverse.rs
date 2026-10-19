@@ -365,6 +365,14 @@ pub(crate) async fn export_rows<S: QueryStore>(
             });
             continue;
         }
+        if starts(&p, &["uos_ai", "authority", "native_owner_renewal"]) {
+            gateway_authority::native_control::validate_native_control_custody(&key, record)?;
+            controls.push(CustodyRecord {
+                key: k.clone(),
+                record: record.clone(),
+            });
+            continue;
+        }
         if starts(&p, &["uos_ai", "authority"]) {
             if key == gateway_authority::keys::kernel_defaults() {
                 let mut expected = gateway_authority::quota::KernelDefaults::default();
