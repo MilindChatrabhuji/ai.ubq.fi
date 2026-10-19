@@ -25,6 +25,30 @@ pub(crate) async fn finish_record<
 ) -> Result<RecoveredSession, GatewayError> {
     let now = clock.now_ms()?;
     let (_, old) = journal::load(store, id).await?;
+    if let Some(local) = old
+        .local_work
+        .as_ref()
+        .filter(|local| local.phase != gateway_core::local_work::LocalWorkPhase::ProviderPlanned)
+    {
+        let local_observation =
+            local
+                .terminal
+                .unwrap_or(gateway_core::local_work::LocalTerminalObservation {
+                    semantic: gateway_core::local_work::LocalSemanticOutcome::Incomplete,
+                    reader_termination: observed.reader_termination,
+                    body: observed.body,
+                    delivery: observed.delivery,
+                });
+        return crate::local_work::finish_local_record(
+            store,
+            tokens,
+            clock,
+            id,
+            local_observation,
+            None,
+        )
+        .await;
+    }
     if old.finished {
         return Ok(RecoveredSession {
             request_id: id.into(),
@@ -175,7 +199,14 @@ pub async fn recover_pending<
             ));
         }
         let (old, row) = journal::load(&store, id).await?;
-        if !row.finished && row.terminal_intent.is_none() && row.lease_expires_at_ms > now {
+        let local_pending = row.local_work.as_ref().is_some_and(|local| {
+            local.phase == gateway_core::local_work::LocalWorkPhase::TerminalPending
+        });
+        if !row.finished
+            && row.terminal_intent.is_none()
+            && !local_pending
+            && row.lease_expires_at_ms > now
+        {
             continue;
         }
         let fence = RevisionCheck {
@@ -190,7 +221,12 @@ pub async fn recover_pending<
             now,
             &[RevisionCheckWire::from(&fence)],
             |j| {
-                if j.terminal_intent.is_none() && j.lease_expires_at_ms > now {
+                if j.terminal_intent.is_none()
+                    && !j.local_work.as_ref().is_some_and(|local| {
+                        local.phase == gateway_core::local_work::LocalWorkPhase::TerminalPending
+                    })
+                    && j.lease_expires_at_ms > now
+                {
                     return Err(journal::unavailable("Routing lease is still active."));
                 }
                 j.recovering = true;
