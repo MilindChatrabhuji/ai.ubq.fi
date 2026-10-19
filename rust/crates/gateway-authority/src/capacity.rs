@@ -16,6 +16,7 @@ use gateway_core::{
     identity::{CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash},
     state::AuthorityStore,
 };
+use gateway_core::{js_string::JsString16, model::ModelId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -401,7 +402,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     }
     pub(crate) async fn reconcile_capacity_for_model(
         &self,
-        model: &str,
+        model: &ModelId,
         now: i64,
     ) -> Result<(), GatewayError> {
         for _ in 0..3 {

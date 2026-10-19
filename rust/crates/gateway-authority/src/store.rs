@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gateway_core::GatewayError;
+use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
+use gateway_core::source_json::SourceJson;
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
     StoredRecord,
@@ -112,6 +114,13 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         Ok(raw)
     }
 
+    /// Establish only the existing cached metadata/revision precondition. This
+    /// observes no payload and cannot replace a named family's validation.
+    pub(crate) async fn observe_revision(&mut self, key: &RecordKey) -> Result<(), GatewayError> {
+        self.cached_record(key).await?;
+        Ok(())
+    }
+
     pub async fn read<T: DeserializeOwned>(
         &mut self,
         key: &RecordKey,
@@ -120,6 +129,22 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             .await?
             .map(|row| {
                 serde_json::from_value(row.json_value()?.clone())
+                    .map_err(|_| invalid("Malformed authority record."))
+            })
+            .transpose()
+    }
+
+    /// Explicit lossless opt-in for named control families. The caller still owns
+    /// the exact key, DTO/version and currentness checks; data grants no authority.
+    pub(crate) async fn read_source_control<T: DeserializeOwned>(
+        &mut self,
+        key: &RecordKey,
+    ) -> Result<Option<T>, GatewayError> {
+        self.cached_record(key)
+            .await?
+            .map(|row| {
+                decode_source_control_record(row)?
+                    .deserialize()
                     .map_err(|_| invalid("Malformed authority record."))
             })
             .transpose()
@@ -233,6 +258,44 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         Ok(())
     }
 
+    /// Same strong-read, revision and expiry contract as `put`, but only explicit
+    /// named-family callers choose the finite Json/ProfileV2 source tree codec.
+    pub(crate) fn put_source_control<T: Serialize + ?Sized>(
+        &mut self,
+        key: &RecordKey,
+        value: &T,
+        expiry: Option<i64>,
+    ) -> Result<(), GatewayError> {
+        if !self.reads.contains_key(&key.0) {
+            return Err(invalid(
+                "A mutation is missing its strong-read precondition.",
+            ));
+        }
+        if let Some(expiry) = expiry {
+            validate_time(expiry)?;
+        }
+        let revision = self.tokens.next_token()?;
+        text(&revision)?;
+        if self
+            .reads
+            .values()
+            .flatten()
+            .any(|row| row.revision == revision)
+        {
+            return Err(invalid("Token source reused an existing revision."));
+        }
+        let document = SourceJson::from_serializable(value)?;
+        let record = encode_source_control_record(revision, &document, expiry)?;
+        self.writes.insert(
+            key.0.clone(),
+            RecordMutation::Put {
+                key: key.clone(),
+                record,
+            },
+        );
+        Ok(())
+    }
+
     pub fn delete(&mut self, key: &RecordKey) -> Result<(), GatewayError> {
         if !self.reads.contains_key(&key.0) {
             return Err(invalid(
@@ -264,3 +327,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             == CommitOutcome::Committed)
     }
 }
+
+#[cfg(test)]
+#[path = "store_source_control_tests.rs"]
+mod source_control_tests;

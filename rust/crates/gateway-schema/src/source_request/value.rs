@@ -151,6 +151,16 @@ impl Value {
     pub fn is_object(&self) -> bool {
         matches!(self.resolve(), Self::Object(_))
     }
+    pub fn is_boolean(&self) -> bool {
+        matches!(self, Self::Bool(_))
+    }
+    pub fn as_i64(&self) -> Option<i64> {
+        if let Self::Number(raw) = self {
+            raw.deserialize().ok()
+        } else {
+            None
+        }
+    }
     pub fn is_array(&self) -> bool {
         self.as_array().is_some()
     }

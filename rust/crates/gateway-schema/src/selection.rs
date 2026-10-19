@@ -3,6 +3,7 @@ use crate::{
     aliases::{LEGACY_SYNTHETIC_MODEL, SYNTHETIC_MODEL},
     util::*,
 };
+use gateway_core::{model::ModelId, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -85,7 +86,7 @@ impl ProviderSelection {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModelWhitelist {
-    pub model_ids: Vec<String>,
+    pub model_ids: Vec<ModelId>,
     pub updated_at_ms: i64,
 }
 pub fn canonical_whitelist_id(id: &str) -> &str {
@@ -117,20 +118,20 @@ impl ModelWhitelist {
             updated_at_ms: positive_integer(value.get("updated_at_ms"))?,
         })
     }
-    pub fn permits(whitelist: Option<&Self>, id: &str) -> bool {
+    pub fn permits(whitelist: Option<&Self>, id: &ModelId) -> bool {
         whitelist.is_none_or(|w| w.model_ids.is_empty() || w.model_ids.iter().any(|s| s == id))
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AccountModelCatalog {
-    pub slugs: Vec<String>,
+    pub slugs: Vec<ModelId>,
     pub client_version: String,
     pub updated_at_ms: i64,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AccountModelsStore {
     pub accounts: BTreeMap<String, AccountModelCatalog>,
-    pub unsupported: BTreeMap<String, BTreeMap<String, i64>>,
+    pub unsupported: BTreeMap<String, BTreeMap<ModelId, i64>>,
 }
 impl AccountModelsStore {
     pub fn record_catalogs(&self, entries: &[(String, AccountModelCatalog)]) -> Self {
@@ -157,7 +158,7 @@ impl AccountModelsStore {
         }
         next
     }
-    pub fn record_unsupported(&self, account: &str, model: &str, at_ms: i64) -> Self {
+    pub fn record_unsupported(&self, account: &str, model: &ModelId, at_ms: i64) -> Self {
         let mut next = self.clone();
         let entries = next.unsupported.entry(account.into()).or_default();
         entries.insert(model.into(), at_ms);
@@ -170,7 +171,7 @@ impl AccountModelsStore {
     }
     pub fn unavailable(
         &self,
-        model: &str,
+        model: &ModelId,
         current_accounts: &[String],
         now_ms: i64,
     ) -> Vec<String> {

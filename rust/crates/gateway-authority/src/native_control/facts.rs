@@ -18,7 +18,11 @@ use gateway_auth::{
 use gateway_core::{
     GatewayError,
     identity::RequestContext,
+    local_work::journal_local_work,
+    model::ModelId,
     provider::UpstreamProvider,
+    source_json::SourceJson,
+    source_serialization as source,
     state::{AuthorityStore, RevisionCheck},
 };
 use serde::Deserialize;
@@ -26,7 +30,6 @@ use serde_json::Value;
 
 #[derive(Deserialize)]
 struct Session {
-    v: u8,
     context: RequestContext,
     input_digest: String,
     api: Option<ApiReservation>,
@@ -42,8 +45,8 @@ struct Session {
 struct Attempt {
     id: String,
     provider: UpstreamProvider,
-    model: String,
-    fence: Value,
+    model: ModelId,
+    fence: SourceJson,
     phase: String,
 }
 
@@ -66,6 +69,27 @@ pub(super) fn checks_digest(checks: &[RevisionCheck]) -> Result<String, GatewayE
             .map(|c| (&c.key.0, &c.expected_revision))
             .collect::<Vec<_>>(),
     )
+}
+
+async fn read_session<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    request_id: &str,
+) -> Result<Session, GatewayError> {
+    let raw: SourceJson = tx
+        .read_source_control(&session_key(request_id))
+        .await?
+        .ok_or_else(fail)?;
+    // One authoritative parser retains v1, complete provider-planned v2, and
+    // ordinary v3's canonical-ORIGINAL binding. A version never grants authority.
+    journal_local_work(&raw)?;
+    raw.deserialize().map_err(|_| fail())
+}
+
+pub(super) async fn session_context<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    request_id: &str,
+) -> Result<RequestContext, GatewayError> {
+    Ok(read_session(tx, request_id).await?.context)
 }
 
 pub(super) async fn read_control<S: AuthorityStore, I: TokenSource>(
@@ -101,7 +125,7 @@ pub(super) async fn read_control<S: AuthorityStore, I: TokenSource>(
         return Err(fail());
     }
     let runtime_key = runtime_key();
-    let _: Option<Value> = tx.read(&runtime_key).await?;
+    tx.observe_revision(&runtime_key).await?;
     if config.source_checks.len() != 1
         || config.source_checks[0].key != runtime_key.0
         || config.source_checks[0].expected_revision != tx.revision(&runtime_key)
@@ -113,9 +137,8 @@ pub(super) async fn read_control<S: AuthorityStore, I: TokenSource>(
         return Err(fail());
     }
     let policy_digest = current_actor.policy_digest;
-    let session: Session = tx.read(&session_key(request_id)).await?.ok_or_else(fail)?;
-    if session.v != 1
-        || session.context.request_id.0 != request_id
+    let session = read_session(tx, request_id).await?;
+    if session.context.request_id.0 != request_id
         || session.context.principal.0 != current_actor.principal
         || session.finished
         || session.semantic_committed
@@ -137,12 +160,17 @@ pub(super) async fn read_control<S: AuthorityStore, I: TokenSource>(
     {
         return Err(fail());
     }
-    let fence = attempt.fence.get("Codex").ok_or_else(fail)?;
-    let admission: AdmittedAccount =
-        serde_json::from_value(fence["admission"].clone()).map_err(|_| fail())?;
+    let fence = source::member(&attempt.fence, "Codex").ok_or_else(fail)?;
+    let admission: AdmittedAccount = source::member(&fence, "admission")
+        .ok_or_else(fail)?
+        .deserialize()
+        .map_err(|_| fail())?;
     let source_key = codex_source_pool_key();
-    if fence["source_key"].as_str() != Some(&source_key.0)
-        || fence["source_revision"].as_str() != Some(admission.binding.pool_versionstamp.0.as_str())
+    let scalar =
+        |field| source::member(&fence, field).and_then(|value| value.deserialize::<String>().ok());
+    if scalar("source_key").as_deref() != Some(source_key.0.as_str())
+        || scalar("source_revision").as_deref()
+            != Some(admission.binding.pool_versionstamp.0.as_str())
         || !session
             .refreshed_versions
             .contains(&admission.binding.credential_version.0)
@@ -188,7 +216,7 @@ pub(super) async fn read_control<S: AuthorityStore, I: TokenSource>(
         admission,
         attempt_id: attempt_id.into(),
         model: attempt.model.clone(),
-        native_generation: fence["native_generation"].as_str().ok_or_else(fail)?.into(),
+        native_generation: scalar("native_generation").ok_or_else(fail)?,
         principal_policy_digest: policy_digest,
         original_admission_digest: digest(&(
             &session.context,
@@ -203,7 +231,7 @@ pub(super) async fn read_control<S: AuthorityStore, I: TokenSource>(
 pub(super) struct ControlFacts {
     pub admission: AdmittedAccount,
     pub attempt_id: String,
-    pub model: String,
+    pub model: ModelId,
     pub native_generation: String,
     pub principal_policy_digest: String,
     pub original_admission_digest: String,

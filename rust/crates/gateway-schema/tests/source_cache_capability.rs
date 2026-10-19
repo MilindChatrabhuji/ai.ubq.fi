@@ -1,4 +1,4 @@
-//! Selected metadata stays scalar; request strings/model/error bodies remain UTF16 SourceJson.
+//! Selected metadata and request/model/error strings remain UTF16 SourceJson.
 use gateway_core::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
@@ -32,7 +32,8 @@ fn check(
     input: &[SourceJson],
     key: &str,
 ) -> Result<(), SourceRequestError> {
-    source_request::validate_known_unsupported_prompt_cache(model, cap, body, input, key)
+    let cap = cap.map(|value| SourceJson::from_serializable(value).unwrap());
+    source_request::validate_known_unsupported_prompt_cache(model, cap.as_ref(), body, input, key)
 }
 #[test]
 fn false_capability_preserves_lone_model_and_original_payload() {
@@ -161,4 +162,28 @@ fn legacy_scalar_wrapper_delegates_without_error_envelope_change() {
         source.body(),
         &SourceJson::from_serializable(&scalar.envelope).unwrap()
     );
+}
+
+#[test]
+fn opaque_other_provider_does_not_hide_current_provider_capabilities() {
+    let cap = raw(
+        r#"{"version":1,"providers":[{"id":"\ud800","controls":{"source":"catalog","verified_at_ms":1,"key":true}},{"id":"codex_chatgpt","controls":{"source":"catalog","verified_at_ms":1,"key":false}}]}"#,
+    );
+    let normalized = prompt_cache::normalize_capabilities_source(Some(&cap)).unwrap();
+    let providers = source::array(&source::member(&normalized, "providers").unwrap()).unwrap();
+    assert_eq!(
+        source::string(&source::member(&providers[0], "id").unwrap())
+            .unwrap()
+            .as_units(),
+        &[0xd800]
+    );
+    let error = source_request::validate_known_unsupported_prompt_cache(
+        &JsString16::from_utf8("model"),
+        Some(&cap),
+        &raw(r#"{"prompt_cache_key":"key"}"#),
+        &[],
+        "input",
+    )
+    .unwrap_err();
+    assert_eq!(param(&error), "prompt_cache_key");
 }

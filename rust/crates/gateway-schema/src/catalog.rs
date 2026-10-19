@@ -7,13 +7,13 @@ use crate::{
     aliases::*, metadata::*, reasoning::ModelReasoning, selection::*, snapshot::ModelSnapshot,
     util::*,
 };
-use gateway_core::GatewayError;
+use gateway_core::{GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ProviderCatalog {
-    pub models: Vec<Value>,
+    pub models: Vec<SourceJson>,
     pub updated_at_ms: Option<i64>,
     pub configured: bool,
     pub available: bool,
@@ -24,7 +24,7 @@ pub struct CatalogInput {
     pub snapshot: Option<ModelSnapshot>,
     pub full_snapshot: Option<ModelSnapshot>,
     pub providers: BTreeMap<String, ProviderCatalog>,
-    pub enrichment: BTreeMap<String, MetadataHint>,
+    pub enrichment: BTreeMap<ModelId, MetadataHint>,
     pub selection: Option<ProviderSelection>,
     pub whitelist: Option<ModelWhitelist>,
 }
@@ -35,13 +35,13 @@ impl CatalogInput {
     pub fn configured(&self, provider: &str) -> bool {
         self.providers.get(provider).is_some_and(|p| p.configured)
     }
-    pub fn rows(&self, provider: &str) -> &[Value] {
+    pub fn rows(&self, provider: &str) -> &[SourceJson] {
         self.providers
             .get(provider)
             .map(|p| p.models.as_slice())
             .unwrap_or(&[])
     }
-    pub fn available_rows(&self, provider: &str) -> &[Value] {
+    pub fn available_rows(&self, provider: &str) -> &[SourceJson] {
         if self.enabled(provider) {
             self.rows(provider)
         } else {
@@ -53,8 +53,8 @@ impl CatalogInput {
     }
     pub fn metadata(
         &self,
-        id: &str,
-        codex: Option<&Value>,
+        id: &ModelId,
+        codex: Option<&SourceJson>,
         provider: Option<MetadataHint>,
         subscription: bool,
     ) -> ResolvedMetadata {
@@ -170,13 +170,20 @@ pub fn claude_levels(model: &Value) -> Vec<String> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RequestModelMetadata {
     pub snapshot: Option<ModelSnapshot>,
-    pub record: Option<Value>,
+    pub record: Option<SourceJson>,
     pub reasoning: ModelReasoning,
     pub supported_endpoints: Option<Vec<String>>,
 }
+impl RequestModelMetadata {
+    pub fn prompt_cache(&self) -> Option<SourceJson> {
+        self.record
+            .as_ref()
+            .and_then(|record| gateway_core::source_serialization::member(record, "prompt_cache"))
+    }
+}
 pub fn request_model_metadata(
     input: &CatalogInput,
-    model: &str,
+    model: &ModelId,
     responses: bool,
     now_ms: i64,
 ) -> RequestModelMetadata {
@@ -276,10 +283,10 @@ pub fn request_model_metadata(
     }
 }
 pub fn validate_model_available(
-    model: &str,
+    model: &ModelId,
     responses: bool,
     metadata: &RequestModelMetadata,
-) -> Result<(), GatewayError> {
+) -> Result<(), crate::source_request::SourceRequestError> {
     let route = if responses {
         "responses"
     } else {
