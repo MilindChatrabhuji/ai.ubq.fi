@@ -36,6 +36,10 @@ pub enum CodexRequest {
     SetResetSettings {
         document: Value,
     },
+    /// Exact selected subscription; the host must mint current authenticated admin authority.
+    ConsumeReset {
+        account_id_hash: String,
+    },
     OverageSettings,
     SetOverageSettings {
         document: Value,

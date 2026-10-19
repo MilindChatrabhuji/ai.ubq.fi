@@ -190,6 +190,39 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         Ok((action, operation))
     }
 
+    /// A signed native response alone cannot publish credentials into the Worker.
+    pub async fn verify_action_publication(
+        &self,
+        action: &NativeRenewalAction,
+        operation_id: &str,
+        publication_revision: &str,
+    ) -> Result<NativeRenewalFence, GatewayError> {
+        for _ in 0..5 {
+            let mut tx = self.authority.transaction(self.time(0)?)?;
+            let row = self.action(&mut tx, action.action_ref()).await?;
+            let operation: OperationRow = tx
+                .read(&rows::key("operation", operation_id))
+                .await?
+                .ok_or_else(fail)?;
+            if row.fence != *action.fence()
+                || row.operation_id.as_deref() != Some(operation_id)
+                || operation.v != 1
+                || operation.operation_id != operation_id
+                || operation.action_ref != row.action_ref
+                || operation.phase != Phase::Published
+                || operation.publication_revision.as_deref() != Some(publication_revision)
+            {
+                return Err(fail());
+            }
+            let terminal = operation.terminal.as_ref().ok_or_else(fail)?;
+            let fence = self.verify_terminal(&mut tx, &row, terminal).await?;
+            if tx.commit().await? {
+                return Ok(fence);
+            }
+        }
+        Err(conflict())
+    }
+
     /// Existing routing convenience; all permission comes from actual original AuthService minting.
     pub async fn authenticate_and_prepare<H: AuthHost>(
         &self,

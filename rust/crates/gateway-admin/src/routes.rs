@@ -5,6 +5,7 @@ pub enum AdminOperation {
     CodexAuthUpload,
     CodexResetGet,
     CodexResetUpdate,
+    CodexResetConsume,
     CodexOverageGet,
     CodexOverageUpdate,
     CodexResetShadowList,
@@ -80,6 +81,7 @@ pub fn match_route(method: &str, path: &str) -> Option<AdminRoute> {
         ("POST", "/admin/codex/auth") => CodexAuthUpload,
         ("GET", "/admin/providers/codex/banked-resets") => CodexResetGet,
         ("PATCH", "/admin/providers/codex/banked-resets") => CodexResetUpdate,
+        ("POST", "/admin/providers/codex/banked-resets/consume") => CodexResetConsume,
         ("GET", "/admin/providers/codex/overage-usage") => CodexOverageGet,
         ("PATCH", "/admin/providers/codex/overage-usage") => CodexOverageUpdate,
         ("GET", "/admin/providers/codex/banked-resets/shadow-decisions") => CodexResetShadowList,
@@ -176,8 +178,10 @@ impl AdminOperation {
         use AdminOperation::*;
         match self {
             CodexAuthUpload => "codex_credential_import",
-            CodexResetGet | CodexResetUpdate | CodexOverageGet | CodexOverageUpdate
-            | CodexResetShadowList | CodexRecheck => "codex_capacity_authority",
+            CodexResetGet | CodexResetUpdate | CodexResetConsume | CodexOverageGet
+            | CodexOverageUpdate | CodexResetShadowList | CodexRecheck => {
+                "codex_capacity_authority"
+            }
             CacheExperimentGet | CacheExperimentSet | CodexModelsGet | CodexModelsSet
             | ModelsWhitelistGet | ModelsWhitelistSet | ModelsCatalog | ModelsRefresh
             | ProviderSelectionGet | ProviderSelectionSet => "model_catalog",

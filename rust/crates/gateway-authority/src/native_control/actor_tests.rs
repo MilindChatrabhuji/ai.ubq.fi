@@ -1,4 +1,5 @@
 use super::*;
+mod live_manual;
 use gateway_auth::{
     crypto::{Secret, sha256_base64url},
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
