@@ -71,6 +71,14 @@ test("finite native producer reads actual marked SQLite bytes and preserves raw 
       0n,
       -1n,
     ]);
+    database.run("INSERT INTO kv(k,v,v_encoding,version,seq,expiration_ms) VALUES(?,?,?,?,?,?)", [
+      packStringKey(["default", "bytes"]),
+      new Uint8Array([0, 255]),
+      3n,
+      8n,
+      1n,
+      9223372036854775807n,
+    ]);
     database.close(true);
     const original = readFileSync(source);
     const capture = await capturePrivateNativeState(source, directory, "a".repeat(40), 2300);
@@ -82,8 +90,9 @@ test("finite native producer reads actual marked SQLite bytes and preserves raw 
     assert.deepEqual(row.revision, { version: "9", sequence: "0" });
     assert.equal(row.expiration_ms, 9500);
     assert.equal(row.value.encoding, "source-graph-v1");
-    if (row.value.encoding === "source-graph-v1") assert.deepEqual(row.value.value, encodeNativeCaptureValue(graph));
+    assert.deepEqual(row.value.value, encodeNativeCaptureValue(graph));
     assert.equal(capture.value.entries.find((entry) => entry.value.encoding === "counter-le64")?.expiration_ms, -1);
+    assert.ok(JSON.stringify(capture.value).includes('"expiration_ms":9223372036854775807'));
     assert.deepEqual(readFileSync(source), original);
   } finally {
     rmSync(directory, { recursive: true, force: true });

@@ -15,7 +15,12 @@ export type NativeCapture = {
   data_revision: { version: string; sequence: string };
   queue_entries: number;
   running_queue_entries: number;
-  entries: { raw_key: number[]; value: NativeValue; revision: { version: string; sequence: string }; expiration_ms: number }[];
+  entries: {
+    raw_key: number[];
+    value: NativeValue;
+    revision: { version: string; sequence: string };
+    expiration_ms: number | ReturnType<typeof JSON.rawJSON>;
+  }[];
 };
 
 /** Caller-owned process quiescence is separate from the verified private snapshot.
@@ -29,8 +34,10 @@ export const capturePrivateNativeState = async (source: string, stagingParent: s
     for (const row of reader.query<NativeRow>("SELECT k,v,v_encoding,version,seq,expiration_ms FROM kv ORDER BY k").iterate()) {
       validateNativeRow(row, revision);
       assertPortableKvKeyBytes(row.k);
-      const expiration = Number(row.expiration_ms);
-      if (!Number.isSafeInteger(expiration)) throw new Error("Native capture absolute expiry is not exactly representable");
+      const numericExpiry = Number(row.expiration_ms);
+      // Retain the existing i64 JSON number wire beyond JavaScript's safe range.
+      // Callers must send these serialized bytes without parsing them through Number.
+      const expiration = Number.isSafeInteger(numericExpiry) ? numericExpiry : JSON.rawJSON(String(row.expiration_ms));
       let value: NativeValue;
       if (row.v_encoding === 1n) {
         const decoded: unknown = deserialize(row.v);
