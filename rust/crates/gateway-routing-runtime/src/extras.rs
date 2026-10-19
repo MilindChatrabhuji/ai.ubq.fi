@@ -256,7 +256,7 @@ impl<
                     codex: Some(account.clone()),
                 })
                 .await?;
-            if !matches!(&credential.fence,CredentialFence::Codex{admission,..}if admission==&account)
+            if !matches!(credential.fence(),CredentialFence::Codex{admission,..}if admission==&account)
             {
                 return Err(journal::unavailable(
                     "Image child credential does not match its admission.",
@@ -264,7 +264,7 @@ impl<
                 .into());
             }
             self.host
-                .ensure_credential_current(&credential.fence, &self.input.principal, &model)
+                .ensure_credential_current(credential.fence(), &self.input.principal, &model)
                 .await?;
             let mut input = self.input.clone();
             input.raw = body.clone();
@@ -278,10 +278,16 @@ impl<
                 &credential,
                 &child.nonce,
             )?;
+            let crate::types::PreparedWireRequest::Ready(request) = request else {
+                return Err(journal::unavailable(
+                    "Image child credential does not match its admission.",
+                )
+                .into());
+            };
             return Ok(ImageChildAttempt {
                 scope: child.clone(),
                 request,
-                credential: credential.fence,
+                credential: credential.into_fence(),
             });
         }
         Err(journal::unavailable("Image child selection did not settle.").into())

@@ -7,8 +7,8 @@ use gateway_core::{
 };
 use gateway_providers::policy::HopFailure;
 use gateway_routing_runtime::{
-    AttemptFailure, AttemptUsage, RefusalDecision, RoutingSession, TransportState, classify,
-    policy, recover_pending,
+    AttemptFailure, AttemptUsage, PreparedWireRequest, RefusalDecision, RoutingSession,
+    TransportState, classify, policy, recover_pending,
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::atomic::Ordering};
@@ -308,7 +308,7 @@ fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity()
             RefusalDecision::Continue
         );
         let second = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(second.request.provider, UpstreamProvider::Metered);
+        assert_eq!(second.request.provider(), UpstreamProvider::Metered);
         assert_ne!(
             first.paid.unwrap().attempt_id,
             second.paid.as_ref().unwrap().attempt_id
@@ -751,7 +751,7 @@ fn direct_dispatch_and_finish_count_api_once() {
         .await
         .unwrap();
         let attempt = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(attempt.request.provider, UpstreamProvider::Deepseek);
+        assert_eq!(attempt.request.provider(), UpstreamProvider::Deepseek);
         session.before_dispatch(&attempt).await.unwrap();
         assert!(session.before_dispatch(&attempt).await.is_err());
         session.transport_started(&attempt).await.unwrap();
@@ -868,7 +868,7 @@ fn synthetic_hops_share_original_admission_and_stop_after_semantic_commit() {
         .await
         .unwrap();
         let first = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(first.request.provider, UpstreamProvider::Lithos);
+        assert_eq!(first.request.provider(), UpstreamProvider::Lithos);
         session.before_dispatch(&first).await.unwrap();
         session.transport_started(&first).await.unwrap();
         assert_eq!(
@@ -879,7 +879,7 @@ fn synthetic_hops_share_original_admission_and_stop_after_semantic_commit() {
             RefusalDecision::Continue
         );
         let second = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(second.request.provider, UpstreamProvider::Deepseek);
+        assert_eq!(second.request.provider(), UpstreamProvider::Deepseek);
         assert_eq!(first.original_request_id, second.original_request_id);
         session.before_dispatch(&second).await.unwrap();
         session.transport_started(&second).await.unwrap();
@@ -916,8 +916,11 @@ fn codex_none_and_ultra_keep_source_wire_translation_and_one_conversation() {
         .await
         .unwrap();
         let first = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(first.request.body["reasoning"]["effort"], "max");
-        let conversation = first.request.headers["conversation_id"].clone();
+        assert_eq!(first.request.body()["reasoning"]["effort"], "max");
+        let PreparedWireRequest::Ready(first_ready) = &first.request else {
+            panic!("expected scalar Ready")
+        };
+        let conversation = first_ready.headers["conversation_id"].clone();
         session.before_dispatch(&first).await.unwrap();
         session.transport_started(&first).await.unwrap();
         assert_eq!(
@@ -928,7 +931,10 @@ fn codex_none_and_ultra_keep_source_wire_translation_and_one_conversation() {
             RefusalDecision::Continue
         );
         let second = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(second.request.headers["conversation_id"], conversation);
+        let PreparedWireRequest::Ready(second_ready) = &second.request else {
+            panic!("expected scalar Ready")
+        };
+        assert_eq!(second_ready.headers["conversation_id"], conversation);
         assert_ne!(first.credential, second.credential);
         session.before_dispatch(&second).await.unwrap();
         session.transport_started(&second).await.unwrap();
@@ -1129,8 +1135,8 @@ fn source_deepseek_extension_uses_one_captured_route_selection() {
         );
         assert!(!request.catalog.enabled("deepseek"));
         let attempt = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(attempt.request.provider, UpstreamProvider::Deepseek);
-        assert_eq!(attempt.request.body["reasoning_effort"], "none");
+        assert_eq!(attempt.request.provider(), UpstreamProvider::Deepseek);
+        assert_eq!(attempt.request.body()["reasoning_effort"], "none");
         session
             .finish(TransportObservation::default())
             .await
