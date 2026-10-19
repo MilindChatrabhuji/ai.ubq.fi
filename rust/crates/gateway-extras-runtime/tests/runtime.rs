@@ -245,8 +245,20 @@ impl ExtrasHost for Host {
         operation: ExtrasDispatch,
     ) -> Result<UpstreamResponse, DispatchFailure> {
         let (label, body) = match &operation {
-            ExtrasDispatch::Voyage(c) => ("voyage".into(), c.prepared().body.clone()),
-            ExtrasDispatch::SystemOne(c) => ("systemone".into(), c.prepared().body.clone()),
+            ExtrasDispatch::Voyage(c) => (
+                "voyage".into(),
+                c.prepared()
+                    .body
+                    .deserialize::<Value>()
+                    .expect("Generated scalar fixture request"),
+            ),
+            ExtrasDispatch::SystemOne(c) => (
+                "systemone".into(),
+                c.prepared()
+                    .body
+                    .deserialize::<Value>()
+                    .expect("Generated scalar fixture request"),
+            ),
             ExtrasDispatch::ImageChild {
                 request_id, body, ..
             } => (request_id.clone(), body.clone()),

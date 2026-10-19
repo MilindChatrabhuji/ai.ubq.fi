@@ -36,7 +36,7 @@ pub struct SelectedAccount {
     pub(crate) replay_scope: String,
     pub(crate) key_id: String,
     pub(crate) model: String,
-    pub(crate) raw: Value,
+    pub(crate) raw: SourceJson,
     pub(crate) disabled: bool,
     pub(crate) native_checks: Vec<RevisionCheck>,
     pub(crate) workspace_continuation: bool,
@@ -94,7 +94,7 @@ pub enum PoolSelection {
 pub struct SelectionInput<'a> {
     pub key_id: &'a str,
     pub model: &'a str,
-    pub raw: &'a Value,
+    pub raw: &'a SourceJson,
     /// The same server-owned source selection used for validation and the m14 plan.
     pub selection: Option<&'a ProviderSelection>,
 }

@@ -75,13 +75,21 @@ pub fn paid_hop_identity(request_id: &str, provider: PaidProvider) -> String {
         }
     )
 }
-pub fn response_has_answer(value: &Value) -> bool {crate::source_policy::response_has_answer(&crate::source::generated(value))}
-pub fn item_has_answer(value: &Value) -> bool {crate::source_policy::item_has_answer(&crate::source::generated(value))}
+pub fn response_has_answer(value: &Value) -> bool {
+    crate::source_policy::response_has_answer(&crate::source::generated(value))
+}
+pub fn item_has_answer(value: &Value) -> bool {
+    crate::source_policy::item_has_answer(&crate::source::generated(value))
+}
 fn nonempty(value: Option<&Value>) -> bool {
     value.and_then(Value::as_str).is_some_and(|v| !v.is_empty())
 }
-pub fn semantic_event(value: &Value) -> bool {crate::source_policy::semantic_event(&crate::source::generated(value))}
-pub fn reasoning_progress(value: &Value) -> bool {crate::source_policy::reasoning_progress(&crate::source::generated(value))}
+pub fn semantic_event(value: &Value) -> bool {
+    crate::source_policy::semantic_event(&crate::source::generated(value))
+}
+pub fn reasoning_progress(value: &Value) -> bool {
+    crate::source_policy::reasoning_progress(&crate::source::generated(value))
+}
 pub fn chat_has_answer(value: &Value) -> bool {
     value
         .get("choices")
