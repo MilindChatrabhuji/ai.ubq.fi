@@ -1,14 +1,13 @@
+import { looksLikeUosApiKey, apiKeyPolicyFromHashRecord } from "./authority/native-api-key-policy.ts";
 import type { Kv, KvEntryMaybe, KvKey } from "#kv";
-import { API_KEY_NO_EXPIRATION_MS, API_KEY_NO_USAGE_LIMIT, apiKeyHashKey, normalizeApiKeyWindowMs } from "./api-keys.ts";
+import { API_KEY_NO_EXPIRATION_MS, API_KEY_NO_USAGE_LIMIT, apiKeyHashKey } from "./api-keys.ts";
 import { openaiError, STANDARD_RATE_LIMIT_HEADERS } from "./http.ts";
 import { getKv } from "./kv.ts";
-import { hasStrictPaidFallbackPolicy } from "./paid-fallback/index.ts";
 import type { ApiKeyHashRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "./types.ts";
 import { isRecord, sha256Base64Url } from "./utils.ts";
 
 import type { ApiKeyPolicy, ApiKeyUsagePolicyScope, ApiKeyUsageProvider } from "./authority/native-contracts.ts";
 import {
-  apiKeyUsageV3PolicyVersion,
   apiKeyUsageV3RetentionMs as nativeApiKeyUsageV3RetentionMs,
   currentApiKeyUsageWindow,
   isApiKeyUsageReservationExpired,
@@ -95,33 +94,7 @@ export class ApiKeyQuotaDispatchError extends Error {
 type CachedPolicy = Readonly<{ policy: ApiKeyPolicy; expires_at_ms: number }>;
 const policyCache = new Map<string, CachedPolicy>();
 
-export const looksLikeUosApiKey = (token: string): boolean => /^u_[0-9a-f]{64}$/.test(token.trim());
-
-const hasUsageQuotaV3 = (record: unknown): boolean => isRecord(record) && record.usage_quota_version === 3;
-
-const policyVersion = (record: ApiKeyHashRecord): string => apiKeyUsageV3PolicyVersion(normalizeApiKeyWindowMs(record.window_ms));
-
-export const apiKeyPolicyFromHashRecord = (tokenHash: string, record: ApiKeyHashRecord, nowMs: number): ApiKeyPolicy | null => {
-  if (!hasStrictPaidFallbackPolicy(record) || !hasUsageQuotaV3(record)) return null;
-  const windowMs = normalizeApiKeyWindowMs(record.window_ms);
-  const window = currentApiKeyUsageWindow(record.usage_reset_at_ms, windowMs, nowMs);
-  return {
-    token_hash: tokenHash,
-    key_id: record.id,
-    expires_at_ms: Number.isFinite(record.expires_at_ms) ? Math.trunc(record.expires_at_ms) : API_KEY_NO_EXPIRATION_MS,
-    usage_limit_requests: record.usage_limit_requests,
-    window_ms: windowMs,
-    window_start_ms: window.start,
-    usage_reset_at_ms: window.reset,
-    policy_version: policyVersion(record),
-    paid_fallback_enabled: record.paid_fallback_enabled,
-    paid_fallback_limit_microcredits: record.paid_fallback_limit_microcredits,
-    paid_fallback_spent_microcredits: record.paid_fallback_spent_microcredits,
-    paid_fallback_reserved_microcredits: record.paid_fallback_reserved_microcredits,
-    paid_fallback_reservation_request_id: record.paid_fallback_reservation_request_id,
-  };
-};
-
+export { looksLikeUosApiKey, apiKeyPolicyFromHashRecord } from "./authority/native-api-key-policy.ts";
 /** The window-identity fields that scope every V3 usage key, lock, and aggregate record. */
 
 /** Legacy key for one-way V2-to-V3 incident reconciliation only. */

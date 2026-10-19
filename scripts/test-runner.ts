@@ -54,6 +54,7 @@ const SENTINEL_FILES = [
   "sentinel-replay-deletion-budget",
 ];
 const PORTABLE_EXCLUDED = [
+  /tests\/native-authority-workerd\.test\.ts$/,
   /tests\/gpg-dsh\.test\.ts$/,
   /tests\/native-kv-scratch\.test\.ts$/,
   /tests\/sentinel-.*\.test\.ts$/,
@@ -83,7 +84,13 @@ const measurement = (): Group => group("measurement", ["tests/usage-optimization
 const quality = (): Group =>
   group(
     "quality",
-    ["scripts/quality-contract.test.ts", "scripts/test-native-kv.test.ts", "scripts/test-scope.test.ts", "scripts/rust-verify.test.ts"],
+    [
+      "scripts/quality-contract.test.ts",
+      "scripts/test-native-kv.test.ts",
+      "scripts/test-scope.test.ts",
+      "scripts/rust-verify.test.ts",
+      "scripts/prepare-worker-test-runtime.test.ts",
+    ],
     ["PATH"]
   );
 const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[] => {
@@ -92,7 +99,10 @@ const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[
       return [
         group(
           "main",
-          filesBelow("tests").filter((path) => !SPECIAL_MAIN_FILES.has(path.split("/").at(-1) ?? "")),
+          filesBelow("tests").filter(
+            (path) =>
+              !SPECIAL_MAIN_FILES.has(path.split("/").at(-1) ?? "") && (path !== "tests/native-authority-workerd.test.ts" || process.platform === "linux")
+          ),
           PROVIDER_ENV
         ),
         group(

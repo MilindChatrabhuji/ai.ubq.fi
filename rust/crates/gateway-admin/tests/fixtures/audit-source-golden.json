@@ -1,0 +1,107 @@
+{
+  "source_sha": "b6e25555179ad2b195b0bab93e946be834ecda6c",
+  "source_blob": "3ca50c3962fa26ad6fc1b169b3ab2236c0e64d8d",
+  "fields": [
+    {
+      "name": "allowlist-order",
+      "input": "{\"revoked_at_ms\":0,\"reset_usage\":false,\"paid_fallback_limit_credits\":null,\"paid_fallback_enabled\":true,\"window_ms\":60000,\"usage_limit_requests\":2,\"expires_at_ms\":-1,\"name\":\"ordered\",\"token\":\"never\"}",
+      "expected": "{\"name\":\"ordered\",\"expires_at_ms\":-1,\"usage_limit_requests\":2,\"window_ms\":60000,\"paid_fallback_enabled\":true,\"paid_fallback_limit_credits\":null,\"reset_usage\":false,\"revoked_at_ms\":0}"
+    },
+    {
+      "name": "reject-complex",
+      "input": "{\"name\":{},\"expires_at_ms\":[],\"usage_limit_requests\":\"scalar\",\"secret\":\"never\"}",
+      "expected": "{\"usage_limit_requests\":\"scalar\"}"
+    },
+    {
+      "name": "finite-overflow-rejected",
+      "input": "{\"name\":1e400,\"expires_at_ms\":-1e400,\"window_ms\":1.5}",
+      "expected": "{\"window_ms\":1.5}"
+    },
+    {
+      "name": "duplicate-own-last",
+      "input": "{\"name\":\"first\",\"name\":\"last\",\"reset_usage\":true}",
+      "expected": "{\"name\":\"last\",\"reset_usage\":true}"
+    },
+    {
+      "name": "unknown-keys",
+      "input": "{\"__proto__\":{\"name\":\"inherited\"},\"authorization\":\"secret\",\"window_ms\":60000}",
+      "expected": "{\"window_ms\":60000}"
+    },
+    {
+      "name": "own-properties-only",
+      "input": "{\"window_ms\":60000}",
+      "expected": "{\"window_ms\":60000}"
+    }
+  ],
+  "names": [
+    {
+      "index": 0,
+      "input": "\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"",
+      "expected_name": "\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"",
+      "expected_changed": "{\"name\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}"
+    },
+    {
+      "index": 1,
+      "input": "\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"",
+      "expected_name": "\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"",
+      "expected_changed": "{\"name\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"}"
+    },
+    {
+      "index": 2,
+      "input": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀\"",
+      "expected_name": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\ud83d\"",
+      "expected_changed": "{\"name\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\ud83d\"}"
+    },
+    {
+      "index": 3,
+      "input": "\"\\ud800\"",
+      "expected_name": "\"\\ud800\"",
+      "expected_changed": "{\"name\":\"\\ud800\"}"
+    },
+    {
+      "index": 4,
+      "input": "\"\\udc00\"",
+      "expected_name": "\"\\udc00\"",
+      "expected_changed": "{\"name\":\"\\udc00\"}"
+    },
+    {
+      "index": 5,
+      "input": "\"\"",
+      "expected_name": "null",
+      "expected_changed": "{\"name\":\"\"}"
+    },
+    {
+      "index": 6,
+      "input": "\"a\\\"\\n\\t\"",
+      "expected_name": "\"a\\\"\\n\\t\"",
+      "expected_changed": "{\"name\":\"a\\\"\\n\\t\"}"
+    }
+  ],
+  "retention": [
+    {
+      "input": "null",
+      "expected": false
+    },
+    {
+      "input": "{}",
+      "expected": false
+    },
+    {
+      "input": "{\"at_ms\":\"1792224000000\"}",
+      "expected": false
+    },
+    {
+      "input": "{\"at_ms\":1792223999999}",
+      "expected": false
+    },
+    {
+      "input": "{\"at_ms\":1792224000000}",
+      "expected": true
+    },
+    {
+      "input": "{\"at_ms\":1792224000001}",
+      "expected": true
+    }
+  ],
+  "cutoff": 1792224000000
+}
