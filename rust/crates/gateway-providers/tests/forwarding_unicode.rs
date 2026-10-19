@@ -147,7 +147,7 @@ fn disabled_unicode_refuses_preparation_with_exact_source_error() {
             expected["code"].as_str()
         );
         assert_eq!(
-            error.envelope.error.param.as_deref(),
+            error.envelope.error.param.as_ref().and_then(Option::as_deref),
             expected["param"].as_str()
         );
     }
