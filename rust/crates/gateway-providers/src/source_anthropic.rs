@@ -171,10 +171,29 @@ fn valid_name(value: &SourceJson) -> bool {
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
     })
 }
+/// The native body algorithm cannot inspect auth material.
+struct NativeBodyOptions<'a> {
+    restored_native_messages: Option<&'a Vec<serde_json::Value>>,
+    supports_native_effort: bool,
+    supports_disabled_thinking: bool,
+    native_reasoning_efforts: Option<&'a Vec<gateway_core::js_string::JsString16>>,
+    catalog_max_output_tokens: Option<u64>,
+}
+impl<'a> From<&'a PrepareOptions> for NativeBodyOptions<'a> {
+    fn from(options: &'a PrepareOptions) -> Self {
+        Self {
+            restored_native_messages: options.restored_native_messages.as_ref(),
+            supports_native_effort: options.supports_native_effort,
+            supports_disabled_thinking: options.supports_disabled_thinking,
+            native_reasoning_efforts: options.native_reasoning_efforts.as_ref(),
+            catalog_max_output_tokens: options.catalog_max_output_tokens,
+        }
+    }
+}
 fn native_messages(
     raw: &SourceJson,
     system: &mut Vec<SourceJson>,
-    options: &PrepareOptions,
+    options: &NativeBodyOptions<'_>,
 ) -> Option<Vec<SourceJson>> {
     if let Some(restored) = &options.restored_native_messages {
         return Some(restored.iter().map(s::generated).collect());
@@ -286,7 +305,7 @@ fn valid_reasoning(reasoning: &SourceJson) -> bool {
                 .any(|value| s::is(&v, value))
         })
 }
-fn native_reasoning(raw: &SourceJson, options: &PrepareOptions) -> Option<SourceJson> {
+fn native_reasoning(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Option<SourceJson> {
     let Some(reasoning) = s::present(raw, "reasoning").filter(|v| !s::is_null(v)) else {
         return Some(s::object(vec![]));
     };
@@ -312,11 +331,14 @@ fn native_reasoning(raw: &SourceJson, options: &PrepareOptions) -> Option<Source
     } else {
         effort
     };
-    let allowed = options.native_reasoning_efforts.clone().unwrap_or_else(|| {
-        ["low", "medium", "high", "xhigh", "max"]
-            .map(gateway_core::js_string::JsString16::from_utf8)
-            .to_vec()
-    });
+    let allowed = options
+        .native_reasoning_efforts
+        .cloned()
+        .unwrap_or_else(|| {
+            ["low", "medium", "high", "xhigh", "max"]
+                .map(gateway_core::js_string::JsString16::from_utf8)
+                .to_vec()
+        });
     allowed.contains(&effort).then(|| {
         s::object(vec![
             (
@@ -397,6 +419,24 @@ fn add_cache(body: &mut SourceJson, raw: &SourceJson, native: bool) -> Option<()
     Some(())
 }
 pub(crate) fn native(raw: &SourceJson, options: &PrepareOptions) -> Option<SourceJson> {
+    native_body(raw, &NativeBodyOptions::from(options))
+}
+pub(crate) fn native_claude(raw: &SourceJson, options: &ClaudeBodyOptions) -> Option<SourceJson> {
+    native_body(
+        raw,
+        &NativeBodyOptions {
+            restored_native_messages: options.restored_native_messages.as_ref(),
+            supports_native_effort: options
+                .native_reasoning_efforts
+                .as_ref()
+                .is_some_and(|values| !values.is_empty()),
+            supports_disabled_thinking: options.supports_disabled_thinking,
+            native_reasoning_efforts: options.native_reasoning_efforts.as_ref(),
+            catalog_max_output_tokens: Some(32_000),
+        },
+    )
+}
+fn native_body(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Option<SourceJson> {
     if !base(raw) || !policy(raw) {
         return None;
     }
