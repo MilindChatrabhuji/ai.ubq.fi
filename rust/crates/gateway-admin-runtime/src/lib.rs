@@ -137,7 +137,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 self.capabilities
                     .codex(
                         CodexRequest::ConsumeReset {
-                            account_id_hash: account_id_hash.into(),
+                            account_id_hash,
                         },
                         context,
                     )
@@ -292,7 +292,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 self.capabilities
                     .claude(
                         ClaudeRequest::SelectAccount {
-                            account_id: id.into(),
+                            account_id: id,
                         },
                         context,
                     )
