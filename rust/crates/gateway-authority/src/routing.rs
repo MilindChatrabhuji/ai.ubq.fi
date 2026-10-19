@@ -781,7 +781,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let mut view = read_view(&mut tx).await?;
             let slot_index = binding.slot as usize;
             let foreign_probe = view.state.slots.get(slot_index).is_some_and(|slot| {
-                slot.account_id_hash.as_ref() == Some(binding.account_id_hash)
+                slot.account_id_hash.as_ref() == Some(&binding.account_id_hash)
                     && slot.credential_version == binding.credential_version
                     && view.pool.pool_versionstamp == binding.pool_versionstamp
                     && slot

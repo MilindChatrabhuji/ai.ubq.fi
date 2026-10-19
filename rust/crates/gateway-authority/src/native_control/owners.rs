@@ -27,6 +27,32 @@ pub struct RegisteredRenewalOwners {
     owners: Vec<RegisteredRenewalOwner>,
 }
 impl RegisteredRenewalOwners {
+    pub async fn for_inference<'a, S: AuthorityStore, I: TokenSource>(
+        &'a self,
+        authority: &Authority<S, I>,
+        admission: &crate::routing::AdmittedAccount,
+    ) -> Result<&'a RegisteredRenewalOwner, GatewayError> {
+        for _ in 0..3 {
+            authority
+                .ensure_admission_current(admission, authority.fresh_time(0)?)
+                .await?;
+            let mut tx = authority.transaction(authority.fresh_time(0)?)?;
+            let owner = self
+                .account(
+                    &mut tx,
+                    &admission.binding.account_id_hash.0,
+                    Some(&admission.binding),
+                    None,
+                )
+                .await?;
+            authority.fresh_time(tx.now)?;
+            if tx.commit().await? {
+                return Ok(owner);
+            }
+        }
+        Err(fail())
+    }
+
     pub fn configured(owners: Vec<RegisteredRenewalOwner>) -> Result<Self, GatewayError> {
         if !(1..=2).contains(&owners.len()) {
             return Err(fail());
@@ -191,6 +217,54 @@ impl RegisteredRenewalOwners {
                 .ok_or_else(fail)?;
             if action.v != 2
                 || action.action_ref != action_ref
+                || action.fence.v != super::NATIVE_RENEWAL_FENCE_VERSION
+            {
+                return Err(fail());
+            }
+            let owner = self
+                .account(
+                    &mut tx,
+                    &action.fence.account_id_hash,
+                    None,
+                    Some(&action.fence.native_owner_id),
+                )
+                .await?;
+            authority.fresh_time(tx.now)?;
+            if tx.commit().await? {
+                return Ok(owner);
+            }
+        }
+        Err(fail())
+    }
+
+    /// Reverse callbacks resolve only the server operation+claim binding, never a request home.
+    pub async fn for_operation<'a, S: AuthorityStore, I: TokenSource>(
+        &'a self,
+        authority: &Authority<S, I>,
+        operation_id: &str,
+        claim_ref: &str,
+    ) -> Result<&'a RegisteredRenewalOwner, GatewayError> {
+        crate::text(operation_id)?;
+        crate::text(claim_ref)?;
+        for _ in 0..3 {
+            let mut tx = authority.transaction(authority.fresh_time(0)?)?;
+            let operation: rows::OperationRow = tx
+                .read(&rows::key("operation", operation_id))
+                .await?
+                .ok_or_else(fail)?;
+            if operation.v != 1
+                || operation.operation_id != operation_id
+                || operation.claim_ref != claim_ref
+            {
+                return Err(fail());
+            }
+            let action: ActionRow = tx
+                .read(&rows::key("action", &operation.action_ref))
+                .await?
+                .ok_or_else(fail)?;
+            if action.v != 2
+                || action.action_ref != operation.action_ref
+                || action.operation_id.as_deref() != Some(operation_id)
                 || action.fence.v != super::NATIVE_RENEWAL_FENCE_VERSION
             {
                 return Err(fail());
