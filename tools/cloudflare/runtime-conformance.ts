@@ -822,16 +822,6 @@ async function inner(): Promise<void> {
     assert.equal(explicitState.terminal_intent.delivery, "interrupted");
     await assertUpstreamCancelled(events, "fixture:abort-explicit");
     cases.push("real_service_binding_abort_signal_propagates");
-    const cancelId = await disconnectAfterFirstChunk(url("/v1/responses"), { model: "deepseek-flash", input: "fixture:abort-tcp", stream: true }, workspace);
-    const cancelState = await lifecycle(cancelId, 18_000);
-    assert(isObject(cancelState.terminal_intent));
-    assert(["interrupted", "unobserved"].includes(String(cancelState.terminal_intent.delivery)));
-    assert.equal(cancelState.terminal_intent.reader_termination, "cancelled");
-    assert.equal(cancelState.terminal_intent.body, "interrupted");
-    assert.notEqual(cancelState.terminal_intent.semantic_terminal, "response.completed");
-    await assertUpstreamCancelled(events, "fixture:abort-tcp");
-    cases.push("actual_caller_abort_retains_non_successful_transport_state");
-    await captureSuppressionCase(url, cancelId, cases);
     await withScenario("codex", async (fixture) => {
       await imageCases(fixture);
       await liveCases({
@@ -848,6 +838,16 @@ async function inner(): Promise<void> {
     await runProviderMatrixCases({ ...matrixContext, withScenario });
     await withScenario("codex", replayProviderCases);
     await withScenario("codex", unicodeForwardingCases);
+    const cancelId = await disconnectAfterFirstChunk(url("/v1/responses"), { model: "deepseek-flash", input: "fixture:abort-tcp", stream: true }, workspace);
+    const cancelState = await lifecycle(cancelId, 18_000);
+    assert(isObject(cancelState.terminal_intent));
+    assert(["interrupted", "unobserved"].includes(String(cancelState.terminal_intent.delivery)));
+    assert.equal(cancelState.terminal_intent.reader_termination, "cancelled");
+    assert.equal(cancelState.terminal_intent.body, "interrupted");
+    assert.notEqual(cancelState.terminal_intent.semantic_terminal, "response.completed");
+    await assertUpstreamCancelled(events, "fixture:abort-tcp");
+    cases.push("actual_caller_abort_retains_non_successful_transport_state");
+    await captureSuppressionCase(url, cancelId, cases);
     console.log(
       JSON.stringify({
         sourceSha: expectedSha,
