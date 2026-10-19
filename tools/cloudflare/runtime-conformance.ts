@@ -798,7 +798,11 @@ async function inner(): Promise<void> {
       assert(isObject(event) && event.kind === "matrix_catalog" && event.credential_matched === true && typeof event.provider === "string");
       return event.provider;
     });
-    assert.deepEqual(refreshedCatalogs.toSorted(), ["lithos", "openrouter"], "Restart may refresh only its two fixed catalogs, never inference dispatch.");
+    assert.deepEqual(
+      refreshedCatalogs.toSorted((left, right) => left.localeCompare(right)),
+      ["lithos", "openrouter"],
+      "Restart may refresh only its two fixed catalogs, never inference dispatch."
+    );
     cases.push("actual_sqlite_restart_preserves_key_and_quota");
     await agentMessageCases(url, cases);
     const explicitSignal = await fetch(`${running.origin}/public/v1/responses`, {
