@@ -947,6 +947,15 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert() {
         .status,
         429
     );
+    let generated_window = run(store.read(&gateway_authority::keys::kernel_window(
+        "fixture-owner",
+        None,
+    )))
+    .unwrap()
+    .unwrap();
+    let generated = generated_window.json_value().unwrap();
+    assert_eq!(generated["reserved_requests"], 1);
+    assert_eq!(generated["reservations"].as_object().unwrap().len(), 1);
     let inverse = run(export_latest(&store, 2300)).unwrap();
     let window = inverse
         .entries
@@ -959,6 +968,19 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert() {
         .unwrap();
     assert_eq!(value["scope"], "org");
     assert!(value.get("repo").is_none());
+    assert_eq!(value["reserved_requests"], 1);
+    assert!(value.get("reservations").is_none());
+    assert_eq!(window.versionstamp, generated_window.revision);
+    assert_eq!(window.expires_at_ms, generated_window.expires_at_ms);
+    let mut missing_reservation = inverse.clone();
+    missing_reservation.entries.retain(|entry| {
+        entry.key.get(3)
+            != Some(&raw(json!({"type":"string","value":"org_reservation"})))
+    });
+    assert!(matches!(
+        prepare(&missing_reservation, &CanonicalDates),
+        Err(MigrationError::SourceInventory(_))
+    ));
     let rollback = SqliteStore::open(&directory.file("kernel-inverse-new.sqlite3"));
     run(adopt_empty(
         &rollback,

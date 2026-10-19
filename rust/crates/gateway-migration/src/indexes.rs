@@ -146,9 +146,9 @@ pub(crate) fn bind(
                     let source = snapshot
                         .get(&window.0)
                         .ok_or_else(|| invalid("Kernel request window missing"))?;
-                    let source: KernelWindow = decode(source.json_value()?)?;
-                    if source.created_at_ms != request.window_created_at_ms
-                        || source.usage_reset_at_ms != request.window_reset_at_ms
+                    let source = source.json_value()?;
+                    if decode::<i64>(&source["created_at_ms"])? != request.window_created_at_ms
+                        || decode::<i64>(&source["usage_reset_at_ms"])? != request.window_reset_at_ms
                     {
                         return Err(invalid("Kernel reservation belongs to another window"));
                     }
@@ -224,11 +224,13 @@ pub(crate) fn bind(
                 row.record.value = json(&window)?;
             }
             Transform::KernelWindow => {
-                let mut window: KernelWindow = decode(row.record.json_value()?)?;
+                let reservations = kernel.remove(&row.key.0).unwrap_or_default();
+                let mut bound = row.record.json_value()?.clone();
+                bound["reservations"] = json(&reservations)?;
+                let window: KernelWindow = decode(&bound)?;
                 if keys::kernel_window(&window.owner, window.repo.as_deref()) != row.key {
                     return Err(invalid("Kernel window tuple identity conflict"));
                 }
-                window.reservations = kernel.remove(&row.key.0).unwrap_or_default();
                 if window.reserved_requests != window.reservations.len() as i64 {
                     return Err(invalid("Kernel reserved aggregate lacks exact source rows"));
                 }
