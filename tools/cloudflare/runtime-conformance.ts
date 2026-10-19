@@ -785,14 +785,24 @@ async function inner(): Promise<void> {
       assert.equal(response.status, 200);
       await response.text();
     }
-    const before = (await events()).length;
+    const before = await events();
     assert.equal((await post("/v1/responses", { model: "deepseek-flash", input: "fixture:blocked" }, key.token)).status, 429);
-    assert.equal((await events()).length, before);
+    assert.deepEqual(await events(), before);
     cases.push("real_admin_key_creation_and_exact_dispatch_quota");
     await running.stop();
     running = await start(config, workspace);
     assert.equal((await post("/v1/responses", { model: "deepseek-flash", input: "fixture:still-blocked" }, key.token)).status, 429);
-    assert.equal((await events()).length, before);
+    const restartedEvents = await events();
+    assert.deepEqual(restartedEvents.slice(0, before.length), before);
+    const refreshedCatalogs = restartedEvents.slice(before.length).map((event: unknown) => {
+      assert(isObject(event) && event.kind === "matrix_catalog" && event.credential_matched === true && typeof event.provider === "string");
+      return event.provider;
+    });
+    assert.deepEqual(
+      refreshedCatalogs.toSorted((left, right) => left.localeCompare(right)),
+      ["lithos", "openrouter"],
+      "Restart may refresh only its two fixed catalogs, never inference dispatch."
+    );
     cases.push("actual_sqlite_restart_preserves_key_and_quota");
     await agentMessageCases(url, cases);
     const explicitSignal = await fetch(`${running.origin}/public/v1/responses`, {
@@ -812,16 +822,6 @@ async function inner(): Promise<void> {
     assert.equal(explicitState.terminal_intent.delivery, "interrupted");
     await assertUpstreamCancelled(events, "fixture:abort-explicit");
     cases.push("real_service_binding_abort_signal_propagates");
-    const cancelId = await disconnectAfterFirstChunk(url("/v1/responses"), { model: "deepseek-flash", input: "fixture:abort-tcp", stream: true }, workspace);
-    const cancelState = await lifecycle(cancelId, 18_000);
-    assert(isObject(cancelState.terminal_intent));
-    assert(["interrupted", "unobserved"].includes(String(cancelState.terminal_intent.delivery)));
-    assert.equal(cancelState.terminal_intent.reader_termination, "cancelled");
-    assert.equal(cancelState.terminal_intent.body, "interrupted");
-    assert.notEqual(cancelState.terminal_intent.semantic_terminal, "response.completed");
-    await assertUpstreamCancelled(events, "fixture:abort-tcp");
-    cases.push("actual_caller_abort_retains_non_successful_transport_state");
-    await captureSuppressionCase(url, cancelId, cases);
     await withScenario("codex", async (fixture) => {
       await imageCases(fixture);
       await liveCases({
@@ -838,6 +838,16 @@ async function inner(): Promise<void> {
     await runProviderMatrixCases({ ...matrixContext, withScenario });
     await withScenario("codex", replayProviderCases);
     await withScenario("codex", unicodeForwardingCases);
+    const cancelId = await disconnectAfterFirstChunk(url("/v1/responses"), { model: "deepseek-flash", input: "fixture:abort-tcp", stream: true }, workspace);
+    const cancelState = await lifecycle(cancelId, 18_000);
+    assert(isObject(cancelState.terminal_intent));
+    assert(["interrupted", "unobserved"].includes(String(cancelState.terminal_intent.delivery)));
+    assert.equal(cancelState.terminal_intent.reader_termination, "cancelled");
+    assert.equal(cancelState.terminal_intent.body, "interrupted");
+    assert.notEqual(cancelState.terminal_intent.semantic_terminal, "response.completed");
+    await assertUpstreamCancelled(events, "fixture:abort-tcp");
+    cases.push("actual_caller_abort_retains_non_successful_transport_state");
+    await captureSuppressionCase(url, cancelId, cases);
     console.log(
       JSON.stringify({
         sourceSha: expectedSha,

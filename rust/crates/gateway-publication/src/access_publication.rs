@@ -33,7 +33,8 @@ impl RegisteredAccessOwner {
         &self.id
     }
     pub fn configured(id: NativeOwnerId, home: String) -> Result<Self, GatewayError> {
-        if id.0.trim().is_empty() || !std::path::Path::new(&home).is_absolute() {
+        // This declares the native Unix home; it is not a path on the Worker host.
+        if id.0.trim().is_empty() || !home.starts_with('/') {
             return Err(unavailable(
                 "Native access owner configuration is invalid",
                 "native_access_owner_unavailable",
@@ -42,6 +43,10 @@ impl RegisteredAccessOwner {
         Ok(Self { id, home })
     }
 }
+
+#[cfg(test)]
+#[path = "access_owner_registration_tests.rs"]
+mod registration_tests;
 
 pub trait AccessCredentialSource {
     fn read_current_access(

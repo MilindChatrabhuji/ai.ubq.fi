@@ -1,6 +1,7 @@
 //! One original admission before local work; no provider plan or attempt is invented.
 use crate::{
     journal::{self, Journal},
+    policy::RoutePlan,
     session::{RoutingSession, reserve_original},
     types::{RecoveredSession, RevisionCheckWire, RoutingHost, RoutingResult},
 };
@@ -54,6 +55,16 @@ pub struct LocalWorkHandle<S, I, C, H> {
 /// Planning grants no provider, paid or dispatch permission.
 pub struct LocalProviderAdmission<S, I, C, H> {
     pub(crate) original: LocalWorkHandle<S, I, C, H>,
+}
+/// Sealed owned inputs for the genuine source-aware session constructor only.
+/// These are not a public plan, body replacement or another admission.
+pub(crate) struct LocalProviderParts<S, I, C, H> {
+    pub(crate) store: S,
+    pub(crate) tokens: I,
+    pub(crate) clock: C,
+    pub(crate) host: H,
+    pub(crate) input: LocalAdmissionInput,
+    pub(crate) plan: RoutePlan,
 }
 pub struct LocalDeliveryHandle<S, I, C, H> {
     original: LocalWorkHandle<S, I, C, H>,
@@ -316,6 +327,17 @@ impl<
     }
 
     pub async fn checkpoint(&self) -> RoutingResult<LocalWorkLease> {
+        self.checkpoint_phase(
+            &[LocalWorkPhase::Running, LocalWorkPhase::ResponsePending],
+            None,
+        )
+        .await
+    }
+    async fn checkpoint_phase(
+        &self,
+        phases: &[LocalWorkPhase],
+        next: Option<LocalWorkPhase>,
+    ) -> RoutingResult<LocalWorkLease> {
         if self.host.cancelled() {
             return Err(self.host.cancellation_error().into());
         }
@@ -323,12 +345,10 @@ impl<
         let (record, row) = journal::load(&self.store, self.id()).await?;
         self.owned(&row)?;
         if row.lease_expires_at_ms <= now
-            || row.local_work.as_ref().is_none_or(|local| {
-                !matches!(
-                    local.phase,
-                    LocalWorkPhase::Running | LocalWorkPhase::ResponsePending
-                )
-            })
+            || row
+                .local_work
+                .as_ref()
+                .is_none_or(|local| !phases.contains(&local.phase))
         {
             return Err(invalid().into());
         }
@@ -410,6 +430,9 @@ impl<
                 {
                     return Err(invalid());
                 }
+                if let Some(next) = next {
+                    current.local_work.as_mut().ok_or_else(invalid)?.phase = next;
+                }
                 Ok(())
             },
         )
@@ -468,7 +491,10 @@ impl<
         self.checkpoint().await
     }
     pub async fn resume_original(self) -> RoutingResult<LocalProviderAdmission<S, I, C, H>> {
-        if let Err(error) = self.checkpoint().await {
+        if let Err(error) = self
+            .checkpoint_phase(&[LocalWorkPhase::Running], Some(LocalWorkPhase::Planning))
+            .await
+        {
             finish_local_record(
                 &self.store,
                 &self.tokens,
@@ -485,12 +511,16 @@ impl<
             .await?;
             return Err(error);
         }
-        self.transition(LocalWorkPhase::Running, LocalWorkPhase::Planning)
-            .await?;
         Ok(LocalProviderAdmission { original: self })
     }
     pub async fn begin_local_response(self) -> RoutingResult<LocalDeliveryHandle<S, I, C, H>> {
-        if let Err(error) = self.checkpoint().await {
+        if let Err(error) = self
+            .checkpoint_phase(
+                &[LocalWorkPhase::Running],
+                Some(LocalWorkPhase::ResponsePending),
+            )
+            .await
+        {
             finish_local_record(
                 &self.store,
                 &self.tokens,
@@ -507,8 +537,6 @@ impl<
             .await?;
             return Err(error);
         }
-        self.transition(LocalWorkPhase::Running, LocalWorkPhase::ResponsePending)
-            .await?;
         Ok(LocalDeliveryHandle { original: self })
     }
 }
@@ -539,6 +567,77 @@ impl<
     }
     pub fn original_context(&self) -> &RequestContext {
         self.original.original_context()
+    }
+    pub(crate) fn original_metadata(&self) -> &LocalRequestMetadata {
+        &self.original.input.metadata
+    }
+    /// Only M05's real source factory may pass its actual source-derived plan.
+    pub(crate) async fn attest_plan(
+        self,
+        plan: RoutePlan,
+    ) -> RoutingResult<LocalProviderParts<S, I, C, H>> {
+        self.original
+            .checkpoint_phase(
+                &[LocalWorkPhase::Planning],
+                Some(LocalWorkPhase::ProviderPlanned),
+            )
+            .await?;
+        let LocalWorkHandle {
+            store,
+            tokens,
+            clock,
+            host,
+            input,
+            ..
+        } = self.original;
+        Ok(LocalProviderParts {
+            store,
+            tokens,
+            clock,
+            host,
+            input,
+            plan,
+        })
+    }
+    pub(crate) async fn fail_planning(self) -> RoutingResult<RecoveredSession> {
+        let original = self.original;
+        let observed = LocalTerminalObservation {
+            semantic: LocalSemanticOutcome::Incomplete,
+            reader_termination: None,
+            body: None,
+            delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+        };
+        journal::change(
+            &original.store,
+            &original.tokens,
+            original.id(),
+            original.now()?,
+            &[],
+            |row| {
+                original.owned(row)?;
+                let local = row.local_work.as_mut().ok_or_else(invalid)?;
+                if local.phase != LocalWorkPhase::Planning {
+                    return Err(invalid());
+                }
+                local.phase = LocalWorkPhase::TerminalPending;
+                local.terminal = Some(observed);
+                Ok(())
+            },
+        )
+        .await?;
+        Ok(finish_local_record(
+            &original.store,
+            &original.tokens,
+            &original.clock,
+            original.id(),
+            observed,
+            Some((
+                original.original_context(),
+                &original.nonce,
+                &original.digest,
+            )),
+        )
+        .await?)
     }
 }
 impl<
@@ -719,5 +818,129 @@ fn local_transport(observation: LocalTerminalObservation) -> TransportObservatio
         reader_termination: observation.reader_termination,
         body: observation.body,
         delivery: observation.delivery,
+    }
+}
+
+#[cfg(test)]
+mod factory_tests {
+    mod support {
+        use crate as gateway_routing_runtime;
+        include!("../tests/support/mod.rs");
+    }
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use support::*;
+
+    fn admission<I: TokenSource + Clone>(
+        store: &Store,
+        tokens: I,
+    ) -> (LocalProviderAdmission<Store, I, Store, Host>, RoutePlan) {
+        seed_key(store);
+        seed_pool(store);
+        let fixture = input("factory-owner", "gpt-test", &[]);
+        // This matching scalar source fixture exercises the real existing planner;
+        // it is not a product Value adapter or acceptance of the pending M05 factory.
+        let source = SourceJson::parse(&serde_json::to_string(&fixture.raw).unwrap()).unwrap();
+        let plan = crate::policy::plan(&fixture, NOW).unwrap();
+        let local = run(RoutingSession::begin_local_compaction(
+            LocalAdmissionInput {
+                metadata: LocalRequestMetadata {
+                    context: fixture.context,
+                    principal: fixture.principal,
+                    catalog: fixture.catalog,
+                    runtime: fixture.runtime,
+                    client_version: fixture.client_version,
+                    native_session_id: fixture.native_session_id,
+                    retry_prohibited: fixture.retry_prohibited,
+                },
+                original: SourceRequestDocument::new(source).unwrap(),
+            },
+            store.clone(),
+            Host::new(store),
+            store.clone(),
+            tokens,
+        ))
+        .unwrap();
+        (run(local.resume_original()).unwrap(), plan)
+    }
+
+    #[test]
+    fn attest_retains_original_constructor_inputs_and_one_admission() {
+        let store = Store::new();
+        let (admission, plan) = admission(&store, store.clone());
+        let before = store.value(journal::key("factory-owner"));
+        let pool = store.value(source_key());
+        let original = admission.original_source().clone();
+        assert_eq!(
+            admission.original_metadata().context,
+            admission.original_context().clone()
+        );
+        let parts = run(admission.attest_plan(plan)).unwrap();
+        assert_eq!(parts.input.original.original_source(), &original);
+        assert_eq!(parts.plan.model, "gpt-test");
+        let after = parts.store.value(journal::key("factory-owner"));
+        assert_eq!(after["local_work"]["phase"], "provider_planned");
+        for field in ["context", "input_digest", "api", "kernel", "attempts"] {
+            assert_eq!(before[field], after[field], "{field}");
+        }
+        assert_eq!(window(&store)["reserved_requests"], 1);
+        assert_eq!(store.value(source_key()), pool);
+    }
+
+    #[test]
+    fn failed_planning_cleans_expired_original_without_provider_terminal_or_new_admission() {
+        let store = Store::new();
+        let (admission, _) = admission(&store, store.clone());
+        store.advance(gateway_authority::REQUEST_LEASE_MS + 1);
+        let result = run(admission.fail_planning()).unwrap();
+        assert!(result.settled);
+        assert!(result.observation.semantic_terminal.is_none());
+        let row = store.value(journal::key("factory-owner"));
+        assert_eq!(row["local_work"]["terminal"]["semantic"], "incomplete");
+        assert_eq!(row["attempts"], serde_json::json!([]));
+        assert_eq!(row["finished"], true);
+        assert_eq!(window(&store)["reserved_requests"], 0);
+        assert_eq!(window(&store)["committed_requests"], 0);
+    }
+
+    #[derive(Clone)]
+    struct RacingTokens {
+        store: Store,
+        release: Arc<Mutex<Option<ApiReservation>>>,
+    }
+    impl TokenSource for RacingTokens {
+        fn next_token(&self) -> Result<String, GatewayError> {
+            if let Some(api) = self.release.lock().unwrap().take() {
+                run(Authority::with_clock(
+                    self.store.clone(),
+                    self.store.clone(),
+                    self.store.clone(),
+                )
+                .release_api_key(
+                    &api,
+                    true,
+                    "fixture-final-phase-race",
+                    self.store.now_ms()?,
+                ))?;
+            }
+            self.store.next_token()
+        }
+    }
+
+    #[test]
+    fn attest_phase_cas_cannot_ignore_a_reservation_released_after_observation() {
+        let store = Store::new();
+        let tokens = RacingTokens {
+            store: store.clone(),
+            release: Arc::new(Mutex::new(None)),
+        };
+        let (admission, plan) = admission(&store, tokens.clone());
+        *tokens.release.lock().unwrap() = admission.original.api.clone();
+        assert!(run(admission.attest_plan(plan)).is_err());
+        let row = store.value(journal::key("factory-owner"));
+        assert_eq!(row["local_work"]["phase"], "planning");
+        assert_eq!(row["attempts"], serde_json::json!([]));
+        assert_eq!(window(&store)["reserved_requests"], 0);
+        assert_eq!(window(&store)["committed_requests"], 0);
     }
 }

@@ -132,6 +132,22 @@ fn token(account: &str, now: i64) -> String {
         base64url(claims.to_string().as_bytes())
     )
 }
+fn fixture_pool(now: i64) -> CodexSourcePool {
+    CodexSourcePool {
+        accounts: ["fixture-matrix-a", "fixture-matrix-b"]
+            .into_iter()
+            .map(|account| CodexSourceAccount {
+                account_id: account.into(),
+                access_token: Secret::new(token(account, now)),
+                refresh_token: Secret::new(format!("fixture-refresh-{account}")),
+                updated_at_ms: now as f64,
+                native_owner: None,
+            })
+            .collect(),
+        updated_at_ms: now as f64,
+    }
+}
+
 async fn seed_pool(store: &RemoteAuthorityStore) -> Result<(), GatewayError> {
     let source_key = codex_source_pool_key();
     let pool_key = keys::pool();
@@ -155,19 +171,7 @@ async fn seed_pool(store: &RemoteAuthorityStore) -> Result<(), GatewayError> {
         return Ok(());
     }
     let now = gateway_worker::storage::now_ms()?;
-    let pool = CodexSourcePool {
-        accounts: ["fixture-matrix-a", "fixture-matrix-b"]
-            .into_iter()
-            .map(|account| CodexSourceAccount {
-                account_id: account.into(),
-                access_token: Secret::new(token(account, now)),
-                refresh_token: Secret::new(String::new()),
-                updated_at_ms: now as f64,
-                native_owner: None,
-            })
-            .collect(),
-        updated_at_ms: now as f64,
-    };
+    let pool = fixture_pool(now);
     let raw = pool.private_source_value();
     let parsed = parse_codex_source_pool(&raw)?.ok_or_else(invalid)?;
     let revision = "fixture-matrix-source-v1";
@@ -232,4 +236,30 @@ pub fn invalid() -> GatewayError {
         "Controlled Rust fixture setup failed",
         "matrix_fixture_setup_failed",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn typed_fixture_pool_is_valid_without_native_ownership() {
+        let now = 1_800_000_000_000;
+        let pool = super::fixture_pool(now);
+        let raw = pool.private_source_value();
+        let parsed = super::parse_codex_source_pool(&raw).unwrap().unwrap();
+        assert_eq!(parsed.accounts.len(), 2);
+        for account in parsed.accounts {
+            assert!(account.native_owner.is_none());
+            assert_eq!(
+                account.refresh_token.expose(),
+                format!("fixture-refresh-{}", account.account_id)
+            );
+            assert_eq!(
+                gateway_auth::provider_credentials::codex_access_expiry_ms(&account.access_token),
+                Some((now + 3_600_000) as f64)
+            );
+        }
+        let mut rejected = raw;
+        rejected["accounts"][0]["refresh_token"] = serde_json::json!("");
+        assert!(super::parse_codex_source_pool(&rejected).unwrap().is_none());
+    }
 }

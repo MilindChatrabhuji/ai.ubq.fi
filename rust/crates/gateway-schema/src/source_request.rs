@@ -1,4 +1,5 @@
 //! Ordinary-request data views; no provider dispatch or authority is implemented here.
+mod cache_capability;
 mod chat_engine;
 mod content_engine;
 mod controls;
@@ -8,6 +9,7 @@ mod normalized;
 mod ordinary;
 mod reasoning;
 mod value;
+pub use cache_capability::validate_known_unsupported_prompt_cache;
 pub use error::SourceRequestError;
 pub use fields::{
     parse_chat_stream_options, parse_max_completion_tokens, validate_cache_control,
