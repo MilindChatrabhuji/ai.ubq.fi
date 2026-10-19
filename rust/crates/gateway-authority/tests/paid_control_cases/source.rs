@@ -234,3 +234,106 @@ fn ordinary_source_v3_guard_keeps_exact_active_paid_binding_and_missing_history_
             .is_none()
     );
 }
+
+#[derive(serde::Deserialize)]
+struct CapturedCollation {
+    fixture_only: bool,
+    ids: Vec<Vec<u16>>,
+    orders: Vec<Vec<i32>>,
+}
+struct FixtureOnlyCollator {
+    data: CapturedCollation,
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+impl gateway_schema::aliases::SourceStringCollator for FixtureOnlyCollator {
+    fn compare(
+        &self,
+        left: &JsString16,
+        right: &JsString16,
+    ) -> Result<std::cmp::Ordering, gateway_core::GatewayError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let find = |value: &JsString16| {
+            self.data
+                .ids
+                .iter()
+                .position(|units| units == value.as_units())
+        };
+        let (Some(left), Some(right)) = (find(left), find(right)) else {
+            return Err(gateway_core::GatewayError::unavailable(
+                "Fixture-only collation pair was not captured.",
+                "fixture_collation_unknown",
+            ));
+        };
+        Ok(self.data.orders[left][right].cmp(&0))
+    }
+}
+
+#[test]
+fn paid_alias_tie_uses_one_constructor_collator_and_missing_or_unknown_pairs_fail_closed() {
+    // Captured pinned Bun source localeCompare, fixture-only four exact pairs.
+    // No general native comparator/lexical fallback is inferred from this test.
+    let data: CapturedCollation = serde_json::from_str(include_str!(
+        "../fixtures/source-string-collation-paid.json"
+    ))
+    .unwrap();
+    assert!(data.fixture_only);
+    let store = MemoryStore::default();
+    paid_setup(&store);
+    let key = keys::paid_control_observation(PaidProvider::Metered);
+    let mut observation: PaidProviderObservation = row(&store, &key);
+    observation.models = data
+        .ids
+        .iter()
+        .map(|units| {
+            source::object(vec![
+                (
+                    "id",
+                    JsString16::from_units(units.clone())
+                        .to_source_json()
+                        .unwrap(),
+                ),
+                (
+                    "supported_endpoint_types",
+                    SourceJson::from_serializable(&vec!["openai-response", "openai"]).unwrap(),
+                ),
+            ])
+            .unwrap()
+        })
+        .collect();
+    seed_source(&store, key, &observation);
+    republish(&store);
+    let winner = if data.orders[0][1] <= 0 { 0 } else { 1 };
+    let mut input = paid_request("source-alias-tie", PaidProvider::Metered);
+    input.model = logical(&data.ids[winner]);
+    let mut context = context(&input);
+    context.original_model = gateway_schema::aliases::SYNTHETIC_MODEL.into();
+    context.body = source::object(vec![(
+        "model",
+        context.original_model.to_source_json().unwrap(),
+    )])
+    .unwrap();
+    context.synthetic_hop = Some(PaidSyntheticHop::Openlux);
+    let absent = run(authority(&store).authorize_paid_route(&input, &context, NOW))
+        .err()
+        .expect("missing demanded collator");
+    assert_eq!(
+        absent.envelope.error.code.as_deref(),
+        Some("source_string_collation_unavailable")
+    );
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let collator = std::sync::Arc::new(FixtureOnlyCollator {
+        data,
+        calls: calls.clone(),
+    });
+    assert!(
+        gateway_schema::aliases::SourceStringCollator::compare(
+            &*collator,
+            &JsString16::from_utf8("unknown"),
+            &JsString16::from_utf8("unknown")
+        )
+        .is_err()
+    );
+    let authority = authority(&store).with_source_string_collator(collator);
+    run(authority.authorize_paid_route(&input, &context, NOW)).unwrap();
+    assert!(calls.load(std::sync::atomic::Ordering::SeqCst) > 1);
+}
