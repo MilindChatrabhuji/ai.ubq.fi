@@ -292,6 +292,22 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     }
 }
 
+/// Existing-ledger reconciliation can read these exact source fences without
+/// an inventory, audit insertion, reset claim or new account/day reservation.
+pub(crate) async fn capture_reconciliation_candidates<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    proof: &CohortProof,
+    original: &RequestContext,
+) -> Result<Vec<crate::reset::ResetCandidate>, GatewayError> {
+    Ok(facts::capture(tx, proof, original)
+        .await?
+        .members
+        .into_iter()
+        .filter(|member| member.enabled)
+        .map(|member| member.candidate)
+        .collect())
+}
+
 /// Shared claim/submission/physical-send primitives call this inside their one
 /// existing transaction. No deserialized source row can construct the permit.
 pub(crate) async fn validate_automatic_permit<S: AuthorityStore, I: TokenSource>(
