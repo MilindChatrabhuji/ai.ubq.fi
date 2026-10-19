@@ -1,16 +1,17 @@
 use gateway_catalog_runtime::{admin::*, state, *};
 use gateway_core::{
     GatewayError,
-    js_string::JsString16, source_json::SourceJson,
+    js_string::JsString16,
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
+    source_json::SourceJson,
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
     },
     tuple_key::TupleKey,
 };
 use gateway_schema::{
-    catalog::{ordinary_models as ordinary_models_source, public_catalog as public_catalog_source},
     aliases::SourceStringCollator,
+    catalog::{ordinary_models as ordinary_models_source, public_catalog as public_catalog_source},
     catalog_store,
     runtime_config::build_runtime_config as build_runtime_config_source,
     snapshot::{ModelSnapshot, SnapshotOverrides, normalize_snapshot as normalize_snapshot_source},
@@ -27,20 +28,69 @@ use std::{
 };
 
 // Explicit scalar observations of these unchanged frozen scalar fixtures, not a runtime fallback.
-fn lift(value:&Value)->SourceJson{SourceJson::from_serializable(value).unwrap()}
-fn scalar(value:&SourceJson)->Value{value.deserialize().expect("frozen scalar fixture")}
-fn normalize_snapshot(value:&Value,overrides:&SnapshotOverrides,now:i64)->Option<ModelSnapshot>{normalize_snapshot_source(&lift(value),overrides,now)}
-fn build_runtime_config(snapshot:&ModelSnapshot,model:Option<&str>,effort:Option<&str>,now:i64)->Result<Value,gateway_schema::source_request::SourceRequestError>{build_runtime_config_source(snapshot,model.map(Into::into).as_ref(),effort.map(Into::into).as_ref(),now).map(|value|scalar(&value))}
-fn ordinary_models(input:&gateway_schema::catalog::CatalogInput)->Value{scalar(&ordinary_models_source(input))}
-fn public_catalog(input:&gateway_schema::catalog::CatalogInput)->Value{scalar(&public_catalog_source(input,Host::new().source_string_collator().as_ref()).unwrap())}
-struct ScalarResponse{body:Value,headers:BTreeMap<String,String>}
-fn scalar_response(response:AdminCatalogResponse)->ScalarResponse{ScalarResponse{body:scalar(&response.body),headers:response.headers}}
-struct FixtureCollator{order:Vec<String>,failed:bool}
-impl SourceStringCollator for FixtureCollator{
- fn compare(&self,left:&JsString16,right:&JsString16)->Result<Ordering,GatewayError>{
-  if self.failed{return Err(GatewayError::unavailable("Locale comparator unavailable","fixture_collation"));}
-  let rank=|value:&JsString16|self.order.iter().position(|id|value.as_units().iter().copied().eq(id.encode_utf16())).expect("locale case absent from source oracle");Ok(rank(left).cmp(&rank(right)))
- }
+fn lift(value: &Value) -> SourceJson {
+    SourceJson::from_serializable(value).unwrap()
+}
+fn scalar(value: &SourceJson) -> Value {
+    value.deserialize().expect("frozen scalar fixture")
+}
+fn normalize_snapshot(
+    value: &Value,
+    overrides: &SnapshotOverrides,
+    now: i64,
+) -> Option<ModelSnapshot> {
+    normalize_snapshot_source(&lift(value), overrides, now)
+}
+fn build_runtime_config(
+    snapshot: &ModelSnapshot,
+    model: Option<&str>,
+    effort: Option<&str>,
+    now: i64,
+) -> Result<Value, gateway_schema::source_request::SourceRequestError> {
+    build_runtime_config_source(
+        snapshot,
+        model.map(Into::into).as_ref(),
+        effort.map(Into::into).as_ref(),
+        now,
+    )
+    .map(|value| scalar(&value))
+}
+fn ordinary_models(input: &gateway_schema::catalog::CatalogInput) -> Value {
+    scalar(&ordinary_models_source(input))
+}
+fn public_catalog(input: &gateway_schema::catalog::CatalogInput) -> Value {
+    scalar(&public_catalog_source(input, Host::new().source_string_collator().as_ref()).unwrap())
+}
+struct ScalarResponse {
+    body: Value,
+    headers: BTreeMap<String, String>,
+}
+fn scalar_response(response: AdminCatalogResponse) -> ScalarResponse {
+    ScalarResponse {
+        body: scalar(&response.body),
+        headers: response.headers,
+    }
+}
+struct FixtureCollator {
+    order: Vec<String>,
+    failed: bool,
+}
+impl SourceStringCollator for FixtureCollator {
+    fn compare(&self, left: &JsString16, right: &JsString16) -> Result<Ordering, GatewayError> {
+        if self.failed {
+            return Err(GatewayError::unavailable(
+                "Locale comparator unavailable",
+                "fixture_collation",
+            ));
+        }
+        let rank = |value: &JsString16| {
+            self.order
+                .iter()
+                .position(|id| value.as_units().iter().copied().eq(id.encode_utf16()))
+                .expect("locale case absent from source oracle")
+        };
+        Ok(rank(left).cmp(&rank(right)))
+    }
 }
 fn run<T>(future: impl Future<Output = T>) -> T {
     let waker = Waker::noop();
@@ -231,7 +281,12 @@ impl Host {
     }
 }
 impl CatalogHost for Host {
-    fn source_string_collator(&self)->Arc<dyn SourceStringCollator>{Arc::new(FixtureCollator{order:self.order.clone(),failed:self.fail_compare.get()})}
+    fn source_string_collator(&self) -> Arc<dyn SourceStringCollator> {
+        Arc::new(FixtureCollator {
+            order: self.order.clone(),
+            failed: self.fail_compare.get(),
+        })
+    }
     fn now_ms(&self) -> i64 {
         self.now.get()
     }
@@ -301,7 +356,6 @@ impl AdminCatalogHost for Host {
     fn warm_openrouter(&self) {
         self.warmed.set(self.warmed.get() + 1);
     }
-
 }
 fn invoke(
     runtime: &CatalogRuntime,
@@ -344,7 +398,11 @@ fn models_get_retains_raw_extensions_and_contains_only_optional_read_failures() 
     *store.fail_key.borrow_mut() = Some(state::whitelist_key());
     assert_eq!(
         run(runtime.admin_catalog(&store, &host, AdminCatalogOperation::WhitelistGet))
-            .unwrap_err().body().deserialize::<Value>().unwrap()["error"]["code"].as_str(),
+            .unwrap_err()
+            .body()
+            .deserialize::<Value>()
+            .unwrap()["error"]["code"]
+            .as_str(),
         Some("fixture_read")
     );
 }
@@ -552,7 +610,9 @@ fn picker_is_unfiltered_uses_actual_host_order_and_keeps_runtime_when_optional_s
         &store,
         &host,
         AdminCatalogOperation::CodexModelsSet {
-            document: lift(&json!({"models":[{"slug":"z"},{"slug":"A"},{"slug":"a"},{"slug":"ä"}]})),
+            document: lift(
+                &json!({"models":[{"slug":"z"},{"slug":"A"},{"slug":"a"},{"slug":"ä"}]}),
+            ),
         },
     );
     store.put(
@@ -596,7 +656,11 @@ fn picker_is_unfiltered_uses_actual_host_order_and_keeps_runtime_when_optional_s
     host.fail_compare.set(true);
     assert_eq!(
         run(runtime.admin_catalog(&store, &host, AdminCatalogOperation::Catalog))
-            .unwrap_err().body().deserialize::<Value>().unwrap()["error"]["code"].as_str(),
+            .unwrap_err()
+            .body()
+            .deserialize::<Value>()
+            .unwrap()["error"]["code"]
+            .as_str(),
         Some("fixture_collation")
     );
 }
@@ -847,7 +911,9 @@ fn save_while_versioned_discovery_waits_cannot_be_replaced_by_older_version() {
         &store,
         &host,
         AdminCatalogOperation::CodexModelsSet {
-            document: lift(&json!({"models":[{"slug":"new-upload","supported_reasoning_levels":[{"effort":"none"},{"effort":"ultra"},{"effort":"future-tier"}]}],"client_version":"2.0.0"})),
+            document: lift(
+                &json!({"models":[{"slug":"new-upload","supported_reasoning_levels":[{"effort":"none"},{"effort":"ultra"},{"effort":"future-tier"}]}],"client_version":"2.0.0"}),
+            ),
         },
     );
     gate.set(true);
@@ -869,17 +935,83 @@ fn save_while_versioned_discovery_waits_cannot_be_replaced_by_older_version() {
 }
 
 #[test]
-fn actual_admin_source_documents_publish_opaque_models_source_labels_and_whitelist_units(){
- use gateway_core::{source_serialization as source,source_control::decode_source_control_record,value::ValueEncoding};
- let runtime=CatalogRuntime::new();let store=Store::default();let host=Host::new();
- let document=SourceJson::parse(r#"{"models":[{"slug":"\ud800","supported_reasoning_levels":["\udc00"],"default_reasoning_level":"\udc00"}],"source":"label\ud800"}"#).unwrap();
- let saved=run(runtime.admin_catalog(&store,&host,AdminCatalogOperation::CodexModelsSet{document:document.clone()})).unwrap();
- assert_eq!(saved.status,200);assert_eq!(source::member(&saved.body,"source"),Some(SourceJson::parse(r#""label\ud800""#).unwrap()));
- let snapshot=store.rows.borrow().get(&catalog_store::codex_snapshot_key().0).unwrap().clone();let config=store.rows.borrow().get(&catalog_store::runtime_config_key().0).unwrap().clone();
- assert_eq!(snapshot.value_encoding,ValueEncoding::ProfileV2);assert_eq!(config.value_encoding,ValueEncoding::ProfileV2);assert_eq!(snapshot.revision,config.revision);assert_eq!(snapshot.expires_at_ms,None);assert_eq!(config.expires_at_ms,None);
- let fetched=run(runtime.admin_catalog(&store,&host,AdminCatalogOperation::CodexModelsGet)).unwrap();assert_eq!(source::member(&fetched.body,"data"),Some(decode_source_control_record(&snapshot).unwrap()));
- let whitelist=SourceJson::parse(r#"{"model_ids":["\ud800","\udc00","\\ud800"]}"#).unwrap();
- let saved=run(runtime.admin_catalog(&store,&host,AdminCatalogOperation::WhitelistSet{document:whitelist.clone()})).unwrap();assert_eq!(source::member(&saved.body,"model_ids"),source::member(&whitelist,"model_ids"));
- let fetched=run(runtime.admin_catalog(&store,&host,AdminCatalogOperation::WhitelistGet)).unwrap();let data=source::member(&fetched.body,"data").unwrap();assert_eq!(source::member(&data,"model_ids"),source::member(&whitelist,"model_ids"));assert_eq!(store.rows.borrow().get(&state::whitelist_key().0).unwrap().value_encoding,ValueEncoding::ProfileV2);
- assert!(host.requests.borrow().is_empty());println!("M42_ADMIN_SOURCE_WRITER_FIXTURE={}",serde_json::to_string(&(catalog_store::codex_snapshot_key(),snapshot)).unwrap());
+fn actual_admin_source_documents_publish_opaque_models_source_labels_and_whitelist_units() {
+    use gateway_core::{
+        source_control::decode_source_control_record, source_serialization as source,
+        value::ValueEncoding,
+    };
+    let runtime = CatalogRuntime::new();
+    let store = Store::default();
+    let host = Host::new();
+    let document=SourceJson::parse(r#"{"models":[{"slug":"\ud800","supported_reasoning_levels":["\udc00"],"default_reasoning_level":"\udc00"}],"source":"label\ud800"}"#).unwrap();
+    let saved = run(runtime.admin_catalog(
+        &store,
+        &host,
+        AdminCatalogOperation::CodexModelsSet {
+            document: document.clone(),
+        },
+    ))
+    .unwrap();
+    assert_eq!(saved.status, 200);
+    assert_eq!(
+        source::member(&saved.body, "source"),
+        Some(SourceJson::parse(r#""label\ud800""#).unwrap())
+    );
+    let snapshot = store
+        .rows
+        .borrow()
+        .get(&catalog_store::codex_snapshot_key().0)
+        .unwrap()
+        .clone();
+    let config = store
+        .rows
+        .borrow()
+        .get(&catalog_store::runtime_config_key().0)
+        .unwrap()
+        .clone();
+    assert_eq!(snapshot.value_encoding, ValueEncoding::ProfileV2);
+    assert_eq!(config.value_encoding, ValueEncoding::ProfileV2);
+    assert_eq!(snapshot.revision, config.revision);
+    assert_eq!(snapshot.expires_at_ms, None);
+    assert_eq!(config.expires_at_ms, None);
+    let fetched =
+        run(runtime.admin_catalog(&store, &host, AdminCatalogOperation::CodexModelsGet)).unwrap();
+    assert_eq!(
+        source::member(&fetched.body, "data"),
+        Some(decode_source_control_record(&snapshot).unwrap())
+    );
+    let whitelist = SourceJson::parse(r#"{"model_ids":["\ud800","\udc00","\\ud800"]}"#).unwrap();
+    let saved = run(runtime.admin_catalog(
+        &store,
+        &host,
+        AdminCatalogOperation::WhitelistSet {
+            document: whitelist.clone(),
+        },
+    ))
+    .unwrap();
+    assert_eq!(
+        source::member(&saved.body, "model_ids"),
+        source::member(&whitelist, "model_ids")
+    );
+    let fetched =
+        run(runtime.admin_catalog(&store, &host, AdminCatalogOperation::WhitelistGet)).unwrap();
+    let data = source::member(&fetched.body, "data").unwrap();
+    assert_eq!(
+        source::member(&data, "model_ids"),
+        source::member(&whitelist, "model_ids")
+    );
+    assert_eq!(
+        store
+            .rows
+            .borrow()
+            .get(&state::whitelist_key().0)
+            .unwrap()
+            .value_encoding,
+        ValueEncoding::ProfileV2
+    );
+    assert!(host.requests.borrow().is_empty());
+    println!(
+        "M42_ADMIN_SOURCE_WRITER_FIXTURE={}",
+        serde_json::to_string(&(catalog_store::codex_snapshot_key(), snapshot)).unwrap()
+    );
 }

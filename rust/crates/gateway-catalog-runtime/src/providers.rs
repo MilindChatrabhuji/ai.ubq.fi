@@ -482,31 +482,115 @@ pub(crate) fn withdraw_stale_reasoning(models: &mut [SourceJson]) {
         }
     }
 }
-fn normalize_key(raw:&JsString16)->JsString16 {
-    let lower=gateway_core::js_string_case::lowercase_source(&js_trim_source(raw));
-    let mut key=Vec::new();
-    for &unit in lower.as_units(){
-        if (48..=57).contains(&unit)||(97..=122).contains(&unit){key.push(unit);}
-        else if !key.is_empty()&&key.last()!=Some(&45){key.push(45);}
+fn normalize_key(raw: &JsString16) -> JsString16 {
+    let lower = gateway_core::js_string_case::lowercase_source(&js_trim_source(raw));
+    let mut key = Vec::new();
+    for &unit in lower.as_units() {
+        if (48..=57).contains(&unit) || (97..=122).contains(&unit) {
+            key.push(unit);
+        } else if !key.is_empty() && key.last() != Some(&45) {
+            key.push(45);
+        }
     }
-    if key.last()==Some(&45){key.pop();}JsString16::from_units(key)
+    if key.last() == Some(&45) {
+        key.pop();
+    }
+    JsString16::from_units(key)
 }
-fn strip_suffix(raw:&JsString16,suffix:&str)->Option<JsString16>{raw.as_units().strip_suffix(suffix.encode_utf16().collect::<Vec<_>>().as_slice()).map(|units|JsString16::from_units(units.to_vec()))}
-fn slug(raw:&JsString16)->JsString16{JsString16::from_units(raw.as_units().rsplit(|&u|u==47).next().unwrap_or_default().to_vec())}
-fn billing_base(raw:&JsString16)->Option<JsString16>{[":free","-free",":batch","-batch"].iter().find_map(|s|strip_suffix(raw,s))}
+fn strip_suffix(raw: &JsString16, suffix: &str) -> Option<JsString16> {
+    raw.as_units()
+        .strip_suffix(suffix.encode_utf16().collect::<Vec<_>>().as_slice())
+        .map(|units| JsString16::from_units(units.to_vec()))
+}
+fn slug(raw: &JsString16) -> JsString16 {
+    JsString16::from_units(
+        raw.as_units()
+            .rsplit(|&u| u == 47)
+            .next()
+            .unwrap_or_default()
+            .to_vec(),
+    )
+}
+fn billing_base(raw: &JsString16) -> Option<JsString16> {
+    [":free", "-free", ":batch", "-batch"]
+        .iter()
+        .find_map(|s| strip_suffix(raw, s))
+}
 /// Ambiguous joins degrade to unknown. Source tier precedence and exact UTF16 identity are preserved.
-pub fn match_openrouter<'a>(models:&'a[SourceJson],model_id:&ModelId)->Option<&'a SourceJson>{
+pub fn match_openrouter<'a>(
+    models: &'a [SourceJson],
+    model_id: &ModelId,
+) -> Option<&'a SourceJson> {
     use gateway_core::js_string_case::lowercase_source;
-    let target=js_trim_source(model_id.as_js_string());if target.as_units().is_empty(){return None;}
-    let target_slug=slug(&target);let mut tiers:Vec<BTreeMap<JsString16,Option<usize>>>=(0..6).map(|_|BTreeMap::new()).collect();
-    for(index,model)in models.iter().enumerate(){
-        let Some(id)=get(model,"id").as_ref().and_then(source::string)else{continue;};
-        let model_slug=slug(&id);
-        let alias=id.as_units().strip_prefix(&[126]).map(|units|slug(&JsString16::from_units(units.to_vec()))).map(|s|strip_suffix(&s,"-latest").or_else(||strip_suffix(&s,":latest")).unwrap_or(s)).map(|s|normalize_key(&s));
-        let keys=[Some(lowercase_source(&id)),Some(lowercase_source(&model_slug)),Some(normalize_key(&id)),Some(normalize_key(&model_slug)),alias,billing_base(&model_slug).map(|s|normalize_key(&s))];
-        for(tier,key)in tiers.iter_mut().zip(keys){if let Some(key)=key.filter(|s|!s.as_units().is_empty()){match tier.get(&key){None=>{tier.insert(key,Some(index));},Some(Some(old))if get(&models[*old],"id").as_ref().and_then(source::string)!=Some(id.clone())=>{tier.insert(key,None);},_=>{}}}}
+    let target = js_trim_source(model_id.as_js_string());
+    if target.as_units().is_empty() {
+        return None;
     }
-    let keys=[lowercase_source(&target),lowercase_source(&target_slug),normalize_key(&target),normalize_key(&target_slug),normalize_key(&target_slug),normalize_key(&target_slug)];
-    for(tier,key)in tiers.iter().zip(keys){if let Some(Some(index))=tier.get(&key){return models.get(*index);}}
-    if let Some(stripped)=billing_base(&target_slug){for(tier,key)in[(&tiers[1],lowercase_source(&stripped)),(&tiers[3],normalize_key(&stripped))]{if let Some(Some(index))=tier.get(&key){return models.get(*index);}}}None
+    let target_slug = slug(&target);
+    let mut tiers: Vec<BTreeMap<JsString16, Option<usize>>> =
+        (0..6).map(|_| BTreeMap::new()).collect();
+    for (index, model) in models.iter().enumerate() {
+        let Some(id) = get(model, "id").as_ref().and_then(source::string) else {
+            continue;
+        };
+        let model_slug = slug(&id);
+        let alias = id
+            .as_units()
+            .strip_prefix(&[126])
+            .map(|units| slug(&JsString16::from_units(units.to_vec())))
+            .map(|s| {
+                strip_suffix(&s, "-latest")
+                    .or_else(|| strip_suffix(&s, ":latest"))
+                    .unwrap_or(s)
+            })
+            .map(|s| normalize_key(&s));
+        let keys = [
+            Some(lowercase_source(&id)),
+            Some(lowercase_source(&model_slug)),
+            Some(normalize_key(&id)),
+            Some(normalize_key(&model_slug)),
+            alias,
+            billing_base(&model_slug).map(|s| normalize_key(&s)),
+        ];
+        for (tier, key) in tiers.iter_mut().zip(keys) {
+            if let Some(key) = key.filter(|s| !s.as_units().is_empty()) {
+                match tier.get(&key) {
+                    None => {
+                        tier.insert(key, Some(index));
+                    }
+                    Some(Some(old))
+                        if get(&models[*old], "id").as_ref().and_then(source::string)
+                            != Some(id.clone()) =>
+                    {
+                        tier.insert(key, None);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    let keys = [
+        lowercase_source(&target),
+        lowercase_source(&target_slug),
+        normalize_key(&target),
+        normalize_key(&target_slug),
+        normalize_key(&target_slug),
+        normalize_key(&target_slug),
+    ];
+    for (tier, key) in tiers.iter().zip(keys) {
+        if let Some(Some(index)) = tier.get(&key) {
+            return models.get(*index);
+        }
+    }
+    if let Some(stripped) = billing_base(&target_slug) {
+        for (tier, key) in [
+            (&tiers[1], lowercase_source(&stripped)),
+            (&tiers[3], normalize_key(&stripped)),
+        ] {
+            if let Some(Some(index)) = tier.get(&key) {
+                return models.get(*index);
+            }
+        }
+    }
+    None
 }
