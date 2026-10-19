@@ -42,7 +42,7 @@ fn source_lone_units_count_as_textencoder_replacements_without_changing_kept_uni
         let actual = bound_source(
             &input,
             "input[1].output",
-            Some("call_unicode"),
+            Some(&JsString16::from_utf8("call_unicode")),
             "tool_output",
             false,
             &mut elisions,

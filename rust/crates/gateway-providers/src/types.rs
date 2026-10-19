@@ -1,4 +1,4 @@
-use gateway_core::provider::UpstreamProvider;
+use gateway_core::{js_string::JsString16, provider::UpstreamProvider, source_json::SourceJson, source_serialization};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -31,11 +31,11 @@ pub enum ResponseDecode {
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ToolIdentity {
-    pub name: String,
-    pub namespace: Option<String>,
+    pub name: JsString16,
+    pub namespace: Option<JsString16>,
     pub custom: bool,
 }
-pub type ToolMap = BTreeMap<String, ToolIdentity>;
+pub use crate::source_tools::ToolMap;
 
 /// Secrets are supplied by the host-owned credential capability; never discovered here.
 #[derive(Clone, Default)]
@@ -103,7 +103,7 @@ pub struct DecodePlan {
     pub response_id: String,
     pub created_at: i64,
     pub stream: bool,
-    pub request: Value,
+    pub request: SourceJson,
     pub tool_names: ToolMap,
     pub reasoning_summary: Option<String>,
 }
@@ -113,7 +113,7 @@ pub struct PreparedRequest {
     pub url: String,
     pub method: String,
     pub headers: Headers,
-    pub body: Value,
+    pub body: SourceJson,
     pub decode: DecodePlan,
     pub warnings: Vec<String>,
 }
@@ -132,20 +132,66 @@ impl std::fmt::Debug for PreparedRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProviderEvent {
     pub event: Option<String>,
-    pub data: Value,
+    pub data: SourceJson,
 }
 impl ProviderEvent {
     pub fn responses(data: Value) -> Self {
         Self {
             event: data.get("type").and_then(Value::as_str).map(str::to_owned),
-            data,
+            data: crate::source::generated(&data),
         }
     }
     pub fn chat(data: Value) -> Self {
+        Self { event: None, data: crate::source::generated(&data) }
+    }
+    pub fn responses_source(data: SourceJson) -> Self {
+        let event = source_serialization::member(&data, "type")
+            .and_then(|value| source_serialization::string(&value))
+            .and_then(|value| value.try_utf8().ok());
+        Self { event, data }
+    }
+    pub fn chat_source(data: SourceJson) -> Self {
         Self { event: None, data }
     }
+    pub fn field(&self, name: &str) -> Option<SourceJson> {
+        source_serialization::member(&self.data, name)
+    }
+    pub fn type_name(&self) -> Option<String> {
+        self.field("type").and_then(|value| source_serialization::string(&value)).and_then(|value| value.try_utf8().ok())
+    }
+    pub fn is_done(&self) -> bool {
+        crate::source::is(&self.data, "[DONE]")
+    }
+    pub fn semantic_event(&self) -> bool {
+        crate::source_policy::semantic_event(&self.data)
+    }
+    pub fn reasoning_progress(&self) -> bool {
+        crate::source_policy::reasoning_progress(&self.data)
+    }
+    /// Only the isolated numeric/accounting fragment crosses the scalar decoder boundary.
+    pub fn observed_usage(&self) -> Option<Value> {
+        self.field("usage").as_ref().and_then(crate::source_collector::usage)
+            .or_else(|| self.field("response").and_then(|response| crate::source_collector::usage(&crate::source::get(&response, "usage"))))
+    }
+    pub fn terminal(&self) -> Option<gateway_core::lifecycle::SemanticTerminal> {
+        use gateway_core::lifecycle::SemanticTerminal;
+        match self.type_name().as_deref() {
+            Some("response.completed") => Some(SemanticTerminal::Completed),
+            Some("response.incomplete") => Some(SemanticTerminal::Incomplete),
+            Some("response.failed") => Some(SemanticTerminal::Failed),
+            Some("error") => Some(SemanticTerminal::Error),
+            _ if self.field("error").is_some() => Some(SemanticTerminal::Error),
+            _ => self.field("choices").and_then(|value| source_serialization::array(&value)).into_iter().flatten().find_map(|choice| {
+                match crate::source::control(&crate::source::get(&choice, "finish_reason")).as_deref() {
+                    Some("stop" | "tool_calls" | "function_call") => Some(SemanticTerminal::Completed),
+                    Some("length" | "content_filter") => Some(SemanticTerminal::Incomplete),
+                    _ => None,
+                }
+            }),
+        }
+    }
     pub fn encode_sse(&self) -> String {
-        if self.data == Value::String("[DONE]".into()) {
+        if self.is_done() {
             return "data: [DONE]\n\n".into();
         }
         let event = self
@@ -153,14 +199,14 @@ impl ProviderEvent {
             .as_ref()
             .map(|s| format!("event: {s}\n"))
             .unwrap_or_default();
-        format!("{event}data: {}\n\n", self.data)
+        format!("{event}data: {}\n\n", self.data.as_str())
     }
 }
 #[derive(Clone)]
 pub struct DecodedResponse {
     pub status: u16,
     pub headers: Headers,
-    pub body: Value,
+    pub body: SourceJson,
     pub events: Vec<ProviderEvent>,
     pub terminal: Option<gateway_core::lifecycle::SemanticTerminal>,
     pub usage: Option<Value>,
@@ -170,7 +216,7 @@ pub struct DecodedResponse {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Elision {
     pub path: String,
-    pub call_id: Option<String>,
+    pub call_id: Option<JsString16>,
     pub kind: String,
     pub original_bytes: usize,
     pub forwarded_bytes: usize,
