@@ -215,6 +215,13 @@ pub trait ObservabilityHost {
     ) -> impl Future<Output = Result<Option<serde_json::Value>, GatewayError>> {
         async { Err(crate::store::missing("metered_quota_snapshot")) }
     }
+    /// Fixed non-billable monitoring GET. A provider inference key is never substituted.
+    fn fetch_metered_quota(
+        &self,
+        _deadline_ms: i64,
+    ) -> impl Future<Output = Result<serde_json::Value, GatewayError>> {
+        async { Err(crate::store::missing("metered_quota_monitoring_get")) }
+    }
     /// Calls the existing authority's current-binding observation writer; never another ledger.
     fn accept_capacity_observations(
         &self,

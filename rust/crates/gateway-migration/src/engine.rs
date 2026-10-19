@@ -15,6 +15,7 @@ pub(crate) struct Manifest {
     pub source_rows: usize,
     pub mapping_checksum: String,
     pub derived: BTreeMap<String, String>,
+    pub native_revision: Option<crate::NativeRevision>,
 }
 pub struct PreparedAdoption {
     pub(crate) manifest: Manifest,
@@ -108,13 +109,28 @@ pub fn prepare(
     let capture_id = gateway_auth::crypto::sha256_hex(
         &serde_json::to_vec(capture).map_err(|_| invalid("Capture cannot be encoded"))?,
     );
-    let mut rows = capture.validate(host)?;
-    validate_source_inventories(&rows, capture.captured_at_ms)?;
+    prepare_rows(
+        capture.validate(host)?,
+        capture_id,
+        &capture.source_git_sha,
+        capture.captured_at_ms,
+        None,
+    )
+}
+
+pub(crate) fn prepare_rows(
+    mut rows: Vec<Row>,
+    capture_id: String,
+    source_git_sha: &str,
+    captured_at_ms: i64,
+    native_revision: Option<crate::NativeRevision>,
+) -> Result<PreparedAdoption, GatewayError> {
+    validate_source_inventories(&rows, captured_at_ms)?;
     for row in &mut rows {
         crate::projection::forward(row)?;
     }
     let revision = format!("capture:{capture_id}");
-    let derived = crate::indexes::bind(&mut rows, capture.captured_at_ms, &revision)?;
+    let derived = crate::indexes::bind(&mut rows, captured_at_ms, &revision)?;
     let mut derived_digests = BTreeMap::new();
     for (key, record) in &derived {
         if rows.iter().any(|r| r.key == *key)
@@ -135,10 +151,11 @@ pub fn prepare(
         }
     }
     let manifest = Manifest {
-        v: 3,
+        v: 4,
         capture_id: capture_id.clone(),
-        source_git_sha: capture.source_git_sha.clone(),
-        captured_at_ms: capture.captured_at_ms,
+        source_git_sha: source_git_sha.to_owned(),
+        captured_at_ms,
+        native_revision,
         source_rows: rows.len(),
         mapping_checksum: mapping_checksum(
             rows.iter()

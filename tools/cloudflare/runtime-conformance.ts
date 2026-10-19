@@ -372,7 +372,7 @@ async function refusalCases(
   cases: string[]
 ): Promise<void> {
   const refusal = await post("/v1/responses", { model: "deepseek-flash", input: "fixture:refusal-progressive" });
-  assert.equal(refusal.status, 418);
+  assert.equal(refusal.status, 418, refusal.status === 418 ? undefined : await refusal.text());
   assert.equal(refusal.headers.get("content-type"), "application/octet-stream");
   assert.equal(refusal.headers.get("x-fixture-refusal"), "raw");
   assert.equal(refusal.headers.get("x-uos-provider-request-id"), "fixture-refusal-id");
@@ -418,6 +418,32 @@ async function observationCases(url: (path: string) => string, cases: string[]):
   assert(Array.isArray(analytics.buckets));
   assert.equal(analytics.bucket_ms, 900_000);
   cases.push("authenticated_prompt_analytics_reads_actual_authority");
+}
+
+async function authorityAtomicCases(rpc: (body: unknown) => Promise<Record<string, unknown>>, cases: string[]): Promise<void> {
+  const anchor = tuple("fixture", "atomic", "anchor");
+  const valueKey = tuple("fixture", "atomic", "value");
+  const put = (key: string, revision: string, value: unknown): unknown => ({
+    operation: "put",
+    key,
+    record: { schema_version: 1, revision, value, expires_at_ms: null },
+  });
+  assert.equal((await rpc({ operation: "commit", checks: [], mutations: [put(anchor, "anchor-one", 1)] })).committed, true);
+  assert.equal(
+    (await rpc({ operation: "commit", checks: [{ key: anchor, expected_revision: "anchor-one" }], mutations: [put(valueKey, "value-one", 1)] })).committed,
+    true
+  );
+  assert.equal(
+    (await rpc({ operation: "commit", checks: [{ key: anchor, expected_revision: "stale-anchor" }], mutations: [put(valueKey, "value-two", 2)] })).committed,
+    false
+  );
+  const retained = (await rpc({ operation: "read", key: valueKey })).record;
+  assert(isObject(retained));
+  assert.equal(retained.revision, "value-one");
+  assert.equal(retained.value, 1);
+  assert.equal((await rpc({ operation: "commit", checks: [], mutations: [{ operation: "delete", key: valueKey }] })).committed, true);
+  assert.equal((await rpc({ operation: "read", key: valueKey })).record, null);
+  cases.push("actual_authority_unconditional_writes_and_cross_key_atomic_cas");
 }
 
 async function extrasCases(input: {
@@ -674,6 +700,7 @@ async function inner(): Promise<void> {
       assert.equal((await fetch(url(`/v1/models?${query}`), { headers: { authorization: "Bearer fixture-access" } })).status, 400);
     }
     cases.push("invalid_and_duplicate_client_versions_refused");
+    await authorityAtomicCases(rpc, cases);
     await refusalCases(post, lifecycle, cases);
     await observationCases(url, cases);
     await extrasCases({ url, post, rpc, events, lifecycle, cases });

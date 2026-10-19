@@ -78,6 +78,14 @@ const serialVectors = () => {
   const active = present(bootstrap.writes.active, "bootstrap active");
   const hot = present(codex.selectCodex(snapshotOf(routing, active), fixtureNow + 10, "gpt-other"), "hot admission");
   same(hot.writes, { routing: null, active: null }, "hot admission checks without writes");
+  const manualActive = { ...active, generation: active.generation + 1, transition_reason: "manual_reset" };
+  const manualParsed = present(contracts.parseCodexActiveAccountSelection(manualActive), "manual reset active codec");
+  const manual = present(codex.selectCodex(snapshotOf(routing, manualParsed), fixtureNow + 10, "gpt-other"), "manual priority hot admission");
+  same(
+    [manual.writes.active, eligibleAccount(manual).activeTransitionReason],
+    [null, "manual_reset"],
+    "manual promotion survives native parser and ordinary admission"
+  );
   same(hot.checks, { active: "A/opaque:7", pool: "P/opaque:11", routing: "R/opaque:13", capacity: null }, "all four opaque revisions");
   const changedCapacity = present(
     codex.selectCodex({ ...snapshotOf(routing, active), revisions: { ...hot.checks, capacity: "C/conflict:17" } }, fixtureNow + 10, "gpt-test"),

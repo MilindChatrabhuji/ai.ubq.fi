@@ -14,6 +14,7 @@ use crate::LIVE_CALL_ACCOUNT_TTL_MS;
 
 pub(crate) struct State<S> {
     pub store: Rc<S>,
+    next_revision: Rc<dyn Fn() -> Result<String, GatewayError>>,
     pending: RefCell<BTreeMap<String, Pending>>,
 }
 
@@ -101,11 +102,23 @@ impl<S: AuthorityStore> Retirement<S> {
 }
 
 impl<S: AuthorityStore> LiveRuntime<S> {
+    fn revision(&self) -> Result<String, GatewayError> {
+        let revision = (self.state.next_revision)()?;
+        if revision.is_empty() {
+            return Err(GatewayError::unavailable(
+                "Live state revision is unavailable.",
+                "live_revision_unavailable",
+            ));
+        }
+        Ok(revision)
+    }
+
     /// The injected store is the SAME existing authority, never a new live ledger.
-    pub fn new(store: Rc<S>) -> Self {
+    pub fn new(store: Rc<S>, next_revision: Rc<dyn Fn() -> Result<String, GatewayError>>) -> Self {
         Self {
             state: Rc::new(State {
                 store,
+                next_revision,
                 pending: RefCell::new(BTreeMap::new()),
             }),
         }
@@ -119,8 +132,11 @@ impl<S: AuthorityStore> LiveRuntime<S> {
         now: i64,
     ) {
         // Deliberately best-effort and unconditional. Never clears a pending-retirement marker.
+        let Ok(revision) = self.revision() else {
+            return;
+        };
         let record = StoredRecord::json(
-            "",
+            revision,
             json!({"account_id":account,"principal_id":principal,"created_at_ms":now}),
             Some(now.saturating_add(LIVE_CALL_ACCOUNT_TTL_MS)),
         );
@@ -188,8 +204,11 @@ impl<S: AuthorityStore> LiveRuntime<S> {
             let Some(pending) = self.state.pending.borrow().get(call_id).cloned() else {
                 return RetirementOutcome::NotTerminal;
             };
+            let Ok(revision) = self.revision() else {
+                return RetirementOutcome::Unknown;
+            };
             let record = StoredRecord::json(
-                "",
+                revision,
                 json!({"schema_version":1,"call_id":call_id,"upstream_status":pending.status,"created_at_ms":pending.created_at_ms}),
                 None,
             );
