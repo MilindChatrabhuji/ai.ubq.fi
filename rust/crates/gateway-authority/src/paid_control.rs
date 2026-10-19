@@ -226,7 +226,7 @@ async fn source_checks<S: AuthorityStore, I: TokenSource>(
         if let Some(revision) = &check.expected_revision {
             text(revision)?;
         }
-        let _: Option<Value> = tx.read(&key).await?;
+        tx.observe_revision(&key).await?;
         if !tx.expect(&key, &check.expected_revision) {
             return Err(control_error("Paid source provenance changed."));
         }
@@ -558,7 +558,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         }
         tx.now = self.fresh_time(tx.now.max(now))?;
         for check in &receipt.checks {
-            let _: Option<Value> = tx.read(&check.key).await?;
+            tx.observe_revision(&check.key).await?;
             if !tx.expect(&check.key, &check.expected_revision) {
                 return Err(control_error("Paid routing receipt source state changed."));
             }

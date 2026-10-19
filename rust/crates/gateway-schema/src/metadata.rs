@@ -1,5 +1,6 @@
 //! Dynamic metadata resolution: source-specific reasoning precedence, widest sourced context.
 use crate::{reasoning::advertised_effort, util::*};
+use gateway_core::{js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -8,8 +9,8 @@ pub struct MetadataHint {
     pub max_context_window_tokens: Option<i64>,
     pub auto_compact_token_limit_tokens: Option<i64>,
     pub effective_context_window_percent: Option<i64>,
-    pub supported_reasoning_levels: Option<Vec<Value>>,
-    pub default_reasoning_effort: Option<String>,
+    pub supported_reasoning_levels: Option<Vec<SourceJson>>,
+    pub default_reasoning_effort: Option<JsString16>,
 }
 impl MetadataHint {
     pub fn codex(record: &Value) -> Self {
@@ -79,8 +80,8 @@ pub struct ResolvedMetadata {
     pub max_context_window_tokens: Option<i64>,
     pub auto_compact_token_limit_tokens: Option<i64>,
     pub effective_context_window_percent: Option<i64>,
-    pub supported_reasoning_levels: Option<Vec<String>>,
-    pub default_reasoning_effort: Option<String>,
+    pub supported_reasoning_levels: Option<Vec<JsString16>>,
+    pub default_reasoning_effort: Option<JsString16>,
     pub context_source: String,
     pub reasoning_source: String,
 }

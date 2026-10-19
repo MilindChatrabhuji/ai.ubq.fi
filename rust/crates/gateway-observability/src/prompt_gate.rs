@@ -1,7 +1,7 @@
 //! Source cache/telemetry-gate.ts: release-bound Stage0 actual completion evidence.
 use crate::{
     ObservabilityHost, ObservabilityRuntime, counters,
-    prompt::{PROVIDERS, PromptEvent, ROUTES, known_release, model_text},
+    prompt::{PROVIDERS, PromptEvent, ROUTES, known_release, model_hash, model_text},
     store,
 };
 use gateway_auth::crypto::sha256_hex;
@@ -80,7 +80,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 None,
             );
         }
-        let Some(model) = model_text(event.model.as_deref()) else {
+        let Some(model) = model_hash(
+            event.model.as_ref(),
+            "uos-prompt-cache-telemetry-model-v1\0",
+        ) else {
             return result(
                 "ignored",
                 "invalid_model",
@@ -90,7 +93,6 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 None,
             );
         };
-        let model = sha256_hex(format!("uos-prompt-cache-telemetry-model-v1\0{model}").as_bytes());
         let mut deltas = vec![(
             counter_key(&release, provider, &model, &event.route, "completed"),
             1,

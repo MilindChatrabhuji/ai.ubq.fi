@@ -11,6 +11,10 @@ use gateway_core::{
     GatewayError,
     identity::{PaidAttemptId, RequestContext},
     lifecycle::TransportObservation,
+    model::ModelId,
+    source_control::{decode_source_control_record, encode_source_control_record},
+    source_json::SourceJson,
+    source_serialization as source,
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
         StoredRecord,
@@ -76,7 +80,7 @@ impl BillingUsage {
 pub struct AttemptRecord {
     pub id: String,
     pub provider: UpstreamProvider,
-    pub model: String,
+    pub model: ModelId,
     pub cursor: usize,
     pub fence: CredentialFence,
     pub paid: Option<PaidReservation>,
@@ -125,15 +129,14 @@ pub struct Journal {
     pub local_work: Option<LocalWorkRecord>,
 }
 impl Journal {
-    pub(crate) fn decode(value: &serde_json::Value) -> Result<Self, GatewayError> {
+    pub(crate) fn decode(value: &SourceJson) -> Result<Self, GatewayError> {
         let local = journal_local_work(value)?;
-        let row: Self = serde_json::from_value(value.clone())
+        let row: Self = value
+            .deserialize()
             .map_err(|_| unavailable("Routing session is corrupt."))?;
-        if row.local_work != local
-            || serde_json::to_value(&row)
-                .map_err(|_| unavailable("Routing session encoding failed."))?
-                != *value
-        {
+        let encoded = SourceJson::from_serializable(&row)
+            .map_err(|_| unavailable("Routing session encoding failed."))?;
+        if row.local_work != local || !same_source_value(&encoded, value) {
             return Err(unavailable(
                 "Routing session has an incomplete or unknown shape.",
             ));
@@ -141,6 +144,40 @@ impl Journal {
         Ok(row)
     }
 }
+/// Match the old JSON object equality without scalarizing opaque fields. Array
+/// order and scalar number spellings remain significant; object key order does not.
+pub(crate) fn same_source_value(left: &SourceJson, right: &SourceJson) -> bool {
+    match (
+        left.as_str().as_bytes().first(),
+        right.as_str().as_bytes().first(),
+    ) {
+        (Some(b'{'), Some(b'{')) => {
+            let (Some(left), Some(right)) = (source::entries(left), source::entries(right)) else {
+                return false;
+            };
+            left.len() == right.len()
+                && left.iter().all(|(key, value)| {
+                    right
+                        .iter()
+                        .find(|(name, _)| name == key)
+                        .is_some_and(|(_, other)| same_source_value(value, other))
+                })
+        }
+        (Some(b'['), Some(b'[')) => {
+            let (Some(left), Some(right)) = (source::array(left), source::array(right)) else {
+                return false;
+            };
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right.iter())
+                    .all(|(left, right)| same_source_value(left, right))
+        }
+        (Some(b'"'), Some(b'"')) => source::string(left) == source::string(right),
+        _ => left.as_str() == right.as_str(),
+    }
+}
+
 pub fn key(id: &str) -> RecordKey {
     TupleKey::from_scalar_parts(&[
         ScalarKeyPart::String("uos_ai"),
@@ -181,7 +218,7 @@ pub async fn load<S: AuthorityStore>(
         .read(&key(id))
         .await?
         .ok_or_else(|| unavailable("Routing session is missing."))?;
-    let value = Journal::decode(row.json_value()?)?;
+    let value = Journal::decode(&decode_source_control_record(&row)?)?;
     if value.context.request_id.0 != id {
         return Err(unavailable("Routing session identity mismatch."));
     }
@@ -203,12 +240,12 @@ fn mutations<I: TokenSource>(
     } else {
         None
     };
-    let value = serde_json::to_value(journal)
+    let value = SourceJson::from_serializable(journal)
         .map_err(|_| unavailable("Routing journal encoding failed."))?;
     Journal::decode(&value)?;
     let mut rows = vec![RecordMutation::Put {
         key: key(&journal.context.request_id.0),
-        record: StoredRecord::json(&revision, value, expires),
+        record: encode_source_control_record(&revision, &value, expires)?,
     }];
     if journal.finished {
         rows.push(RecordMutation::Delete {
@@ -299,4 +336,27 @@ pub async fn change<
         }
     }
     Err(unavailable("Routing journal changed concurrently."))
+}
+
+#[cfg(test)]
+mod source_shape_tests {
+    use super::*;
+    #[test]
+    fn source_shape_ignores_object_order_not_array_order_or_opaque_identity() {
+        let a =
+            SourceJson::parse(r#"{"model":"\ud800","items":[1,2],"nested":{"first":1,"last":2}}"#)
+                .unwrap();
+        let reordered =
+            SourceJson::parse(r#"{"nested":{"last":2,"first":1},"items":[1,2],"model":"\ud800"}"#)
+                .unwrap();
+        assert!(same_source_value(&a, &reordered));
+        let array =
+            SourceJson::parse(r#"{"model":"\ud800","items":[2,1],"nested":{"first":1,"last":2}}"#)
+                .unwrap();
+        assert!(!same_source_value(&a, &array));
+        let other =
+            SourceJson::parse(r#"{"model":"�","items":[1,2],"nested":{"first":1,"last":2}}"#)
+                .unwrap();
+        assert!(!same_source_value(&a, &other));
+    }
 }

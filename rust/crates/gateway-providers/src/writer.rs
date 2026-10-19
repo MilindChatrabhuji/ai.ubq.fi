@@ -158,7 +158,7 @@ impl ResponseWriter {
     pub fn reasoning(&mut self, text: &str) -> Vec<ProviderEvent> {
         if self.finished
             || text.is_empty()
-            || self.plan.reasoning_summary.as_deref() == Some("none")
+            || self.plan.reasoning_summary.as_ref().is_some_and(|value|value.as_units().iter().copied().eq("none".encode_utf16()))
         {
             return vec![];
         }

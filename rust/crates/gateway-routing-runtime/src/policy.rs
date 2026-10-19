@@ -2,6 +2,7 @@ use crate::types::RoutingInput;
 use chrono::{DateTime, Datelike, Utc};
 use gateway_core::{
     GatewayError,
+    model::ModelId,
     provider::{CodexQuotaClass, PaidProvider, UpstreamProvider},
 };
 use gateway_providers::{
@@ -16,19 +17,19 @@ use serde_json::Value;
 pub enum RouteHop {
     Direct {
         provider: UpstreamProvider,
-        model: String,
+        model: ModelId,
     },
     Codex,
     Claude,
     Paid {
         provider: PaidProvider,
-        model: String,
+        model: ModelId,
         synthetic: bool,
     },
 }
 #[derive(Clone, Debug)]
 pub struct RoutePlan {
-    pub model: String,
+    pub model: ModelId,
     pub hops: Vec<RouteHop>,
     pub synthetic: bool,
     pub paid: PaidRoutingPlan,

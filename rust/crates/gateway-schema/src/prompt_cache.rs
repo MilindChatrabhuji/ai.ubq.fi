@@ -1,7 +1,6 @@
 //! Observed prompt cache metadata is distinct from the official request control schema.
-use crate::util::*;
 use gateway_core::GatewayError;
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 pub const SCOPE_PROFILE: &str = "responses_implicit_input_text_keyed_cycle_isolated_v5";
 pub const CODEX_PROVIDER: &str = "codex_chatgpt";
 pub fn normalize_breakpoint(
@@ -24,265 +23,54 @@ pub fn validate_prompt_cache_controls(body: &Value) -> Result<(), GatewayError> 
     .map_err(crate::source_request::SourceRequestError::into_scalar)
 }
 
-fn enum_list(value: &Value, allowed: Option<&[&str]>, filter: bool) -> Option<Vec<Value>> {
-    let values = value.as_array()?;
-    let mut result = Vec::new();
-    for value in values {
-        let text = if filter {
-            value.as_str()?.trim_matches(crate::util::js_whitespace)
-        } else {
-            value.as_str()?
-        };
-        if text.is_empty() {
-            return None;
-        }
-        if let Some(allowed) = allowed
-            && !allowed.contains(&text)
-        {
-            if filter {
-                continue;
-            }
-            return None;
-        }
-        let item = Value::String(text.to_owned());
-        if !result.contains(&item) {
-            result.push(item);
-        }
-    }
-    Some(result)
+fn scalar_source(value: &Value) -> Option<gateway_core::source_json::SourceJson> {
+    gateway_core::source_json::SourceJson::from_serializable(value).ok()
 }
-fn timestamp(value: Option<&Value>) -> Option<i64> {
-    value.and_then(safe_integer).filter(|n| *n >= 0)
+fn scalar_result(value: Option<gateway_core::source_json::SourceJson>) -> Option<Value> {
+    value?.deserialize().ok()
 }
-fn normalize_block_types(value: &Value) -> Option<Value> {
-    if !value.is_object() || unknown_key(value, &["responses", "chat_completions"]).is_some() {
-        return None;
-    }
-    let mut result = Map::new();
-    for (endpoint, allowed) in [
-        (
-            "responses",
-            &["input_text", "input_image", "input_file"][..],
-        ),
-        ("chat_completions", &["text", "image_url", "file"][..]),
-    ] {
-        if let Some(list) = value.get(endpoint) {
-            let entries = enum_list(list, Some(allowed), true)?;
-            if !entries.is_empty() {
-                result.insert(endpoint.into(), Value::Array(entries));
-            }
-        }
-    }
-    (!result.is_empty()).then_some(Value::Object(result))
+pub fn normalize_capabilities_source(
+    value: Option<&gateway_core::source_json::SourceJson>,
+) -> Option<gateway_core::source_json::SourceJson> {
+    crate::source_request::cache_metadata::normalize_capabilities_source(value)
 }
-fn normalize_controls(value: &Value) -> Option<Value> {
-    if !value.is_object()
-        || unknown_key(
-            value,
-            &[
-                "key",
-                "implicit",
-                "explicit_breakpoints",
-                "modes",
-                "ttls",
-                "legacy_retentions",
-                "breakpoint_block_types",
-                "expected_usage_fields",
-                "source",
-                "verified_at_ms",
-            ],
-        )
-        .is_some()
-    {
-        return None;
-    }
-    let source = value.get("source")?.as_str()?;
-    if !["catalog", "live_probe", "inferred"].contains(&source) {
-        return None;
-    }
-    let time = timestamp(value.get("verified_at_ms"))?;
-    let mut result = Map::new();
-    for key in ["key", "implicit", "explicit_breakpoints"] {
-        if let Some(v) = value.get(key) {
-            if !v.is_boolean() {
-                return None;
-            }
-            result.insert(key.into(), v.clone());
-        }
-    }
-    for (key, allowed, filter, omit_empty) in [
-        ("modes", &["implicit", "explicit"][..], false, false),
-        ("ttls", &["30m"][..], true, true),
-        ("legacy_retentions", &["in_memory", "24h"][..], true, true),
-        (
-            "expected_usage_fields",
-            &["cached_tokens", "cache_write_tokens"][..],
-            false,
-            false,
-        ),
-    ] {
-        if let Some(v) = value.get(key) {
-            let list = enum_list(v, Some(allowed), filter)?;
-            if !omit_empty || !list.is_empty() {
-                result.insert(key.into(), Value::Array(list));
-            }
-        }
-    }
-    if let Some(v) = value.get("breakpoint_block_types") {
-        result.insert("breakpoint_block_types".into(), normalize_block_types(v)?);
-    }
-    result.insert("source".into(), Value::String(source.into()));
-    result.insert("verified_at_ms".into(), json!(time));
-    Some(Value::Object(result))
+pub fn compact_capabilities_source(
+    value: Option<&gateway_core::source_json::SourceJson>,
+) -> Option<gateway_core::source_json::SourceJson> {
+    crate::source_request::cache_metadata::compact_capabilities_source(value)
 }
-pub fn normalize_scope(value: &Value) -> Option<Value> {
-    if !value.is_object()
-        || unknown_key(
-            value,
-            &[
-                "probe_profile",
-                "account_slots",
-                "token_refresh",
-                "conversation_id",
-                "effective_model",
-                "reproducible_cycles",
-                "source",
-                "verified_at_ms",
-            ],
-        )
-        .is_some()
-    {
-        return None;
-    }
-    if value.get("probe_profile").and_then(Value::as_str) != Some(SCOPE_PROFILE)
-        || value.get("source").and_then(Value::as_str) != Some("live_probe")
-    {
-        return None;
-    }
-    for (key, allowed) in [
-        (
-            "account_slots",
-            &["shared", "account_scoped", "unknown"][..],
-        ),
-        ("token_refresh", &["preserved", "changed", "unknown"][..]),
-        ("conversation_id", &["independent", "scoped", "unknown"][..]),
-    ] {
-        if !value
-            .get(key)
-            .and_then(Value::as_str)
-            .is_some_and(|s| allowed.contains(&s))
-        {
-            return None;
-        }
-    }
-    let cycles = timestamp(value.get("reproducible_cycles"))?;
-    if cycles < 3 {
-        return None;
-    }
-    let time = timestamp(value.get("verified_at_ms"))?;
-    let mut next = json!({"probe_profile":SCOPE_PROFILE,"account_slots":value["account_slots"],"token_refresh":value["token_refresh"],"conversation_id":value["conversation_id"]});
-    if value.get("effective_model").is_some() {
-        next["effective_model"] = Value::String(normalized_string(value.get("effective_model"))?);
-    }
-    next["reproducible_cycles"] = json!(cycles);
-    next["source"] = json!("live_probe");
-    next["verified_at_ms"] = json!(time);
-    Some(next)
+pub fn normalize_scope_source(
+    value: &gateway_core::source_json::SourceJson,
+) -> Option<gateway_core::source_json::SourceJson> {
+    crate::source_request::cache_metadata::normalize_scope_source(value)
+}
+pub fn merge_capabilities_source(
+    previous: Option<&gateway_core::source_json::SourceJson>,
+    next: Option<&gateway_core::source_json::SourceJson>,
+) -> Option<gateway_core::source_json::SourceJson> {
+    crate::source_request::cache_metadata::merge_capabilities_source(previous, next)
+}
+pub fn concrete_scope_source(value: &gateway_core::source_json::SourceJson, cycles: i64) -> bool {
+    crate::source_request::cache_metadata::concrete_scope_source(value, cycles)
 }
 pub fn normalize_capabilities(value: Option<&Value>) -> Option<Value> {
-    let value = value?;
-    if value == &Value::Bool(false) {
-        return Some(Value::Bool(false));
-    }
-    if !value.is_object()
-        || unknown_key(value, &["version", "providers"]).is_some()
-        || value.get("version").and_then(safe_integer) != Some(1)
-    {
-        return None;
-    }
-    let providers = value.get("providers")?.as_array()?;
-    if providers.is_empty() {
-        return None;
-    }
-    let mut result = Vec::new();
-    let mut seen = Vec::new();
-    for provider in providers {
-        if !provider.is_object() || unknown_key(provider, &["id", "controls", "scope"]).is_some() {
-            return None;
-        }
-        let id = normalized_string(provider.get("id"))?;
-        if seen.contains(&id) {
-            return None;
-        }
-        seen.push(id.clone());
-        let mut item = json!({"id":id});
-        if let Some(v) = provider.get("controls") {
-            item["controls"] = normalize_controls(v)?;
-        }
-        if let Some(v) = provider.get("scope") {
-            item["scope"] = normalize_scope(v)?;
-        }
-        result.push(item);
-    }
-    Some(json!({"version":1,"providers":result}))
+    let value = value.and_then(scalar_source);
+    scalar_result(normalize_capabilities_source(value.as_ref()))
 }
 pub fn compact_capabilities(value: Option<&Value>) -> Option<Value> {
-    let normalized = normalize_capabilities(value)?;
-    if normalized == Value::Bool(false) {
-        return Some(normalized);
-    }
-    let providers: Vec<_> = normalized["providers"]
-        .as_array()?
-        .iter()
-        .filter_map(|p| {
-            p.get("controls")
-                .map(|c| json!({"id":p["id"],"controls":c}))
-        })
-        .collect();
-    (!providers.is_empty()).then(|| json!({"version":1,"providers":providers}))
+    let value = value.and_then(scalar_source);
+    scalar_result(compact_capabilities_source(value.as_ref()))
+}
+pub fn normalize_scope(value: &Value) -> Option<Value> {
+    scalar_result(normalize_scope_source(&scalar_source(value)?))
 }
 pub fn merge_capabilities(previous: Option<&Value>, next: Option<&Value>) -> Option<Value> {
-    let previous = normalize_capabilities(previous);
-    let next = normalize_capabilities(next);
-    let Some(next) = next else { return previous };
-    if next == Value::Bool(false) {
-        return Some(next);
-    }
-    let Some(previous) = previous.filter(|v| v != &Value::Bool(false)) else {
-        return Some(next);
-    };
-    let old = previous["providers"].as_array()?;
-    let mut providers = Vec::new();
-    for provider in next["providers"].as_array()? {
-        let prior = old.iter().find(|p| p["id"] == provider["id"]);
-        let mut merged = json!({"id":provider["id"]});
-        for key in ["controls", "scope"] {
-            if let Some(v) = provider.get(key).or_else(|| prior.and_then(|p| p.get(key))) {
-                merged[key] = v.clone();
-            }
-        }
-        providers.push(merged);
-    }
-    for provider in old {
-        if !providers.iter().any(|p| p["id"] == provider["id"]) {
-            providers.push(provider.clone());
-        }
-    }
-    Some(json!({"version":1,"providers":providers}))
+    let previous = previous.and_then(scalar_source);
+    let next = next.and_then(scalar_source);
+    scalar_result(merge_capabilities_source(previous.as_ref(), next.as_ref()))
 }
-pub fn concrete_scope(scope: &Value, reproducible_cycles: i64) -> bool {
-    scope.get("probe_profile").and_then(Value::as_str) == Some(SCOPE_PROFILE)
-        && scope.get("source").and_then(Value::as_str) == Some("live_probe")
-        && ["account_slots", "token_refresh", "conversation_id"]
-            .iter()
-            .all(|k| {
-                scope
-                    .get(k)
-                    .and_then(Value::as_str)
-                    .is_some_and(|s| s != "unknown")
-            })
-        && scope.get("reproducible_cycles").and_then(Value::as_i64) == Some(reproducible_cycles)
-        && normalized_string(scope.get("effective_model")).is_some()
+pub fn concrete_scope(value: &Value, cycles: i64) -> bool {
+    scalar_source(value).is_some_and(|value| concrete_scope_source(&value, cycles))
 }
 pub fn validate_known_unsupported(
     model: &str,
@@ -296,9 +84,13 @@ pub fn validate_known_unsupported(
         .iter()
         .map(gateway_core::source_json::SourceJson::from_serializable)
         .collect::<Result<Vec<_>, _>>()?;
+    let prompt_cache = record
+        .and_then(|record| record.get("prompt_cache"))
+        .map(gateway_core::source_json::SourceJson::from_serializable)
+        .transpose()?;
     crate::source_request::validate_known_unsupported_prompt_cache(
         &gateway_core::js_string::JsString16::from_utf8(model),
-        record.and_then(|record| record.get("prompt_cache")),
+        prompt_cache.as_ref(),
         &body,
         &input,
         input_key,

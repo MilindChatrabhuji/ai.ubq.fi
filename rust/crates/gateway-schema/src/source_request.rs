@@ -1,5 +1,6 @@
 //! Ordinary-request data views; no provider dispatch or authority is implemented here.
 mod cache_capability;
+pub(crate) mod cache_metadata;
 mod chat_engine;
 mod content_engine;
 mod controls;

@@ -3,7 +3,7 @@
 use std::future::Future;
 
 use gateway_auth::native_auth::AuthenticatedNativeOwner;
-use gateway_core::GatewayError;
+use gateway_core::{GatewayError, model::ModelId};
 use serde::{Deserialize, Serialize};
 
 pub mod actor;
@@ -29,7 +29,7 @@ pub enum NativeRenewalContext {
     Inference {
         attempt_id: String,
         original_admission_digest: String,
-        model: String,
+        model: ModelId,
         slot: u64,
     },
     LiveCreate {

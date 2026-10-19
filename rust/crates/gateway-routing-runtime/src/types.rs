@@ -7,6 +7,7 @@ use gateway_core::{
     GatewayError,
     identity::RequestContext,
     lifecycle::TransportObservation,
+    model::ModelId,
     provider::UpstreamProvider,
     state::{RecordKey, RevisionCheck},
 };
@@ -23,7 +24,7 @@ pub struct RoutingInput {
     pub raw: gateway_core::source_json::SourceJson,
     pub surface: ClientSurface,
     pub catalog: CatalogInput,
-    pub runtime: Option<Value>,
+    pub runtime: Option<gateway_core::source_json::SourceJson>,
     pub client_version: String,
     pub native_session_id: Option<String>,
     /// Existing server-side request retry policy; never read from client JSON.
@@ -199,7 +200,7 @@ impl std::fmt::Debug for PublishedCredential {
 #[derive(Clone, Debug)]
 pub struct CredentialRequest {
     pub provider: UpstreamProvider,
-    pub model: String,
+    pub model: ModelId,
     pub codex: Option<AdmittedAccount>,
 }
 
@@ -284,7 +285,7 @@ pub trait RoutingHost {
         &self,
         fence: &CredentialFence,
         principal: &AuthPrincipal,
-        model: &str,
+        model: &ModelId,
     ) -> impl Future<Output = Result<(), GatewayError>>;
     fn refresh_codex(
         &self,
@@ -293,13 +294,13 @@ pub trait RoutingHost {
     fn select_claude(
         &self,
         principal: &AuthPrincipal,
-        model: &str,
+        model: &ModelId,
         raw: &gateway_core::source_json::SourceJson,
     ) -> impl Future<Output = Result<ClaudeSelection, GatewayError>>;
     fn observe_claude_response(
         &self,
         fence: &CredentialFence,
-        model: &str,
+        model: &ModelId,
         response: ResponseHead,
     ) -> impl Future<Output = Result<Self::ClaudeHead, GatewayError>>;
     fn finish_claude_response(
@@ -310,7 +311,7 @@ pub trait RoutingHost {
     fn recover_codex(
         &self,
         proof: &CohortProof,
-        model: &str,
+        model: &ModelId,
     ) -> impl Future<Output = Result<CodexRecovery, GatewayError>>;
     fn lookup_paid(
         &self,

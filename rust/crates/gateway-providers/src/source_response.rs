@@ -98,7 +98,7 @@ fn completion(
         ("id", s::text(&plan.response_id)),
         ("object", s::text("chat.completion")),
         ("created", s::generated(&plan.created_at)),
-        ("model", s::text(&plan.model)),
+        ("model", s::quoted(plan.model.as_js_string())),
         (
             "choices",
             s::array(&[s::object(vec![

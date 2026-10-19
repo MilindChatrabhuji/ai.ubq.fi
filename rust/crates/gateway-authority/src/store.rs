@@ -114,6 +114,13 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         Ok(raw)
     }
 
+    /// Establish only the existing cached metadata/revision precondition. This
+    /// observes no payload and cannot replace a named family's validation.
+    pub(crate) async fn observe_revision(&mut self, key: &RecordKey) -> Result<(), GatewayError> {
+        self.cached_record(key).await?;
+        Ok(())
+    }
+
     pub async fn read<T: DeserializeOwned>(
         &mut self,
         key: &RecordKey,

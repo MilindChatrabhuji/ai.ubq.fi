@@ -76,14 +76,11 @@ fn validate_source_inventories(rows: &[Row], now: i64) -> Result<(), GatewayErro
         })
         .collect();
     let (pairs, mut findings) = audit::inspect_key_pairs(&observed)?;
-    let known = pairs
-        .iter()
-        .filter_map(|(id, _)| id.get("id").and_then(Value::as_str).map(str::to_owned))
-        .collect();
+    let known = pairs.iter().map(|pair| pair.key_id.clone()).collect();
     let unlimited = pairs
         .iter()
-        .filter(|(id, _)| id["paid_fallback_limit_microcredits"] == -1)
-        .filter_map(|(id, _)| id["id"].as_str().map(str::to_owned))
+        .filter(|pair| pair.unlimited_paid)
+        .map(|pair| pair.key_id.clone())
         .collect();
     findings.merge(audit::inspect_api_usage(&observed, &known)?);
     findings.merge(audit::inspect_kernel(&observed)?);
