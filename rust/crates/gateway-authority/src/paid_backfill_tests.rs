@@ -662,8 +662,13 @@ fn shared_surplus_usage_adapter_matches_all_actual_source_pricing_cases() {
         row.model = case["model"].as_str().unwrap().into();
         row.quota_per_credit = case["quota_per_credit"].as_i64().unwrap();
         let usage = gateway_core::source_usage::extract_usage_tokens(Some(&case["raw"]));
-        let pricing = case.get("pricing").filter(|value| !value.is_null());
-        let actual = crate::paid::surplus_usage_from_source(&row, usage.as_ref(), pricing);
+        let pricing = case
+            .get("pricing")
+            .filter(|value| !value.is_null())
+            .map(gateway_core::source_json::SourceJson::from_serializable)
+            .transpose()
+            .unwrap();
+        let actual = crate::paid::surplus_usage_from_source(&row, usage.as_ref(), pricing.as_ref());
         let expected = &case["expected"];
         if expected.is_null() {
             assert!(actual.is_none(), "{name}: unexpected billing input");
