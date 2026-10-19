@@ -296,7 +296,7 @@ impl Capture {
             CaptureInput::Omitted(reason) => {
                 self.runtime
                     .record_capture_omission(&self.request_id, reason)
-                    .await?
+                    .await?;
             }
         }
         Ok(())
@@ -436,4 +436,51 @@ pub fn upstream(
     .map_err(|_| {
         GatewayError::unavailable("The upstream stream is unavailable.", "upstream_read_error")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wire() -> ClientWire {
+        ClientWire {
+            status: 200,
+            stream: true,
+            provider: "gateway".into(),
+            parser: None,
+            valid: true,
+            terminal: None,
+            error_code: None,
+            error_param: None,
+            body: Vec::new(),
+            body_bytes: 0,
+        }
+    }
+
+    #[test]
+    fn actual_client_failure_frame_preserves_terminal_and_error_fields() {
+        let mut client = wire();
+        let mut parser = SseParser::new(MAX_RESPONSES_EVENT_BYTES);
+        for frame in parser.push(br#"data: {"type":"response.failed","response":{"error":{"code":"actual_failure","param":"input"}}}
+
+"#).unwrap() { client.frame(frame); }
+        assert!(client.valid);
+        assert_eq!(client.terminal.as_deref(), Some("response.failed"));
+        assert_eq!(client.error_code.as_deref(), Some("actual_failure"));
+        assert_eq!(client.error_param.as_deref(), Some("input"));
+    }
+
+    #[test]
+    fn malformed_client_frame_and_raw_eof_do_not_mint_completion() {
+        let mut client = wire();
+        let mut parser = SseParser::new(MAX_RESPONSES_EVENT_BYTES);
+        for frame in parser.push(b"data: not-json\n\n").unwrap() {
+            client.frame(frame);
+        }
+        for frame in parser.finish().unwrap() {
+            client.frame(frame);
+        }
+        assert!(!client.valid);
+        assert!(client.terminal.is_none());
+    }
 }

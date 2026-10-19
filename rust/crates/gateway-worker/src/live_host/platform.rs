@@ -1,5 +1,5 @@
 //! Fixed live operations over the original actor and the common account authority.
-use std::{collections::BTreeMap, rc::Rc};
+use std::collections::BTreeMap;
 
 use gateway_auth::provider_credentials::{codex_access_expiry_ms, read_codex_source_pool};
 use gateway_authority::{
