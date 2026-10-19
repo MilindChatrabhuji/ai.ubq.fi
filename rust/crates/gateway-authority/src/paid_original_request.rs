@@ -3,7 +3,7 @@
 use super::{PaidRoutingReceipt, control_error, source_key};
 use crate::{
     Authority, TokenSource, keys,
-    paid::PaidRequest,
+    paid::{PaidAttempt, PaidRequest, PaidReservation},
     quota::{ApiReservation, ApiUsageRequest, ApiUsageState, KernelReservation},
     store::Transaction,
 };
@@ -14,6 +14,7 @@ pub(super) async fn require_current<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     request: &PaidRequest,
     original: &RequestContext,
+    existing: Option<&PaidReservation>,
 ) -> Result<(), GatewayError> {
     let error =
         || control_error("Original request ownership is missing, expired, finalizing or changed.");
@@ -44,11 +45,36 @@ pub(super) async fn require_current<S: AuthorityStore, I: TokenSource>(
         || journal["recovering"].as_bool() != Some(false)
         || journal["semantic_committed"].as_bool() != Some(false)
         || !journal.get("terminal_intent").is_none_or(Value::is_null)
-        || !journal.get("active").is_none_or(Value::is_null)
         || !journal["lease_expires_at_ms"]
             .as_i64()
             .is_some_and(|lease| lease > tx.now)
     {
+        return Err(error());
+    }
+    if let Some(expected) = existing {
+        if expected.key_id != request.key_id
+            || expected.request_id != request.request_id
+            || expected.attempt_id != request.attempt_id
+            || expected.provider != request.provider
+            || expected.created_at_ms != request.created_at_ms
+        {
+            return Err(error());
+        }
+        let active = journal["active"].as_str().ok_or_else(error)?;
+        let attempt = journal["attempts"]
+            .as_array()
+            .and_then(|attempts| {
+                attempts
+                    .iter()
+                    .find(|attempt| attempt["id"].as_str() == Some(active))
+            })
+            .ok_or_else(error)?;
+        let paid: PaidReservation =
+            serde_json::from_value(attempt["paid"].clone()).map_err(|_| error())?;
+        if &paid != expected {
+            return Err(error());
+        }
+    } else if !journal.get("active").is_none_or(Value::is_null) {
         return Err(error());
     }
     let api: Option<ApiReservation> =
@@ -122,15 +148,47 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         original: &RequestContext,
         now: i64,
     ) -> Result<PaidRoutingReceipt, GatewayError> {
+        self.bind_original(receipt, original, None, now).await
+    }
+    /// Recheck only the exact already-active paid reservation; this never grants fresh exposure.
+    pub async fn bind_paid_original_dispatch(
+        &self,
+        receipt: &PaidRoutingReceipt,
+        original: &RequestContext,
+        existing: &PaidReservation,
+        now: i64,
+    ) -> Result<PaidRoutingReceipt, GatewayError> {
+        self.bind_original(receipt, original, Some(existing), now)
+            .await
+    }
+    async fn bind_original(
+        &self,
+        receipt: &PaidRoutingReceipt,
+        original: &RequestContext,
+        existing: Option<&PaidReservation>,
+        now: i64,
+    ) -> Result<PaidRoutingReceipt, GatewayError> {
         for _ in 0..128 {
             let mut tx = self.transaction(self.fresh_time(now)?)?;
             self.require_paid_route(&mut tx, &receipt.request, receipt, now)
                 .await?;
-            require_current(&mut tx, &receipt.request, original).await?;
+            require_current(&mut tx, &receipt.request, original, existing).await?;
+            if let Some(expected) = existing {
+                let key = keys::paid_attempt(&expected.key_id.0, &expected.attempt_id.0);
+                let row: PaidAttempt = tx
+                    .read(&key)
+                    .await?
+                    .ok_or_else(|| control_error("Existing paid history is missing or expired."))?;
+                if &row.reservation != expected {
+                    return Err(control_error("Active paid reservation changed."));
+                }
+            }
+            // Recheck time against this same cached snapshot, then CAS its exact revisions.
             tx.now = self.fresh_time(tx.now)?;
-            require_current(&mut tx, &receipt.request, original).await?;
+            require_current(&mut tx, &receipt.request, original, existing).await?;
             let mut bound = receipt.clone();
             bound.original_request = Some(original.clone());
+            bound.existing_paid = existing.cloned();
             bound.checks = tx.checks();
             if tx.commit().await? {
                 return Ok(bound);

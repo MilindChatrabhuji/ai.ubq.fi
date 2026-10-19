@@ -192,6 +192,13 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }
             let key = keys::paid_attempt(&input.key_id.0, &input.attempt_id.0);
             if let Some(existing) = tx.read::<PaidAttempt>(&key).await? {
+                if receipt
+                    .existing_paid
+                    .as_ref()
+                    .is_some_and(|expected| expected != &existing.reservation)
+                {
+                    return Err(invalid("Existing-only paid reservation changed."));
+                }
                 if existing.reservation.request_id != input.request_id
                     || existing.reservation.provider != input.provider
                     || existing.model != input.model
@@ -224,6 +231,12 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 } else {
                     continue;
                 }
+            }
+            if receipt.existing_paid.is_some() {
+                return Err(unavailable(
+                    "paid_control_unavailable",
+                    "Existing paid history is missing or expired; dispatch cannot create exposure.",
+                ));
             }
             let limit = MicrocreditLimit::try_from(policy.paid_fallback_limit_microcredits)
                 .map_err(|_| invalid("Paid limit is invalid."))?;

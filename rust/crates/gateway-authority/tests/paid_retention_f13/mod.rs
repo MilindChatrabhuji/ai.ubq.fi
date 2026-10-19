@@ -481,3 +481,122 @@ fn f13_non_api_original_kernel_is_rechecked_without_renewing_it() {
             .is_err()
     );
 }
+
+fn publish_active_paid(
+    store: &MemoryStore,
+    input: &PaidRequest,
+    paid: &gateway_authority::paid::PaidReservation,
+) {
+    let key = super::paid_original::journal_key(&input.request_id.0);
+    let mut journal = store.row(&key).unwrap().value;
+    journal["active"] = json!("f13-prepared-active");
+    journal["attempts"] = json!([{
+        "id":"f13-prepared-active","provider":UpstreamProvider::Metered,"model":input.model,"cursor":0,
+        "fence":{"Paid":{"provider":UpstreamProvider::Metered,"owner_id":"fixture-owner","owner_epoch":"fixture-epoch","configuration_generation":"fixture-config-generation","credential_binding":"fixture-openlux-binding"}},
+        "paid":paid,"phase":"Prepared","transport_started":false,"response_nonce":null,"response_count":0,
+        "workspace_nonce":null,"workspace_continuations":0,"known_not_started":false,"observation":null,
+        "provider_request_id":null,"billing":null
+    }]);
+    store.seed(key, &journal);
+}
+#[test]
+fn f13_exact_active_dispatch_rechecks_existing_only_before_and_after_api_dispatch() {
+    for committed in [false, true] {
+        let (store, authority, input, pre) = setup();
+        let PaidAdmission::Reserved(reservation) =
+            run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &pre, NOW))
+                .unwrap()
+        else {
+            panic!("expected fresh")
+        };
+        let before = window_value(&store, reservation.window_reset_at_ms);
+        let mut now = NOW;
+        if committed {
+            let key = super::paid_original::journal_key(&input.request_id.0);
+            let mut journal = store.row(&key).unwrap().value;
+            let api: gateway_authority::quota::ApiReservation =
+                serde_json::from_value(journal["api"].clone()).unwrap();
+            assert!(run(authority.dispatch_api_key(&api, UpstreamProvider::Metered, NOW)).unwrap());
+            now = NOW + gateway_authority::REQUEST_LEASE_MS + 1;
+            journal["lease_expires_at_ms"] = json!(now + gateway_authority::REQUEST_LEASE_MS);
+            store.seed(key, &journal);
+            store.clock(now);
+        }
+        publish_active_paid(&store, &input, &reservation);
+        let route = run(authority.authorize_paid_route(&input, &context(&input), now)).unwrap();
+        let original = original_context(&store, &input);
+        assert!(run(authority.bind_paid_original_request(&route, &original, now)).is_err());
+        let dispatch =
+            run(authority.bind_paid_original_dispatch(&route, &original, &reservation, now))
+                .unwrap();
+        assert!(
+            matches!(run(authority.reserve_paid(&input,&PaidAuthorization::DirectPaidModel,&dispatch,now)).unwrap(),PaidAdmission::Existing(same) if same==reservation)
+        );
+        assert_eq!(window_value(&store, reservation.window_reset_at_ms), before);
+    }
+}
+#[test]
+fn f13_existing_only_dispatch_never_recreates_missing_history_or_fresh_exposure() {
+    let (store, authority, input, pre) = setup();
+    let PaidAdmission::Reserved(reservation) =
+        run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &pre, NOW))
+            .unwrap()
+    else {
+        panic!("expected fresh")
+    };
+    publish_active_paid(&store, &input, &reservation);
+    let original = original_context(&store, &input);
+    let route = fresh_route(&authority, &input);
+    let dispatch =
+        run(authority.bind_paid_original_dispatch(&route, &original, &reservation, NOW)).unwrap();
+    let before = window_value(&store, reservation.window_reset_at_ms);
+    let key = keys::paid_attempt(&input.key_id.0, &input.attempt_id.0);
+    let mut history = store.row(&key).unwrap();
+    history.expires_at_ms = Some(NOW);
+    store.seed_record(key.clone(), history);
+    assert!(
+        run(authority.bind_paid_original_dispatch(&route, &original, &reservation, NOW)).is_err()
+    );
+    assert!(
+        run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &dispatch, NOW))
+            .is_err()
+    );
+    assert!(run(store.read(&key)).unwrap().is_none());
+    assert_eq!(window_value(&store, reservation.window_reset_at_ms), before);
+}
+#[test]
+fn f13_wrong_active_attempt_and_expired_dispatch_lease_are_refused() {
+    let (store, authority, input, pre) = setup();
+    let PaidAdmission::Reserved(reservation) =
+        run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &pre, NOW))
+            .unwrap()
+    else {
+        panic!("expected fresh")
+    };
+    let mut wrong = reservation.clone();
+    wrong.attempt_id.0 = "another-paid-attempt".into();
+    publish_active_paid(&store, &input, &wrong);
+    let original = original_context(&store, &input);
+    let route = fresh_route(&authority, &input);
+    assert!(
+        run(authority.bind_paid_original_dispatch(&route, &original, &reservation, NOW)).is_err()
+    );
+    publish_active_paid(&store, &input, &reservation);
+    let dispatch = run(authority.bind_paid_original_dispatch(
+        &fresh_route(&authority, &input),
+        &original,
+        &reservation,
+        NOW,
+    ))
+    .unwrap();
+    store.clock(NOW + gateway_authority::REQUEST_LEASE_MS + 1);
+    assert!(
+        run(authority.reserve_paid(
+            &input,
+            &PaidAuthorization::DirectPaidModel,
+            &dispatch,
+            NOW + gateway_authority::REQUEST_LEASE_MS + 1
+        ))
+        .is_err()
+    );
+}
