@@ -1,0 +1,76 @@
+{
+  "provenance": {
+    "ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/f8f4c1d3-c46e-4636-b308-1974c4bd307b",
+    "script_sha256": "fb562a9b27de2f1bcb64990f5530b1751928ee61c1f966941952663cf5405578"
+  },
+  "source_sha": "8214a7eeba7657b6798b19ae8f79debdbca6bed3",
+  "input_rows": [
+    {
+      "owner": "  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  ",
+      "repo": "  /repo path  ",
+      "request_count": 3.9,
+      "first_seen_at_ms": 0,
+      "last_seen_at_ms": 5.9,
+      "last_route": " /route "
+    },
+    {
+      "owner": " org\ud800 ",
+      "repo": " repo\u0000name ",
+      "request_count": -3,
+      "first_seen_at_ms": "bad",
+      "last_seen_at_ms": 10,
+      "extra_private": "must not leak"
+    },
+    null,
+    {
+      "owner": 3,
+      "repo": "r"
+    },
+    {
+      "owner": " ",
+      "repo": "r"
+    }
+  ],
+  "initial_response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "owner": "org\ud800",
+          "repo": "repo\u0000name",
+          "request_count": 0,
+          "first_seen_at_ms": 1800000000000,
+          "last_seen_at_ms": 10,
+          "last_route": null
+        },
+        {
+          "owner": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "repo": "/repo path",
+          "request_count": 3,
+          "first_seen_at_ms": 0,
+          "last_seen_at_ms": 5,
+          "last_route": "/route"
+        }
+      ]
+    }
+  },
+  "policy_owner": "org\ud800",
+  "policy_value": {
+    "foreign": true
+  },
+  "filtered_response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "owner": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "repo": "/repo path",
+          "request_count": 3,
+          "first_seen_at_ms": 0,
+          "last_seen_at_ms": 5,
+          "last_route": "/route"
+        }
+      ]
+    }
+  }
+}
