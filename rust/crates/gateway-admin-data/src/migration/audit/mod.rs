@@ -4,7 +4,7 @@ mod paid;
 mod source_fields;
 mod usage;
 pub use keys::{AuditedKeyPair, inspect_key_pairs, valid_key_policy, valid_source_key_policy};
-pub use paid::inspect_paid;
+pub use paid::{inspect_paid, valid_source_paid_request};
 pub use usage::{inspect_api_usage, inspect_kernel};
 
 use super::{ObservedRow, starts};
