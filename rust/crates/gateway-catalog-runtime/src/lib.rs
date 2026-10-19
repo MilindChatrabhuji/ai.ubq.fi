@@ -251,10 +251,10 @@ impl CatalogRuntime {
                 break;
             }
             host.wait(25).await?;
-            if let MemoIdentity::Credential(binding) = &identity {
-                if host.publication().await?.binding(provider).as_ref() != Some(binding) {
-                    return Ok(None);
-                }
+            if let MemoIdentity::Credential(binding) = &identity
+                && host.publication().await?.binding(provider).as_ref() != Some(binding)
+            {
+                return Ok(None);
             }
             if self
                 .memo
@@ -428,6 +428,59 @@ impl CatalogRuntime {
         Err(unavailable(
             "Claude model discovery exceeded its page bound",
         ))
+    }
+    /// Publish completed credential-validation metadata into the one Claude memo.
+    pub async fn cache_validated_claude<S: QueryStore, H: CatalogHost>(
+        &self,
+        store: &S,
+        host: &H,
+        binding: &ProviderBinding,
+        models: Vec<Value>,
+        fetched_at_ms: i64,
+    ) -> Result<bool, GatewayError> {
+        let publication = host.publication().await?;
+        publication.validate()?;
+        if publication.binding(CatalogProvider::ClaudeCode).as_ref() != Some(binding)
+            || !state::checks_current(store, &publication.source_checks).await?
+        {
+            return Ok(false);
+        }
+        if host
+            .publication()
+            .await?
+            .binding(CatalogProvider::ClaudeCode)
+            .as_ref()
+            != Some(binding)
+        {
+            return Ok(false);
+        }
+        if fetched_at_ms <= 0 || fetched_at_ms > host.now_ms() {
+            return Err(unavailable("Validated Claude catalog time is invalid"));
+        }
+        let mut memo = self.memo.borrow_mut();
+        memo.next_request = memo
+            .next_request
+            .checked_add(1)
+            .ok_or_else(|| unavailable("Provider catalog request generation overflowed"))?;
+        let request = memo.next_request;
+        memo.entries.insert(
+            CatalogProvider::ClaudeCode,
+            MemoEntry {
+                identity: MemoIdentity::Credential(binding.clone()),
+                snapshot: Some(ProviderCatalog {
+                    models,
+                    updated_at_ms: Some(fetched_at_ms),
+                    configured: true,
+                    available: true,
+                    stale: false,
+                }),
+                expires_ms: fetched_at_ms.saturating_add(PROVIDER_FRESH_MS),
+                retry_ms: 0,
+                published_generation: request,
+                shared_request: None,
+            },
+        );
+        Ok(true)
     }
     pub async fn versioned_models<S: QueryStore, H: CatalogHost>(
         &self,

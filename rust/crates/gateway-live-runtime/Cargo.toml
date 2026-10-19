@@ -1,0 +1,16 @@
+[package]
+name = "gateway-live-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core.workspace = true
+gateway-auth.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ryu-js = "=1.0.2"
+
+[lints]
+workspace = true

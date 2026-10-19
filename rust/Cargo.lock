@@ -969,6 +969,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-live-runtime"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-core",
+ "ryu-js",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-migration"
 version = "0.1.0"
 dependencies = [
@@ -979,6 +990,7 @@ dependencies = [
  "gateway-authority",
  "gateway-claude-runtime",
  "gateway-core",
+ "gateway-native",
  "gateway-schema",
  "rusqlite",
  "serde",
@@ -994,6 +1006,7 @@ dependencies = [
  "gateway-authority",
  "gateway-core",
  "gateway-publication",
+ "getrandom 0.4.3",
  "httparse",
  "landlock",
  "libc",
@@ -1090,6 +1103,7 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-catalog-runtime",
+ "gateway-claude-runtime",
  "gateway-core",
  "gateway-extras-runtime",
  "gateway-observability",

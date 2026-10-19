@@ -123,7 +123,7 @@ const config :Workerd.Config = (
       modules = [(name = "index.js", esModule = embed ${quoted(join(root, "rust/crates/gateway-worker/build/index.js"))}), (name = "index_bg.wasm", wasm = embed ${quoted(join(root, "rust/crates/gateway-worker/build/index_bg.wasm"))})],
       compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal", "request_signal_passthrough"],
       globalOutbound = "driver",
-      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "ASSETS", service = "assets"), (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"), (name = "DEEPSEEK_API_KEY", text = "fixture-provider-secret"), (name = "CEREBRAS_API_KEY", text = "fixture-provider-secret"), (name = "OPENROUTER_API_KEY", text = "fixture-provider-secret"), (name = "VOYAGEAI_API_KEY", text = "fixture-provider-secret")],
+      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "ASSETS", service = "assets"), (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"), (name = "DEEPSEEK_API_KEY", text = "fixture-provider-secret"), (name = "CEREBRAS_API_KEY", text = "fixture-provider-secret"), (name = "OPENROUTER_API_KEY", text = "fixture-provider-secret"), (name = "VOYAGEAI_API_KEY", text = "fixture-provider-secret"), (name = "IMAGE_BASE_MODEL", text = "gpt-test")],
       durableObjectNamespaces = [(className = "GatewayAuthority", uniqueKey = "uos-rust-runtime-conformance-v1", enableSql = true)],
       durableObjectStorage = (localDisk = "state")
     )),
@@ -500,6 +500,100 @@ async function extrasCases(input: {
   cases.push("actual_systemone_fixed_openrouter_transport_and_dispatch_attribution");
 }
 
+async function imageCases(input: {
+  url: (path: string) => string;
+  post: (path: string, body: unknown) => Promise<Response>;
+  rpc: (body: unknown) => Promise<Record<string, unknown>>;
+  lifecycle: (id: string) => Promise<Record<string, unknown>>;
+  cases: string[];
+}): Promise<void> {
+  const { url, post, rpc, lifecycle, cases } = input;
+  const account = "fixture-image-account";
+  const access = "fixture-provider-secret";
+  const refresh = "fixture-image-refresh";
+  const revision = "fixture-image-source";
+  const sha256 = (value: string): string => createHash("sha256").update(value).digest("hex");
+  // These are the exact codex_credential_identity recipes from the committed
+  // gateway-auth/provider_credentials.rs factory, using synthetic secrets only.
+  const now = Date.now();
+  const model = { slug: "gpt-test", supported_reasoning_levels: [{ effort: "none" }], default_reasoning_level: "none" };
+  const records = [
+    [
+      tuple("ubq_ai", "codex_auth"),
+      revision,
+      { accounts: [{ account_id: account, access_token: access, refresh_token: refresh, updated_at_ms: now }], updated_at_ms: now },
+    ],
+    [
+      tuple("uos_ai", "authority", "v1", "codex_pool"),
+      "fixture-image-normalized",
+      {
+        v: 1,
+        pool_versionstamp: revision,
+        accounts: [
+          {
+            account_id_hash: sha256(`uos_ai\0codex_routing_account\0${account}`),
+            admin_account_hash: sha256(account),
+            credential_version: sha256(`${account}\0${access}\0${refresh}`),
+            enabled: true,
+          },
+        ],
+      },
+    ],
+    [tuple("ubq_ai", "codex_models"), "fixture-image-models", { models: [model], source: "controlled-runtime-fixture", updated_at_ms: now }],
+  ] as const;
+  const seeded = await rpc({
+    operation: "commit",
+    checks: records.map(([key]) => ({ key, expected_revision: null })),
+    mutations: records.map(([key, revision, value]) => ({ operation: "put", key, record: { schema_version: 1, revision, value, expires_at_ms: null } })),
+  });
+  assert.equal(seeded.committed, true);
+  const generated = await post("/v1/images/generations", { prompt: "fixture:image-generated", n: 2 });
+  assert.equal(generated.status, 200);
+  const images = await objectBody(generated);
+  assert(Array.isArray(images.data) && images.data.length === 2);
+  assert(images.data.every((image: unknown) => isObject(image) && image.b64_json === "aW1hZ2U="));
+  const id = generated.headers.get("x-uos-request-id");
+  assert(id);
+  const state = await lifecycle(id);
+  assert(
+    Array.isArray(state.children) &&
+      state.children.length === 2 &&
+      state.children.every((child: unknown) => isObject(child) && child.settled === true && child.transport_started === true)
+  );
+  assert(isObject(state.children[0]) && isObject(state.children[1]));
+  assert.equal(state.children[0].request_id, id);
+  assert.equal(state.children[1].request_id, `${id}:image:generations:2`);
+  assert(isObject(state.extras_dispatch) && isObject(state.kernel_override));
+  assert.equal(state.extras_dispatch.provider, "chatgpt_codex");
+  assert.equal(state.kernel_override.terminal, "committed");
+  cases.push("actual_codex_image_fanout_child_identity_and_single_original_kernel");
+
+  const form = new FormData();
+  form.append("prompt", "fixture:image-edit");
+  form.append("n", "1");
+  form.append("image[]", new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: "image/png" }), "fixture.png");
+  const edited = await fetch(url("/v1/images/edits"), { method: "POST", headers: { authorization: "Bearer fixture-access" }, body: form });
+  assert.equal(edited.status, 200);
+  const editedBody = await objectBody(edited);
+  assert(Array.isArray(editedBody.data) && editedBody.data.length === 1);
+  const editId = edited.headers.get("x-uos-request-id");
+  assert(editId);
+  await lifecycle(editId);
+  cases.push("actual_bounded_multipart_image_edit_and_native_codex_decoder");
+
+  const invalid = await post("/v1/images/generations", { n: 0 });
+  assert.equal(invalid.status, 400);
+  const invalidId = invalid.headers.get("x-uos-request-id");
+  assert(invalidId);
+  await invalid.arrayBuffer();
+  const rejected = await lifecycle(invalidId);
+  assert.deepEqual(rejected.children, []);
+  assert.equal(rejected.extras_dispatch, null);
+  assert(isObject(rejected.kernel_override));
+  assert.equal(rejected.kernel_override.terminal, "released");
+  cases.push("invalid_image_plan_releases_original_without_claim_or_provider_call");
+}
+
 async function inner(): Promise<void> {
   const workspace = process.argv[4];
   assert(workspace && resolve(workspace).startsWith(join(root, ".data/rust-runtime-conformance/")));
@@ -700,6 +794,7 @@ async function inner(): Promise<void> {
     assert.notEqual(cancelState.terminal_intent.semantic_terminal, "response.completed");
     await assertUpstreamCancelled(events, "fixture:abort-tcp");
     cases.push("actual_caller_abort_retains_non_successful_transport_state");
+    await imageCases({ url, post, rpc, lifecycle, cases });
     console.log(
       JSON.stringify({
         sourceSha: expectedSha,
