@@ -62,8 +62,18 @@ async function truncated(context: MatrixContext): Promise<void> {
   assert(!text.includes("response.completed"));
   assert(text.includes("response.failed") || text.includes("response.incomplete"));
   const state = await settled(context, response);
-  assert.equal(state.semantic_committed, false);
-  context.cases.push("matrix_codex_truncated_stream_no_successful_terminal_or_semantic_commit");
+  assert.equal(state.finished, true);
+  // Any declared terminal seals retries; this flag does not mean successful completion.
+  assert.equal(state.semantic_committed, true);
+  const terminal = object(state.terminal_intent);
+  assert.deepEqual(terminal, { semantic_terminal: "response.failed", reader_termination: "eof", body: "drained", delivery: "unobserved" });
+  assertSingleAdmission(state, "chatgpt_codex");
+  const attempts = state.attempts;
+  assert(Array.isArray(attempts));
+  const attempt = object(attempts[0]);
+  assert.equal(attempt.phase, "Terminal");
+  assert.deepEqual(attempt.observation, terminal);
+  context.cases.push("matrix_codex_truncated_stream_retains_failed_terminal_without_success_or_delivery");
 }
 
 export async function codexProviderCases(context: MatrixContext): Promise<void> {
