@@ -96,14 +96,17 @@ impl<
         } else {
             policy::plan(&input, now)?
         };
-        let streamed = input.raw["stream"] == true;
+        let streamed = input.streamed();
         let mut row = Journal {
-            v: 1,
+            // Fresh ordinary requests identify the new original-source binding explicitly.
+            // Existing generated extras keep their exact legacy scalar-serialized bytes.
+            v: if family.is_some() { 1 } else { 3 },
             context: input.context.clone(),
-            input_digest: gateway_auth::crypto::sha256_hex(
-                &serde_json::to_vec(&input.raw)
-                    .map_err(|_| journal::unavailable("Request encoding failed."))?,
-            ),
+            input_digest: if family.is_some() {
+                gateway_auth::crypto::sha256_hex(input.original_source().as_bytes())
+            } else {
+                crate::local_work::original_source_digest(input.original_source())?
+            },
             api: None,
             kernel: None,
             cursor: 0,
@@ -226,8 +229,10 @@ impl<
         let (plan, conversation_id) = match planned {
             Ok(planned) => planned,
             Err(error) => {
-                admission.fail_planning().await?;
-                return Err(error);
+                return Err(match admission.fail_planning().await {
+                    Ok(_) => error,
+                    Err(cleanup) => error.with_cleanup_diagnostic(&cleanup),
+                });
             }
         };
         let parts = admission.attest_plan(plan).await?;

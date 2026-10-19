@@ -111,3 +111,43 @@ fn local_factory_source_failure_cleans_original_without_provider_exposure() {
     assert_eq!(window(&store)["committed_requests"], 0);
     assert_eq!(store.value(source_key()), pool);
 }
+
+#[test]
+fn fresh_ordinary_v3_binds_canonical_original_without_persisting_payload() {
+    let store = Store::new();
+    seed_key(&store);
+    seed_pool(&store);
+    let mut request = input("ordinary-source-v3", "gpt-test", &[]);
+    request.raw = SourceJson::parse(
+        r#"{"model":"gpt-test","input":"\ud800","metadata":{"2":1,"2":2,"n":-0}}"#,
+    )
+    .unwrap();
+    let expected =
+        gateway_routing_runtime::local_work::original_source_digest(request.original_source())
+            .unwrap();
+    let original = request.raw.clone();
+    let session = run(RoutingSession::begin(
+        request,
+        store.clone(),
+        Host::new(&store),
+        store.clone(),
+        store.clone(),
+    ))
+    .unwrap();
+    assert_eq!(session.original_source(), &original);
+    let key = gateway_core::tuple_key::TupleKey::from_scalar_parts(&[
+        gateway_core::tuple_key::ScalarKeyPart::String("uos_ai"),
+        gateway_core::tuple_key::ScalarKeyPart::String("routing_runtime"),
+        gateway_core::tuple_key::ScalarKeyPart::String("v1"),
+        gateway_core::tuple_key::ScalarKeyPart::String("session"),
+        gateway_core::tuple_key::ScalarKeyPart::String("ordinary-source-v3"),
+    ])
+    .to_record_key();
+    let row = store.value(key);
+    assert_eq!(row["v"], 3);
+    assert_eq!(row["input_digest"], expected);
+    assert!(row.get("local_work").is_none());
+    assert!(row.get("raw").is_none());
+    assert!(row.get("input").is_none());
+    assert_eq!(window(&store)["reserved_requests"], 1);
+}
