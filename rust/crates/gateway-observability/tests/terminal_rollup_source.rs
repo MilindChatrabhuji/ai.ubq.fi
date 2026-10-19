@@ -32,10 +32,10 @@ fn actual_source_terminal_writer_cases_match_shared_usage_and_bounded_atomic_sto
             let key = TupleKey::from_json_parts(key.as_array().unwrap())
                 .unwrap()
                 .to_record_key();
-            store.rows.borrow_mut().insert(
-                key.0,
-                StoredRecord::json("initial", existing.clone(), None),
-            );
+            store
+                .rows
+                .borrow_mut()
+                .insert(key.0, StoredRecord::json("initial", existing.clone(), None));
         }
         let runtime = ObservabilityRuntime::new(store.clone(), host);
         let usage = extract_usage_tokens(Some(&case["raw"]));
@@ -94,4 +94,44 @@ fn actual_source_terminal_writer_cases_match_shared_usage_and_bounded_atomic_sto
         }
     }
     assert_eq!(typed_cases, 24);
+}
+
+#[test]
+fn source_number_version_does_not_discard_a_valid_existing_aggregate() {
+    let cases: Vec<Value> =
+        serde_json::from_str(include_str!("terminal_rollup_source_cases.json")).unwrap();
+    let case = cases
+        .iter()
+        .find(|case| case["name"] == "valid_historical_fraction_kept")
+        .unwrap();
+    let mut imported = case["existing"].clone();
+    // JSON 1 and 1.0 are the same source Number discriminator, not distinct schemas.
+    imported["v"] = serde_json::json!(1.0);
+    assert!(gateway_observability::api::valid_usage_rollup(&imported));
+    let key = TupleKey::from_json_parts(case["expected"]["rows"][0]["key"].as_array().unwrap())
+        .unwrap()
+        .to_record_key();
+    let store = Memory::default();
+    store
+        .rows
+        .borrow_mut()
+        .insert(key.0.clone(), StoredRecord::json("initial", imported, None));
+    let host = Host::default();
+    host.at.set(NOW);
+    let runtime = ObservabilityRuntime::new(store.clone(), host);
+    let usage = extract_usage_tokens(Some(&case["raw"]));
+    assert!(
+        run(runtime.record_terminal_usage_rollup(TerminalUsageRollup {
+            model: case["model"].as_str(),
+            provider: case["provider"].as_str(),
+            request_id: case["request_id"].as_str().unwrap(),
+            request_created_at_ms: case["created"].as_f64(),
+            usage: usage.as_ref(),
+        }))
+        .unwrap()
+    );
+    assert_eq!(
+        store.rows.borrow()[&key.0].json_value().unwrap(),
+        &case["expected"]["rows"][0]["value"]
+    );
 }
