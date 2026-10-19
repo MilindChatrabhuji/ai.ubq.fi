@@ -173,8 +173,7 @@ impl Images {
                 })?;
             let target = PinnedDestination::new(&attempt.request.url)
                 .map_err(|error| DispatchFailure::gateway(error, true))?;
-            let wire = serde_json::to_vec(&attempt.request.body)
-                .map_err(|_| DispatchFailure::gateway(invalid(), true))?;
+            let wire = attempt.request.body.as_bytes().to_vec();
             let ticket = RefCell::new(None);
             let result = outbound::send_http(
                 &target,
@@ -283,8 +282,7 @@ impl Images {
             return Ok(UpstreamResponse {
                 status: decoded.status,
                 headers,
-                body: serde_json::to_vec(&decoded.body)
-                    .map_err(|_| DispatchFailure::gateway(invalid(), false))?,
+                body: decoded.body.as_bytes().to_vec(),
                 semantic_terminal: decoded.terminal,
                 usage: decoded.usage,
             });
