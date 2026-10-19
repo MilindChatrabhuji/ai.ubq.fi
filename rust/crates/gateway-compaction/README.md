@@ -6,4 +6,4 @@ The algorithm source of truth is this repository's `lib/jev_compaction/{types,re
 
 The finite `CompactionHost` receives only Jev state/questions or the fixed buffered residue body, never a caller URL or credential. Its Jev transport must enforce the supplied 30000ms timeout through body consumption and forward caller cancellation; residue calls remain buffered with the source 20000ms bound. M05 owns interception, existing switch defaults and the original request/admission/fallback lifecycle.
 
-Status: provisional API registration snapshot. This initial commit does not yet contain or accept the complete algorithm; no runtime or provider acceptance is claimed.
+Status: provisional implementation. The first ten component tests match the captured TypeScript source vectors, including windowing and partial residue behavior. Supplemental fitting/floor vectors and final native/WASM strict gates remain pending; no actual Worker/runtime or provider acceptance is claimed.
