@@ -76,7 +76,7 @@ function models(provider) {
           max_tokens: 1024,
           capabilities: {
             thinking: { types: { disabled: { supported: true }, adaptive: { supported: true } } },
-            effort: { supported: true, high: { supported: true } },
+            effort: { supported: true, medium: { supported: true }, high: { supported: true } },
           },
         },
       ],
