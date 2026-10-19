@@ -11,12 +11,12 @@ use crate::{Authority, TokenSource, invalid, keys, text, unavailable};
 use gateway_auth::provider_credentials::{
     CodexNativeOwner, codex_source_pool_key, read_codex_source_pool,
 };
+use gateway_core::model::ModelId;
 use gateway_core::{
     GatewayError,
     identity::{CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash},
     state::AuthorityStore,
 };
-use gateway_core::{js_string::JsString16, model::ModelId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;

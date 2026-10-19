@@ -7,8 +7,8 @@ use crate::{
         CapacityWindow, CapacityWindows,
     },
 };
+use gateway_core::model::ModelId;
 use gateway_core::{GatewayError, identity::RoutingAccountHash};
-use gateway_core::{js_string::JsString16, model::ModelId};
 use serde_json::Value;
 pub const CAPACITY_MAX_AGE_MS: i64 = 30 * crate::MINUTE_MS;
 fn optional_time(value: &Value, name: &str) -> Option<i64> {
@@ -139,7 +139,9 @@ pub fn capacity_headroom_for_observation(
     row: &CapacityObservation,
     model: Option<&ModelId>,
 ) -> Option<f64> {
-    let model = model.map(label).unwrap_or_default();
+    let model = model
+        .map(crate::routing::model_quota_label)
+        .unwrap_or_default();
     if model.is_empty() {
         return headroom(&row.windows);
     }
