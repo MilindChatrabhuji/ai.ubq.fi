@@ -140,7 +140,7 @@ async function producerRoundTrip(context: MatrixContext, stream: boolean): Promi
   context.cases.push(`matrix_actual_lithos_${kind}_output_replayed_to_codex_keeps_calls_unicode_and_original_history`);
 }
 
-async function legacyReplay(context: MatrixContext): Promise<void> {
+export async function legacyReplay(context: MatrixContext): Promise<void> {
   const marker = "fixture:matrix:replay:legacy";
   const responseId = "resp_197c782c84e54851b12fbae3fc396d7e";
   const genuine = "rs_03375d708dca4424016abf51952afc87d1824eacab5be80344";
@@ -169,7 +169,8 @@ async function legacyReplay(context: MatrixContext): Promise<void> {
   assert.equal(input.length, 11);
   assert.deepEqual(
     input.map((item) => item.id ?? null),
-    [null, null, null, null, genuine, genuineMessage, null, null, "resp_custom_item_0", longId, null]
+    // Source message normalization reconstructs only type/role/content before Codex replay.
+    [null, null, null, null, genuine, null, null, null, null, longId, null]
   );
   assert.equal(records(input[0]?.content)[0]?.text, "legacy answer 😀");
   assert.equal(input[1]?.call_id, "call_legacy");
