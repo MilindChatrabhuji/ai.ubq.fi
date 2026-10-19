@@ -26,7 +26,6 @@ pub struct NativeImportClaim {
     row: ImportActionRow,
     permit: Option<String>,
     mode: NativeImportMode,
-    publication_revision: Option<String>,
 }
 impl NativeImportClaim {
     pub fn binding(&self) -> &NativeImportBinding {
@@ -34,9 +33,6 @@ impl NativeImportClaim {
     }
     pub fn mode(&self) -> NativeImportMode {
         self.mode
-    }
-    pub fn publication_revision(&self) -> Option<&str> {
-        self.publication_revision.as_deref()
     }
 }
 /// Consumed by the fixed native importer, never deserialized from caller data.
@@ -134,6 +130,9 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             || op.operation_id != claim.binding.operation_id
             || op.action_ref != claim.binding.action_ref
             || op.claim_ref != claim.binding.claim_ref
+            || op.terminal.is_some()
+            || op.publication_revision.is_some()
+            || op.phase == Phase::Published
         {
             return Err(unavailable());
         }
@@ -179,6 +178,11 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                     || op.operation_id != row.metadata.operation_id
                     || op.request_digest != request_digest
                     || generation.is_none()
+                    || op.terminal.is_some()
+                    || op.publication_revision.is_some()
+                    || op.native_source_generation.is_some()
+                    || op.access_generation.is_some()
+                    || op.phase == Phase::Published
                 {
                     return Err(unavailable());
                 }
@@ -235,7 +239,6 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                     row: row.clone(),
                     permit,
                     mode,
-                    publication_revision: op.publication_revision,
                 });
             }
         }

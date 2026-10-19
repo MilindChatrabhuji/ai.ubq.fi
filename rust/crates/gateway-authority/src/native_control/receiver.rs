@@ -29,6 +29,10 @@ impl RegisteredRenewalOwner {
     pub fn native_owner_id(&self) -> &str {
         &self.id
     }
+    /// Read-only configured native mapping, never a caller-selected path or permission.
+    pub fn registered_home(&self) -> &str {
+        &self.home
+    }
 }
 
 pub struct NativeRenewalAuthority<'a, S, I, C> {

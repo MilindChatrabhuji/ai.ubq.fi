@@ -64,7 +64,10 @@ fn common(
     }
     Ok(())
 }
-pub(super) fn validate_custody(value: &SourceJson, id: &str) -> Result<(), GatewayError> {
+pub(in crate::native_control) fn validate_custody(
+    value: &SourceJson,
+    id: &str,
+) -> Result<(), GatewayError> {
     let version = gateway_core::source_serialization::member(value, "v")
         .and_then(|v| v.deserialize::<u8>().ok())
         .ok_or_else(unavailable)?;

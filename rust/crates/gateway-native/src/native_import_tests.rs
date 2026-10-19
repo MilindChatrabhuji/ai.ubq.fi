@@ -713,3 +713,6 @@ fn ingress_header_guard_and_error_mapping_are_the_original_source_rules() {
     );
     assert_eq!(error.envelope.error.error_type, "invalid_request_error");
 }
+
+#[path = "existing_account_import_tests.rs"]
+mod existing_account_import;

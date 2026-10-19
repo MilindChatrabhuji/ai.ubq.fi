@@ -66,7 +66,6 @@ fn original_import_v2_single_start_replay_unknown_and_no_forged_terminal() {
         let proof = proof(&control, &store, &id, &cfg, &hash, 20).await;
         let mut first = control.claim_import(&proof).await.unwrap();
         assert_eq!(first.mode(), NativeImportMode::ImportOnce);
-        assert!(first.publication_revision().is_none());
         let mut replay = control.claim_import(&proof).await.unwrap();
         assert_eq!(replay.mode(), NativeImportMode::ReconcileOnly);
         assert!(
