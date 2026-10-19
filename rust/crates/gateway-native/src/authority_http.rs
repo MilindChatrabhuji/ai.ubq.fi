@@ -13,7 +13,7 @@ use gateway_auth::{
     },
 };
 use gateway_authority::native_control::{
-    NativeRenewalMode,
+    NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalMode,
     wire::{NativeRenewalAuthorityRequest as Request, NativeRenewalAuthorityResponse as Response},
 };
 use std::{net::TcpStream, time::Instant};
@@ -130,6 +130,7 @@ impl NativeAuthorityHttp {
                     action_ref: expected,
                 } = original.request;
                 *v == 1
+                    && fence.v == NATIVE_RENEWAL_FENCE_VERSION
                     && action_ref == &expected
                     && operation_id == &original.operation_id
                     && identifier(claim_ref)
@@ -146,8 +147,13 @@ impl NativeAuthorityHttp {
                         NativeRenewalMode::ReconcileOnly => start_permit.is_none(),
                     }
             }
+            (Request::Recheck { .. }, Response::Recheck { v, fence }) => {
+                *v == 1
+                    && fence.v == NATIVE_RENEWAL_FENCE_VERSION
+                    && fence.owner_id == self.identity.owner_id()
+                    && fence.owner_epoch == self.identity.owner_epoch()
+            }
             (Request::Start { .. }, Response::Start { v, .. })
-            | (Request::Recheck { .. }, Response::Recheck { v, .. })
             | (Request::Unknown { .. }, Response::Unknown { v }) => *v == 1,
             (
                 Request::Published {

@@ -79,6 +79,83 @@ fn document(refresh: &str, timestamp: &str) -> Value {
 }
 
 #[test]
+fn fixed_registry_requires_one_or_two_distinct_owners_and_homes() {
+    let first = FixtureHome::new();
+    let second = FixtureHome::new();
+    let third = FixtureHome::new();
+    let location = |id: &str, home: &FixtureHome| {
+        NativeOwnerLocation::configured(NativeOwnerId(id.into()), home.0.clone()).unwrap()
+    };
+    assert!(UnixOwnerTransport::new(Vec::new()).is_err());
+    assert!(UnixOwnerTransport::new(vec![location("first", &first)]).is_ok());
+    assert!(
+        UnixOwnerTransport::new(vec![location("first", &first), location("second", &second)])
+            .is_ok()
+    );
+    assert!(
+        UnixOwnerTransport::new(vec![
+            location("first", &first),
+            location("second", &second),
+            location("third", &third)
+        ])
+        .is_err()
+    );
+    assert!(
+        UnixOwnerTransport::new(vec![location("first", &first), location("first", &second)])
+            .is_err()
+    );
+    assert!(
+        UnixOwnerTransport::new(vec![location("first", &first), location("second", &first)])
+            .is_err()
+    );
+}
+
+#[test]
+fn second_registered_home_and_opaque_old_new_generations_stay_independent() {
+    let first = FixtureHome::new();
+    let second = FixtureHome::new();
+    let first_doc = document("opaque-refresh-old", "2026-10-18T12:00:00.000000001Z");
+    let mut second_doc = document("opaque-second-refresh", "2026-10-18T12:00:00.000000001Z");
+    second_doc["tokens"]["account_id"] = json!("workspace-secondary");
+    fs::write(
+        first.0.join("auth.json"),
+        serde_json::to_vec(&first_doc).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        second.0.join("auth.json"),
+        serde_json::to_vec(&second_doc).unwrap(),
+    )
+    .unwrap();
+    let first_owner = NativeOwnerId("first-owner".into());
+    let second_owner = NativeOwnerId("second-owner".into());
+    let transport = UnixOwnerTransport::new(vec![
+        NativeOwnerLocation::configured(first_owner.clone(), first.0.clone()).unwrap(),
+        NativeOwnerLocation::configured(second_owner.clone(), second.0.clone()).unwrap(),
+    ])
+    .unwrap();
+    let old = run(transport.read_credentials(&first_owner)).unwrap();
+    let second_before = run(transport.read_credentials(&second_owner)).unwrap();
+    assert_eq!(second_before.account_id, "workspace-secondary");
+    let new_doc = document("opaque-refresh-new", "2026-10-18T12:00:00.000000002Z");
+    fs::write(
+        first.0.join("auth.json"),
+        serde_json::to_vec(&new_doc).unwrap(),
+    )
+    .unwrap();
+    let new = run(transport.read_credentials(&first_owner)).unwrap();
+    assert_ne!(new.generation_hash(), old.generation_hash());
+    assert_eq!(new.refresh_token.expose(), "opaque-refresh-new");
+    assert_eq!(
+        run(transport.read_credentials(&second_owner))
+            .unwrap()
+            .generation_hash(),
+        second_before.generation_hash()
+    );
+    assert!(run(transport.read_credentials(&NativeOwnerId("unregistered-owner".into()))).is_err());
+}
+
+#[test]
 fn actual_unix_supervisor_uses_localhost_header_and_read_only_method() {
     run(async {
         let home = FixtureHome::new();
