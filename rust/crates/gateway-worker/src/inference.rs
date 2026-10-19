@@ -856,10 +856,7 @@ fn copy_headers(
     Ok(())
 }
 
-fn correlation<'a>(
-    provider: UpstreamProvider,
-    headers: &'a gateway_providers::Headers,
-) -> Option<&'a str> {
+fn correlation(provider: UpstreamProvider, headers: &gateway_providers::Headers) -> Option<&str> {
     let names: &[&str] = if provider == UpstreamProvider::Deepseek {
         &["x-request-id", "x-ds-request-id", "x-deepseek-request-id"]
     } else if provider == UpstreamProvider::Cerebras {

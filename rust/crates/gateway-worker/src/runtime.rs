@@ -284,13 +284,12 @@ pub async fn route(
         let catalog = CatalogState::load(&store, &env, &host, context.clone()).await?;
         let mut response = crate::extras::run(
             request,
-            route,
+            crate::extras::Target { route, request_id },
             inference::RequestResources { context, permit },
             &principal,
             store,
             catalog,
             &host,
-            request_id,
         )
         .await?;
         decorate_api_policy(&mut response, &principal)?;
