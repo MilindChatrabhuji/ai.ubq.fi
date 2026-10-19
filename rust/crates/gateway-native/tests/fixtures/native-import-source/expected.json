@@ -1,0 +1,1865 @@
+{
+  "schema": "native-import-original-bun-oracle-v1",
+  "claim": "Observed original Bun source plus existing synthetic KV/model fixture; NOT Rust receiver/gateway acceptance",
+  "runtime": "1.4.0",
+  "controls": {
+    "sensitive_environment_present": false,
+    "bun_network_error": "ECONNREFUSED",
+    "synthetic_env_read_error": "EPERM",
+    "real_network_fetches": 0,
+    "controlled_fetch_fixture": "tests/admin-codex-coverage.test.ts: admin codex auth stores the upstream catalog and reports catalog seeding",
+    "clock_ms": 1767225600000,
+    "uuid_source": "deterministic synthetic sequence"
+  },
+  "outcomes": [
+    {
+      "id": "auth-empty",
+      "source_surface": "auth",
+      "raw_body_bytes": 0,
+      "raw_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": false,
+        "kind": "empty"
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-invalid-json",
+      "source_surface": "auth",
+      "raw_body_bytes": 1,
+      "raw_body_sha256": "021fb596db81e6d02bf3d2586ee3981fe519f275c0ac9ca76bbcf2ebb4097d96",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": false,
+        "kind": "invalid"
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-null",
+      "source_surface": "auth",
+      "raw_body_bytes": 4,
+      "raw_body_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": null,
+        "bare_token_data": null,
+        "wrapped_token_data": null
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-array",
+      "source_surface": "auth",
+      "raw_body_bytes": 2,
+      "raw_body_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": [],
+        "bare_token_data": null,
+        "wrapped_token_data": null
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-missing-tokens",
+      "source_surface": "auth",
+      "raw_body_bytes": 2,
+      "raw_body_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {},
+        "bare_token_data": null,
+        "wrapped_token_data": null
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-empty-token",
+      "source_surface": "auth",
+      "raw_body_bytes": 115,
+      "raw_body_sha256": "eab28d6875e2c00ff7eda4fccd8dbb72d24dad4fe712728f2fb6a9ceec165867",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {
+          "tokens": {
+            "access_token": "",
+            "refresh_token": "synthetic-fixture-refresh",
+            "account_id": "synthetic-fixture-account"
+          }
+        },
+        "bare_token_data": null,
+        "wrapped_token_data": null
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-forbidden-access-only-auth-mode",
+      "source_surface": "auth",
+      "raw_body_bytes": 171,
+      "raw_body_sha256": "22788645874a514d8a03c15c5010b9c44b7a600da1fb3c8d05ba7b1b73bff1b0",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {
+          "tokens": {
+            "access_token": "synthetic-fixture-access",
+            "refresh_token": "synthetic-fixture-refresh",
+            "account_id": "synthetic-fixture-account"
+          },
+          "auth_mode": "chatgptAuthTokens"
+        },
+        "bare_token_data": null,
+        "wrapped_token_data": null
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-bare",
+      "source_surface": "auth",
+      "raw_body_bytes": 139,
+      "raw_body_sha256": "95f922312c8aa0ef933e3c1459659f886bde06e9bbb6ee69caa9a46fa492d47a",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {
+          "tokens": {
+            "access_token": "synthetic-fixture-access",
+            "refresh_token": "synthetic-fixture-refresh",
+            "account_id": "synthetic-fixture-account"
+          }
+        },
+        "bare_token_data": {
+          "access_token": "synthetic-fixture-access",
+          "refresh_token": "synthetic-fixture-refresh",
+          "account_id": "synthetic-fixture-account"
+        },
+        "wrapped_token_data": null
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "x-uos-upstream": "chatgpt_codex"
+      },
+      "body": {
+        "stored": true,
+        "refreshed": false,
+        "account_id": "synthetic-fixture-account",
+        "account_count": 1,
+        "account_ids": ["synthetic-fixture-account"],
+        "access_token_expires_at_ms": null,
+        "updated_at_ms": 1767225600000,
+        "upstream_status": 200,
+        "upstream_content_type": "application/json",
+        "models": {
+          "count": 1,
+          "source": "chatgpt_codex",
+          "updated_at_ms": 1767225600000,
+          "client_version": "0.100.0"
+        },
+        "catalog_seeded": true,
+        "normalized_snapshot_updated": true
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [
+        {
+          "pathname": "/backend-api/codex/models",
+          "client_version": "0.100.0"
+        }
+      ],
+      "stored_default_model": null,
+      "stored_row_count": 7
+    },
+    {
+      "id": "auth-wrapped",
+      "source_surface": "auth",
+      "raw_body_bytes": 148,
+      "raw_body_sha256": "dbd7afdd8dc3dad67cd5ef924e8b7ab3499dbc0108dfe583324f8c62ca96c97d",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {
+          "auth": {
+            "tokens": {
+              "access_token": "synthetic-fixture-access",
+              "refresh_token": "synthetic-fixture-refresh",
+              "account_id": "synthetic-fixture-account"
+            }
+          }
+        },
+        "bare_token_data": null,
+        "wrapped_token_data": {
+          "access_token": "synthetic-fixture-access",
+          "refresh_token": "synthetic-fixture-refresh",
+          "account_id": "synthetic-fixture-account"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "x-uos-upstream": "chatgpt_codex"
+      },
+      "body": {
+        "stored": true,
+        "refreshed": false,
+        "account_id": "synthetic-fixture-account",
+        "account_count": 1,
+        "account_ids": ["synthetic-fixture-account"],
+        "access_token_expires_at_ms": null,
+        "updated_at_ms": 1767225600000,
+        "upstream_status": 200,
+        "upstream_content_type": "application/json",
+        "models": {
+          "count": 1,
+          "source": "chatgpt_codex",
+          "updated_at_ms": 1767225600000,
+          "client_version": "0.100.0"
+        },
+        "catalog_seeded": true,
+        "normalized_snapshot_updated": true
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [
+        {
+          "pathname": "/backend-api/codex/models",
+          "client_version": "0.100.0"
+        }
+      ],
+      "stored_default_model": null,
+      "stored_row_count": 7
+    },
+    {
+      "id": "auth-wrapped-null-overrides-valid-outer",
+      "source_surface": "auth",
+      "raw_body_bytes": 151,
+      "raw_body_sha256": "791414fd47f54ddb353bbda6e51e7b90a79acb9d7a6d89164113afe7250ebfe1",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {
+          "tokens": {
+            "access_token": "synthetic-fixture-access",
+            "refresh_token": "synthetic-fixture-refresh",
+            "account_id": "synthetic-fixture-account"
+          },
+          "auth": null
+        },
+        "bare_token_data": {
+          "access_token": "synthetic-fixture-access",
+          "refresh_token": "synthetic-fixture-refresh",
+          "account_id": "synthetic-fixture-account"
+        },
+        "wrapped_token_data": null
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-wrapped-malformed-models",
+      "source_surface": "auth",
+      "raw_body_bytes": 160,
+      "raw_body_sha256": "7c9e5a83c44b130798a416d4d81ead6a83a6bf313c4f9a25d282f40e5685eff8",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {
+          "auth": {
+            "tokens": {
+              "access_token": "synthetic-fixture-access",
+              "refresh_token": "synthetic-fixture-refresh",
+              "account_id": "synthetic-fixture-account"
+            }
+          },
+          "models": []
+        },
+        "bare_token_data": null,
+        "wrapped_token_data": {
+          "access_token": "synthetic-fixture-access",
+          "refresh_token": "synthetic-fixture-refresh",
+          "account_id": "synthetic-fixture-account"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "x-uos-upstream": "chatgpt_codex"
+      },
+      "body": {
+        "stored": true,
+        "refreshed": false,
+        "account_id": "synthetic-fixture-account",
+        "account_count": 1,
+        "account_ids": ["synthetic-fixture-account"],
+        "access_token_expires_at_ms": null,
+        "updated_at_ms": 1767225600000,
+        "upstream_status": 200,
+        "upstream_content_type": "application/json",
+        "models": {
+          "count": 1,
+          "source": "chatgpt_codex",
+          "updated_at_ms": 1767225600000,
+          "client_version": "0.100.0"
+        },
+        "catalog_seeded": true,
+        "normalized_snapshot_updated": true
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [
+        {
+          "pathname": "/backend-api/codex/models",
+          "client_version": "0.100.0"
+        }
+      ],
+      "stored_default_model": null,
+      "stored_row_count": 7
+    },
+    {
+      "id": "auth-client-version-snake-wins",
+      "source_surface": "auth",
+      "raw_body_bytes": 212,
+      "raw_body_sha256": "452e2ea61a28ef5ffed8ac5be097338795c86658c3f9e0cb4c29a66678eec784",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {
+          "auth": {
+            "tokens": {
+              "access_token": "synthetic-fixture-access",
+              "refresh_token": "synthetic-fixture-refresh",
+              "account_id": "synthetic-fixture-account"
+            }
+          },
+          "models": {
+            "client_version": "0.126.0",
+            "clientVersion": "0.127.0"
+          }
+        },
+        "bare_token_data": null,
+        "wrapped_token_data": {
+          "access_token": "synthetic-fixture-access",
+          "refresh_token": "synthetic-fixture-refresh",
+          "account_id": "synthetic-fixture-account"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "x-uos-upstream": "chatgpt_codex"
+      },
+      "body": {
+        "stored": true,
+        "refreshed": false,
+        "account_id": "synthetic-fixture-account",
+        "account_count": 1,
+        "account_ids": ["synthetic-fixture-account"],
+        "access_token_expires_at_ms": null,
+        "updated_at_ms": 1767225600000,
+        "upstream_status": 200,
+        "upstream_content_type": "application/json",
+        "models": {
+          "count": 1,
+          "source": "chatgpt_codex",
+          "updated_at_ms": 1767225600000,
+          "client_version": "0.126.0"
+        },
+        "catalog_seeded": true,
+        "normalized_snapshot_updated": true
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [
+        {
+          "pathname": "/backend-api/codex/models",
+          "client_version": "0.126.0"
+        }
+      ],
+      "stored_default_model": null,
+      "stored_row_count": 7
+    },
+    {
+      "id": "auth-client-version-camel",
+      "source_surface": "auth",
+      "raw_body_bytes": 185,
+      "raw_body_sha256": "6d9cf003a2af0199e884ae9ad152b66953369b466b2e177e00531e3bcc54aaa2",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {
+          "auth": {
+            "tokens": {
+              "access_token": "synthetic-fixture-access",
+              "refresh_token": "synthetic-fixture-refresh",
+              "account_id": "synthetic-fixture-account"
+            }
+          },
+          "models": {
+            "clientVersion": "0.127.0"
+          }
+        },
+        "bare_token_data": null,
+        "wrapped_token_data": {
+          "access_token": "synthetic-fixture-access",
+          "refresh_token": "synthetic-fixture-refresh",
+          "account_id": "synthetic-fixture-account"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "x-uos-upstream": "chatgpt_codex"
+      },
+      "body": {
+        "stored": true,
+        "refreshed": false,
+        "account_id": "synthetic-fixture-account",
+        "account_count": 1,
+        "account_ids": ["synthetic-fixture-account"],
+        "access_token_expires_at_ms": null,
+        "updated_at_ms": 1767225600000,
+        "upstream_status": 200,
+        "upstream_content_type": "application/json",
+        "models": {
+          "count": 1,
+          "source": "chatgpt_codex",
+          "updated_at_ms": 1767225600000,
+          "client_version": "0.127.0"
+        },
+        "catalog_seeded": true,
+        "normalized_snapshot_updated": true
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [
+        {
+          "pathname": "/backend-api/codex/models",
+          "client_version": "0.127.0"
+        }
+      ],
+      "stored_default_model": null,
+      "stored_row_count": 7
+    },
+    {
+      "id": "auth-client-version-empty-snake-defaults",
+      "source_surface": "auth",
+      "raw_body_bytes": 205,
+      "raw_body_sha256": "d6c24c9126b81d4b560eec9d654730fdf201a078e5d26c8ec1fc1b7fb14eca63",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {
+          "auth": {
+            "tokens": {
+              "access_token": "synthetic-fixture-access",
+              "refresh_token": "synthetic-fixture-refresh",
+              "account_id": "synthetic-fixture-account"
+            }
+          },
+          "models": {
+            "client_version": "",
+            "clientVersion": "0.127.0"
+          }
+        },
+        "bare_token_data": null,
+        "wrapped_token_data": {
+          "access_token": "synthetic-fixture-access",
+          "refresh_token": "synthetic-fixture-refresh",
+          "account_id": "synthetic-fixture-account"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "x-uos-upstream": "chatgpt_codex"
+      },
+      "body": {
+        "stored": true,
+        "refreshed": false,
+        "account_id": "synthetic-fixture-account",
+        "account_count": 1,
+        "account_ids": ["synthetic-fixture-account"],
+        "access_token_expires_at_ms": null,
+        "updated_at_ms": 1767225600000,
+        "upstream_status": 200,
+        "upstream_content_type": "application/json",
+        "models": {
+          "count": 1,
+          "source": "chatgpt_codex",
+          "updated_at_ms": 1767225600000,
+          "client_version": "0.100.0"
+        },
+        "catalog_seeded": true,
+        "normalized_snapshot_updated": true
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [
+        {
+          "pathname": "/backend-api/codex/models",
+          "client_version": "0.100.0"
+        }
+      ],
+      "stored_default_model": null,
+      "stored_row_count": 7
+    },
+    {
+      "id": "auth-client-version-nonstring-snake-uses-camel",
+      "source_surface": "auth",
+      "raw_body_bytes": 204,
+      "raw_body_sha256": "7a0ab00060d7f0af0e6fe780b4b59867fefd9a062f2b27e58ccc4dbf6ccfda99",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {
+          "auth": {
+            "tokens": {
+              "access_token": "synthetic-fixture-access",
+              "refresh_token": "synthetic-fixture-refresh",
+              "account_id": "synthetic-fixture-account"
+            }
+          },
+          "models": {
+            "client_version": 5,
+            "clientVersion": "0.127.0"
+          }
+        },
+        "bare_token_data": null,
+        "wrapped_token_data": {
+          "access_token": "synthetic-fixture-access",
+          "refresh_token": "synthetic-fixture-refresh",
+          "account_id": "synthetic-fixture-account"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "x-uos-upstream": "chatgpt_codex"
+      },
+      "body": {
+        "stored": true,
+        "refreshed": false,
+        "account_id": "synthetic-fixture-account",
+        "account_count": 1,
+        "account_ids": ["synthetic-fixture-account"],
+        "access_token_expires_at_ms": null,
+        "updated_at_ms": 1767225600000,
+        "upstream_status": 200,
+        "upstream_content_type": "application/json",
+        "models": {
+          "count": 1,
+          "source": "chatgpt_codex",
+          "updated_at_ms": 1767225600000,
+          "client_version": "0.127.0"
+        },
+        "catalog_seeded": true,
+        "normalized_snapshot_updated": true
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [
+        {
+          "pathname": "/backend-api/codex/models",
+          "client_version": "0.127.0"
+        }
+      ],
+      "stored_default_model": null,
+      "stored_row_count": 7
+    },
+    {
+      "id": "auth-client-version-invalid-defaults",
+      "source_surface": "auth",
+      "raw_body_bytes": 215,
+      "raw_body_sha256": "7876d0d88f6e779634ff5969ee9c1b1f7d3a71b97dd5aa92e7a8e5a5cfff6261",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {
+          "auth": {
+            "tokens": {
+              "access_token": "synthetic-fixture-access",
+              "refresh_token": "synthetic-fixture-refresh",
+              "account_id": "synthetic-fixture-account"
+            }
+          },
+          "models": {
+            "client_version": "not-semver",
+            "clientVersion": "0.127.0"
+          }
+        },
+        "bare_token_data": null,
+        "wrapped_token_data": {
+          "access_token": "synthetic-fixture-access",
+          "refresh_token": "synthetic-fixture-refresh",
+          "account_id": "synthetic-fixture-account"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "x-uos-upstream": "chatgpt_codex"
+      },
+      "body": {
+        "stored": true,
+        "refreshed": false,
+        "account_id": "synthetic-fixture-account",
+        "account_count": 1,
+        "account_ids": ["synthetic-fixture-account"],
+        "access_token_expires_at_ms": null,
+        "updated_at_ms": 1767225600000,
+        "upstream_status": 200,
+        "upstream_content_type": "application/json",
+        "models": {
+          "count": 1,
+          "source": "chatgpt_codex",
+          "updated_at_ms": 1767225600000,
+          "client_version": "0.100.0"
+        },
+        "catalog_seeded": true,
+        "normalized_snapshot_updated": true
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [
+        {
+          "pathname": "/backend-api/codex/models",
+          "client_version": "0.100.0"
+        }
+      ],
+      "stored_default_model": null,
+      "stored_row_count": 7
+    },
+    {
+      "id": "auth-one-bom",
+      "source_surface": "auth",
+      "raw_body_bytes": 142,
+      "raw_body_sha256": "b7ff2956f76a133e188fc6d12856ebc03d240bf9e651b2071d0fd0266d3f2136",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {
+          "tokens": {
+            "access_token": "synthetic-fixture-access",
+            "refresh_token": "synthetic-fixture-refresh",
+            "account_id": "synthetic-fixture-account"
+          }
+        },
+        "bare_token_data": {
+          "access_token": "synthetic-fixture-access",
+          "refresh_token": "synthetic-fixture-refresh",
+          "account_id": "synthetic-fixture-account"
+        },
+        "wrapped_token_data": null
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "x-uos-upstream": "chatgpt_codex"
+      },
+      "body": {
+        "stored": true,
+        "refreshed": false,
+        "account_id": "synthetic-fixture-account",
+        "account_count": 1,
+        "account_ids": ["synthetic-fixture-account"],
+        "access_token_expires_at_ms": null,
+        "updated_at_ms": 1767225600000,
+        "upstream_status": 200,
+        "upstream_content_type": "application/json",
+        "models": {
+          "count": 1,
+          "source": "chatgpt_codex",
+          "updated_at_ms": 1767225600000,
+          "client_version": "0.100.0"
+        },
+        "catalog_seeded": true,
+        "normalized_snapshot_updated": true
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [
+        {
+          "pathname": "/backend-api/codex/models",
+          "client_version": "0.100.0"
+        }
+      ],
+      "stored_default_model": null,
+      "stored_row_count": 7
+    },
+    {
+      "id": "auth-two-bom",
+      "source_surface": "auth",
+      "raw_body_bytes": 145,
+      "raw_body_sha256": "d991e6ea38d357bdbc16bbdbccecbed42dce9692c1f74ca466b4dfdb5d9fb625",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": false,
+        "kind": "invalid"
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-replacement-decoding",
+      "source_surface": "auth",
+      "raw_body_bytes": 9,
+      "raw_body_sha256": "36781faac995a68b69aab7d540747e0c70efed427e66a608cdf64fc4feaaff12",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {
+          "x": "�"
+        },
+        "bare_token_data": null,
+        "wrapped_token_data": null
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-length-01",
+      "source_surface": "auth",
+      "raw_body_bytes": 2,
+      "raw_body_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "request": {
+        "query": "",
+        "headers": {
+          "content-length": "01"
+        },
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": false,
+        "kind": "invalid"
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-length--1",
+      "source_surface": "auth",
+      "raw_body_bytes": 2,
+      "raw_body_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "request": {
+        "query": "",
+        "headers": {
+          "content-length": "-1"
+        },
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": false,
+        "kind": "invalid"
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-length-plus1",
+      "source_surface": "auth",
+      "raw_body_bytes": 2,
+      "raw_body_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "request": {
+        "query": "",
+        "headers": {
+          "content-length": "+1"
+        },
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": false,
+        "kind": "invalid"
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-length-1e2",
+      "source_surface": "auth",
+      "raw_body_bytes": 2,
+      "raw_body_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "request": {
+        "query": "",
+        "headers": {
+          "content-length": "1e2"
+        },
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": false,
+        "kind": "invalid"
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-length-9007199254740992",
+      "source_surface": "auth",
+      "raw_body_bytes": 2,
+      "raw_body_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "request": {
+        "query": "",
+        "headers": {
+          "content-length": "9007199254740992"
+        },
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": false,
+        "kind": "invalid"
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-length-invalid",
+      "source_surface": "auth",
+      "raw_body_bytes": 2,
+      "raw_body_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "request": {
+        "query": "",
+        "headers": {
+          "content-length": "invalid"
+        },
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": false,
+        "kind": "invalid"
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-zero-declared-still-reads",
+      "source_surface": "auth",
+      "raw_body_bytes": 2,
+      "raw_body_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "request": {
+        "query": "",
+        "headers": {
+          "content-length": "0"
+        },
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {},
+        "bare_token_data": null,
+        "wrapped_token_data": null
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-declared-over32m",
+      "source_surface": "auth",
+      "raw_body_bytes": 139,
+      "raw_body_sha256": "95f922312c8aa0ef933e3c1459659f886bde06e9bbb6ee69caa9a46fa492d47a",
+      "request": {
+        "query": "",
+        "headers": {
+          "content-length": "33554433"
+        },
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": false,
+        "kind": "too_large"
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-exact32m",
+      "source_surface": "auth",
+      "raw_body_bytes": 33554432,
+      "raw_body_sha256": "0474915f1d2334ec7a84e4b872586c5ad840d3915626a07186800c4846a9c14c",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": true,
+        "value": {},
+        "bare_token_data": null,
+        "wrapped_token_data": null
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-actual-over32m",
+      "source_surface": "auth",
+      "raw_body_bytes": 33554433,
+      "raw_body_sha256": "524aa9bf5b0e121ec2330f4aeb71a98d767397e311f14bd0f3901c61f4d329ea",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": {
+        "ok": false,
+        "kind": "too_large"
+      },
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Body does not look like a Codex auth.json",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "auth-store-unavailable-before-parse",
+      "source_surface": "auth",
+      "raw_body_bytes": 1,
+      "raw_body_sha256": "021fb596db81e6d02bf3d2586ee3981fe519f275c0ac9ca76bbcf2ebb4097d96",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "unavailable"
+      },
+      "parser": {
+        "ok": false,
+        "kind": "invalid"
+      },
+      "status": 500,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Deno KV is not available; cannot persist Codex auth",
+          "type": "invalid_request_error",
+          "code": "server_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-default",
+      "source_surface": "profile",
+      "raw_body_bytes": 0,
+      "raw_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "profile": "prod",
+        "include_cache": false,
+        "include_legacy": false,
+        "overwrite": false,
+        "dry_run": true,
+        "total": 0,
+        "imported": 0,
+        "skipped": 0,
+        "optional": 0,
+        "errors": 0,
+        "groups": {}
+      },
+      "text_calls": 1,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-blank-profile",
+      "source_surface": "profile",
+      "raw_body_bytes": 0,
+      "raw_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request": {
+        "query": "?profile=%20",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "profile": "prod",
+        "include_cache": false,
+        "include_legacy": false,
+        "overwrite": false,
+        "dry_run": true,
+        "total": 0,
+        "imported": 0,
+        "skipped": 0,
+        "optional": 0,
+        "errors": 0,
+        "groups": {}
+      },
+      "text_calls": 1,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-local",
+      "source_surface": "profile",
+      "raw_body_bytes": 0,
+      "raw_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request": {
+        "query": "?profile=local",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "profile": "local",
+        "include_cache": false,
+        "include_legacy": true,
+        "overwrite": false,
+        "dry_run": true,
+        "total": 0,
+        "imported": 0,
+        "skipped": 0,
+        "optional": 0,
+        "errors": 0,
+        "groups": {}
+      },
+      "text_calls": 1,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-prod",
+      "source_surface": "profile",
+      "raw_body_bytes": 0,
+      "raw_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request": {
+        "query": "?profile=prod",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "profile": "prod",
+        "include_cache": false,
+        "include_legacy": false,
+        "overwrite": false,
+        "dry_run": true,
+        "total": 0,
+        "imported": 0,
+        "skipped": 0,
+        "optional": 0,
+        "errors": 0,
+        "groups": {}
+      },
+      "text_calls": 1,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-dry-run-false-is-still-dry",
+      "source_surface": "profile",
+      "raw_body_bytes": 0,
+      "raw_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request": {
+        "query": "?profile=prod&dry_run=false&overwrite=true",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "profile": "prod",
+        "include_cache": false,
+        "include_legacy": false,
+        "overwrite": true,
+        "dry_run": true,
+        "total": 0,
+        "imported": 0,
+        "skipped": 0,
+        "optional": 0,
+        "errors": 0,
+        "groups": {}
+      },
+      "text_calls": 1,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-write-dry-run-conflict",
+      "source_surface": "profile",
+      "raw_body_bytes": 0,
+      "raw_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request": {
+        "query": "?profile=prod&write=1&dry_run=true",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "dry_run and write are mutually exclusive",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 1,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-truthy-options",
+      "source_surface": "profile",
+      "raw_body_bytes": 0,
+      "raw_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request": {
+        "query": "?profile=local&include_cache=YES&include_legacy=on&overwrite=yes&write=on",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "profile": "local",
+        "include_cache": true,
+        "include_legacy": true,
+        "overwrite": true,
+        "dry_run": false,
+        "total": 0,
+        "imported": 0,
+        "skipped": 0,
+        "optional": 0,
+        "errors": 0,
+        "groups": {}
+      },
+      "text_calls": 1,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-invalid-before-body",
+      "source_surface": "profile",
+      "raw_body_bytes": 5242881,
+      "raw_body_sha256": "29d92a909372c6fc9c902311a215fab54f8c1ce2249eb42b12030871e93c157e",
+      "request": {
+        "query": "?profile=invalid",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 400,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "profile must be local or prod",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-size-before-write-conflict",
+      "source_surface": "profile",
+      "raw_body_bytes": 5242881,
+      "raw_body_sha256": "29d92a909372c6fc9c902311a215fab54f8c1ce2249eb42b12030871e93c157e",
+      "request": {
+        "query": "?profile=prod&write=1&dry_run=true",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 413,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Migration body is too large",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 1,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-declared-over5m-plain",
+      "source_surface": "profile",
+      "raw_body_bytes": 0,
+      "raw_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request": {
+        "query": "",
+        "headers": {
+          "content-length": "5242881"
+        },
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 413,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Migration body is too large",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-declared-over5m-leading-zero",
+      "source_surface": "profile",
+      "raw_body_bytes": 0,
+      "raw_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request": {
+        "query": "",
+        "headers": {
+          "content-length": "05242881"
+        },
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 413,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Migration body is too large",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-declared-over5m-scientific",
+      "source_surface": "profile",
+      "raw_body_bytes": 0,
+      "raw_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request": {
+        "query": "",
+        "headers": {
+          "content-length": "6e6"
+        },
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 413,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Migration body is too large",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-invalid-length-reads-body",
+      "source_surface": "profile",
+      "raw_body_bytes": 0,
+      "raw_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request": {
+        "query": "",
+        "headers": {
+          "content-length": "invalid"
+        },
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "profile": "prod",
+        "include_cache": false,
+        "include_legacy": false,
+        "overwrite": false,
+        "dry_run": true,
+        "total": 0,
+        "imported": 0,
+        "skipped": 0,
+        "optional": 0,
+        "errors": 0,
+        "groups": {}
+      },
+      "text_calls": 1,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-exact5m",
+      "source_surface": "profile",
+      "raw_body_bytes": 5242880,
+      "raw_body_sha256": "ba5ad3ab4353434a375605412de9ea271055d1cb49d534f774bd1c2d092c4732",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "profile": "prod",
+        "include_cache": false,
+        "include_legacy": false,
+        "overwrite": false,
+        "dry_run": true,
+        "total": 0,
+        "imported": 0,
+        "skipped": 0,
+        "optional": 0,
+        "errors": 0,
+        "groups": {}
+      },
+      "text_calls": 1,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-actual-over5m",
+      "source_surface": "profile",
+      "raw_body_bytes": 5242881,
+      "raw_body_sha256": "29d92a909372c6fc9c902311a215fab54f8c1ce2249eb42b12030871e93c157e",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 413,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Migration body is too large",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 1,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-reencoded-over5m",
+      "source_surface": "profile",
+      "raw_body_bytes": 1747627,
+      "raw_body_sha256": "68b041e71e5c1cb529316e9c06b713837bd580e497306de31588e865306812d2",
+      "request": {
+        "query": "",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 413,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Migration body is too large",
+          "type": "invalid_request_error",
+          "code": "invalid_request_error"
+        }
+      },
+      "text_calls": 1,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-partial422-applies-first-row",
+      "source_surface": "profile",
+      "raw_body_bytes": 172,
+      "raw_body_sha256": "feaced99a9e07dae433bc881f37d69c29663665a37c6244bf6927140e0fbbde9",
+      "request": {
+        "query": "?profile=prod&write=1&overwrite=true",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 422,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "profile": "prod",
+        "include_cache": false,
+        "include_legacy": false,
+        "overwrite": true,
+        "dry_run": false,
+        "total": 2,
+        "imported": 1,
+        "skipped": 0,
+        "optional": 0,
+        "errors": 1,
+        "groups": {
+          "defaults": 1
+        }
+      },
+      "text_calls": 1,
+      "controlled_fetch_calls": [],
+      "stored_default_model": "gpt-5.5",
+      "stored_row_count": 1
+    },
+    {
+      "id": "profile-valid-row-default-dry",
+      "source_surface": "profile",
+      "raw_body_bytes": 161,
+      "raw_body_sha256": "be746e13aaaa2d833cdf377ed2a97a69b73a8dc847357d472c532feb996b8fa9",
+      "request": {
+        "query": "?profile=prod&dry_run=false&overwrite=true",
+        "headers": {},
+        "kv": "synthetic-existing-harness"
+      },
+      "parser": null,
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "profile": "prod",
+        "include_cache": false,
+        "include_legacy": false,
+        "overwrite": true,
+        "dry_run": true,
+        "total": 1,
+        "imported": 1,
+        "skipped": 0,
+        "optional": 0,
+        "errors": 0,
+        "groups": {
+          "defaults": 1
+        }
+      },
+      "text_calls": 1,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    },
+    {
+      "id": "profile-store-unavailable-before-options",
+      "source_surface": "profile",
+      "raw_body_bytes": 1,
+      "raw_body_sha256": "021fb596db81e6d02bf3d2586ee3981fe519f275c0ac9ca76bbcf2ebb4097d96",
+      "request": {
+        "query": "?profile=invalid",
+        "headers": {},
+        "kv": "unavailable"
+      },
+      "parser": null,
+      "status": 500,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "error": {
+          "message": "Deno KV is not available; cannot import migration",
+          "type": "invalid_request_error",
+          "code": "server_error"
+        }
+      },
+      "text_calls": 0,
+      "controlled_fetch_calls": [],
+      "stored_default_model": null,
+      "stored_row_count": 0
+    }
+  ]
+}
