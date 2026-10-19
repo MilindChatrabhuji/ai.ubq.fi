@@ -619,3 +619,127 @@ fn export_writer_records(store: &Store, family: &str, keys: &[RecordKey]) {
         .unwrap();
     println!("M45_ACTUAL_WRITER_RECORDS={}", path.display());
 }
+
+#[test]
+fn local_development_named_metadata_preserves_paired_auth_after_source_update() {
+    run(async {
+        let store = Store::default();
+        let host = Host::default();
+        let caps = Caps::default();
+        let keys_service = keys::KeyService {
+            store: &store,
+            host: &host,
+            capabilities: &caps,
+            release: "fixture",
+        };
+        let created = keys_service
+            .create(
+                &SourceJson::parse(r#"{"name":"controlled local fixture"}"#).unwrap(),
+                &actor(),
+                "create",
+            )
+            .await
+            .unwrap();
+        let generated = field_text(&response_source(&created), "id")
+            .try_utf8()
+            .unwrap();
+        let previous_key = gateway_auth::api_keys::id_key(&generated);
+        let mut record = keys::decode_id_record(
+            &previous_key,
+            &store.read(&previous_key).await.unwrap().unwrap(),
+        )
+        .unwrap();
+        // Controlled bootstrap data only. The following update still executes
+        // the real named KeyService writer and original ID/hash/policy CAS.
+        record.policy.id = "local-development".into();
+        let local_key = gateway_auth::api_keys::id_key(&record.policy.id);
+        let metadata =
+            keys::record_mutation(local_key.clone(), &record, None, "local-bootstrap").unwrap();
+        let hash = gateway_auth::store::put(
+            gateway_auth::api_keys::hash_key(&record.hash),
+            &record.policy,
+            None,
+            "local-bootstrap",
+        )
+        .unwrap();
+        let policy = RecordMutation::Put {
+            key: keys::authority_policy_key(&record.policy.id),
+            record: gateway_core::source_control::encode_source_control_record(
+                "local-bootstrap",
+                &input::json(&keys::authority_policy(&record, NOW)),
+                None,
+            )
+            .unwrap(),
+        };
+        store.rows.borrow_mut().remove(&previous_key.0);
+        store
+            .rows
+            .borrow_mut()
+            .remove(&keys::authority_policy_key(&generated).0);
+        assert_eq!(
+            store
+                .commit(AtomicTransition {
+                    checks: vec![],
+                    mutations: vec![metadata, hash, policy]
+                })
+                .await
+                .unwrap(),
+            CommitOutcome::Committed
+        );
+        let cfg = AuthConfig {
+            git_sha_known: true,
+            ..Default::default()
+        };
+        let auth = AuthService::new(&store, &host, &cfg);
+        let mut request = AuthRequest {
+            method: "POST".into(),
+            url: "http://127.0.0.1:8000/v1/responses".into(),
+            native_peer: Some(NativePeer {
+                listener_bypass_enabled: true,
+                tcp: true,
+                hostname: "127.0.0.1".into(),
+            }),
+            ..Default::default()
+        };
+        let assert_local = |principal: AuthPrincipal| {
+            assert!(!principal.is_admin);
+            assert!(!principal.is_super_admin);
+            assert!(
+                matches!(principal.method,AuthMethod::KvApiKey{key_id,..}if key_id=="local-development")
+            );
+        };
+        assert_local(auth.authenticate_client(&request).await.unwrap());
+        keys_service.mutate(AdminOperation::ApiKeysUpdate,&SourceJson::parse(r#"{"id":"local-development","name":"\ud800","paid_fallback_enabled":true,"paid_fallback_limit_credits":1}"#).unwrap(),&actor(),"source-metadata").await.unwrap();
+        assert_eq!(
+            store
+                .read(&local_key)
+                .await
+                .unwrap()
+                .unwrap()
+                .value_encoding,
+            ValueEncoding::ProfileV2
+        );
+        assert_local(auth.authenticate_client(&request).await.unwrap());
+        let original_peer = request.native_peer.take();
+        assert_eq!(
+            auth.authenticate_client(&request).await.unwrap_err().status,
+            401
+        );
+        request.native_peer = original_peer;
+        request
+            .headers
+            .insert("origin".into(), "https://evil.example".into());
+        assert_eq!(
+            auth.authenticate_client(&request).await.unwrap_err().status,
+            401
+        );
+        request.headers.clear();
+        request
+            .headers
+            .insert("sec-fetch-site".into(), "cross-site".into());
+        assert_eq!(
+            auth.authenticate_client(&request).await.unwrap_err().status,
+            401
+        );
+    });
+}
