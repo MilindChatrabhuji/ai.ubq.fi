@@ -17,7 +17,7 @@ use gateway_core::{
     source_serialization as source,
     state::{AuthorityStore, RevisionCheck},
 };
-use gateway_providers::{AuthMaterial, Headers};
+use gateway_providers::Headers;
 use gateway_schema::selection::ProviderSelection;
 use serde::Serialize;
 use serde_json::Value;
@@ -61,10 +61,7 @@ impl ClaudePoolSession {
                 host.compare_principals(a, b)
             })
             .await?;
-        Ok(
-            (!key.is_empty() && access.policy.allowed_key_ids.iter().any(|id| id == key))
-                .then_some(access.check),
-        )
+        Ok(access.policy.allows_scalar(key).then_some(access.check))
     }
     pub async fn select<S: AuthorityStore, H: ClaudePoolHost>(
         &self,
@@ -166,16 +163,10 @@ impl ClaudePoolSession {
                 &generation,
                 Some(&binding),
                 &binding.credential,
-                binding.workspace.as_ref().map(|w| w.id.as_str()),
+                binding.workspace.as_ref().map(|w| &w.id),
             )
             .ok_or_else(|| crate::invalid("Claude catalog generation changed."))?;
         let mut options = retained.map(|s| s.options.clone()).unwrap_or_default();
-        options.auth = AuthMaterial {
-            secret: binding.credential.secret.expose().into(),
-            api_key: binding.credential.kind == CredentialKind::ApiKey,
-            account_id: Some(binding.account_id.clone()),
-            workspace_id: binding.workspace.as_ref().map(|w| w.id.clone()),
-        };
         let effort = gateway_core::source_serialization::member(input.raw, "reasoning")
             .filter(|reasoning| gateway_core::source_serialization::entries(reasoning).is_some())
             .and_then(|reasoning| gateway_core::source_serialization::member(&reasoning, "effort"));

@@ -12,7 +12,7 @@ impl<T: SourceStringCollator + ?Sized> SourceStringCollator for std::sync::Arc<T
     }
 }
 /// Stable fallible merge sort. Comparator failure escapes before any result is published.
-pub(crate) fn sort_source<T, F>(mut values: Vec<T>, compare: &F) -> Result<Vec<T>, GatewayError>
+pub fn sort_source<T, F>(mut values: Vec<T>, compare: &F) -> Result<Vec<T>, GatewayError>
 where
     F: Fn(&T, &T) -> Result<Ordering, GatewayError>,
 {
