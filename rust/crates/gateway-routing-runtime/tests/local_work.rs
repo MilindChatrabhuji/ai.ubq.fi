@@ -101,6 +101,8 @@ fn assert_custody(store: &Store) {
 fn local_success_reserves_before_any_ordinary_plan_and_releases_only_unused_dispatch() {
     let store = Store::new();
     seed_key(&store);
+    seed_pool(&store);
+    let original_pool = store.value(source_key());
     assert!(policy::plan(&input("unplanned", "unavailable-model", &[]), NOW).is_err());
     let local = begin_local(&store, "unplanned");
     assert_eq!(local.original_source().as_str(), ORIGINAL);
@@ -125,6 +127,7 @@ fn local_success_reserves_before_any_ordinary_plan_and_releases_only_unused_disp
     assert_eq!(journal["local_work"]["terminal"]["semantic"], "completed");
     assert!(store.value(key("pending", "unplanned")).is_null());
     assert_custody(&store);
+    assert_eq!(store.value(source_key()), original_pool);
 }
 
 #[test]
