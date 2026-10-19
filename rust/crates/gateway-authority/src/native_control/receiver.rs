@@ -104,7 +104,7 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
     ) -> Result<ActionRow, GatewayError> {
         text(reference)?;
         let action: ActionRow = tx
-            .read(&rows::key("action", reference))
+            .read_source_control(&rows::key("action", reference))
             .await?
             .ok_or_else(fail)?;
         if action.action_ref != reference
@@ -233,12 +233,7 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         request_id: &str,
     ) -> Result<NativeRenewalAction, GatewayError> {
         let mut tx = self.authority.transaction(self.time(0)?)?;
-        let raw: serde_json::Value = tx
-            .read(&rows::session_key(request_id))
-            .await?
-            .ok_or_else(fail)?;
-        let context: gateway_core::identity::RequestContext =
-            serde_json::from_value(raw["context"].clone()).map_err(|_| fail())?;
+        let context = facts::session_context(&mut tx, request_id).await?;
         if context.request_id.0 != request_id {
             return Err(fail());
         }
@@ -260,12 +255,7 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         for _ in 0..5 {
             let now = self.time(0)?;
             let mut tx = self.authority.transaction(now)?;
-            let raw: serde_json::Value = tx
-                .read(&rows::session_key(request_id))
-                .await?
-                .ok_or_else(fail)?;
-            let context: gateway_core::identity::RequestContext =
-                serde_json::from_value(raw["context"].clone()).map_err(|_| fail())?;
+            let context = facts::session_context(&mut tx, request_id).await?;
             if &context != actor.context() {
                 return Err(fail());
             }
@@ -289,7 +279,7 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 &current.fence.source_native_generation,
             ))?;
             let key = rows::key("action", &reference);
-            let existing: Option<ActionRow> = tx.read(&key).await?;
+            let existing: Option<ActionRow> = tx.read_source_control(&key).await?;
             let row = if let Some(row) = existing {
                 if row.actor != *actor.stored()
                     || row.fence != current.fence
@@ -311,7 +301,7 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                     account_digests: current.account_digests,
                     operation_id: None,
                 };
-                tx.put(&key, &row, None)?;
+                tx.put_source_control(&key, &row, None)?;
                 row
             };
             self.current(&mut tx, &row).await?;
@@ -452,7 +442,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
             };
             if action.operation_id.is_none() {
                 action.operation_id = Some(operation_id.into());
-                tx.put(&rows::key("action", reference), &action, None)?;
+                tx.put_source_control(&rows::key("action", reference), &action, None)?;
             }
             if let Some(terminal) = &operation.terminal {
                 self.verify_terminal(&mut tx, &action, terminal).await?;
