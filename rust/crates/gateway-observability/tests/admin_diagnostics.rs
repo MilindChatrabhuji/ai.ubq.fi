@@ -119,7 +119,16 @@ fn retention_diagnostics_use_current_store_after_runtime_rebind_and_restart() {
     let runtime = ObservabilityRuntime::new(first.clone(), host.clone());
     let original = run(runtime.error_retention_diagnostics());
     assert_eq!(original["state"], "ok");
-    assert_eq!(original["accounting_complete"], true);
+    // One source maintenance pass may intentionally leave the owner index incomplete.
+    assert_eq!(original["accounting_complete"], false);
+    let mut ready = false;
+    for _ in 0..20 {
+        if run(runtime.error_retention_diagnostics())["accounting_complete"] == true {
+            ready = true;
+            break;
+        }
+    }
+    assert!(ready, "source bounded bootstrap must eventually finish");
     let unavailable = Memory::default();
     unavailable.unavailable.set(true);
     let rebound =
