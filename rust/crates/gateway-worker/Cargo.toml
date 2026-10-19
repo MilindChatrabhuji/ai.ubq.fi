@@ -27,6 +27,8 @@ gateway-routing-runtime.workspace = true
 gateway-extras-runtime.workspace = true
 gateway-publication.workspace = true
 gateway-observability.workspace = true
+gateway-live-runtime.workspace = true
+gateway-migration.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }

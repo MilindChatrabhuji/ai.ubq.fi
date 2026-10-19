@@ -1106,6 +1106,8 @@ dependencies = [
  "gateway-claude-runtime",
  "gateway-core",
  "gateway-extras-runtime",
+ "gateway-live-runtime",
+ "gateway-migration",
  "gateway-observability",
  "gateway-providers",
  "gateway-publication",
