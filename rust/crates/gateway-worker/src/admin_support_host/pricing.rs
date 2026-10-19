@@ -31,8 +31,9 @@ pub(super) fn project(
     let pricing = envelope(pricing, "metered_pricing_invalid")?;
     let status = envelope(status, "metered_status_invalid")?;
     let quota = status["quota_per_unit"]
-        .as_i64()
-        .filter(|n| *n > 0 && *n <= MAX_SAFE_INTEGER);
+        .as_f64()
+        .filter(|n| n.is_finite() && n.fract() == 0.0 && *n > 0.0 && *n <= MAX_SAFE_INTEGER as f64)
+        .map(|n| n as i64);
     let Some(quota) =
         quota.filter(|_| status["setup"] == true && (0..=MAX_SAFE_INTEGER).contains(&at))
     else {
@@ -108,5 +109,20 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn source_number_integer_accepts_decimal_json_notation() {
+        let status: Value = serde_json::from_str(
+            r#"{"success":true,"data":{"setup":true,"quota_per_unit":500000.0}}"#,
+        )
+        .unwrap();
+        let snapshot = project(
+            &[],
+            &json!({"success":true,"data":{"model_ratio":{},"model_price":{}}}),
+            &status,
+            10,
+        )
+        .unwrap();
+        assert_eq!(snapshot.quota_per_credit, 500000);
     }
 }

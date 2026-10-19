@@ -49,7 +49,6 @@ struct Attempt {
 
 pub(super) struct Facts {
     pub fence: NativeRenewalFence,
-    pub attempt_id: String,
     pub checks_digest: String,
     pub account_digests: Vec<String>,
     pub control_checks_digest: String,
@@ -58,7 +57,7 @@ pub(super) struct Facts {
 pub(super) fn digest<T: serde::Serialize>(value: &T) -> Result<String, GatewayError> {
     Ok(sha256_hex(&serde_json::to_vec(value).map_err(|_| fail())?))
 }
-fn checks_digest(checks: &[RevisionCheck]) -> Result<String, GatewayError> {
+pub(super) fn checks_digest(checks: &[RevisionCheck]) -> Result<String, GatewayError> {
     let prefix = super::rows::prefix();
     digest(
         &checks
@@ -268,6 +267,7 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
         .filter(|v| v.is_finite() && v.fract() == 0.0 && v.abs() <= 9_007_199_254_740_991.0)
         .map(|v| v as i64);
     let fence = NativeRenewalFence {
+        v: super::NATIVE_RENEWAL_FENCE_VERSION,
         owner_id: owner_id.into(),
         owner_epoch: owner_epoch.into(),
         owner_revision: tx.revision(&keys::paid_control_owner()).ok_or_else(fail)?,
@@ -283,13 +283,15 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
         principal: current_actor.principal,
         principal_policy_digest: control.principal_policy_digest,
         original_request_id: request_id.into(),
-        original_admission_digest: control.original_admission_digest,
-        model: control.model,
-        slot: admission.binding.slot,
+        context: super::NativeRenewalContext::Inference {
+            attempt_id: control.attempt_id,
+            original_admission_digest: control.original_admission_digest,
+            model: control.model,
+            slot: admission.binding.slot,
+        },
     };
     Ok(Facts {
         fence,
-        attempt_id: control.attempt_id,
         checks_digest: checks_digest(&tx.checks())?,
         control_checks_digest: control.checks_digest,
         account_digests: source
