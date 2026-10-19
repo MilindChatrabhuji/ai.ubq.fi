@@ -135,12 +135,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 let account_id_hash = String::from_utf16(hash.as_units())
                     .expect("closed lowercase ASCII account hash");
                 self.capabilities
-                    .codex(
-                        CodexRequest::ConsumeReset {
-                            account_id_hash,
-                        },
-                        context,
-                    )
+                    .codex(CodexRequest::ConsumeReset { account_id_hash }, context)
                     .await
             }
             CodexResetUpdate | CodexOverageUpdate => {
@@ -290,12 +285,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     .and_then(source_body::text)
                     .ok_or_else(|| invalid("account_id is required"))?;
                 self.capabilities
-                    .claude(
-                        ClaudeRequest::SelectAccount {
-                            account_id: id,
-                        },
-                        context,
-                    )
+                    .claude(ClaudeRequest::SelectAccount { account_id: id }, context)
                     .await
             }
             ClaudeQuotaClear => {
