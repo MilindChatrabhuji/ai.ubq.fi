@@ -2,6 +2,7 @@
 //! The store must atomically commit every check and mutation, durably, before returning.
 //! Independent records preserve history without a bounded whole-ledger snapshot.
 
+pub mod cache_experiment;
 pub mod capacity;
 mod capacity_rules;
 pub mod claude;
