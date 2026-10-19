@@ -69,7 +69,11 @@ impl OrdinaryPreparationContext {
         default_effort: &str,
     ) -> Self {
         Self {
-            prompt_cache: metadata.record.as_ref().and_then(|record| record.get("prompt_cache")).cloned(),
+            prompt_cache: metadata
+                .record
+                .as_ref()
+                .and_then(|record| record.get("prompt_cache"))
+                .cloned(),
             reasoning: metadata.reasoning.clone(),
             default_effort: default_effort.to_owned(),
         }
