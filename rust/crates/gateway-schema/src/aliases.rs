@@ -1,6 +1,36 @@
 //! Latest Flash aliases resolve only from injected cached catalog observations.
-use gateway_core::{model::ModelId, source_json::SourceJson};
+use gateway_core::{GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
+/// Constructor-owned synchronous source locale ordering; no model or authority normalization.
+pub trait SourceStringCollator: Send + Sync {
+    fn compare(&self, left: &JsString16, right: &JsString16) -> Result<Ordering, GatewayError>;
+}
+/// Stable fallible merge sort. Comparator failure escapes before any result is published.
+pub(crate) fn sort_source<T, F>(mut values: Vec<T>, compare: &F) -> Result<Vec<T>, GatewayError>
+where
+    F: Fn(&T, &T) -> Result<Ordering, GatewayError>,
+{
+    if values.len() < 2 {
+        return Ok(values);
+    }
+    let right = values.split_off(values.len() / 2);
+    let left = sort_source(values, compare)?;
+    let right = sort_source(right, compare)?;
+    let mut out = Vec::with_capacity(left.len() + right.len());
+    let mut left = left.into_iter().peekable();
+    let mut right = right.into_iter().peekable();
+    while let (Some(a), Some(b)) = (left.peek(), right.peek()) {
+        if compare(a, b)? != Ordering::Greater {
+            out.push(left.next().expect("left present"));
+        } else {
+            out.push(right.next().expect("right present"));
+        }
+    }
+    out.extend(left);
+    out.extend(right);
+    Ok(out)
+}
 pub const SYNTHETIC_MODEL: &str = "ubiquity/deepseek-flash";
 pub const LEGACY_SYNTHETIC_MODEL: &str = "ubiquity/deepseek-v4.1-flash";
 pub const FLASH_ORDER: &[&str] = &["lithos", "deepseek", "openrouter", "surplus", "openlux"];
@@ -213,9 +243,10 @@ pub fn resolve_flash_aliases(
     surplus: Option<&[SourceJson]>,
     openlux: Option<&[SourceJson]>,
     utc_year: u32,
-) -> FlashAliases {
+    collator: &dyn SourceStringCollator,
+) -> Result<FlashAliases, GatewayError> {
     let fallback = FlashAliases::default();
-    FlashAliases {
+    Ok(FlashAliases {
         lithos: lithos
             .and_then(|m| provider_alias(m, utc_year))
             .unwrap_or(fallback.lithos),
@@ -229,5 +260,5 @@ pub fn resolve_flash_aliases(
         openlux: openlux
             .and_then(|m| provider_alias(m, utc_year))
             .unwrap_or(fallback.openlux),
-    }
+    })
 }
