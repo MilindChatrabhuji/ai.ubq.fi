@@ -3,8 +3,14 @@
 #[path = "worker-custody-fixture/host.rs"]
 mod host;
 #[cfg(not(target_arch = "wasm32"))]
+#[path = "worker-custody-fixture/inputs.rs"]
+mod inputs;
+#[cfg(not(target_arch = "wasm32"))]
 #[path = "worker-custody-fixture/port.rs"]
 mod port;
+#[cfg(not(target_arch = "wasm32"))]
+#[path = "worker-custody-fixture/producers.rs"]
+mod producers;
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), gateway_migration::MigrationError> {
     use gateway_core::state::AuthorityStore;
@@ -29,6 +35,13 @@ fn main() -> Result<(), gateway_migration::MigrationError> {
     struct Candidate {
         operation: &'static str,
         capture: NativeCapture,
+        adoption_receipt: AdoptionReceipt,
+    }
+    #[derive(Deserialize)]
+    #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+    enum Phase {
+        ExerciseRuntime { v: u32 },
+        AdvanceManagedA { v: u32 },
     }
     #[derive(Serialize)]
     struct Inverse {
@@ -42,17 +55,63 @@ fn main() -> Result<(), gateway_migration::MigrationError> {
         1,
         "The fixture accepts no source, credential, endpoint or target arguments"
     );
-    let init: Initialize = port::read()?;
+    #[derive(Deserialize)]
+    #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+    enum Preparation {
+        PrepareInputs {
+            v: u32,
+            directory: String,
+            now_ms: i64,
+        },
+    }
+    // Inspect only the finite operation selector, then deserialize the ORIGINAL
+    // raw document. Untagged serde buffering must not erase NativeCapture SourceJson.
+    #[derive(Deserialize)]
+    struct Selector {
+        #[serde(default)]
+        operation: Option<String>,
+    }
+    let initial: gateway_core::source_json::SourceJson = port::read()?;
+    let selector: Selector = initial.deserialize()?;
+    let init: Initialize = if selector.operation.is_none() {
+        initial.deserialize()?
+    } else {
+        match initial.deserialize::<Preparation>()? {
+            Preparation::PrepareInputs {
+                v: 1,
+                directory,
+                now_ms,
+            } => {
+                port::write(&inputs::prepare(&directory, now_ms)?)?;
+                return Ok(());
+            }
+            _ => return Err(port::error("Unsupported fixture preparation").into()),
+        }
+    };
     if init.v != 1 {
         return Err(port::error("Unsupported fixture initialization").into());
     }
     let store = port::Store::default();
     let fixed = host::Host::from_stopped_fixture(&init.directory, &init.capture, init.now_ms)?;
     let candidate = support_run(sanitize_native_capture(&init.capture, &fixed))?;
+    let prepared = prepare_native(&candidate)?;
+    let adoption_receipt = support_run(adopt_empty(&store, &prepared))?;
     port::write(&Candidate {
         operation: "candidate",
         capture: candidate,
+        adoption_receipt,
     })?;
+    match port::read::<Phase>()? {
+        Phase::ExerciseRuntime { v: 1 } => {}
+        _ => return Err(port::error("Expected the fixed runtime producer phase").into()),
+    }
+    port::write(&producers::exercise(&store)?)?;
+    match port::read::<Phase>()? {
+        Phase::AdvanceManagedA { v: 1 } => {}
+        _ => return Err(port::error("Expected the fixed managed-a producer phase").into()),
+    }
+    let (fixed, receipt) = fixed.advance_managed_a(&store)?;
+    port::write(&receipt)?;
     let export: Export = port::read()?;
     if export.v != 1 {
         return Err(port::error("Unsupported fixture export").into());
