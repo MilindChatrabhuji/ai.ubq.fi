@@ -13,92 +13,19 @@ pub struct PendingLocalCompletion<S, I, C, H> {
     chosen_at_ms: i64,
     plan: Option<LocalCompletedJournalPlan>,
 }
-pub struct LocalCompletionRefusal<S, I, C, H> {
-    original: Box<LocalWorkHandle<S, I, C, H>>,
-    error: RoutingError,
-}
-impl<S, I, C, H> std::fmt::Debug for LocalCompletionRefusal<S, I, C, H> {
-    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        out.debug_struct("LocalCompletionRefusal")
-            .field("error", &self.error)
-            .finish_non_exhaustive()
-    }
-}
+#[path = "local_response.rs"]
+mod response;
+pub use response::{
+    BuiltLocalResponse, LocalAccountingProgress, LocalCompletionRefusal, LocalObservationSink,
+    LocalSelectedResponse, LocalWireDecision, LocalWireKind,
+};
 pub type LocalCompletionChoice<S, I, C, H> =
-    Result<PendingLocalCompletion<S, I, C, H>, LocalCompletionRefusal<S, I, C, H>>;
+    Result<BuiltLocalResponse<S, I, C, H>, LocalCompletionRefusal<S, I, C, H>>;
 
 pub enum LocalCompletionAdvance<S, I, C, H> {
     Ready(LocalDeliveryHandle<S, I, C, H>),
     Conflict,
     Unconfirmed(GatewayError),
-}
-impl<
-    S: QueryStore + Clone,
-    I: TokenSource + Clone,
-    C: AuthorityClock + Clone + 'static,
-    H: RoutingHost,
-> LocalWorkHandle<S, I, C, H>
-{
-    /// Call immediately after the genuine successful build and final observed abort check.
-    /// This consumes ownership synchronously, before any awaited persistence operation.
-    pub fn mark_local_completed(self) -> LocalCompletionChoice<S, I, C, H> {
-        let chosen = if self.host.cancelled() {
-            Err(self.host.cancellation_error())
-        } else {
-            self.now()
-        };
-        match chosen {
-            Ok(chosen_at_ms) => Ok(PendingLocalCompletion {
-                original: Some(self),
-                chosen_at_ms,
-                plan: None,
-            }),
-            Err(error) => Err(LocalCompletionRefusal {
-                original: Box::new(self),
-                error: error.into(),
-            }),
-        }
-    }
-}
-impl<
-    S: QueryStore + Clone,
-    I: TokenSource + Clone,
-    C: AuthorityClock + Clone + 'static,
-    H: RoutingHost,
-> LocalCompletionRefusal<S, I, C, H>
-{
-    pub fn error(&self) -> &RoutingError {
-        &self.error
-    }
-    /// Pre-choice cancellation cleanup; it cannot expose ordinary fallback.
-    pub async fn cleanup(&self) -> RoutingResult<RecoveredSession> {
-        let original = &self.original;
-        let (_, row) = journal::load(&original.store, original.id()).await?;
-        if !same_original(
-            &row,
-            original.original_context(),
-            &original.nonce,
-            &original.digest,
-            &original.api,
-            &original.kernel,
-        ) {
-            return Err(invalid().into());
-        }
-        Ok(finish_local_record(
-            &original.store,
-            &original.tokens,
-            &original.clock,
-            original.id(),
-            LocalTerminalObservation {
-                semantic: LocalSemanticOutcome::Cancelled,
-                reader_termination: None,
-                body: None,
-                delivery: DeliveryOutcome::Unobserved,
-            },
-            Some(binding(original)),
-        )
-        .await?)
-    }
 }
 impl<
     S: QueryStore + Clone,
@@ -218,7 +145,7 @@ impl<
                 body,
                 delivery,
             },
-            Some(binding(original)),
+            Some(selected_binding(original)),
         )
         .await?)
     }
@@ -301,17 +228,9 @@ async fn terminal_checks<S: AuthorityStore>(
                 || actual.key_id != api.key_id
                 || actual.request_id != api.request_id
                 || actual.route != api.route
-                || actual.transport_started
-                || !matches!(
-                    actual.state,
-                    ApiUsageState::Reserved | ApiUsageState::Released
-                )
-                || settled && actual.state != ApiUsageState::Released
             {
                 return Err(invalid());
             }
-        } else if !api.deferred {
-            return Err(invalid());
         }
         checks.push(RevisionCheckWire {
             key,
@@ -505,6 +424,7 @@ pub(crate) struct OriginalBinding<'a> {
     pub(super) api: &'a Option<ApiReservation>,
     pub(super) kernel: &'a Option<KernelReservation>,
     pub(super) allow_unbound_admission: bool,
+    pub(super) api_release_done: bool,
 }
 impl OriginalBinding<'_> {
     pub(super) fn matches(&self, row: &Journal) -> bool {
@@ -538,5 +458,12 @@ pub(super) fn binding<S, I, C, H>(original: &LocalWorkHandle<S, I, C, H>) -> Ori
         api: &original.api,
         kernel: &original.kernel,
         allow_unbound_admission: false,
+        api_release_done: false,
     }
+}
+
+fn selected_binding<S, I, C, H>(original: &LocalWorkHandle<S, I, C, H>) -> OriginalBinding<'_> {
+    let mut expected = binding(original);
+    expected.api_release_done = true;
+    expected
 }

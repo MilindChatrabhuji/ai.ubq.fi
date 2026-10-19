@@ -29,7 +29,9 @@ mod completion;
 #[path = "local_coordination.rs"]
 mod coordination;
 pub use completion::{
-    LocalCompletionAdvance, LocalCompletionChoice, LocalCompletionRefusal, PendingLocalCompletion,
+    BuiltLocalResponse, LocalAccountingProgress, LocalCompletionAdvance, LocalCompletionChoice,
+    LocalCompletionRefusal, LocalObservationSink, LocalSelectedResponse, LocalWireDecision,
+    LocalWireKind, PendingLocalCompletion,
 };
 
 /// Existing request metadata only. No caller supplies a replacement normalized body.
@@ -238,6 +240,7 @@ impl<
                     api: &row.api,
                     kernel: &row.kernel,
                     allow_unbound_admission: true,
+                    api_release_done: false,
                 }),
             )
             .await?;
@@ -774,11 +777,15 @@ pub(crate) async fn finish_local_record<
             .await;
     }
     let authority = Authority::with_clock(store.clone(), tokens.clone(), clock.clone());
-    if let Some(api) = &intent.api {
+    if let Some(api) = &intent.api
+        && expected
+            .as_ref()
+            .is_none_or(|binding| !binding.api_release_done)
+    {
         authority
             .release_api_key(
                 api,
-                true,
+                false,
                 "local_work_without_provider_dispatch",
                 clock.now_ms()?,
             )
