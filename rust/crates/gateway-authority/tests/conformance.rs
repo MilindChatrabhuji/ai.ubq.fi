@@ -128,7 +128,7 @@ fn mixed_pool_proof_is_not_quota_only_and_expires_with_the_quota_deadline() {
     assert!(proof.full_cohort_unavailable());
     assert!(!proof.full_cohort_exhausted());
     let mut input = paid_request("mixed-paid", PaidProvider::Surplus);
-    input.model = "gpt-test".to_owned();
+    input.model = "gpt-test".into();
     assert!(
         run(reserve_paid(
             &authority,
