@@ -4,12 +4,13 @@ pub use crate::catalog_views::{
 };
 pub use crate::native_catalog::{native_catalog, native_catalog_fallback};
 use crate::{
-    aliases::*, metadata::*, reasoning::ModelReasoning, selection::*, snapshot::ModelSnapshot,
-    util::*,
+    aliases::*, metadata::*, model_control as c, reasoning::ModelReasoning, selection::*,
+    snapshot::ModelSnapshot, source_request::SourceRequestError,
 };
-use gateway_core::{GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson};
+use gateway_core::{
+    js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as source,
+};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use std::collections::BTreeMap;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ProviderCatalog {
@@ -72,98 +73,134 @@ impl CatalogInput {
         self.enabled("ubiquity") && self.synthetic_configured()
     }
 }
-pub fn endpoint_paths(model: &Value) -> Vec<String> {
-    let types = model
-        .get("supported_endpoint_types")
-        .and_then(Value::as_array);
-    let has = |key| types.is_some_and(|t| t.iter().any(|v| v.as_str() == Some(key)));
+pub fn endpoint_paths(model: &SourceJson) -> Vec<String> {
     let mut paths = Vec::new();
-    if has("openai-response") {
+    if endpoint_supports(model, "openai-response") {
         paths.push("/v1/responses".into());
     }
-    if has("openai") {
+    if endpoint_supports(model, "openai") {
         paths.push("/v1/chat/completions".into());
     }
     paths
 }
-pub fn endpoint_supports(model: &Value, endpoint: &str) -> bool {
-    model
-        .get("supported_endpoint_types")
-        .and_then(Value::as_array)
-        .is_some_and(|types| types.iter().any(|v| v.as_str() == Some(endpoint)))
+pub fn endpoint_supports(model: &SourceJson, endpoint: &str) -> bool {
+    c::get(model, "supported_endpoint_types")
+        .as_ref()
+        .and_then(c::array)
+        .is_some_and(|types| {
+            types
+                .iter()
+                .any(|v| c::string(v).is_some_and(|s| c::matches(&s, endpoint)))
+        })
 }
-pub fn model_list_row(record: &Value, fallback_created: i64) -> Option<Value> {
+pub fn model_list_row(record: &SourceJson, fallback_created: i64) -> Option<SourceJson> {
     let id = ["id", "slug", "model", "name"]
         .iter()
-        .find_map(|key| record.get(key).and_then(Value::as_str))?;
-    if id.is_empty() {
+        .find_map(|key| c::get(record, key).as_ref().and_then(c::string))?;
+    if id.as_units().is_empty() {
         return None;
     }
-    Some(
-        json!({"id":id,"object":"model","created":nonnegative_truncated_value(record.get("created")).unwrap_or_else(||json!(fallback_created)),"owned_by":record.get("owned_by").and_then(Value::as_str).unwrap_or("openai")}),
-    )
+    let created = c::get(record, "created")
+        .as_ref()
+        .and_then(source::number)
+        .map(f64::trunc)
+        .filter(|n| n.is_finite() && *n >= 0.0)
+        .map(|n| {
+            if n <= crate::util::MAX_SAFE_INTEGER {
+                c::json(&(n as i64))
+            } else {
+                c::json(&n)
+            }
+        })
+        .unwrap_or_else(|| c::json(&fallback_created));
+    let owner = c::get(record, "owned_by")
+        .as_ref()
+        .and_then(c::string)
+        .unwrap_or_else(|| "openai".into());
+    Some(c::object(vec![
+        ("id", c::json(&id)),
+        ("object", c::json("model")),
+        ("created", created),
+        ("owned_by", c::json(&owner)),
+    ]))
 }
-pub fn normalize_model_list(payload: &Value) -> Option<Value> {
-    if !is_record(payload) {
+pub fn normalize_model_list(payload: &SourceJson) -> Option<SourceJson> {
+    if !c::is_record(payload) {
         return None;
     }
-    let fallback = payload
-        .get("updated_at_ms")
-        .and_then(Value::as_f64)
+    let fallback = c::get(payload, "updated_at_ms")
+        .as_ref()
+        .and_then(source::number)
         .filter(|n| n.is_finite())
         .map(|n| (n / 1000.0).trunc().max(0.0) as i64)
         .unwrap_or(0);
-    let rows = payload
-        .get("data")
-        .and_then(Value::as_array)
-        .or_else(|| payload.get("models").and_then(Value::as_array))?;
-    Some(
-        json!({"object":"list","data":rows.iter().filter_map(|r|model_list_row(r,fallback)).collect::<Vec<_>>()}),
-    )
+    let rows = c::get(payload, "data")
+        .as_ref()
+        .and_then(c::array)
+        .or_else(|| c::get(payload, "models").as_ref().and_then(c::array))?;
+    Some(c::object(vec![
+        ("object", c::json("list")),
+        (
+            "data",
+            c::json(
+                &rows
+                    .iter()
+                    .filter_map(|row| model_list_row(row, fallback))
+                    .collect::<Vec<_>>(),
+            ),
+        ),
+    ]))
 }
-pub fn append_unique(rows: &mut Vec<Value>, new_rows: impl IntoIterator<Item = Value>, key: &str) {
+fn field_equal(a: Option<SourceJson>, b: Option<SourceJson>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => source::canonical(&a).ok() == source::canonical(&b).ok(),
+        _ => false,
+    }
+}
+pub fn append_unique(
+    rows: &mut Vec<SourceJson>,
+    new_rows: impl IntoIterator<Item = SourceJson>,
+    key: &str,
+) {
     for row in new_rows {
-        let id = row.get(key);
-        if !rows.iter().any(|r| r.get(key) == id) {
+        if !rows
+            .iter()
+            .any(|r| field_equal(c::get(r, key), c::get(&row, key)))
+        {
             rows.push(row);
         }
     }
 }
 pub fn filter_whitelist(
-    rows: Vec<Value>,
+    rows: Vec<SourceJson>,
     whitelist: Option<&ModelWhitelist>,
     native: bool,
-) -> Vec<Value> {
+) -> Vec<SourceJson> {
     rows.into_iter()
-        .filter(|r| {
+        .filter(|row| {
             let id = if native {
-                identifier(r)
+                c::identifier(row)
             } else {
-                r.get("id").and_then(Value::as_str)
+                c::get(row, "id").as_ref().and_then(c::string)
             };
             id.is_some_and(|id| {
-                ModelWhitelist::permits(
-                    whitelist,
-                    if native {
-                        id.trim_matches(crate::util::js_whitespace)
-                    } else {
-                        id
-                    },
-                )
+                let id = if native { c::trim(&id) } else { id };
+                ModelWhitelist::permits(whitelist, &ModelId::from_source(id))
             })
         })
         .collect()
 }
-pub fn claude_levels(model: &Value) -> Vec<String> {
+pub fn claude_levels(model: &SourceJson) -> Vec<JsString16> {
     let mut levels = Vec::new();
-    if model.get("supports_disabled_thinking") == Some(&Value::Bool(true)) {
+    if c::get(model, "supports_disabled_thinking").is_some_and(|v| v.as_str() == "true") {
         levels.push("none".into());
     }
-    if let Some(raw) = model
-        .get("supported_reasoning_levels")
-        .and_then(Value::as_array)
+    if let Some(raw) = c::get(model, "supported_reasoning_levels")
+        .as_ref()
+        .and_then(c::array)
     {
-        levels.extend(raw.iter().filter_map(|v| v.as_str().map(str::to_owned)));
+        levels.extend(raw.iter().filter_map(c::string));
     }
     levels
 }
@@ -178,7 +215,7 @@ impl RequestModelMetadata {
     pub fn prompt_cache(&self) -> Option<SourceJson> {
         self.record
             .as_ref()
-            .and_then(|record| gateway_core::source_serialization::member(record, "prompt_cache"))
+            .and_then(|record| c::get(record, "prompt_cache"))
     }
 }
 pub fn request_model_metadata(
@@ -187,8 +224,8 @@ pub fn request_model_metadata(
     responses: bool,
     now_ms: i64,
 ) -> RequestModelMetadata {
-    if model == "glm-5.2" {
-        let record = json!({"slug":"glm-5.2"});
+    if model.matches_scalar("glm-5.2") {
+        let record = c::object(vec![("slug", c::json("glm-5.2"))]);
         return RequestModelMetadata {
             snapshot: None,
             reasoning: ModelReasoning::from_record(Some(&record)),
@@ -205,16 +242,21 @@ pub fn request_model_metadata(
             supported_endpoints: None,
         };
     }
+    let matches_model = |row: &&SourceJson| {
+        c::get(row, "id")
+            .as_ref()
+            .and_then(c::string)
+            .is_some_and(|id| &id == model.as_js_string())
+    };
     if input.enabled("claude_code")
-        && let Some(model) = input
-            .rows("claude_code")
-            .iter()
-            .find(|r| r.get("id").and_then(Value::as_str) == Some(model))
+        && let Some(row) = input.rows("claude_code").iter().find(matches_model)
     {
-        let mut record =
-            json!({"slug":model["id"],"supported_reasoning_levels":claude_levels(model)});
-        if model.get("supports_disabled_thinking") == Some(&Value::Bool(true)) {
-            record["default_reasoning_level"] = json!("none");
+        let mut record = c::object(vec![
+            ("slug", c::get(row, "id").expect("matched model")),
+            ("supported_reasoning_levels", c::json(&claude_levels(row))),
+        ]);
+        if c::get(row, "supports_disabled_thinking").is_some_and(|v| v.as_str() == "true") {
+            c::set(&mut record, "default_reasoning_level", c::json("none"));
         }
         return RequestModelMetadata {
             snapshot,
@@ -228,22 +270,26 @@ pub fn request_model_metadata(
     } else {
         "openai"
     };
-    let candidates: Vec<_> = ["openlux", "surplus"]
+    let candidates = ["openlux", "surplus"]
         .iter()
         .filter_map(|provider| {
             input
                 .rows(provider)
                 .iter()
-                .find(|r| r.get("id").and_then(Value::as_str) == Some(model))
+                .find(matches_model)
                 .map(|r| (*provider, r))
         })
-        .collect();
+        .collect::<Vec<_>>();
     if let Some((provider, paid)) = candidates
         .iter()
         .find(|(_, m)| endpoint_supports(m, endpoint))
         .or_else(|| candidates.first())
     {
-        let record = json!({"slug":model,"supported_reasoning_levels":["none"],"default_reasoning_level":"none"});
+        let record = c::object(vec![
+            ("slug", c::json(model)),
+            ("supported_reasoning_levels", c::json(&["none"])),
+            ("default_reasoning_level", c::json("none")),
+        ]);
         let snapshot = snapshot.or_else(|| {
             Some(ModelSnapshot {
                 models: Vec::new(),
@@ -261,18 +307,21 @@ pub fn request_model_metadata(
                 client_version: None,
             })
         });
+        // Only finite endpoint membership is consumed here; original source rows remain authoritative.
+        let endpoints = c::get(paid, "supported_endpoint_types")
+            .as_ref()
+            .and_then(c::array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| c::string(item).and_then(|s| s.try_utf8().ok()))
+                    .collect()
+            });
         return RequestModelMetadata {
             snapshot,
             reasoning: ModelReasoning::from_record(Some(&record)),
             record: Some(record),
-            supported_endpoints: paid
-                .get("supported_endpoint_types")
-                .and_then(Value::as_array)
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(str::to_owned))
-                        .collect()
-                }),
+            supported_endpoints: endpoints,
         };
     }
     RequestModelMetadata {
@@ -286,7 +335,7 @@ pub fn validate_model_available(
     model: &ModelId,
     responses: bool,
     metadata: &RequestModelMetadata,
-) -> Result<(), crate::source_request::SourceRequestError> {
+) -> Result<(), SourceRequestError> {
     let route = if responses {
         "responses"
     } else {
@@ -297,31 +346,36 @@ pub fn validate_model_available(
     } else {
         "openai"
     };
-    let message = if metadata
+    let suffix = if metadata
         .supported_endpoints
         .as_ref()
         .is_some_and(|e| !e.iter().any(|e| e == endpoint))
     {
         Some(format!(
-            "The model '{model}' does not support {route}. Use /v1/models for supported models."
+            "' does not support {route}. Use /v1/models for supported models."
         ))
     } else if metadata
         .snapshot
         .as_ref()
         .is_some_and(|s| !s.models.is_empty())
         && metadata.record.is_none()
-        && model.trim_matches(crate::util::js_whitespace) != "gpt-reserve"
+        && !c::matches(&c::trim(model.as_js_string()), "gpt-reserve")
     {
-        Some(format!(
-            "The model '{model}' does not exist or is not available through this gateway. Use /v1/models for supported models."
-        ))
+        Some("' does not exist or is not available through this gateway. Use /v1/models for supported models.".into())
     } else {
         None
     };
-    match message {
-        Some(message) => {
-            Err(GatewayError::new(404, message, Some("model_not_found")).with_param(Some("model")))
-        }
-        None => Ok(()),
+    if let Some(suffix) = suffix {
+        let prefix = JsString16::from_utf8("The model '");
+        let suffix = JsString16::from_utf8(&suffix);
+        Err(SourceRequestError::new(
+            404,
+            c::concat(&[&prefix, model.as_js_string(), &suffix]),
+            "invalid_request_error",
+            Some("model_not_found"),
+            Some(Some("model".into())),
+        ))
+    } else {
+        Ok(())
     }
 }

@@ -94,10 +94,11 @@ pub(crate) fn learn(
     id: &str,
     model: &ModelId,
     now: i64,
+    collator: &dyn gateway_schema::aliases::SourceStringCollator,
 ) -> Result<SourceJson, GatewayError> {
     let parsed = AccountModelsStore::parse(raw)
         .unwrap_or_default()
-        .record_unsupported(id, model, now);
+        .record_unsupported(id, model, now, collator)?;
     let mut next = raw.clone();
     if source::entries(&next).is_none() {
         return Err(invalid(

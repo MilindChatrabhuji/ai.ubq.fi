@@ -1,9 +1,11 @@
 //! Operator selection, whitelist and non-secret per-account model eligibility hints.
+use crate::aliases::SourceStringCollator;
 use crate::{
     aliases::{LEGACY_SYNTHETIC_MODEL, SYNTHETIC_MODEL},
     util::*,
 };
 use gateway_core::{model::ModelId, source_json::SourceJson};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -136,7 +138,7 @@ pub struct AccountModelCatalog {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AccountModelsStore {
     pub accounts: BTreeMap<String, AccountModelCatalog>,
-    pub unsupported: BTreeMap<String, BTreeMap<ModelId, i64>>,
+    pub unsupported: BTreeMap<String, IndexMap<ModelId, i64>>,
 }
 impl AccountModelsStore {
     pub fn record_catalogs(&self, entries: &[(String, AccountModelCatalog)]) -> Self {
@@ -154,7 +156,7 @@ impl AccountModelsStore {
             next.accounts.insert(account.clone(), catalog.clone());
             if let Some(rejections) = next.unsupported.get_mut(account) {
                 for slug in &catalog.slugs {
-                    rejections.remove(slug);
+                    rejections.shift_remove(slug);
                 }
                 if rejections.is_empty() {
                     next.unsupported.remove(account);
@@ -163,16 +165,46 @@ impl AccountModelsStore {
         }
         next
     }
-    pub fn record_unsupported(&self, account: &str, model: &ModelId, at_ms: i64) -> Self {
+    pub fn record_unsupported(
+        &self,
+        account: &str,
+        model: &ModelId,
+        at_ms: i64,
+        collator: &dyn SourceStringCollator,
+    ) -> Result<Self, gateway_core::GatewayError> {
+        use gateway_core::source_serialization as source;
         let mut next = self.clone();
         let entries = next.unsupported.entry(account.into()).or_default();
         entries.insert(model.clone(), at_ms);
-        let mut ordered: Vec<_> = entries.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let raw = source::object_keys(
+            entries
+                .iter()
+                .map(|(model, at)| (model.as_js_string().clone(), crate::model_control::json(at)))
+                .collect(),
+        )?;
+        // Object.entries enumerates numeric keys first, even after inserting a new numeric-looking model.
+        let mut ordered = source::entries(&raw)
+            .expect("model object")
+            .into_iter()
+            .map(|(key, _)| {
+                let model = ModelId::from_source(key);
+                let time = entries[&model];
+                (model, time)
+            })
+            .collect::<Vec<_>>();
         ordered.retain(|(_, at)| at_ms - *at <= 7 * 24 * 60 * 60_000);
-        ordered.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let mut ordered =
+            crate::aliases::sort_source(ordered, &|a: &(ModelId, i64), b: &(ModelId, i64)| {
+                let by_time = b.1.cmp(&a.1);
+                if by_time == std::cmp::Ordering::Equal {
+                    collator.compare(a.0.as_js_string(), b.0.as_js_string())
+                } else {
+                    Ok(by_time)
+                }
+            })?;
         ordered.truncate(32);
         *entries = ordered.into_iter().collect();
-        next
+        Ok(next)
     }
     pub fn unavailable(
         &self,
@@ -260,7 +292,7 @@ impl AccountModelsStore {
                 let Some(models) = source::entries(&raw) else {
                     continue;
                 };
-                let entries: BTreeMap<_, _> = models
+                let entries: IndexMap<_, _> = models
                     .into_iter()
                     .filter_map(|(model, value)| {
                         if c::trim(&model).as_units().is_empty() {
@@ -311,7 +343,7 @@ impl Serialize for AccountModelsStore {
 }
 impl<'de> Deserialize<'de> for AccountModelsStore {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let raw = SourceJson::deserialize(deserializer)?;
+        let raw = <SourceJson as Deserialize>::deserialize(deserializer)?;
         Self::parse(&raw)
             .ok_or_else(|| serde::de::Error::custom("Malformed source account-model record"))
     }
