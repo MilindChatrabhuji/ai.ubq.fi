@@ -207,28 +207,38 @@ impl ClaudePoolHost for Host {
 }
 
 pub(super) fn headers(binding: &AccountBinding, workspace: bool) -> gateway_providers::Headers {
+    credential_headers(
+        &binding.credential,
+        if workspace {
+            binding.workspace.as_ref().map(|value| value.id.as_str())
+        } else {
+            None
+        },
+    )
+}
+pub(super) fn credential_headers(
+    credential: &claude::Credential,
+    workspace: Option<&str>,
+) -> gateway_providers::Headers {
     let mut headers = gateway_providers::Headers::from([
         ("Content-Type".into(), "application/json".into()),
         ("Accept".into(), "application/json".into()),
         ("anthropic-version".into(), "2023-06-01".into()),
     ]);
-    match binding.credential.kind {
+    match credential.kind {
         CredentialKind::Oauth => {
             headers.insert(
                 "Authorization".into(),
-                format!("Bearer {}", binding.credential.secret.expose()),
+                format!("Bearer {}", credential.secret.expose()),
             );
             headers.insert("anthropic-beta".into(), "oauth-2025-04-20".into());
         }
         CredentialKind::ApiKey => {
-            headers.insert(
-                "x-api-key".into(),
-                binding.credential.secret.expose().into(),
-            );
+            headers.insert("x-api-key".into(), credential.secret.expose().into());
         }
     }
-    if workspace && let Some(workspace) = &binding.workspace {
-        headers.insert("anthropic-workspace-id".into(), workspace.id.clone());
+    if let Some(workspace) = workspace {
+        headers.insert("anthropic-workspace-id".into(), workspace.into());
     }
     headers
 }

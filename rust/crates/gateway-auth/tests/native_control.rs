@@ -135,3 +135,57 @@ fn control_frame_limits_are_smaller_without_changing_read_or_publication_limits(
             .is_err()
     );
 }
+
+#[test]
+fn reverse_authority_response_mac_isolated_from_forward_control_and_publication() {
+    let identity = identity();
+    let nonce = base64url(&[7; 32]);
+    let reply = br#"{"v":1}"#;
+    let signature = identity
+        .sign_authority_response(&nonce, b"{}", 200, reply)
+        .unwrap();
+    // Independently computed Python HMAC-SHA256 over the exact reverse frame.
+    assert_eq!(signature, "dWEc77PeP5zjOK0mSmI6ZAPQ_hcfCvpaRzNXUGKvoy4");
+    identity
+        .verify_authority_response(&nonce, b"{}", 200, reply, &signature)
+        .unwrap();
+    assert!(
+        identity
+            .verify_control_response(&nonce, b"{}", 200, reply, &signature)
+            .is_err()
+    );
+    assert!(
+        identity
+            .verify_publication_response(&nonce, b"{}", 200, reply, &signature)
+            .is_err()
+    );
+    assert!(
+        identity
+            .verify_authority_response(&nonce, b"{}", 409, reply, &signature)
+            .is_err()
+    );
+    assert!(
+        identity
+            .verify_authority_response(&nonce, b"{ }", 200, reply, &signature)
+            .is_err()
+    );
+    assert!(
+        identity
+            .verify_authority_response(&base64url(&[8; 32]), b"{}", 200, reply, &signature)
+            .is_err()
+    );
+    let medium = vec![b'x'; NATIVE_CONTROL_MAX_BYTES + 1];
+    identity
+        .sign(NATIVE_RENEWAL_AUTHORITY_PATH, 1, &nonce, &medium)
+        .unwrap();
+    assert!(
+        identity
+            .sign(
+                NATIVE_RENEWAL_AUTHORITY_PATH,
+                1,
+                &nonce,
+                &vec![b'x'; NATIVE_AUTHORITY_MAX_BYTES + 1]
+            )
+            .is_err()
+    );
+}

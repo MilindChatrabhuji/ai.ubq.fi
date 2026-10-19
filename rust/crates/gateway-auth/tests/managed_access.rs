@@ -33,7 +33,7 @@ fn projected_source(projection: &ManagedAccessProjection) -> Value {
     json!({"accounts":[{
         "account_id":projection.account_id(),"access_token":projection.access_token().expose(),"refresh_token":"","updated_at_ms":1000,
         "native_owner":{"codex_home":"/tmp/synthetic-native-owner","generation_hash":projection.access_generation(),"native_refreshed_at":projection.native_refreshed_at(),"managed_source":{"v":2,"generation_hash":projection.native_source_generation()}}
-    },{"account_id":"sibling","access_token":"synthetic-sibling-access","refresh_token":"synthetic-sibling-refresh","updated_at_ms":5}],"updated_at_ms":1000})
+    },{"account_id":"sibling","access_token":"synthetic-sibling-access","refresh_token":"synthetic-sibling-refresh","updated_at_ms":5.0}],"updated_at_ms":1000})
 }
 
 #[test]

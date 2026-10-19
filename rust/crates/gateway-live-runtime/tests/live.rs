@@ -4,8 +4,7 @@ use std::{
     future::Future,
     pin::pin,
     rc::Rc,
-    sync::Arc,
-    task::{Context, Poll, Wake, Waker},
+    task::{Context, Poll, Waker},
 };
 
 use gateway_auth::{AuthMethod, AuthPrincipal, crypto::Secret};
@@ -20,12 +19,7 @@ use gateway_live_runtime::*;
 use serde_json::{Value, json};
 
 fn run<F: Future>(future: F) -> F::Output {
-    struct Noop;
-    impl Wake for Noop {
-        fn wake(self: Arc<Self>) {}
-    }
-    let waker = Waker::from(Arc::new(Noop));
-    let mut context = Context::from_waker(&waker);
+    let mut context = Context::from_waker(Waker::noop());
     let mut future = pin!(future);
     loop {
         if let Poll::Ready(value) = future.as_mut().poll(&mut context) {
@@ -112,11 +106,13 @@ impl LiveAccount for Account {
         &self.id
     }
 }
+type UpstreamResult = Result<LiveResponse<Vec<u8>>, LiveDispatchFailure<Vec<u8>>>;
+type CapturedRequest = (String, String, BTreeMap<String, String>);
 struct Host {
     now: Cell<i64>,
     selected: RefCell<VecDeque<Result<Account, LiveResponse<Vec<u8>>>>>,
-    upstream: RefCell<VecDeque<Result<LiveResponse<Vec<u8>>, LiveDispatchFailure<Vec<u8>>>>>,
-    requests: RefCell<Vec<(String, String, BTreeMap<String, String>)>>,
+    upstream: RefCell<VecDeque<UpstreamResult>>,
+    requests: RefCell<Vec<CapturedRequest>>,
     events: RefCell<Vec<String>>,
     generation: Cell<u32>,
     removed: Cell<bool>,
@@ -789,4 +785,56 @@ fn authenticated_principal_methods_match_source() {
             gateway_auth::crypto::sha256_hex(b"synthetic-bearer")
         )
     );
+}
+
+#[test]
+fn executed_pinned_bun_source_golden_vectors_match_portable_runtime() {
+    let golden: Value = serde_json::from_str(include_str!("fixtures/source-golden.json")).unwrap();
+    for row in golden["routes"].as_array().unwrap() {
+        let result = live_route(
+            row["method"].as_str().unwrap(),
+            row["path"].as_str().unwrap(),
+        );
+        let projected = match result {
+            None => Value::Null,
+            Some(LiveRoute::Create) => json!({"kind":"call"}),
+            Some(LiveRoute::Sideband(call_id)) => json!({"kind":"sideband","callId":call_id}),
+        };
+        assert_eq!(projected, row["result"]);
+    }
+    for row in golden["locations"].as_array().unwrap() {
+        assert_eq!(
+            serde_json::to_value(call_id_from_location(row["location"].as_str().unwrap())).unwrap(),
+            row["id"]
+        );
+    }
+    for row in golden["sessions"].as_array().unwrap() {
+        let (_, runtime, host) = fixture();
+        let mut request = input();
+        request.session = Some(row["session"].as_str().unwrap().into());
+        assert_eq!(
+            run(runtime.create_call(&principal(), request, &host, &false)).status,
+            201
+        );
+        assert_eq!(host.requests.borrow()[0].1, row["body"].as_str().unwrap());
+    }
+    for row in golden["headers"].as_array().unwrap() {
+        let (_, runtime, host) = fixture();
+        let mut request = input();
+        // The source fixture uses real Request/Headers: its getter already strips HTTP whitespace.
+        request.headers = row["input"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.as_str().unwrap().trim().into()))
+            .collect();
+        assert_eq!(
+            run(runtime.create_call(&principal(), request, &host, &false)).status,
+            201
+        );
+        assert_eq!(
+            serde_json::to_value(&host.requests.borrow()[0].2).unwrap(),
+            row["result"]
+        );
+    }
 }

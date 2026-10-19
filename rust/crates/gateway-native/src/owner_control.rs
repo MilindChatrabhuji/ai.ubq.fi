@@ -5,23 +5,32 @@ use std::{future::Future, time::Instant};
 
 use gateway_auth::{
     GatewayError,
-    native_auth::AuthenticatedNativeOwner,
+    native_auth::{AuthenticatedNativeOwner, NativeAuthHeaders},
     native_control::{NativeControlEnvelope, NativeControlResponse},
 };
 
 pub struct NativeControlContext<'a> {
     deadline: Instant,
     disconnected: &'a dyn Fn() -> bool,
+    original_auth: NativeAuthHeaders<'a>,
 }
 impl<'a> NativeControlContext<'a> {
-    pub(crate) fn admitted(deadline: Instant, disconnected: &'a dyn Fn() -> bool) -> Self {
+    pub(crate) fn admitted(
+        deadline: Instant,
+        disconnected: &'a dyn Fn() -> bool,
+        original_auth: NativeAuthHeaders<'a>,
+    ) -> Self {
         Self {
             deadline,
             disconnected,
+            original_auth,
         }
     }
     pub fn deadline(&self) -> Instant {
         self.deadline
+    }
+    pub fn original_auth_headers(&self) -> NativeAuthHeaders<'a> {
+        self.original_auth
     }
     pub fn now_ms(&self) -> Result<i64, GatewayError> {
         let value = SystemTime::now()
