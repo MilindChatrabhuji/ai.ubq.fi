@@ -101,6 +101,15 @@ impl<
                 .authority()
                 .authorize_paid_route(&input, &context, self.now()?)
                 .await?;
+            let receipt = self
+                .authority()
+                .bind_paid_original_dispatch(
+                    &receipt,
+                    &self.input.context,
+                    reservation,
+                    self.now()?,
+                )
+                .await?;
             Self::check_paid_credential(&record.fence, &receipt)?;
             let authorization = if synthetic {
                 gateway_authority::paid::PaidAuthorization::DirectPaidModel

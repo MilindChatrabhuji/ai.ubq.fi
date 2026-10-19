@@ -75,13 +75,25 @@ impl FailureKind {
         }
     }
     pub fn code(self) -> &'static str {
-        if self == Self::Cancelled { "request_cancelled" } else { "jev_compaction_unavailable" }
+        if self == Self::Cancelled {
+            "request_cancelled"
+        } else {
+            "jev_compaction_unavailable"
+        }
     }
     pub fn error_type(self) -> &'static str {
-        if self.status() >= 500 || self == Self::Cancelled { "server_error" } else { "invalid_request_error" }
+        if self.status() >= 500 || self == Self::Cancelled {
+            "server_error"
+        } else {
+            "invalid_request_error"
+        }
     }
     pub fn message(self) -> String {
-        if self == Self::Cancelled { "Request was cancelled.".into() } else { format!("Jev compaction unavailable ({})", self.label()) }
+        if self == Self::Cancelled {
+            "Request was cancelled.".into()
+        } else {
+            format!("Jev compaction unavailable ({})", self.label())
+        }
     }
 }
 
@@ -92,7 +104,9 @@ pub struct CompactionFailure {
     pub detail: &'static str,
 }
 impl CompactionFailure {
-    pub fn new(kind: FailureKind, detail: &'static str) -> Self { Self { kind, detail } }
+    pub fn new(kind: FailureKind, detail: &'static str) -> Self {
+        Self { kind, detail }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
