@@ -10,7 +10,6 @@ use crate::{
     store::Transaction,
 };
 use gateway_auth::{
-    api_keys,
     crypto::sha256_hex,
     provider_credentials::{
         codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
@@ -53,6 +52,7 @@ pub(super) struct Facts {
     pub attempt_id: String,
     pub checks_digest: String,
     pub account_digests: Vec<String>,
+    pub control_checks_digest: String,
 }
 
 pub(super) fn digest<T: serde::Serialize>(value: &T) -> Result<String, GatewayError> {
@@ -69,63 +69,17 @@ fn checks_digest(checks: &[RevisionCheck]) -> Result<String, GatewayError> {
     )
 }
 
-async fn actor_current<S: AuthorityStore, I: TokenSource>(
-    tx: &mut Transaction<'_, S, I>,
-    actor: &Actor,
-) -> Result<String, GatewayError> {
-    let mut keys_seen = Vec::new();
-    if let Actor::ApiKey { key_id, token_hash } = actor {
-        if token_hash.len() != 43
-            || !token_hash
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-        {
-            return Err(fail());
-        }
-        let auth_key = api_keys::hash_key(token_hash);
-        let record: api_keys::ApiKeyHashRecord = tx.read(&auth_key).await?.ok_or_else(fail)?;
-        if record.revoked_at_ms.is_some() {
-            return Err(fail());
-        }
-        let policy = api_keys::policy_from_record(token_hash.clone(), record, tx.now)?;
-        if &policy.key_id != key_id {
-            return Err(fail());
-        }
-        let policy_key = keys::api_policy(key_id);
-        let normalized: ApiKeyPolicy = tx.read(&policy_key).await?.ok_or_else(fail)?;
-        normalized.validate(&gateway_core::identity::ApiKeyId(key_id.clone()), tx.now)?;
-        if normalized.expires_at_ms != policy.expires_at_ms
-            || normalized.window_ms != policy.window_ms
-            || normalized.usage_limit_requests != policy.usage_limit_requests
-        {
-            return Err(fail());
-        }
-        keys_seen.push(auth_key);
-        keys_seen.push(policy_key);
-    }
-    keys_seen.push(keys::paid_control_owner());
-    keys_seen.push(keys::paid_control_config());
-    digest(
-        &keys_seen
-            .iter()
-            .map(|k| (&k.0, tx.revision(k)))
-            .collect::<Vec<_>>(),
-    )
-}
-
-pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
+pub(super) async fn read_control<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     actor: &Actor,
     request_id: &str,
     expected_attempt: Option<&str>,
     identity: &gateway_auth::native_auth::NativeTransportIdentity,
-    registered: &super::RegisteredRenewalOwner,
-) -> Result<Facts, GatewayError> {
+    current_config: &gateway_auth::AuthConfig,
+) -> Result<ControlFacts, GatewayError> {
     let owner_id = identity.owner_id();
     let owner_epoch = identity.owner_epoch();
     let key_fingerprint = identity.key_fingerprint();
-    let native_owner_id = registered.native_owner_id();
-    let home = registered.home.as_str();
     let owner: PaidControlOwner = tx
         .read(&keys::paid_control_owner())
         .await?
@@ -155,11 +109,15 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
     {
         return Err(fail());
     }
-    let policy_digest = actor_current(tx, actor).await?;
+    let current_actor = super::actor::read_current(tx, actor, current_config).await?;
+    if current_actor.scope != super::actor::NativeActorScope::Client {
+        return Err(fail());
+    }
+    let policy_digest = current_actor.policy_digest;
     let session: Session = tx.read(&session_key(request_id)).await?.ok_or_else(fail)?;
     if session.v != 1
         || session.context.request_id.0 != request_id
-        || session.context.principal.0 != actor.principal()
+        || session.context.principal.0 != current_actor.principal
         || session.finished
         || session.semantic_committed
         || session.recovering
@@ -192,7 +150,10 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
     {
         return Err(fail());
     }
-    if let Actor::ApiKey { key_id, .. } = actor {
+    if let Some(key_id) = session.context.key_id.as_ref().map(|k| &k.0) {
+        if current_actor.principal != format!("api-key:{key_id}") {
+            return Err(fail());
+        }
         if session.context.key_id.as_ref().map(|k| k.0.as_str()) != Some(key_id) {
             return Err(fail());
         }
@@ -224,8 +185,59 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
             }
         }
     }
+    Ok(ControlFacts {
+        admission,
+        attempt_id: attempt_id.into(),
+        model: attempt.model.clone(),
+        native_generation: fence["native_generation"].as_str().ok_or_else(fail)?.into(),
+        principal_policy_digest: policy_digest,
+        original_admission_digest: digest(&(
+            &session.context,
+            &session.input_digest,
+            &session.api,
+            attempt_id,
+        ))?,
+        checks_digest: checks_digest(&tx.checks())?,
+    })
+}
+
+pub(super) struct ControlFacts {
+    pub admission: AdmittedAccount,
+    pub attempt_id: String,
+    pub model: String,
+    pub native_generation: String,
+    pub principal_policy_digest: String,
+    pub original_admission_digest: String,
+    pub checks_digest: String,
+}
+
+pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    actor: &Actor,
+    request_id: &str,
+    expected_attempt: Option<&str>,
+    identity: &gateway_auth::native_auth::NativeTransportIdentity,
+    current_config: &gateway_auth::AuthConfig,
+    registered: &super::RegisteredRenewalOwner,
+) -> Result<Facts, GatewayError> {
+    let control = read_control(
+        tx,
+        actor,
+        request_id,
+        expected_attempt,
+        identity,
+        current_config,
+    )
+    .await?;
+    let admission = &control.admission;
+    let current_actor = super::actor::read_current(tx, actor, current_config).await?;
+    let source_key = codex_source_pool_key();
+    let owner_id = identity.owner_id();
+    let owner_epoch = identity.owner_epoch();
+    let native_owner_id = registered.native_owner_id();
+    let home = registered.home.as_str();
     let view = crate::routing::read_view(tx).await?;
-    if !view.matches(&admission) {
+    if !view.matches(admission) {
         return Err(fail());
     }
     let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;
@@ -237,15 +249,20 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
     let native = account.native_owner.as_ref().ok_or_else(fail)?;
     if native.codex_home != home
         || native.generation_hash != identity.native_generation_hash
-        || fence["native_generation"].as_str() != Some(identity.native_generation_hash.as_str())
+        || control.native_generation != identity.native_generation_hash
         || normalized.pool_versionstamp.0 != admission.binding.pool_versionstamp.0
     {
         return Err(fail());
     }
-    let physical = raw["accounts"][slot]["native_owner"]
-        .get("managed_source")
-        .map(|v| v["generation_hash"].as_str().ok_or_else(fail))
-        .transpose()?
+    if native.external_user_id.is_none()
+        && (native.managed_source.is_none() || !account.refresh_token.expose().is_empty())
+    {
+        return Err(fail());
+    }
+    let physical = native
+        .managed_source
+        .as_ref()
+        .map(|s| s.generation_hash.as_str())
         .unwrap_or(&native.generation_hash);
     let expiry = codex_access_expiry_ms(&account.access_token)
         .filter(|v| v.is_finite() && v.fract() == 0.0 && v.abs() <= 9_007_199_254_740_991.0)
@@ -263,22 +280,18 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
         access_generation: native.generation_hash.clone(),
         access_expires_at_ms: expiry,
         native_refreshed_at: native.native_refreshed_at.clone(),
-        principal: actor.principal(),
-        principal_policy_digest: policy_digest,
+        principal: current_actor.principal,
+        principal_policy_digest: control.principal_policy_digest,
         original_request_id: request_id.into(),
-        original_admission_digest: digest(&(
-            &session.context,
-            &session.input_digest,
-            &session.api,
-            attempt_id,
-        ))?,
-        model: attempt.model.clone(),
+        original_admission_digest: control.original_admission_digest,
+        model: control.model,
         slot: admission.binding.slot,
     };
     Ok(Facts {
         fence,
-        attempt_id: attempt_id.into(),
+        attempt_id: control.attempt_id,
         checks_digest: checks_digest(&tx.checks())?,
+        control_checks_digest: control.checks_digest,
         account_digests: source
             .accounts
             .iter()
