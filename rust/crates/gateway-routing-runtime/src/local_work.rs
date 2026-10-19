@@ -30,7 +30,7 @@ pub struct LocalRequestMetadata {
     pub context: RequestContext,
     pub principal: AuthPrincipal,
     pub catalog: CatalogInput,
-    pub runtime: Option<Value>,
+    pub runtime: Option<SourceJson>,
     pub client_version: String,
     pub native_session_id: Option<String>,
     pub retry_prohibited: bool,

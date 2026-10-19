@@ -67,8 +67,7 @@ async fn dispatch_attempts(
         let target = PinnedDestination::new(&attempt.request.url)?;
         let wire = match retained_wire {
             Some(wire) => wire,
-            None => serde_json::to_vec(&attempt.request.body)
-                .map_err(|_| invalid("Request could not be encoded."))?,
+            None => attempt.request.body.as_bytes().to_vec(),
         };
         let gate_session = session.clone();
         let gate_attempt = attempt.clone();
@@ -579,9 +578,8 @@ pub async fn run(
                                 }
                                 for event in events {
                                     state.next_sequence = event
-                                        .data
-                                        .get("sequence_number")
-                                        .and_then(Value::as_u64)
+                                        .field("sequence_number")
+                                        .and_then(|value| value.deserialize::<u64>().ok())
                                         .map_or(state.next_sequence + 1, |number| number + 1);
                                     observe_event(&state.observation, &event);
                                     state.queue.push_back(event.encode_sse().into_bytes());
@@ -704,8 +702,7 @@ pub async fn run(
         } else if let Some(raw) = decoded.raw_body {
             raw
         } else {
-            serde_json::to_vec(&decoded.body)
-                .map_err(|_| invalid("Upstream response cannot be encoded."))?
+            decoded.body.as_bytes().to_vec()
         };
         capture.configure(
             decoded.status,
@@ -804,29 +801,7 @@ impl Relay {
 }
 
 fn observe_event(observation: &ObservationHandle, event: &ProviderEvent) {
-    let terminal = match event.data.get("type").and_then(Value::as_str) {
-        Some("response.completed") => Some(SemanticTerminal::Completed),
-        Some("response.incomplete") => Some(SemanticTerminal::Incomplete),
-        Some("response.failed") => Some(SemanticTerminal::Failed),
-        Some("error") => Some(SemanticTerminal::Error),
-        _ if event.data.get("error").is_some() => Some(SemanticTerminal::Error),
-        _ => event
-            .data
-            .get("choices")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .find_map(
-                |choice| match choice.get("finish_reason").and_then(Value::as_str) {
-                    Some("stop" | "tool_calls" | "function_call") => {
-                        Some(SemanticTerminal::Completed)
-                    }
-                    Some("length" | "content_filter") => Some(SemanticTerminal::Incomplete),
-                    _ => None,
-                },
-            ),
-    };
-    if let Some(terminal) = terminal {
+    if let Some(terminal) = event.terminal() {
         observation.semantic_terminal(terminal);
     }
 }

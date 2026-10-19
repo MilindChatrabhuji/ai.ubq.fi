@@ -13,8 +13,9 @@ fn only(value: &SourceJson, keys: &[&str]) -> bool {
     })
 }
 fn base(raw: &SourceJson) -> bool {
-    crate::anthropic::is_claude(&s::control(&s::get(raw, "model")).unwrap_or_default())
-        && s::present(raw, "store").is_none_or(|v| s::boolean(&v) == Some(false))
+    s::string(&s::get(raw, "model")).is_some_and(|model| {
+        crate::anthropic::is_claude_model(&gateway_core::model::ModelId::from_source(model))
+    }) && s::present(raw, "store").is_none_or(|v| s::boolean(&v) == Some(false))
         && s::present(raw, "previous_response_id").is_none_or(|v| s::is_null(&v))
         && [
             "context_management",
@@ -303,23 +304,33 @@ fn native_reasoning(raw: &SourceJson, options: &PrepareOptions) -> Option<Source
     if !options.supports_native_effort {
         return None;
     }
-    let effort = s::control(&effort)?;
-    let effort = if effort == "ultra" && options.native_reasoning_efforts.is_none() {
-        "max"
+    let effort = s::string(&effort)?;
+    let effort = if effort.as_units().iter().copied().eq("ultra".encode_utf16())
+        && options.native_reasoning_efforts.is_none()
+    {
+        gateway_core::js_string::JsString16::from_utf8("max")
     } else {
-        &effort
+        effort
     };
     let allowed = options.native_reasoning_efforts.clone().unwrap_or_else(|| {
         ["low", "medium", "high", "xhigh", "max"]
-            .map(str::to_owned)
+            .map(gateway_core::js_string::JsString16::from_utf8)
             .to_vec()
     });
-    allowed.iter().any(|value| value == effort).then(|| {
-        s::generated(
-            &serde_json::json!({"thinking":{"type":"adaptive"},"output_config":{"effort":effort}}),
-        )
+    allowed.iter().any(|value| *value == effort).then(|| {
+        s::object(vec![
+            (
+                "thinking",
+                s::generated(&serde_json::json!({"type":"adaptive"})),
+            ),
+            (
+                "output_config",
+                s::object(vec![("effort", s::quoted(&effort))]),
+            ),
+        ])
     })
 }
+
 fn native_choice(raw: &SourceJson) -> Option<SourceJson> {
     let mut choice = match s::present(raw, "tool_choice") {
         None => s::object(vec![]),

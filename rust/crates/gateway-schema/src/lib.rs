@@ -7,6 +7,7 @@ pub mod catalog_store;
 pub mod catalog_views;
 pub mod content;
 pub mod metadata;
+pub(crate) mod model_control;
 pub mod native_catalog;
 pub mod prompt_cache;
 pub mod provider_catalog;

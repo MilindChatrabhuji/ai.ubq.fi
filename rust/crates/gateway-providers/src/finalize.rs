@@ -37,10 +37,34 @@ pub fn buffered_chat_events(completion: &Value, plan: &DecodePlan) -> Vec<Provid
         choices.push(json!({"index":index,"delta":delta,"finish_reason":null}));
         finishes.push(json!({"index":index,"delta":{},"finish_reason":choice["finish_reason"]}));
     }
-    let base = |choices: Value| json!({"id":completion.get("id").cloned().unwrap_or(json!(plan.response_id)),"object":"chat.completion.chunk","created":completion.get("created").cloned().unwrap_or(json!(plan.created_at)),"model":plan.model,"choices":choices});
+    let base = |choices: Value| {
+        crate::source::object(vec![
+            (
+                "id",
+                crate::source::generated(
+                    &completion
+                        .get("id")
+                        .cloned()
+                        .unwrap_or(json!(plan.response_id)),
+                ),
+            ),
+            ("object", crate::source::text("chat.completion.chunk")),
+            (
+                "created",
+                crate::source::generated(
+                    &completion
+                        .get("created")
+                        .cloned()
+                        .unwrap_or(json!(plan.created_at)),
+                ),
+            ),
+            ("model", crate::source::quoted(plan.model.as_js_string())),
+            ("choices", crate::source::generated(&choices)),
+        ])
+    };
     let mut events = vec![
-        ProviderEvent::chat(base(json!(choices))),
-        ProviderEvent::chat(base(json!(finishes))),
+        ProviderEvent::chat_source(base(json!(choices))),
+        ProviderEvent::chat_source(base(json!(finishes))),
     ];
     if crate::source::boolean(&crate::source::path(
         &plan.request,
@@ -49,8 +73,8 @@ pub fn buffered_chat_events(completion: &Value, plan: &DecodePlan) -> Vec<Provid
         && let Some(usage) = completion.get("usage")
     {
         let mut chunk = base(json!([]));
-        chunk["usage"] = usage.clone();
-        events.push(ProviderEvent::chat(chunk));
+        crate::source::set(&mut chunk, "usage", crate::source::generated(usage));
+        events.push(ProviderEvent::chat_source(chunk));
     }
     events.push(ProviderEvent::chat(json!("[DONE]")));
     events

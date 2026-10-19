@@ -16,6 +16,7 @@ fn get(value: &SourceJson, key: &str) -> SourceJson {
     source::member(value, key).unwrap()
 }
 fn metadata(record: Option<Value>) -> RequestModelMetadata {
+    let record = record.map(|value| SourceJson::from_serializable(&value).unwrap());
     RequestModelMetadata {
         snapshot: None,
         reasoning: ModelReasoning::from_record(record.as_ref()),
@@ -33,7 +34,7 @@ fn options(record: Option<Value>, default: &str) -> PrepareOptions {
         conversation_id: Some("fixture-conversation".into()),
         ordinary_preparation: Some(OrdinaryPreparationContext::from_metadata(
             &metadata(record),
-            default,
+            &default.into(),
         )),
         ..Default::default()
     }
@@ -43,7 +44,7 @@ fn error(surface: ClientSurface, raw: &str, options: &PrepareOptions) -> SourceR
         UpstreamProvider::ChatgptCodex,
         surface,
         &parse(raw),
-        "gpt-fixture",
+        &"gpt-fixture".into(),
         options,
     )
     .unwrap_err()
@@ -192,7 +193,7 @@ fn actual_host_default_and_catalog_wire_map_do_not_become_a_tier_allowlist() {
         UpstreamProvider::ChatgptCodex,
         ClientSurface::Responses,
         &raw,
-        "gpt-fixture",
+        &"gpt-fixture".into(),
         &options,
     )
     .unwrap();
@@ -219,7 +220,7 @@ fn actual_host_default_and_catalog_wire_map_do_not_become_a_tier_allowlist() {
                 UpstreamProvider::ChatgptCodex,
                 surface,
                 &raw,
-                "gpt-fixture",
+                &"gpt-fixture".into(),
                 &options,
             )
             .unwrap();
@@ -242,7 +243,7 @@ fn absent_catalog_is_unknown_and_source_reasoning_fields_stay_authoritative() {
         UpstreamProvider::ChatgptCodex,
         ClientSurface::Responses,
         &raw,
-        "gpt-fixture",
+        &"gpt-fixture".into(),
         &options,
     )
     .unwrap();
@@ -262,11 +263,11 @@ fn absent_catalog_is_unknown_and_source_reasoning_fields_stay_authoritative() {
 fn selected_context_is_immutable_and_none_is_only_the_explicit_legacy_adapter_contract() {
     let mut original = metadata(Some(json!({"prompt_cache":false})));
     let mut default = "host-default".to_owned();
-    let context = OrdinaryPreparationContext::from_metadata(&original, &default);
-    original.record = Some(json!({"prompt_cache":true}));
+    let context = OrdinaryPreparationContext::from_metadata(&original, &default.as_str().into());
+    original.record = Some(parse(r#"{"prompt_cache":true}"#));
     default.clear();
-    assert_eq!(context.prompt_cache(), Some(&Value::Bool(false)));
-    assert_eq!(context.default_effort(), "host-default");
+    assert_eq!(context.prompt_cache(), Some(&parse("false")));
+    assert_eq!(context.default_effort(), &"host-default".into());
     let mut options = options(None, "host-default");
     options.ordinary_preparation = Some(context);
     assert_error(
@@ -283,7 +284,7 @@ fn selected_context_is_immutable_and_none_is_only_the_explicit_legacy_adapter_co
         UpstreamProvider::ChatgptCodex,
         ClientSurface::Responses,
         &parse(r#"{"model":"gpt-fixture","input":"x"}"#),
-        "gpt-fixture",
+        &"gpt-fixture".into(),
         &options,
     )
     .unwrap();
@@ -300,7 +301,7 @@ fn selected_ordinary_metadata_does_not_prevalidate_direct_or_openrouter_branches
         UpstreamProvider::Deepseek,
         ClientSurface::Chat,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options,
     )
     .unwrap();
@@ -313,10 +314,49 @@ fn selected_ordinary_metadata_does_not_prevalidate_direct_or_openrouter_branches
         UpstreamProvider::Openrouter,
         ClientSurface::Responses,
         &raw,
-        "openai/test",
+        &"openai/test".into(),
         &options,
     )
     .unwrap();
     assert_eq!(get(&native.body, "input"), get(&raw, "input"));
     assert_eq!(get(&native.body, "reasoning"), get(&raw, "reasoning"));
+}
+
+#[test]
+fn opaque_model_and_effort_wire_map_units_are_data_not_scalar_fallbacks() {
+    use gateway_core::{js_string::JsString16, model::ModelId};
+    let record = parse(
+        r#"{"id":"\ud800","supported_reasoning_levels":["\udc00"],"default_reasoning_level":"\udc00","reasoning_effort_wire_map":{"\udc00":"wire\ud800"},"prompt_cache":false}"#,
+    );
+    let metadata = RequestModelMetadata {
+        snapshot: None,
+        reasoning: ModelReasoning::from_record(Some(&record)),
+        record: Some(record),
+        supported_endpoints: None,
+    };
+    let mut opts = options(None, "none");
+    opts.ordinary_preparation = Some(OrdinaryPreparationContext::from_metadata(
+        &metadata,
+        &JsString16::from_utf8("host-default"),
+    ));
+    let raw = parse(r#"{"model":"\ud800","input":"x","reasoning":{"effort":"\udc00"}}"#);
+    let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));
+    let prepared = prepare_source_request(
+        UpstreamProvider::ChatgptCodex,
+        ClientSurface::Responses,
+        &raw,
+        &model,
+        &opts,
+    )
+    .unwrap();
+    assert_eq!(
+        get(&prepared.body, "model"),
+        model.to_source_json().unwrap()
+    );
+    assert_eq!(
+        get(&get(&prepared.body, "reasoning"), "effort"),
+        parse(r#""wire\ud800""#)
+    );
+    assert_eq!(prepared.decode.model, model);
+    assert_eq!(prepared.decode.request, raw);
 }

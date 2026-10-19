@@ -1,4 +1,5 @@
 //! Global serial subscription selection; source routing-serial.ts and routing-evaluation.ts.
+use gateway_core::{js_string::JsString16, model::ModelId};
 use std::collections::{BTreeMap, BTreeSet};
 
 use gateway_core::GatewayError;
@@ -25,24 +26,48 @@ pub use crate::routing_codec::{normalize as normalize_routing_state, parse_routi
 pub use crate::routing_rules::apply_capacity_observation;
 pub use crate::routing_types::*;
 
-pub fn model_quota_class(model: &str) -> CodexQuotaClass {
-    let model = model.trim().to_ascii_lowercase();
-    if model == "gpt-5.3-codex-spark" {
+pub fn model_quota_class(model: &ModelId) -> CodexQuotaClass {
+    let trimmed = gateway_schema::reasoning::js_trim_source(model.as_js_string());
+    let lower = lower_control_units(trimmed.as_units());
+    let same = |s: &str| lower.iter().copied().eq(s.encode_utf16());
+    if same("gpt-5.3-codex-spark") {
         CodexQuotaClass::Spark
-    } else if model == "gpt-oss-120b" {
+    } else if same("gpt-oss-120b") {
         CodexQuotaClass::GptOss120b
-    } else if model
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .collect::<String>()
-        == "gptreserve"
-    {
+    } else if model_quota_label(model) == "gptreserve" {
         CodexQuotaClass::Reserve
-    } else if model.is_empty() {
+    } else if lower.is_empty() {
         CodexQuotaClass::Unknown
     } else {
         CodexQuotaClass::Standard
     }
+}
+// Only finite ASCII class comparisons consume this projection; original model data is untouched.
+fn lower_control_units(units: &[u16]) -> Vec<u16> {
+    let mut out = Vec::new();
+    for scalar in char::decode_utf16(units.iter().copied()) {
+        match scalar {
+            Ok(c) => {
+                for lower in c.to_lowercase() {
+                    let mut buf = [0; 2];
+                    out.extend_from_slice(lower.encode_utf16(&mut buf));
+                }
+            }
+            Err(e) => out.push(e.unpaired_surrogate()),
+        }
+    }
+    out
+}
+pub(crate) fn model_quota_label(model: &ModelId) -> String {
+    lower_control_units(model.as_js_string().as_units())
+        .into_iter()
+        .filter_map(|u| {
+            u8::try_from(u)
+                .ok()
+                .filter(u8::is_ascii_alphanumeric)
+                .map(char::from)
+        })
+        .collect()
 }
 
 /// Non-inference account identity. The source model remains optional UTF16 and is never replaced.
@@ -105,9 +130,9 @@ fn unavailable_model(
     models: &ModelAvailability,
     pool: &SubscriptionPool,
     account: &RoutingAccountHash,
-    model: &str,
+    model: &ModelId,
     now: i64,
-) -> Option<Option<String>> {
+) -> Option<Option<JsString16>> {
     if let Some(learned) = models
         .unsupported
         .get(&account.0)
@@ -138,7 +163,7 @@ pub(crate) struct RoutingView {
     pub state: RoutingState,
     pub active: Option<ActiveSelection>,
     models: ModelAvailability,
-    models_source: serde_json::Value,
+    models_source: gateway_core::source_json::SourceJson,
     source_ids: BTreeMap<String, String>,
     pub(crate) capacity: CapacityStore,
     pub(crate) overage: BTreeMap<String, bool>,
@@ -273,13 +298,13 @@ pub(crate) struct Evaluation {
     pub(crate) eligible: bool,
     pub(crate) probe: bool,
     pub(crate) retry: Option<i64>,
-    pub(crate) detail: Option<String>,
+    pub(crate) detail: Option<JsString16>,
 }
 
 pub(crate) fn evaluate(
     view: &RoutingView,
     slot: usize,
-    model: &str,
+    model: &ModelId,
     class: CodexQuotaClass,
     now: i64,
 ) -> Evaluation {
@@ -403,7 +428,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Event-owned reset preflight materializes capacity evidence before selecting new proof.
     pub async fn materialize_capacity_quota_blocks(
         &self,
-        model: &str,
+        model: &ModelId,
         class: CodexQuotaClass,
         now: i64,
     ) -> Result<bool, GatewayError> {
@@ -474,11 +499,16 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     }
     pub async fn select_account(
         &self,
-        model: &str,
+        model: &ModelId,
         class: CodexQuotaClass,
         now: i64,
     ) -> Result<RouteSelection, GatewayError> {
-        text(model)?;
+        if gateway_schema::reasoning::js_trim_source(model.as_js_string())
+            .as_units()
+            .is_empty()
+        {
+            return Err(invalid("Missing or oversized authority identity."));
+        }
         self.select_account_source(model, class, now).await
     }
 
@@ -488,20 +518,13 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         model: Option<&gateway_core::js_string::JsString16>,
         now: i64,
     ) -> Result<LiveRouteSelection, GatewayError> {
-        let scalar = model.and_then(|v| v.try_utf8().ok());
-        // Source lexical comparisons treat absent/empty text alike. The original UTF16 option
-        // remains in the result/provider session; this value never enters a provider request.
-        let lexical = scalar.as_deref().unwrap_or("");
-        let class = if model.is_none_or(|m| m.as_units().is_empty()) {
-            CodexQuotaClass::Unknown
-        } else {
-            scalar
-                .as_deref()
-                .map(model_quota_class)
-                .unwrap_or(CodexQuotaClass::Standard)
-        };
+        let lexical = model
+            .cloned()
+            .map(ModelId::from_source)
+            .unwrap_or_else(|| ModelId::from_scalar(""));
+        let class = model_quota_class(&lexical);
         Ok(
-            match self.select_account_source(lexical, class, now).await? {
+            match self.select_account_source(&lexical, class, now).await? {
                 RouteSelection::Eligible(a) => LiveRouteSelection::Eligible(LiveAccountSelection {
                     binding: a.binding,
                     active_generation: a.active_generation,
@@ -591,7 +614,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
 
     async fn select_account_source(
         &self,
-        model: &str,
+        model: &ModelId,
         class: CodexQuotaClass,
         now: i64,
     ) -> Result<RouteSelection, GatewayError> {
@@ -887,14 +910,11 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     pub async fn learn_model_unavailable(
         &self,
         admission: &AdmittedAccount,
-        detail: &str,
+        detail: &JsString16,
         now: i64,
     ) -> Result<bool, GatewayError> {
-        let expected = format!(
-            "The '{}' model is not supported when using Codex with a ChatGPT account.",
-            admission.requested_model
-        );
-        if detail != expected {
+        let expected = crate::source_models::unsupported_detail(&admission.requested_model);
+        if detail != &expected {
             return Ok(false);
         }
         for _ in 0..3 {
@@ -913,7 +933,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 &admission.requested_model,
                 now,
             )?;
-            tx.put(&keys::models(), &models, None)?;
+            tx.put_source_control(&keys::models(), &models, None)?;
             if tx.commit().await? {
                 return Ok(true);
             }

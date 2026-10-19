@@ -44,7 +44,7 @@ fn paid_request(attempt: &str, provider: PaidProvider) -> PaidRequest {
         request_id: id("client-one"),
         attempt_id: PaidAttemptId(attempt.to_owned()),
         provider,
-        model: "paid-model".to_owned(),
+        model: "paid-model".into(),
         route: "responses".to_owned(),
         path: "/v1/responses".to_owned(),
         stream: true,
@@ -352,13 +352,13 @@ fn paid_usage_records_actual_overshoot_once_without_fabricating_a_terminal() {
     };
     assert!(run(authority.settle_paid(&reservation, &usage, NOW)).unwrap());
     assert!(!run(authority.settle_paid(&reservation, &usage, NOW)).unwrap());
-    let row: gateway_authority::paid::PaidAttempt = serde_json::from_value(
-        store
-            .row(&keys::paid_attempt("key-a", "paid-one"))
-            .unwrap()
-            .value,
-    )
-    .unwrap();
+    let row: gateway_authority::paid::PaidAttempt =
+        gateway_core::source_control::decode_source_control_record(
+            &store.row(&keys::paid_attempt("key-a", "paid-one")).unwrap(),
+        )
+        .unwrap()
+        .deserialize()
+        .unwrap();
     assert_eq!(row.spend_microcredits, Some(2500));
     assert_eq!(row.terminal_state, PaidTerminalState::Pending);
     assert_eq!(row.billing_state, BillingState::Settled);

@@ -1,10 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use gateway_core::GatewayError;
+use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
+use gateway_core::source_json::SourceJson;
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
     StoredRecord,
 };
+use gateway_schema::aliases::SourceStringCollator;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -25,6 +29,22 @@ pub struct Authority<S, I> {
     pub(crate) store: S,
     pub(crate) tokens: I,
     clock: Option<Box<dyn AuthorityClock>>,
+    source_string_collator: Option<Arc<dyn SourceStringCollator>>,
+}
+
+struct MissingSourceStringCollator;
+static MISSING_SOURCE_STRING_COLLATOR: MissingSourceStringCollator = MissingSourceStringCollator;
+impl SourceStringCollator for MissingSourceStringCollator {
+    fn compare(
+        &self,
+        _left: &gateway_core::js_string::JsString16,
+        _right: &gateway_core::js_string::JsString16,
+    ) -> Result<std::cmp::Ordering, GatewayError> {
+        Err(GatewayError::unavailable(
+            "Source string comparison requires the trusted runtime capability.",
+            "source_string_collation_unavailable",
+        ))
+    }
 }
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
@@ -33,6 +53,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             store,
             tokens,
             clock: None,
+            source_string_collator: None,
         }
     }
 
@@ -41,7 +62,20 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             store,
             tokens,
             clock: Some(Box::new(clock)),
+            source_string_collator: None,
         }
+    }
+
+    /// Trusted source-runtime comparison capability, never a request/token field.
+    pub fn with_source_string_collator(mut self, collator: Arc<dyn SourceStringCollator>) -> Self {
+        self.source_string_collator = Some(collator);
+        self
+    }
+
+    pub(crate) fn source_string_collator(&self) -> &dyn SourceStringCollator {
+        self.source_string_collator
+            .as_deref()
+            .unwrap_or(&MISSING_SOURCE_STRING_COLLATOR)
     }
 
     pub(crate) fn fresh_time(&self, started_at: i64) -> Result<i64, GatewayError> {
@@ -112,6 +146,13 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         Ok(raw)
     }
 
+    /// Establish only the existing cached metadata/revision precondition. This
+    /// observes no payload and cannot replace a named family's validation.
+    pub(crate) async fn observe_revision(&mut self, key: &RecordKey) -> Result<(), GatewayError> {
+        self.cached_record(key).await?;
+        Ok(())
+    }
+
     pub async fn read<T: DeserializeOwned>(
         &mut self,
         key: &RecordKey,
@@ -125,11 +166,27 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             .transpose()
     }
 
+    /// Explicit lossless opt-in for named control families. The caller still owns
+    /// the exact key, DTO/version and currentness checks; data grants no authority.
+    pub(crate) async fn read_source_control<T: DeserializeOwned>(
+        &mut self,
+        key: &RecordKey,
+    ) -> Result<Option<T>, GatewayError> {
+        self.cached_record(key)
+            .await?
+            .map(|row| {
+                decode_source_control_record(row)?
+                    .deserialize()
+                    .map_err(|_| invalid("Malformed authority record."))
+            })
+            .transpose()
+    }
+
     pub async fn read_claude_quota(
         &mut self,
         account_id: &str,
         cohort_id: &str,
-    ) -> Result<Option<serde_json::Value>, GatewayError> {
+    ) -> Result<Option<SourceJson>, GatewayError> {
         let key = crate::keys::claude_quota(account_id, cohort_id);
         self.cached_record(&key)
             .await?
@@ -137,7 +194,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
                 gateway_core::value::ValueEncoding::ProfileV2 => Ok(
                     crate::claude::quota_proof_metadata(&row.profile_v2_value()?),
                 ),
-                _ => row.json_value().cloned(),
+                _ => SourceJson::from_serializable(row.json_value()?),
             })
             .transpose()
     }
@@ -233,6 +290,44 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         Ok(())
     }
 
+    /// Same strong-read, revision and expiry contract as `put`, but only explicit
+    /// named-family callers choose the finite Json/ProfileV2 source tree codec.
+    pub(crate) fn put_source_control<T: Serialize + ?Sized>(
+        &mut self,
+        key: &RecordKey,
+        value: &T,
+        expiry: Option<i64>,
+    ) -> Result<(), GatewayError> {
+        if !self.reads.contains_key(&key.0) {
+            return Err(invalid(
+                "A mutation is missing its strong-read precondition.",
+            ));
+        }
+        if let Some(expiry) = expiry {
+            validate_time(expiry)?;
+        }
+        let revision = self.tokens.next_token()?;
+        text(&revision)?;
+        if self
+            .reads
+            .values()
+            .flatten()
+            .any(|row| row.revision == revision)
+        {
+            return Err(invalid("Token source reused an existing revision."));
+        }
+        let document = SourceJson::from_serializable(value)?;
+        let record = encode_source_control_record(revision, &document, expiry)?;
+        self.writes.insert(
+            key.0.clone(),
+            RecordMutation::Put {
+                key: key.clone(),
+                record,
+            },
+        );
+        Ok(())
+    }
+
     pub fn delete(&mut self, key: &RecordKey) -> Result<(), GatewayError> {
         if !self.reads.contains_key(&key.0) {
             return Err(invalid(
@@ -264,3 +359,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             == CommitOutcome::Committed)
     }
 }
+
+#[cfg(test)]
+#[path = "store_source_control_tests.rs"]
+mod source_control_tests;

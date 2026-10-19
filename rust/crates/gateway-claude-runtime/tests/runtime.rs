@@ -37,7 +37,7 @@ fn authoritative_refusal_rotates_durable_active_and_all_current_accounts_prove_p
             &host,
             SelectionInput {
                 key_id: KEY,
-                model: MODEL,
+                model: &MODEL.into(),
                 raw: &raw,
                 selection: None
             }
@@ -84,7 +84,9 @@ fn generic_429_cools_down_but_never_rotates_and_no_reset_limit_has_no_proof() {
             apply(&session, &store, &host, &first, 429, headers, NOW),
             OutcomeDecision::Preserve
         ));
-        assert!(quota::applicable_proof(store.quota(&a).as_ref(), &a, MODEL, NOW).is_none());
+        assert!(
+            quota::applicable_proof(store.quota(&a).as_ref(), &a, &MODEL.into(), NOW).is_none()
+        );
         assert_eq!(store.roster().active_account_id, Some(a.account_id));
         if quota::cooling_down(store.quota(first.binding()).as_ref(), NOW) {
             let next = ClaudePoolSession::new(config);
@@ -93,7 +95,7 @@ fn generic_429_cools_down_but_never_rotates_and_no_reset_limit_has_no_proof() {
                 &host,
                 SelectionInput {
                     key_id: KEY,
-                    model: MODEL,
+                    model: &MODEL.into(),
                     raw: &raw,
                     selection: None,
                 },
@@ -125,12 +127,14 @@ fn a_success_is_recorded_at_head_receipt_before_any_clone_and_clears_older_proof
     let older =
         run(session.observe_response(&store, &host, &first, head(200, Headers::new(), NOW - 1)))
             .unwrap();
-    assert!(quota::applicable_proof(store.quota(&a).as_ref(), &a, MODEL, NOW).is_some());
+    assert!(quota::applicable_proof(store.quota(&a).as_ref(), &a, &MODEL.into(), NOW).is_some());
     drop(older);
     let newer =
         run(session.observe_response(&store, &host, &first, head(200, Headers::new(), NOW + 1)))
             .unwrap();
-    assert!(quota::applicable_proof(store.quota(&a).as_ref(), &a, MODEL, NOW + 1).is_none());
+    assert!(
+        quota::applicable_proof(store.quota(&a).as_ref(), &a, &MODEL.into(), NOW + 1).is_none()
+    );
     drop(newer);
 }
 #[test]
@@ -143,7 +147,7 @@ fn principal_revocation_and_current_catalog_generation_change_refuse_before_disp
     let first = selected(&session, &store, &host, &raw);
     store.allow(json!([]));
     assert_eq!(
-        run(session.ensure_current(&store, &host, &first, KEY, MODEL, &raw))
+        run(session.ensure_current(&store, &host, &first, KEY, &MODEL.into(), &raw))
             .unwrap_err()
             .status,
         403
@@ -153,7 +157,7 @@ fn principal_revocation_and_current_catalog_generation_change_refuse_before_disp
         .generation
         .record_success(gateway_admin_runtime::claude_generation::StateChange::CredentialStored);
     assert_eq!(
-        run(session.ensure_current(&store, &host, &first, KEY, MODEL, &raw))
+        run(session.ensure_current(&store, &host, &first, KEY, &MODEL.into(), &raw))
             .unwrap_err()
             .status,
         400
@@ -172,7 +176,7 @@ fn a_persisted_empty_deny_and_roster_tombstone_cannot_bootstrap_an_account() {
             &host,
             SelectionInput {
                 key_id: KEY,
-                model: MODEL,
+                model: &MODEL.into(),
                 raw: &raw,
                 selection: None
             }
@@ -188,7 +192,7 @@ fn a_persisted_empty_deny_and_roster_tombstone_cannot_bootstrap_an_account() {
             &host,
             SelectionInput {
                 key_id: KEY,
-                model: MODEL,
+                model: &MODEL.into(),
                 raw: &raw,
                 selection: None
             }
@@ -273,7 +277,7 @@ fn optional_history_and_health_failure_do_not_undo_accepted_quota_or_proof() {
         apply(&session, &store, &host, &first, 429, exhausted(NOW), NOW),
         OutcomeDecision::Paid
     ));
-    assert!(quota::applicable_proof(store.quota(&a).as_ref(), &a, MODEL, NOW).is_some());
+    assert!(quota::applicable_proof(store.quota(&a).as_ref(), &a, &MODEL.into(), NOW).is_some());
     assert_eq!(host.accepted.borrow().len(), 1);
 }
 #[test]
@@ -363,7 +367,7 @@ fn workspace_retry_selects_default_rotates_cohort_and_does_not_refetch_effort_ca
     assert_eq!(host.catalog_calls.get(), 1);
     assert!(store.quota(&a).is_none());
     assert_ne!(first.replay_scope(), next.replay_scope());
-    run(session.ensure_current(&store, &host, &next, KEY, MODEL, &raw)).unwrap();
+    run(session.ensure_current(&store, &host, &next, KEY, &MODEL.into(), &raw)).unwrap();
     assert_eq!(host.catalog_calls.get(), 1);
 }
 #[test]
@@ -471,7 +475,7 @@ fn split_surrogate_detail_survives_quota_storage_and_the_next_cooldown_response(
         &host,
         SelectionInput {
             key_id: KEY,
-            model: MODEL,
+            model: &MODEL.into(),
             raw: &raw,
             selection: None,
         },
@@ -527,7 +531,7 @@ fn imported_cooldown_statuses_match_pinned_bun_constructor_and_never_authorize_p
             &host,
             SelectionInput {
                 key_id: KEY,
-                model: MODEL,
+                model: &MODEL.into(),
                 raw: &raw(),
                 selection: None,
             },
@@ -548,7 +552,8 @@ fn imported_cooldown_statuses_match_pinned_bun_constructor_and_never_authorize_p
         }
         assert_eq!(store.get(&quota_key(&account)).unwrap(), before);
         assert!(
-            quota::applicable_proof(store.quota(&account).as_ref(), &account, MODEL, NOW).is_none()
+            quota::applicable_proof(store.quota(&account).as_ref(), &account, &MODEL.into(), NOW)
+                .is_none()
         );
         assert!(host.accepted.borrow().is_empty());
         assert!(host.health.borrow().is_empty());
@@ -575,7 +580,7 @@ fn valid_source_negative_zero_does_not_disable_quota_or_full_pool_proof() {
         quota.windows["5h"].utilization.unwrap().to_bits(),
         (-0.0f64).to_bits()
     );
-    assert!(quota::applicable_proof(Some(&quota), &account, MODEL, NOW).is_some());
+    assert!(quota::applicable_proof(Some(&quota), &account, &MODEL.into(), NOW).is_some());
 }
 #[test]
 fn quota_codec_selection_is_explicit_and_profile_v1_is_not_reinterpreted() {
@@ -624,7 +629,9 @@ fn real_sqlite_close_reopen_retains_global_active_and_quota() {
     {
         let reopened = Store::open(&path);
         assert_eq!(reopened.roster().active_account_id, Some(b.account_id));
-        assert!(quota::applicable_proof(reopened.quota(&a).as_ref(), &a, MODEL, NOW).is_some());
+        assert!(
+            quota::applicable_proof(reopened.quota(&a).as_ref(), &a, &MODEL.into(), NOW).is_some()
+        );
     }
     std::fs::remove_file(path).unwrap();
 }

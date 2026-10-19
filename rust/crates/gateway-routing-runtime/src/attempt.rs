@@ -235,14 +235,11 @@ impl<
                             "/v1/responses"
                         }
                         .into(),
-                        stream: self.input.raw["stream"] == true,
-                        reasoning: self.input.raw["reasoning"]["effort"]
-                            .as_str()
-                            .or_else(|| self.input.raw["reasoning_effort"].as_str())
-                            .map(str::to_owned),
+                        stream: self.input.streamed(),
+                        reasoning: self.input.requested_reasoning(),
                         created_at_ms: self.input.context.started_at_ms,
                     };
-                    let context = self.paid_context(provider, synthetic);
+                    let context = self.paid_context(provider, synthetic)?;
                     let receipt = self
                         .authority()
                         .authorize_paid_route(&input, &context, self.now()?)

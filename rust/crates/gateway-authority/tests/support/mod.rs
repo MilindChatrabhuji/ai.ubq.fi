@@ -289,10 +289,10 @@ pub fn policy() -> ApiKeyPolicy {
         paid_fallback_limit_microcredits: 10_000,
         paid_fallback_quota_per_credit: 1_000_000,
         paid_fallback_pricing_checked_at_ms: NOW,
-        paid_fallback_models: vec!["gpt-test".to_owned(), "paid-model".to_owned()],
+        paid_fallback_models: vec!["gpt-test".into(), "paid-model".into()],
         paid_fallback_max_exposure_microcredits: BTreeMap::from([
-            ("gpt-test".to_owned(), 1_000),
-            ("paid-model".to_owned(), 1_000),
+            ("gpt-test".into(), 1_000),
+            ("paid-model".into(), 1_000),
         ]),
     }
 }

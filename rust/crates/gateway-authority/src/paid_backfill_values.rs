@@ -14,11 +14,6 @@ fn safe(value: &Value, minimum: i64) -> Option<i64> {
         })
         .map(|number| number as i64)
 }
-fn nonnegative_finite(value: &Value) -> Option<f64> {
-    value
-        .as_f64()
-        .filter(|number| number.is_finite() && *number >= 0.0)
-}
 pub(super) fn window_anchor(value: &Value) -> Option<i64> {
     if value["v"].as_f64() != Some(3.0)
         || !value["key_id"]
@@ -42,11 +37,31 @@ pub(super) fn window_anchor(value: &Value) -> Option<i64> {
     }
     safe(&value["window_reset_at_ms"], 1)
 }
-fn valid_rollup(value: &Value) -> bool {
-    value["v"].as_f64() == Some(1.0)
-        && ["model", "provider"]
-            .iter()
-            .all(|field| value[*field].as_str().is_some_and(|s| !s.is_empty()))
+fn source_safe(value: Option<&gateway_core::source_json::SourceJson>, minimum: i64) -> Option<i64> {
+    value
+        .and_then(gateway_core::source_serialization::number)
+        .filter(|number| {
+            number.is_finite()
+                && number.fract() == 0.0
+                && *number >= minimum as f64
+                && *number <= MAX_SAFE_INTEGER as f64
+        })
+        .map(|number| number as i64)
+}
+fn source_finite(value: Option<&gateway_core::source_json::SourceJson>) -> Option<f64> {
+    value
+        .and_then(gateway_core::source_serialization::number)
+        .filter(|number| number.is_finite() && *number >= 0.0)
+}
+fn valid_rollup(value: &gateway_core::source_json::SourceJson) -> bool {
+    use gateway_core::source_serialization as source;
+    source::member(value, "v").as_ref().and_then(source::number) == Some(1.0)
+        && ["model", "provider"].iter().all(|field| {
+            source::member(value, field)
+                .as_ref()
+                .and_then(source::string)
+                .is_some_and(|value| !value.as_units().is_empty())
+        })
         && [
             "bucket_start_at_ms",
             "request_count",
@@ -58,30 +73,26 @@ fn valid_rollup(value: &Value) -> bool {
             "updated_at_ms",
         ]
         .iter()
-        .all(|field| safe(&value[*field], 0).is_some())
+        .all(|field| source_safe(source::member(value, field).as_ref(), 0).is_some())
         && ["quota_sum", "spend_microcredits"]
             .iter()
-            .all(|field| nonnegative_finite(&value[*field]).is_some())
+            .all(|field| source_finite(source::member(value, field).as_ref()).is_some())
 }
-pub(super) fn merge_rollup(
-    existing: Option<&Value>,
+/// The sole historical merge engine. Model labels and unknown source leaves never
+/// enter Value; numeric accumulation and source invalid-row replacement are unchanged.
+pub(super) fn merge_source_rollup(
+    existing: Option<&gateway_core::source_json::SourceJson>,
     row: &PaidAttempt,
-    model: &str,
+    model: &gateway_core::model::ModelId,
     provider: &str,
     bucket: i64,
     now: i64,
-) -> Result<Value, GatewayError> {
+) -> Result<gateway_core::source_json::SourceJson, GatewayError> {
+    use gateway_core::{source_json::SourceJson, source_serialization as source};
     let existing = existing.filter(|value| valid_rollup(value));
-    let count = |field: &str| {
-        existing
-            .and_then(|value| safe(&value[field], 0))
-            .unwrap_or(0)
-    };
-    let finite = |field: &str| {
-        existing
-            .and_then(|value| nonnegative_finite(&value[field]))
-            .unwrap_or(0.0)
-    };
+    let field = |name: &str| existing.and_then(|value| source::member(value, name));
+    let count = |name: &str| source_safe(field(name).as_ref(), 0).unwrap_or(0);
+    let finite = |name: &str| source_finite(field(name).as_ref()).unwrap_or(0.0);
     let input = nonnegative(row.input_tokens.unwrap_or(0))?;
     let cached = nonnegative(row.cached_input_tokens.unwrap_or(0))?;
     let output = nonnegative(row.output_tokens.unwrap_or(0))?;
@@ -98,27 +109,74 @@ pub(super) fn merge_rollup(
     if !quota.is_finite() || !spend.is_finite() {
         return Err(crate::invalid("Paid backfill rollup overflow."));
     }
-    // Source JSON.stringify emits safe integral numbers without a decimal suffix.
-    // Preserve that representation for the existing live settlement DTO; retain
-    // genuine fractional/large source spend rather than rounding or inventing it.
+    // Keep existing source-safe integral spend emission and genuine fractions.
     let spend = if spend.fract() == 0.0 && spend <= MAX_SAFE_INTEGER as f64 {
         json!(spend as i64)
     } else {
         json!(spend)
     };
-    Ok(json!({
-        "v":1,
-        "bucket_start_at_ms":existing.map(|value| value["bucket_start_at_ms"].clone()).unwrap_or(json!(bucket)),
-        "model":existing.map(|value| value["model"].clone()).unwrap_or(json!(model)),
-        "provider":existing.map(|value| value["provider"].clone()).unwrap_or(json!(provider)),
-        "request_count":add(count("request_count"),1)?,
-        "quota_sum":quota,
-        "input_tokens":add(count("input_tokens"),input)?,
-        "cached_input_tokens":add(count("cached_input_tokens"),cached)?,
-        "output_tokens":add(count("output_tokens"),output)?,
-        "spend_microcredits":spend,
-        "first_request_at_ms":existing.and_then(|value| safe(&value["first_request_at_ms"],0)).map_or(row.reservation.created_at_ms,|old| old.min(row.reservation.created_at_ms)),
-        "last_request_at_ms":existing.and_then(|value| safe(&value["last_request_at_ms"],0)).map_or(row.reservation.created_at_ms,|old| old.max(row.reservation.created_at_ms)),
-        "updated_at_ms":now,
-    }))
+    source::object(vec![
+        ("v", SourceJson::from_serializable(&1)?),
+        (
+            "bucket_start_at_ms",
+            field("bucket_start_at_ms").unwrap_or(SourceJson::from_serializable(&bucket)?),
+        ),
+        ("model", field("model").unwrap_or(model.to_source_json()?)),
+        (
+            "provider",
+            field("provider").unwrap_or(SourceJson::from_serializable(provider)?),
+        ),
+        (
+            "request_count",
+            SourceJson::from_serializable(&add(count("request_count"), 1)?)?,
+        ),
+        ("quota_sum", SourceJson::from_serializable(&quota)?),
+        (
+            "input_tokens",
+            SourceJson::from_serializable(&add(count("input_tokens"), input)?)?,
+        ),
+        (
+            "cached_input_tokens",
+            SourceJson::from_serializable(&add(count("cached_input_tokens"), cached)?)?,
+        ),
+        (
+            "output_tokens",
+            SourceJson::from_serializable(&add(count("output_tokens"), output)?)?,
+        ),
+        ("spend_microcredits", SourceJson::from_serializable(&spend)?),
+        (
+            "first_request_at_ms",
+            SourceJson::from_serializable(
+                &source_safe(field("first_request_at_ms").as_ref(), 0)
+                    .map_or(row.reservation.created_at_ms, |old| {
+                        old.min(row.reservation.created_at_ms)
+                    }),
+            )?,
+        ),
+        (
+            "last_request_at_ms",
+            SourceJson::from_serializable(
+                &source_safe(field("last_request_at_ms").as_ref(), 0)
+                    .map_or(row.reservation.created_at_ms, |old| {
+                        old.max(row.reservation.created_at_ms)
+                    }),
+            )?,
+        ),
+        ("updated_at_ms", SourceJson::from_serializable(&now)?),
+    ])
+}
+
+#[cfg(test)]
+pub(super) fn merge_rollup(
+    existing: Option<&Value>,
+    row: &PaidAttempt,
+    model: &str,
+    provider: &str,
+    bucket: i64,
+    now: i64,
+) -> Result<Value, GatewayError> {
+    let existing = existing
+        .map(gateway_core::source_json::SourceJson::from_serializable)
+        .transpose()?;
+    merge_source_rollup(existing.as_ref(), row, &model.into(), provider, bucket, now)?.deserialize()
 }
