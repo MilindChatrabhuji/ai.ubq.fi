@@ -82,6 +82,7 @@ pub struct NativeRenewalClaim {
     action: NativeRenewalAction,
     mode: NativeRenewalMode,
     start_permit: Option<String>,
+    publication_revision: Option<String>,
 }
 
 impl NativeRenewalClaim {
@@ -100,6 +101,9 @@ impl NativeRenewalClaim {
     /// Returned once to the private authenticated carrier; never present on replay.
     pub fn start_permit(&self) -> Option<&str> {
         self.start_permit.as_deref()
+    }
+    pub fn publication_revision(&self) -> Option<&str> {
+        self.publication_revision.as_deref()
     }
 }
 

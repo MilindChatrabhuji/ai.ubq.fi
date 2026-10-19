@@ -93,6 +93,29 @@ pub(super) enum Phase {
     Published,
 }
 
+/// One fixed native source generation can start at most one refresh across all original requests.
+/// This marker is retained after uncertainty; it is not a routing/accounting ledger or a lease.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct GenerationEffect {
+    pub v: u8,
+    pub operation_id: String,
+    pub claim_ref: String,
+    pub publication_revision: Option<String>,
+}
+
+pub(super) fn generation_key(fence: &NativeRenewalFence) -> Result<RecordKey, GatewayError> {
+    Ok(key(
+        "generation",
+        &super::facts::digest(&(
+            "uos-native-renewal-generation-v1",
+            &fence.native_owner_id,
+            &fence.account_id_hash,
+            &fence.source_native_generation,
+        ))?,
+    ))
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct OperationRow {
