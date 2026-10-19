@@ -822,6 +822,8 @@ try {
     await rpc("workflow", "setKernelQuota", { scope: "org", usageLimitRequests: -1, options: { expiresAtMs: -1 } });
     report.assertions.push("20 actual mixed Bun HTTP/Worker contenders share APIlimit2 and concurrent kernel limit2 across principals and keys");
     const original = await reserve("growth", "bun-shared");
+    assert.equal((await rpc("growth", "reserveKernelUsage", { handle: original })).kind, "reserved");
+    await metadata("growth", original);
     const [bunResult, workerResult] = await Promise.all([
       bunCall("growth", [{ method: "selectCodexAccount", args: { handle: original } }]),
       rpc("ledger", "selectCodexAccount", { handle: pending }),

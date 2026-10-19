@@ -121,7 +121,7 @@ export class NativeAuthority {
   private async _executeRetained(binding: NativeRetainedHistoryBinding, input: NativeCommand): Promise<NativeReply> {
     const runtime = this._runtime;
     if (!runtime) throw new NativeAuthorityError("retained_history_unavailable", 503);
-    const command = parseNativeCommand(input);
+    const command = structuredClone(parseNativeCommand(input));
     const canonical = nativeCommandBytes(command);
     const verified = await runtime.verifyRetained(binding, canonical, this._clock());
     return this._sql.transaction(() => {
@@ -309,7 +309,7 @@ export class NativeAuthority {
     }
   }
   private async _execute(binding: NativeRuntimeBinding, input: NativeCommand): Promise<NativeReply> {
-    const command = parseNativeCommand(input),
+    const command = structuredClone(parseNativeCommand(input)),
       observedAt = this._clock();
     const runtime = this._runtime;
     if (!runtime) throw new NativeAuthorityError("native_runtime_unavailable", 503);

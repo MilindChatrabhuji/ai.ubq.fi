@@ -36,7 +36,7 @@ const principal = (identity: NativeRuntimeIdentity): string => {
     case "passkey_session":
       return "passkey-user:" + identity.userId;
     case "disabled_local":
-      return identity.bearerDigest ?? "local-auth-disabled";
+      return identity.bearerDigest === null ? "local-auth-disabled" : "bearer-sha256:" + identity.bearerDigest;
     case "auth_tokens_allowlist":
     case "admin_allowlist":
     case "deno_deploy_token":

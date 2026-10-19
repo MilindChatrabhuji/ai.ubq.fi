@@ -32,6 +32,20 @@ const required = <T>(value: T | undefined | null): T => {
   if (value === undefined || value === null) throw new Error("required synthetic runtime value absent");
   return value;
 };
+const verificationBarrier = () => {
+  const entered = Promise.withResolvers<undefined>(),
+    released = Promise.withResolvers<undefined>();
+  return {
+    ready: entered.promise,
+    release: () => {
+      released.resolve(undefined);
+    },
+    pause: async () => {
+      entered.resolve(undefined);
+      await released.promise;
+    },
+  };
+};
 const storage = (database: Database): NativeSqlStorage => ({
   sql: {
     exec: (query, ...bindings) => {
@@ -45,6 +59,7 @@ const fixture = (api = true, kernel = false, identity: NativeRuntimeIdentity = {
   const db = new Database(":memory:");
   const clock = { now: NOW };
   const source = { routingRevision: "catalog-v3", allowUnrostered: false, wrongIntent: false, failAuth: false, direct: true };
+  let pauseVerification: (() => Promise<void>) | null = null;
   let verifiedKernel: Readonly<{ owner: string; repo: string }> | null = null;
   if (kernel)
     verifiedKernel =
@@ -117,6 +132,7 @@ const fixture = (api = true, kernel = false, identity: NativeRuntimeIdentity = {
     verifier: {
       verify: async (context, intentDigest, at) => {
         if (source.failAuth) throw new Error("synthetic native authentication refused");
+        await pauseVerification?.();
         const verified = api
           ? await sources.runtime.verifier.verify(context, intentDigest, at)
           : { bindingId: subject.id, subjectId: subject.id, contextBinding: subject.id, intentDigest, identity, api: null, kernel: verifiedKernel };
@@ -177,6 +193,9 @@ const fixture = (api = true, kernel = false, identity: NativeRuntimeIdentity = {
     client,
     open,
     admit,
+    verification: (pause: () => Promise<void>) => {
+      pauseVerification = pause;
+    },
     restart: () => {
       rpc = construct();
     },
@@ -220,7 +239,7 @@ const identities: readonly (readonly [NativeRuntimeIdentity, string, boolean])[]
   [{ kind: "admin_allowlist" }, "auth-method:admin_allowlist", false],
   [{ kind: "deno_deploy_token" }, "auth-method:deno_deploy_token", false],
   [{ kind: "disabled_local", bearerDigest: null }, "local-auth-disabled", false],
-  [{ kind: "disabled_local", bearerDigest: "a".repeat(64) }, "a".repeat(64), false],
+  [{ kind: "disabled_local", bearerDigest: "a".repeat(64) }, "bearer-sha256:" + "a".repeat(64), false],
 ];
 for (const [identity, expected, api] of identities)
   test(`runtime v3: ${identity.kind} preserves source principal identity`, async () => {
@@ -690,6 +709,100 @@ test("runtime v3 retained history: grants, verifier, replay, cursor and lease sc
     await assert.rejects(client(alternateBinding).call("claimPaidReconciliation", { cursor, limit: 1 }), /cursor_ownership_mismatch/);
     expect(sql.page("paid_lease", NOW, "", 100)).toHaveLength(0);
     expect(sql.page("paid_pending", NOW, "", 100)).toHaveLength(2);
+  } finally {
+    f.db.close();
+  }
+});
+
+test("runtime v3 correction: API reuse cannot attach retained accounting to a fresh lifetime", async () => {
+  const f = sourceFixture("P12");
+  try {
+    const [historical] = f.source.action(f.owner, "p12-restore-retained");
+    const original = required(f.sql.read("request_lifetime", [historical.handle], NOW).value);
+    const fresh = f.client("control"),
+      handle = required(
+        (
+          await fresh.call("openAuthenticatedRequest", {
+            requestId: original.requestId,
+            route: original.route,
+            path: original.path,
+          })
+        ).handle
+      );
+    const before = { request: f.sql.page("api_request", NOW, "", 100), window: f.sql.page("api_window", NOW, "", 100) };
+    const reuse = await fresh.call("reserveApiUsage", { handle });
+    console.log(
+      JSON.stringify({ correctionCase: "retained-api-reuse", historical: original, fresh: f.sql.read("request_lifetime", [handle], NOW).value, reply: reuse })
+    );
+    expect(reuse).toMatchObject({ kind: "unavailable", detail: "identity_conflict" });
+    expect(f.sql.read("request_lifetime", [handle], NOW).value?.api).toBeNull();
+    expect((await fresh.call("releaseApiUndispatched", { handle, reason: "fresh-client" })).kind).toBe("not_applicable");
+    expect({ request: f.sql.page("api_request", NOW, "", 100), window: f.sql.page("api_window", NOW, "", 100) }).toEqual(before);
+    const retained = new NativeAuthorityClient(new NativeRetainedHistoryServer(f.authority, f.retainedSources.binding(historical.bindingId)), f.epoch);
+    expect((await retained.call("releaseApiUndispatched", { handle: original.handle, reason: "verified-original-owner" })).kind).toBe("released");
+  } finally {
+    f.db.close();
+  }
+});
+
+test("runtime v3 correction: ordinary command arguments stay bound to the verified snapshot", async () => {
+  const f = fixture();
+  try {
+    const barrier = verificationBarrier();
+    f.verification(barrier.pause);
+    const args = { requestId: "approved-request", route: "/v1/responses", path: "/v1/responses" };
+    const pending = f.client.call("openAuthenticatedRequest", args, "mutable-ordinary");
+    await barrier.ready;
+    expect(f.db.inTransaction).toBe(false);
+    args.requestId = "mutated-request";
+    barrier.release();
+    const reply = await pending,
+      row = required(f.sql.read("request_lifetime", [required(reply.handle)], NOW).value);
+    console.log(JSON.stringify({ correctionCase: "mutable-ordinary", observedRequestId: row.requestId }));
+    expect(row.requestId).toBe("approved-request");
+    expect(await f.client.call("openAuthenticatedRequest", { ...args, requestId: "approved-request" }, "mutable-ordinary")).toEqual(reply);
+    expect(f.sql.page("runtime_request", NOW, "", 100)).toHaveLength(1);
+    expect((await f.client.call("reserveApiUsage", { handle: required(reply.handle) })).kind).toBe("reserved");
+    expect((await f.client.call("reserveApiUsage", { handle: required(reply.handle) })).kind).toBe("reuse");
+    expect(f.sql.page("api_request", NOW, "", 100)).toHaveLength(1);
+  } finally {
+    f.db.close();
+  }
+});
+
+test("runtime v3 correction: retained nested arguments stay bound to the verified snapshot", async () => {
+  const f = sourceFixture("P12");
+  try {
+    const [, historical] = f.source.action(f.owner, "p12-restore-retained");
+    const barrier = verificationBarrier(),
+      runtime = f.runtimeSources.runtime;
+    const authority = new NativeAuthority(f.storage, f.seed, () => NOW, undefined, {
+      ...runtime,
+      retainedHistory: {
+        ...f.retainedSources.initial,
+        verifier: {
+          verify: async (context: unknown, intent: string) => {
+            await barrier.pause();
+            return await f.retainedSources.initial.verifier.verify(context, intent);
+          },
+        },
+      },
+    });
+    const client = new NativeAuthorityClient(new NativeRetainedHistoryServer(authority, f.retainedSources.binding(historical.bindingId)), f.epoch);
+    const args = { attemptHandle: historical.attemptHandle, patch: { provider_request_id: "approved-provider-id" } };
+    const pending = client.call("recordPaidAttemptLifecycle", args, "mutable-retained");
+    await barrier.ready;
+    expect(f.db.inTransaction).toBe(false);
+    args.patch.provider_request_id = "mutated-provider-id";
+    barrier.release();
+    const reply = await pending;
+    console.log(JSON.stringify({ correctionCase: "mutable-retained", reply }));
+    expect(reply.detail).toMatchObject({ provider_request_id: "approved-provider-id" });
+    expect(await client.call("recordPaidAttemptLifecycle", { ...args, patch: { provider_request_id: "approved-provider-id" } }, "mutable-retained")).toEqual(
+      reply
+    );
+    const receipt = required(f.sql.page("operation_receipt", NOW, "", 100).find((entry) => entry.key.at(-1) === "mutable-retained")?.row.value);
+    expect(receipt.command).toContain('"provider_request_id":"approved-provider-id"');
   } finally {
     f.db.close();
   }
