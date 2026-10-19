@@ -290,7 +290,7 @@ pub async fn run(
     request_id: RequestId,
 ) -> Result<Response, GatewayError> {
     let RequestResources { context, permit } = resources;
-    let responses = request.path() == "/v1/responses";
+    let responses = crate::normalized_path(&request.path()) == "/v1/responses";
     let surface = if responses {
         ClientSurface::Responses
     } else {

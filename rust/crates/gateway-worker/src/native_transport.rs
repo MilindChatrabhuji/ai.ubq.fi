@@ -39,6 +39,62 @@ impl NativeTransport {
         Self { identity, carrier }
     }
 
+    pub(crate) fn carrier(&self) -> &Fetcher {
+        &self.carrier
+    }
+
+    pub(crate) async fn live_upgrade(
+        &self,
+        action_ref: &str,
+        platform: &PlatformHost,
+    ) -> Result<crate::GatewayResponse, GatewayError> {
+        use gateway_auth::native_live::{NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_PATH};
+        use worker::wasm_bindgen::{JsCast, JsValue};
+        use worker::wasm_bindgen_futures::JsFuture;
+        let now = crate::storage::now_ms()?;
+        let nonce = base64url(&random::random_bytes(32)?);
+        let mac = self.identity.sign_live_request(now, &nonce, action_ref)?;
+        let headers = Headers::new();
+        for (name, value) in [
+            ("upgrade", "websocket".to_owned()),
+            (NATIVE_LIVE_ACTION_HEADER, action_ref.to_owned()),
+            (NATIVE_VERSION_HEADER, "1".to_owned()),
+            (NATIVE_KEY_HEADER, self.identity.key_id().to_owned()),
+            (NATIVE_TIME_HEADER, now.to_string()),
+            (NATIVE_NONCE_HEADER, nonce),
+            (NATIVE_MAC_HEADER, mac),
+        ] {
+            headers.set(name, &value).map_err(|_| unavailable())?;
+        }
+        let cancellation = platform.cancellation.child()?;
+        let init = worker::web_sys::RequestInit::new();
+        init.set_method("GET");
+        init.set_redirect(worker::web_sys::RequestRedirect::Manual);
+        init.set_headers(headers.as_ref());
+        init.set_signal(Some(&cancellation.signal()));
+        let request = worker::web_sys::Request::new_with_str_and_init(
+            &format!("https://uos-native.internal{NATIVE_LIVE_PATH}"),
+            &init,
+        )
+        .map_err(|_| unavailable())?;
+        if cancellation.signal().aborted() {
+            return Err(unavailable());
+        }
+        // The typed platform carrier keeps the original raw Response object;
+        // workers-rs conversion would reconstruct its upgrade and status text.
+        let carrier: worker::worker_sys::Fetcher = self.carrier().clone().into_rpc();
+        let promise = carrier.fetch(&request).map_err(|_| unavailable())?;
+        let raw: worker::web_sys::Response = JsFuture::from(promise)
+            .await
+            .map_err(|_: JsValue| unavailable())?
+            .dyn_into()
+            .map_err(|_| unavailable())?;
+        if raw.status() != 101 || raw.websocket().is_none() {
+            return Err(unavailable());
+        }
+        Ok(crate::GatewayResponse::Raw(raw))
+    }
+
     pub async fn send(
         &self,
         path: &'static str,
