@@ -15,26 +15,10 @@ fn signed_safe(v: &Value) -> bool {
         .is_some_and(|n| n.is_finite() && n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0)
 }
 pub fn valid_usage_rollup(v: &Value) -> bool {
-    v["v"].as_f64() == Some(1.0)
-        && ["model", "provider"]
-            .iter()
-            .all(|f| v[f].as_str().is_some_and(|s| !s.is_empty()))
-        && [
-            "bucket_start_at_ms",
-            "request_count",
-            "input_tokens",
-            "cached_input_tokens",
-            "output_tokens",
-            "first_request_at_ms",
-            "last_request_at_ms",
-            "updated_at_ms",
-        ]
-        .iter()
-        .all(|f| store::safe_i64(&v[f]).is_some())
-        && ["quota_sum", "spend_microcredits"]
-            .iter()
-            .all(|f| v[f].as_f64().is_some_and(|n| n.is_finite() && n >= 0.0))
+    gateway_core::source_json::SourceJson::from_serializable(v)
+        .is_ok_and(|document| crate::records::valid_usage_rollup_source(&document))
 }
+
 pub fn valid_balance_sample(v: &Value) -> bool {
     v["v"] == 1
         && store::safe_i64(&v["bucket_start_at_ms"]).is_some()
