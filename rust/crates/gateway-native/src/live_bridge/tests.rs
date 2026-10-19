@@ -103,7 +103,7 @@ impl NativeLiveConnector for Connector {
         TcpStream::connect_timeout(&self.address, context.remaining()?).map_err(|_| unavailable())
     }
 }
-fn configs() -> (Arc<ServerConfig>, Arc<rustls::ClientConfig>) {
+pub(super) fn configs() -> (Arc<ServerConfig>, Arc<rustls::ClientConfig>) {
     let cert =
         CertificateDer::from(include_bytes!("../../tests/fixtures/native-tls/leaf.der").to_vec());
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(

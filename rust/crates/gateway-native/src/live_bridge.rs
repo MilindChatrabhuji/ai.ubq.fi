@@ -146,7 +146,7 @@ impl NativeLiveHandler for NativeLiveService {
                 Role::Server,
                 Some(websocket_config()),
             );
-            let mut downstream = PendingSocket::new(socket);
+            let mut downstream = PendingSocket::new(socket, Role::Server);
             let mut preopen = PreopenQueue::default();
             // Consume already-buffered frames and close before the first upstream
             // dial. The same reader stays active while the dial thread awaits TLS.
@@ -194,11 +194,11 @@ impl NativeLiveHandler for NativeLiveService {
                 if upstream.is_none() && retired.is_none() {
                     match receiver.try_recv() {
                         Ok(socket::DialResult::Connected(socket)) => {
-                            let mut peer = PendingSocket::new(*socket);
+                            let mut peer = PendingSocket::new(*socket, Role::Client);
                             let frames = std::mem::take(&mut preopen);
                             let mut failed = false;
                             for text in frames.drain() {
-                                if peer.enqueue(text).is_err() {
+                                if peer.send(text).is_err() {
                                     failed = true;
                                     break;
                                 }
@@ -240,9 +240,9 @@ impl NativeLiveHandler for NativeLiveService {
                 }
                 if let Some(peer) = upstream.as_mut() {
                     loop {
-                        match peer.socket.read() {
+                        match peer.read() {
                             Ok(Message::Text(text)) => {
-                                if downstream.enqueue(text.to_string()).is_err() {
+                                if downstream.send(text.to_string()).is_err() {
                                     break 'relay (
                                         1011,
                                         "realtime sideband is not writable".into(),
@@ -308,7 +308,7 @@ fn read_downstream<S: std::io::Read + Write>(
     preopen: &mut PreopenQueue,
 ) -> Result<Option<(u16, String)>, GatewayError> {
     loop {
-        let text = match down.socket.read() {
+        let text = match down.read() {
             Ok(Message::Text(text)) => Some(text.to_string()),
             Ok(Message::Binary(bytes)) => Some(decode_text(&bytes)),
             Ok(Message::Close(frame)) => return Ok(Some(close_value(frame))),
@@ -321,7 +321,7 @@ fn read_downstream<S: std::io::Read + Write>(
                 return Err(failure("realtime sideband frame exceeds payload limit"));
             }
             if let Some(peer) = up.as_mut() {
-                peer.enqueue(text)?;
+                peer.send(text)?;
             } else {
                 preopen.push(text)?;
             }
