@@ -97,6 +97,17 @@ impl Capabilities {
 }
 
 impl RuntimeCapabilities for Capabilities {
+    async fn migration(
+        &self,
+        request: gateway_admin_runtime::capabilities::MigrationRequest,
+        context: Context,
+    ) -> Result<AuthResponse, GatewayError> {
+        self.measured_body_bytes(&context)?;
+        self.catalog_host
+            .store
+            .profile_migration(request, context)
+            .await
+    }
     async fn capture(
         &self,
         request: gateway_admin_runtime::capabilities::CaptureRequest,

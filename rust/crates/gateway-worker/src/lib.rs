@@ -21,7 +21,12 @@ mod extras_host;
 mod host;
 mod image_host;
 mod inference;
+mod inference_capture;
 mod lifecycle;
+mod live_host;
+mod live_http;
+/// Rust-only fixture composition; no native capture HTTP route is exposed.
+pub mod migration_host;
 mod multipart;
 mod native_authority;
 mod native_host;

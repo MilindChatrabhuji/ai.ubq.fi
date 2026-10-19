@@ -29,6 +29,7 @@ pub struct Host {
     pub env: Env,
     pub platform: PlatformHost,
     claude: crate::claude_host::Binding,
+    original: gateway_core::identity::RequestContext,
 }
 
 fn provider_name(provider: UpstreamProvider) -> Option<&'static str> {
@@ -211,7 +212,7 @@ impl RoutingHost for Host {
     async fn refresh_codex(&self, fence: &CredentialFence) -> Result<RefreshOutcome, GatewayError> {
         self.platform
             .native
-            .refresh_routing(fence, &self.platform)
+            .refresh_routing(fence, &self.platform, &self.original)
             .await
     }
     async fn select_claude(
@@ -259,6 +260,7 @@ impl Host {
         store: RemoteAuthorityStore,
         platform: PlatformHost,
         context: std::rc::Rc<worker::Context>,
+        original: gateway_core::identity::RequestContext,
     ) -> Self {
         let claude = crate::claude_host::Binding::new(store.clone(), platform.clone(), context);
         Self {
@@ -266,6 +268,7 @@ impl Host {
             env: platform.env.clone(),
             platform,
             claude,
+            original,
         }
     }
     async fn wait_result(&self, milliseconds: i64) -> Result<(), GatewayError> {
