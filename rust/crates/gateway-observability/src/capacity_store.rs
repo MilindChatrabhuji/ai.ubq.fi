@@ -106,10 +106,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             if bucket < cutoff || bucket > newest {
                 continue;
             }
-            if let Some(point) = shape::read_history(entry.record.json_value()?) {
-                if store::safe_i64(&point["bucket_start_at_ms"]) == Some(bucket) {
-                    out.push(point)
-                }
+            if let Some(point) = shape::read_history(entry.record.json_value()?)
+                && store::safe_i64(&point["bucket_start_at_ms"]) == Some(bucket)
+            {
+                out.push(point)
             }
         }
         out.sort_by_key(|p| {
@@ -320,23 +320,21 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 None,
             )?);
         }
-        if preserve {
-            if let Some(old) = previous_history {
-                writes.push(store::put(
-                    self.host.as_ref(),
-                    store::key(json!([
-                        "uos_ai",
-                        "provider_capacity",
-                        "v1",
-                        "history",
-                        point["bucket_start_at_ms"],
-                        "transition",
-                        old["sampled_at_ms"]
-                    ])),
-                    old,
-                    expiry,
-                )?);
-            }
+        if preserve && let Some(old) = previous_history {
+            writes.push(store::put(
+                self.host.as_ref(),
+                store::key(json!([
+                    "uos_ai",
+                    "provider_capacity",
+                    "v1",
+                    "history",
+                    point["bucket_start_at_ms"],
+                    "transition",
+                    old["sampled_at_ms"]
+                ])),
+                old,
+                expiry,
+            )?);
         }
         writes.push(store::put(self.host.as_ref(), history, point, expiry)?);
         writes.push(RecordMutation::Delete { key: key("lease") });
@@ -373,30 +371,31 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     continue;
                 }
                 let source = source.expect("present source");
-                if let Some(ref p) = previous {
-                    if outage && capacity_math::same_cohort(&p["source"], source) {
-                        let current =
-                            json!({"snapshot_at_ms":point["sampled_at_ms"],"sources":[source]});
-                        for event in capacity_math::rate_limit_events(
-                            None,
-                            &current,
-                            std::slice::from_ref(p),
-                        ) {
-                            let id = event["event_id"].as_str().unwrap_or("").to_owned();
-                            if !merged.contains_key(&id) {
-                                let _ = store::commit(
-                                    self.store.as_ref(),
-                                    Vec::new(),
-                                    vec![store::put(
-                                        self.host.as_ref(),
-                                        event_key("rate_limit_reset_event", &id),
-                                        event.clone(),
-                                        Some(at + shape::RETENTION_MS),
-                                    )?],
-                                )
-                                .await;
-                                merged.insert(id, event);
-                            }
+                if let Some(ref p) = previous
+                    && outage
+                    && capacity_math::same_cohort(&p["source"], source)
+                {
+                    let current =
+                        json!({"snapshot_at_ms":point["sampled_at_ms"],"sources":[source]});
+                    for event in
+                        capacity_math::rate_limit_events(None, &current, std::slice::from_ref(p))
+                    {
+                        let id = event["event_id"].as_str().unwrap_or("").to_owned();
+                        if let std::collections::btree_map::Entry::Vacant(entry) =
+                            merged.entry(id.clone())
+                        {
+                            let _ = store::commit(
+                                self.store.as_ref(),
+                                Vec::new(),
+                                vec![store::put(
+                                    self.host.as_ref(),
+                                    event_key("rate_limit_reset_event", &id),
+                                    event.clone(),
+                                    Some(at + shape::RETENTION_MS),
+                                )?],
+                            )
+                            .await;
+                            entry.insert(event);
                         }
                     }
                 }

@@ -433,7 +433,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     }
     pub async fn claude_capacity_history(&self, at: i64) -> Value {
         let base = json!({"v":1,"scan":"unavailable","truncated":false,"bucket_ms":BUCKET_MS,"retention_ms":RETENTION_MS,"stale_after_ms":STALE_MS,"points":[]});
-        let read = async {
+        let read: Result<Value, GatewayError> = async {
             let cutoff = (at - RETENTION_MS).max(0);
             let first = cutoff / BUCKET_MS * BUCKET_MS;
             let end = at / BUCKET_MS * BUCKET_MS + BUCKET_MS;
@@ -499,11 +499,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             Ok(out)
         }
         .await;
-        read.unwrap_or_else(|_: GatewayError| base)
+        read.unwrap_or(base)
     }
     pub async fn claude_capacity_rollups(&self, since: i64, at: i64) -> Value {
         let base = json!({"scan":"unavailable","truncated":false,"points":[]});
-        let read = async {
+        let read: Result<Value, GatewayError> = async {
             let first = since / HOUR_MS * HOUR_MS;
             let last = at / HOUR_MS * HOUR_MS;
             let selector = QuerySelector::Range {
@@ -560,6 +560,6 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             Ok(json!({"scan":"ok","truncated":truncated,"points":points}))
         }
         .await;
-        read.unwrap_or_else(|_: GatewayError| base)
+        read.unwrap_or(base)
     }
 }

@@ -87,7 +87,32 @@ pub(crate) async fn commit<S: AuthorityStore>(
     checks: Vec<RevisionCheck>,
     mutations: Vec<RecordMutation>,
 ) -> Result<bool, GatewayError> {
-    Ok(store.commit(AtomicTransition { checks, mutations }).await? == CommitOutcome::Committed)
+    // Bun KV applies the last mutation for a key. The portable adapter accepts
+    // unconditional writes; retain only the source's explicit check conjunction.
+    let mut explicit = std::collections::BTreeMap::<String, RevisionCheck>::new();
+    for check in checks {
+        if let Some(previous) = explicit.get(&check.key.0)
+            && previous.expected_revision != check.expected_revision
+        {
+            return Ok(false);
+        }
+        explicit.insert(check.key.0.clone(), check);
+    }
+    let mut final_writes = std::collections::BTreeMap::<String, RecordMutation>::new();
+    for mutation in mutations {
+        let key = match &mutation {
+            RecordMutation::Put { key, .. } | RecordMutation::Delete { key } => key,
+        };
+        final_writes.insert(key.0.clone(), mutation);
+    }
+    // Errors can mean an unknown committed outcome. Never replay the mutation.
+    Ok(store
+        .commit(AtomicTransition {
+            checks: explicit.into_values().collect(),
+            mutations: final_writes.into_values().collect(),
+        })
+        .await?
+        == CommitOutcome::Committed)
 }
 pub(crate) async fn scan<S: QueryStore>(
     store: &S,

@@ -81,7 +81,7 @@ pub struct ClaudeAccountReadback {
     pub credential: CredentialMetadata,
     pub workspace: Option<WorkspaceMetadata>,
     /// Validated source quota state, without pool proof or credential fields.
-    pub quota: Option<Value>,
+    pub quota: Option<gateway_core::source_json::SourceJson>,
 }
 #[derive(Clone, Debug)]
 pub struct ClaudeRosterReadback {
@@ -113,7 +113,7 @@ pub struct ActiveProbe {
     pub provider: ProbeProvider,
     pub content_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+    pub error: Option<gateway_core::js_string::JsString16>,
 }
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
