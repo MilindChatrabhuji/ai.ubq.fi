@@ -52,7 +52,7 @@ pub(crate) struct StoredNativeActor {
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum SourceActor {
-    ApiKey { key_id: String, token_hash: String, hash_revision: String, policy_revision: String },
+    ApiKey { key_id: String, token_hash: String, hash_revision: String, policy_revision: String, #[serde(deserialize_with = "required_expiry")] expires_at_ms: Option<i64> },
     Session { digest: String, index_revision: String, session_revision: String, user_id: String, user_revision: String, expires_at_ms: i64 },
     Configuration { method: ConfigMethod, token_hash: Option<String>, valid_until_ms: Option<i64> },
     Kernel { owner: String, repo: String, state_id: String, scope: String, expires_at_ms: i64, repo_revision: Option<String>, org_revision: Option<String>, defaults_revision: Option<String>, cutover_revision: Option<String>, keys_revision: Option<String> },
@@ -94,9 +94,13 @@ async fn mint<S: AuthorityStore, I: TokenSource>(authority: &Authority<S, I>, co
             let record: api_keys::ApiKeyHashRecord = tx.read(&key).await?.ok_or_else(fail)?;
             let current = api_keys::policy_from_record(policy.token_hash.clone(), record, now)?;
             if current != *policy { return Err(fail()); }
+            let source_record = authority.store().read(&key).await?.ok_or_else(fail)?;
+            if tx.revision(&key).as_deref() != Some(source_record.revision.as_str()) { return Err(fail()); }
+            let mut expires_at_ms = (policy.expires_at_ms != api_keys::NO_LIMIT).then_some(policy.expires_at_ms);
+            if let Some(source_expiry) = source_record.expires_at_ms { expires_at_ms = Some(expires_at_ms.map_or(source_expiry, |expiry| expiry.min(source_expiry))); }
             let policy_key = keys::api_policy(key_id);
             let _: crate::quota::ApiKeyPolicy = tx.read(&policy_key).await?.ok_or_else(fail)?;
-            SourceActor::ApiKey { key_id: key_id.clone(), token_hash: policy.token_hash.clone(), hash_revision: tx.revision(&key).ok_or_else(fail)?, policy_revision: tx.revision(&policy_key).ok_or_else(fail)? }
+            SourceActor::ApiKey { key_id: key_id.clone(), token_hash: policy.token_hash.clone(), hash_revision: tx.revision(&key).ok_or_else(fail)?, policy_revision: tx.revision(&policy_key).ok_or_else(fail)?, expires_at_ms }
         }
         AuthMethod::PasskeySession { user_id, is_admin, .. } => {
             let token = token.ok_or_else(fail)?;
@@ -135,6 +139,7 @@ async fn mint<S: AuthorityStore, I: TokenSource>(authority: &Authority<S, I>, co
     tx.now = authority.fresh_time(tx.now)?;
     ensure_lifetime(&stored, tx.now)?;
     if !tx.commit().await? { return Err(fail()); }
+    validate_current_time(&stored, authority.fresh_time(now)?)?;
     Ok(NativeRenewalActor { context: context.clone(), stored, policy_digest: current.policy_digest, transient })
 }
 
@@ -152,7 +157,7 @@ pub(crate) async fn read_current<S: AuthorityStore, I: TokenSource>(tx: &mut Tra
                 || tx.revision(&key).as_ref() != Some(index_revision) || tx.revision(&user_key).as_ref() != Some(user_revision) || user.id != *user_id || (stored.scope == NativeActorScope::Admin && !user.is_admin) { return Err(fail()); }
             format!("passkey-user:{user_id}")
         }
-        SourceActor::ApiKey { key_id, token_hash, hash_revision, policy_revision } => {
+        SourceActor::ApiKey { key_id, token_hash, hash_revision, policy_revision, .. } => {
             if stored.scope == NativeActorScope::Admin || token_hash.len() != 43 || !token_hash.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')) { return Err(fail()); }
             let key = api_keys::hash_key(token_hash);
             let record: api_keys::ApiKeyHashRecord = tx.read(&key).await?.ok_or_else(fail)?;
@@ -189,10 +194,12 @@ pub(crate) async fn read_current<S: AuthorityStore, I: TokenSource>(tx: &mut Tra
 }
 
 fn ensure_lifetime(stored: &StoredNativeActor, now: i64) -> Result<(), GatewayError> {
-    let expiry = match &stored.source { SourceActor::Session { expires_at_ms, .. } | SourceActor::Kernel { expires_at_ms, .. } => Some(*expires_at_ms), SourceActor::Configuration { valid_until_ms, .. } => *valid_until_ms, _ => None };
+    let expiry = match &stored.source { SourceActor::Session { expires_at_ms, .. } | SourceActor::Kernel { expires_at_ms, .. } => Some(*expires_at_ms), SourceActor::Configuration { valid_until_ms, .. } => *valid_until_ms, SourceActor::ApiKey { expires_at_ms, .. } => *expires_at_ms };
     if expiry.is_some_and(|expiry| expiry <= now) { return Err(fail()); }
     Ok(())
 }
+pub(crate) fn validate_current_time(stored: &StoredNativeActor, now: i64) -> Result<(), GatewayError> { crate::validate_time(now)?; ensure_lifetime(stored, now) }
+fn required_expiry<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<i64>, D::Error> { Option::<i64>::deserialize(deserializer) }
 async fn observed<S: AuthorityStore, I: TokenSource>(tx: &mut Transaction<'_, S, I>, key: &RecordKey) -> Result<Option<String>, GatewayError> { let _: Option<Value> = tx.read(key).await?; Ok(tx.revision(key)) }
 fn digest(value: &impl Serialize) -> Result<String, GatewayError> { Ok(sha256_hex(&serde_json::to_vec(value).map_err(|_| fail())?)) }
 fn config_digest(config: &AuthConfig) -> Result<String, GatewayError> {
