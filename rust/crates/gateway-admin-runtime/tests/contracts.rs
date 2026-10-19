@@ -13,6 +13,9 @@ use std::{
     task::{Context as TaskContext, Poll, Waker},
 };
 
+#[path = "contract_cases/manual_reset.rs"]
+mod manual_reset;
+
 // Assertions inspect the actual JSON wire of either explicit response arm.
 trait WireBody {
     fn wire_json(&self) -> Value;

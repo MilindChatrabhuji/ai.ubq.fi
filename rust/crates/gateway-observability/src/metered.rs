@@ -93,6 +93,75 @@ pub fn snapshot_view(state: &Value, cache: &str) -> Value {
     }
     value
 }
+/// Source getMeteredQuotaDiagnostics, separate from the internal snapshot envelope.
+pub fn diagnostics(configured: bool, snapshot: Option<&Value>) -> Value {
+    let mut result = json!({"configured":configured,"available":false});
+    for name in [
+        "cache_state",
+        "confidence",
+        "balance_credits",
+        "baseline_credits",
+        "remaining_percent",
+        "used_percent",
+        "observed_at_ms",
+        "cycle_started_at_ms",
+        "last_known_debits_credits",
+        "last_inferred_credit_credits",
+        "last_credit_at_ms",
+        "latest_refill_id",
+        "latest_refill_amount_credits",
+        "latest_refill_completed_at_ms",
+        "unlimited_quota",
+        "total_available",
+        "total_granted",
+        "total_used",
+    ] {
+        result[name] = Value::Null;
+    }
+    let Some(snapshot) = snapshot.filter(|_| configured) else {
+        return result;
+    };
+    let state = &snapshot["state"];
+    let token_usage = snapshot["unlimited_quota"] == true
+        || !snapshot["total_available"].is_null()
+        || !snapshot["total_used"].is_null();
+    result["available"] = json!(true);
+    for name in [
+        "cache_state",
+        "balance_credits",
+        "baseline_credits",
+        "remaining_percent",
+        "used_percent",
+        "last_inferred_credit_credits",
+        "unlimited_quota",
+        "total_available",
+        "total_granted",
+        "total_used",
+    ] {
+        result[name] = snapshot[name].clone();
+    }
+    for name in [
+        "observed_at_ms",
+        "latest_refill_id",
+        "latest_refill_amount_credits",
+        "latest_refill_completed_at_ms",
+    ] {
+        result[name] = state[name].clone();
+    }
+    if !token_usage {
+        for name in ["confidence", "cycle_started_at_ms", "last_credit_at_ms"] {
+            result[name] = state[name].clone();
+        }
+        result["last_known_debits_credits"] = match (
+            state["last_known_debits_quota"].as_f64(),
+            state["quota_per_credit"].as_f64(),
+        ) {
+            (Some(debits), Some(credit)) => json!(debits / credit),
+            _ => Value::Null,
+        };
+    }
+    result
+}
 async fn retained<S: AuthorityStore>(store: &S, at: i64) -> Result<Option<Value>, GatewayError> {
     let row = store.read(&key("state")).await?;
     Ok(store::value(row.as_ref(), at)?
