@@ -44,19 +44,9 @@ pub fn model_quota_class(model: &ModelId) -> CodexQuotaClass {
 }
 // Only finite ASCII class comparisons consume this projection; original model data is untouched.
 fn lower_control_units(units: &[u16]) -> Vec<u16> {
-    let mut out = Vec::new();
-    for scalar in char::decode_utf16(units.iter().copied()) {
-        match scalar {
-            Ok(c) => {
-                for lower in c.to_lowercase() {
-                    let mut buf = [0; 2];
-                    out.extend_from_slice(lower.encode_utf16(&mut buf));
-                }
-            }
-            Err(e) => out.push(e.unpaired_surrogate()),
-        }
-    }
-    out
+    gateway_core::js_string_case::lowercase_source(&JsString16::from_units(units.to_vec()))
+        .as_units()
+        .to_vec()
 }
 pub(crate) fn model_quota_label(model: &ModelId) -> String {
     lower_control_units(model.as_js_string().as_units())
@@ -84,7 +74,7 @@ pub enum LiveRouteSelection {
     Eligible(LiveAccountSelection),
     QuotaBlocked { retry_at_ms: Option<i64> },
     CredentialsInvalid,
-    ModelUnavailable { detail: Option<String> },
+    ModelUnavailable { detail: Option<JsString16> },
     RoutingUnavailable,
 }
 
@@ -932,6 +922,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 id,
                 &admission.requested_model,
                 now,
+                self.source_string_collator(),
             )?;
             tx.put_source_control(&keys::models(), &models, None)?;
             if tx.commit().await? {

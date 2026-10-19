@@ -123,7 +123,7 @@ fn daily(parts: &[Value], value: &Value) -> bool {
 }
 pub(crate) fn audit(
     rows: &[ObservedRow],
-    errors: &mut Vec<String>,
+    errors: &mut Vec<gateway_core::js_string::JsString16>,
 ) -> Result<(), gateway_core::GatewayError> {
     for row in rows
         .iter()

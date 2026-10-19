@@ -129,17 +129,22 @@ pub fn inspect_paid(
                     || !source::equals(&value, "key_id", &p[4])
                     || !source::equals(&value, "request_id", &p[5])
                 {
-                    a.errors.push(format!(
-                        "paid fallback V3 request is malformed: {}",
-                        reference(p)
-                    ));
+                    a.errors.push(
+                        format!("paid fallback V3 request is malformed: {}", reference(p))
+                            .as_str()
+                            .into(),
+                    );
                     continue;
                 }
                 if !known.contains(id) {
-                    a.errors.push(format!(
-                        "paid fallback V3 request is orphaned: {id}/{}",
-                        p[5].as_str().unwrap_or("")
-                    ));
+                    a.errors.push(
+                        format!(
+                            "paid fallback V3 request is orphaned: {id}/{}",
+                            p[5].as_str().unwrap_or("")
+                        )
+                        .as_str()
+                        .into(),
+                    );
                 }
                 requests.insert(reference(&p[4..]), value);
                 continue;
@@ -187,23 +192,31 @@ pub fn inspect_paid(
                 }
             };
             if !valid {
-                a.errors.push(format!(
-                    "paid fallback V3 {diagnostic} is malformed: {}",
-                    reference(p)
-                ));
+                a.errors.push(
+                    format!(
+                        "paid fallback V3 {diagnostic} is malformed: {}",
+                        reference(p)
+                    )
+                    .as_str()
+                    .into(),
+                );
                 continue;
             }
             if ["window", "request", "reconciliation_lease"].contains(&segment)
                 && !known.contains(id)
             {
-                a.errors.push(format!(
-                    "paid fallback V3 {diagnostic} is orphaned: {}",
-                    if segment == "request" {
-                        format!("{id}/{}", p[5].as_str().unwrap_or(""))
-                    } else {
-                        id.to_owned()
-                    }
-                ));
+                a.errors.push(
+                    format!(
+                        "paid fallback V3 {diagnostic} is orphaned: {}",
+                        if segment == "request" {
+                            format!("{id}/{}", p[5].as_str().unwrap_or(""))
+                        } else {
+                            id.to_owned()
+                        }
+                    )
+                    .as_str()
+                    .into(),
+                );
             }
             match segment {
                 "window" => {
@@ -222,14 +235,20 @@ pub fn inspect_paid(
         let id = source::text(v, "key_id").unwrap_or_default();
         let request = source::text(v, "request_id").unwrap_or_default();
         if outstanding && !pending.contains(r) {
-            a.errors.push(format!(
-                "paid fallback V3 request is missing its pending marker: {id}/{request}"
-            ));
+            a.errors.push(
+                format!("paid fallback V3 request is missing its pending marker: {id}/{request}")
+                    .as_str()
+                    .into(),
+            );
         }
         if !outstanding && pending.contains(r) {
-            a.errors.push(format!(
-                "paid fallback V3 terminal request retains a pending marker: {id}/{request}"
-            ));
+            a.errors.push(
+                format!(
+                    "paid fallback V3 terminal request retains a pending marker: {id}/{request}"
+                )
+                .as_str()
+                .into(),
+            );
         }
         let wr = reference(&[
             source::finite(v, "key_id").unwrap_or(Value::Null),
@@ -241,27 +260,36 @@ pub fn inspect_paid(
                     && source::number(v, "spend_microcredits").unwrap_or(0.0) > 0.0))
             && !windows.contains_key(&wr)
         {
-            a.errors.push(format!(
-                "paid fallback V3 bounded request is missing its window: {id}/{request}"
-            ));
+            a.errors.push(
+                format!("paid fallback V3 bounded request is missing its window: {id}/{request}")
+                    .as_str()
+                    .into(),
+            );
         }
         let spend_null =
             source::member(v, "spend_microcredits").is_some_and(|value| value.as_str() == "null");
         if source::equals(v, "billing_state", &serde_json::json!("settled")) && spend_null {
-            a.errors.push(format!(
-                "paid fallback V3 settled request is missing spend: {id}/{request}"
-            ));
+            a.errors.push(
+                format!("paid fallback V3 settled request is missing spend: {id}/{request}")
+                    .as_str()
+                    .into(),
+            );
         }
         if outstanding && !spend_null {
-            a.errors.push(format!(
-                "paid fallback V3 outstanding request has spend: {id}/{request}"
-            ));
+            a.errors.push(
+                format!("paid fallback V3 outstanding request has spend: {id}/{request}")
+                    .as_str()
+                    .into(),
+            );
         }
     }
     for r in &pending {
         if !requests.contains_key(r) {
-            a.errors
-                .push(format!("paid fallback V3 pending marker is orphaned: {r}"));
+            a.errors.push(
+                format!("paid fallback V3 pending marker is orphaned: {r}")
+                    .as_str()
+                    .into(),
+            );
         }
     }
     for (r, w) in &windows {
@@ -300,9 +328,11 @@ pub fn inspect_paid(
             || number(w, "reserved_microcredits") != Some(reserved)
             || number(w, "settled_microcredits") != Some(settled)
         {
-            a.errors.push(format!(
-                "paid fallback V3 window aggregate is inconsistent: {r}"
-            ));
+            a.errors.push(
+                format!("paid fallback V3 window aggregate is inconsistent: {r}")
+                    .as_str()
+                    .into(),
+            );
         }
     }
     Ok(a)

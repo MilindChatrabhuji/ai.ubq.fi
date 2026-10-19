@@ -1,3 +1,11 @@
+mod source_catalog {
+    include!("../../gateway-schema/tests/support/source_catalog.rs");
+    pub fn loader_fixture() -> Collator {
+        Collator(
+            serde_json::from_str(include_str!("fixtures/catalog-loader-sort-v1.json")).unwrap(),
+        )
+    }
+}
 use gateway_catalog_runtime::{
     state::{self, source_key},
     *,
@@ -5,6 +13,7 @@ use gateway_catalog_runtime::{
 use gateway_core::{
     GatewayError,
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
+    source_json::SourceJson,
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
         StoredRecord,
@@ -21,6 +30,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     future::{Future, poll_fn},
     rc::Rc,
+    sync::Arc,
     task::{Context, Poll, Waker},
 };
 fn run<T>(future: impl Future<Output = T>) -> T {
@@ -227,6 +237,9 @@ impl Host {
     }
 }
 impl CatalogHost for Host {
+    fn source_string_collator(&self) -> Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        Arc::new(source_catalog::Collator::captured())
+    }
     fn now_ms(&self) -> i64 {
         self.store.now.get()
     }
@@ -680,9 +693,12 @@ fn claude_failure_retains_ids_and_withdraws_reasoning_permissions() {
     let first = run(runtime.refresh_provider(&store, &host, CatalogProvider::ClaudeCode, false))
         .unwrap()
         .unwrap();
-    assert_eq!(first.models[0]["supports_disabled_thinking"], true);
     assert_eq!(
-        first.models[0]["supported_reasoning_levels"],
+        first.models[0].deserialize::<Value>().unwrap()["supports_disabled_thinking"],
+        true
+    );
+    assert_eq!(
+        first.models[0].deserialize::<Value>().unwrap()["supported_reasoning_levels"],
         json!(["high", "arbitrary"])
     );
     store.now.set(store.now.get() + 300001);
@@ -695,9 +711,24 @@ fn claude_failure_retains_ids_and_withdraws_reasoning_permissions() {
         .unwrap()
         .unwrap();
     assert!(stale.stale);
-    assert_eq!(stale.models[0]["id"], "claude-sonnet-5");
-    assert!(stale.models[0].get("supports_disabled_thinking").is_none());
-    assert!(stale.models[0].get("supported_reasoning_levels").is_none());
+    assert_eq!(
+        stale.models[0].deserialize::<Value>().unwrap()["id"],
+        "claude-sonnet-5"
+    );
+    assert!(
+        stale.models[0]
+            .deserialize::<Value>()
+            .unwrap()
+            .get("supports_disabled_thinking")
+            .is_none()
+    );
+    assert!(
+        stale.models[0]
+            .deserialize::<Value>()
+            .unwrap()
+            .get("supported_reasoning_levels")
+            .is_none()
+    );
     host.provider(CatalogProvider::ClaudeCode, "claude-owner-2");
     let published = host.published.borrow().clone();
     assert!(
@@ -740,7 +771,12 @@ fn anonymous_surplus_is_public_data_without_an_inference_configuration() {
     ));
     let publication = host.published.borrow().clone();
     let public = run(runtime.load_public_state(&store, &publication, store.now.get())).unwrap();
-    assert_eq!(public.input.rows("surplus")[0]["id"], "public-model");
+    assert_eq!(
+        public.input.rows("surplus")[0]
+            .deserialize::<Value>()
+            .unwrap()["id"],
+        "public-model"
+    );
     assert!(!public.input.configured("surplus"));
     let ordinary = run(runtime.load_state(&store, &publication, store.now.get())).unwrap();
     assert!(ordinary.input.rows("surplus").is_empty());
@@ -765,7 +801,10 @@ fn anonymous_surplus_uses_the_same_cache_across_credential_changes() {
             run(runtime.refresh_provider(&store, &host, CatalogProvider::Surplus, false))
                 .unwrap()
                 .unwrap();
-        assert_eq!(snapshot.models[0]["id"], "cached-model");
+        assert_eq!(
+            snapshot.models[0].deserialize::<Value>().unwrap()["id"],
+            "cached-model"
+        );
         let publication = host.published.borrow().clone();
         assert!(
             run(runtime.load_state(&store, &publication, store.now.get()))
@@ -792,10 +831,17 @@ fn explicit_anonymous_requests_do_not_coalesce_and_newer_results_win() {
         run(runtime.refresh_anonymous_surplus(&store, &host, false))
             .unwrap()
             .unwrap()
-            .models[0]["id"],
+            .models[0]
+            .deserialize::<Value>()
+            .unwrap()["id"],
         "new"
     );
-    assert_eq!(run(first).unwrap().unwrap().models[0]["id"], "new");
+    assert_eq!(
+        run(first).unwrap().unwrap().models[0]
+            .deserialize::<Value>()
+            .unwrap()["id"],
+        "new"
+    );
     assert_eq!(host.requests.borrow().len(), 2);
 }
 #[test]
@@ -815,7 +861,9 @@ fn anonymous_surplus_failure_retains_cache_and_honors_retry_and_cancellation() {
         run(runtime.refresh_anonymous_surplus(&store, &host, false))
             .unwrap()
             .unwrap()
-            .models[0]["id"],
+            .models[0]
+            .deserialize::<Value>()
+            .unwrap()["id"],
         "retained"
     );
     run(runtime.refresh_anonymous_surplus(&store, &host, false)).unwrap();
@@ -841,7 +889,12 @@ fn validated_claude_metadata_uses_current_source_fences_and_the_existing_memo() 
     let binding = ProviderBinding {
         identity: "validated-owner".into(),
     };
-    let rows = vec![json!({"id":"claude-validated","supported_reasoning_levels":["high"]})];
+    let rows = vec![
+        SourceJson::from_serializable(
+            &json!({"id":"claude-validated","supported_reasoning_levels":["high"]}),
+        )
+        .unwrap(),
+    ];
     assert!(
         run(runtime.cache_validated_claude(&store, &host, &binding, rows, store.now.get()))
             .unwrap()
@@ -849,7 +902,10 @@ fn validated_claude_metadata_uses_current_source_fences_and_the_existing_memo() 
     let cached = run(runtime.refresh_provider(&store, &host, CatalogProvider::ClaudeCode, false))
         .unwrap()
         .unwrap();
-    assert_eq!(cached.models[0]["id"], "claude-validated");
+    assert_eq!(
+        cached.models[0].deserialize::<Value>().unwrap()["id"],
+        "claude-validated"
+    );
     assert!(host.requests.borrow().is_empty());
     host.provider(CatalogProvider::ClaudeCode, "replacement-owner");
     assert!(
@@ -883,13 +939,15 @@ fn validation_publication_cannot_be_overwritten_by_an_older_inflight_refresh() {
             &store,
             &host,
             &binding,
-            vec![json!({"id":"claude-validated"})],
+            vec![SourceJson::from_serializable(&json!({"id":"claude-validated"})).unwrap()],
             store.now.get()
         ))
         .unwrap()
     );
     assert_eq!(
-        run(pending).unwrap().unwrap().models[0]["id"],
+        run(pending).unwrap().unwrap().models[0]
+            .deserialize::<Value>()
+            .unwrap()["id"],
         "claude-validated"
     );
 }
@@ -909,19 +967,22 @@ fn public_openrouter_enrichment_does_not_require_routing_credentials() {
     let state = run(runtime.load_state(&store, &host.published.borrow(), store.now.get())).unwrap();
     assert!(!state.input.configured("openrouter"));
     assert_eq!(
-        state.input.enrichment["vendor/model"].max_context_window_tokens,
+        state.input.enrichment[&"vendor/model".into()].max_context_window_tokens,
         Some(200000)
     );
 }
 #[test]
 fn openrouter_empty_failure_retains_cache_and_ambiguous_matches_are_unknown() {
     let rows = vec![
-        json!({"id":"a/model","context_window_tokens":1}),
-        json!({"id":"b/model","context_window_tokens":2}),
+        source_catalog::json(&json!({"id":"a/model","context_window_tokens":1})),
+        SourceJson::from_serializable(&json!({"id":"b/model","context_window_tokens":2})).unwrap(),
     ];
-    assert!(providers::match_openrouter(&rows, "model").is_none());
+    assert!(providers::match_openrouter(&rows, &"model".into()).is_none());
     assert_eq!(
-        providers::match_openrouter(&rows, "a/model").unwrap()["context_window_tokens"],
+        providers::match_openrouter(&rows, &"a/model".into())
+            .unwrap()
+            .deserialize::<Value>()
+            .unwrap()["context_window_tokens"],
         1
     );
     let store = Store::new();
@@ -934,7 +995,10 @@ fn openrouter_empty_failure_retains_cache_and_ambiguous_matches_are_unknown() {
     let retained = run(runtime.refresh_provider(&store, &host, CatalogProvider::Openrouter, false))
         .unwrap()
         .unwrap();
-    assert_eq!(retained.models[0]["id"], "a/model");
+    assert_eq!(
+        retained.models[0].deserialize::<Value>().unwrap()["id"],
+        "a/model"
+    );
     run(runtime.refresh_provider(&store, &host, CatalogProvider::Openrouter, false)).unwrap();
     assert_eq!(host.requests.borrow().len(), 2);
 }
@@ -1053,8 +1117,14 @@ fn overlapping_forced_provider_refreshes_keep_the_newer_publication() {
         .unwrap()
         .unwrap();
     let first = run(first).unwrap().unwrap();
-    assert_eq!(second.models[0]["id"], "newer");
-    assert_eq!(first.models[0]["id"], "newer");
+    assert_eq!(
+        second.models[0].deserialize::<Value>().unwrap()["id"],
+        "newer"
+    );
+    assert_eq!(
+        first.models[0].deserialize::<Value>().unwrap()["id"],
+        "newer"
+    );
 }
 
 #[test]
@@ -1197,7 +1267,13 @@ fn later_official_deepseek_public_metadata_overwrites_paid_enrichment_only_for_i
     ]})));
     run(runtime.refresh_provider(&store, &host, CatalogProvider::Openrouter, true)).unwrap();
     let state = run(runtime.load_state(&store, &host.published.borrow(), store.now.get())).unwrap();
-    let catalog = gateway_schema::catalog::build_catalog_snapshot(&state.input);
+    let catalog = gateway_schema::catalog::build_catalog_snapshot(
+        &state.input,
+        &source_catalog::loader_fixture(),
+    )
+    .unwrap()
+    .deserialize::<Value>()
+    .unwrap();
     let rows = catalog["models"].as_array().unwrap();
     let official = rows
         .iter()
@@ -1331,4 +1407,73 @@ fn pre_save_selection_read_cannot_replace_newer_pending_or_current_catalog_views
         ["cerebras"]
     );
     assert_eq!(reads.count.get(), 4);
+}
+
+#[test]
+fn versioned_union_and_persisted_account_evidence_keep_source_model_and_effort_units() {
+    use gateway_core::{
+        source_control::decode_source_control_record, source_serialization as source,
+        value::ValueEncoding,
+    };
+    let store = Store::new();
+    let host = Host::new(&store);
+    let runtime = CatalogRuntime::new();
+    host.published
+        .borrow_mut()
+        .codex_accounts
+        .push(CodexAccount {
+            account_id: "account-b".into(),
+            credential_fingerprint: "credential-b".into(),
+        });
+    for raw in [
+        r#"{"top":"first\udc00","models":[{"slug":"\ud800","display_name":"first","supported_reasoning_levels":[{"effort":"\udc00"}]}]}"#,
+        r#"{"top":"second","models":[{"slug":"\ud800","display_name":"second"},{"slug":"\udc00"}]}"#,
+    ] {
+        host.queue(Outcome {
+            response: Ok(CatalogFetchResponse::json(200, raw)),
+            ticks: 0,
+            callback: None,
+        });
+    }
+    let response = run(runtime.versioned_models(&store, &host, "0.163.0", None)).unwrap();
+    let document = SourceJson::parse(response.body.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        source::member(&document, "top"),
+        Some(SourceJson::parse(r#""first\udc00""#).unwrap())
+    );
+    let models = source::array(&source::member(&document, "models").unwrap()).unwrap();
+    assert_eq!(models.len(), 2);
+    assert_eq!(
+        source::member(&models[0], "slug"),
+        Some(SourceJson::parse(r#""\ud800""#).unwrap())
+    );
+    assert_eq!(
+        source::member(&models[0], "display_name"),
+        Some(SourceJson::parse(r#""first""#).unwrap())
+    );
+    let evidence = store.live(&state::account_models_key()).unwrap();
+    assert_eq!(evidence.value_encoding, ValueEncoding::ProfileV2);
+    let evidence_document = decode_source_control_record(&evidence).unwrap();
+    let accounts = source::member(&evidence_document, "accounts").unwrap();
+    let first = source::member(&accounts, "account-a").unwrap();
+    let second = source::member(&accounts, "account-b").unwrap();
+    assert_eq!(
+        source::member(&first, "slugs"),
+        Some(SourceJson::parse(r#"["\ud800"]"#).unwrap())
+    );
+    assert_eq!(
+        source::member(&second, "slugs"),
+        Some(SourceJson::parse(r#"["\ud800","\udc00"]"#).unwrap())
+    );
+    assert!(host.requests.borrow().iter().all(|request| matches!(
+        request,
+        CatalogFetch::Codex {
+            if_none_match: None,
+            ..
+        }
+    )));
+    println!(
+        "M42_VERSIONED_EVIDENCE_WRITER_FIXTURE={}",
+        serde_json::to_string(&(state::account_models_key().0, evidence)).unwrap()
+    );
 }

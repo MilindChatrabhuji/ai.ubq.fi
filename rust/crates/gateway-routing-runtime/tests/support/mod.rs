@@ -1,3 +1,5 @@
+#[path = "../../../gateway-schema/tests/support/source_catalog.rs"]
+mod source_catalog;
 use gateway_auth::{AuthMethod, AuthPrincipal, crypto::Secret};
 use gateway_authority::{
     AuthorityClock, TokenSource, keys,
@@ -298,9 +300,9 @@ pub fn input(id: &str, model: &str, providers: &[&str]) -> RoutingInput {
         );
     }
     catalog.full_snapshot = Some(ModelSnapshot {
-        models: vec![
-            json!({"slug":"gpt-test","supported_reasoning_levels":[{"effort":"none"},{"effort":"high"},{"effort":"ultra"}],"default_reasoning_level":"none"}),
-        ],
+        models: vec![source_catalog::json(
+            &json!({"slug":"gpt-test","supported_reasoning_levels":[{"effort":"none"},{"effort":"high"},{"effort":"ultra"}],"default_reasoning_level":"none"}),
+        )],
         source: "fixture".into(),
         updated_at_ms: NOW,
         client_version: Some("0.163.0".into()),
@@ -361,6 +363,9 @@ impl Host {
 }
 impl RoutingHost for Host {
     type ClaudeHead = u64;
+    fn source_string_collator(&self) -> Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        Arc::new(source_catalog::Collator::captured())
+    }
     fn cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
     }
@@ -434,7 +439,7 @@ impl RoutingHost for Host {
         &self,
         fence: &CredentialFence,
         _principal: &AuthPrincipal,
-        _model: &str,
+        _model: &gateway_core::model::ModelId,
     ) -> Result<(), GatewayError> {
         if let CredentialFence::Codex {
             source_key,
@@ -465,7 +470,7 @@ impl RoutingHost for Host {
     async fn select_claude(
         &self,
         _principal: &AuthPrincipal,
-        _model: &str,
+        _model: &gateway_core::model::ModelId,
         _raw: &gateway_core::source_json::SourceJson,
     ) -> Result<ClaudeSelection, GatewayError> {
         if self.claude_internal_error {
@@ -487,7 +492,7 @@ impl RoutingHost for Host {
     async fn observe_claude_response(
         &self,
         _fence: &CredentialFence,
-        _model: &str,
+        _model: &gateway_core::model::ModelId,
         _response: ResponseHead,
     ) -> Result<Self::ClaudeHead, GatewayError> {
         Ok(self.claude_heads.fetch_add(1, Ordering::SeqCst))
@@ -517,7 +522,7 @@ impl RoutingHost for Host {
     async fn recover_codex(
         &self,
         _proof: &CohortProof,
-        _model: &str,
+        _model: &gateway_core::model::ModelId,
     ) -> Result<CodexRecovery, GatewayError> {
         Ok(CodexRecovery::Declined)
     }

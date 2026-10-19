@@ -4,6 +4,12 @@ use gateway_core::{lifecycle::BillingState, value::PortableValue};
 use serde_json::json;
 
 pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
+    if crate::paid_controls::forward(row)? {
+        return Ok(());
+    }
+    if crate::source_metadata::retain_raw(row)? {
+        return Ok(());
+    }
     let p = &row.parts;
     if starts(p, &["uos_ai", "codex_reset_shadow_decision"]) {
         gateway_authority::full_pool_reset::FullPoolShadowDecision::validate_record(
@@ -127,27 +133,6 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
         } else if kind.ends_with("_policy") {
             let _: KernelPolicy = decode(&v)?;
         }
-    } else if starts(p, &["uos_ai", "paid_fallback", "v3", "request"]) {
-        if p.len() != 6 || p[4] != v["key_id"] || p[5] != v["request_id"] {
-            return Err(invalid("Paid source request identity conflicts"));
-        }
-        let mut projected = v.clone();
-        let provider = v.get("provider").cloned().unwrap_or(json!("metered"));
-        projected["reservation"] = json!({"key_id":v["key_id"],"request_id":v.get("original_request_id").unwrap_or(&v["request_id"]),"attempt_id":v["request_id"],"provider":provider,"window_reset_at_ms":v["window_reset_at_ms"],"created_at_ms":v["created_at_ms"],"reserved_microcredits":v["reserved_microcredits"]});
-        projected["transport_started"] = json!(false);
-        projected["cached_input_tokens"] =
-            v.get("cached_input_tokens").cloned().unwrap_or(Value::Null);
-        projected["usage_rollup_at_ms"] =
-            v.get("usage_rollup_at_ms").cloned().unwrap_or(Value::Null);
-        let request: PaidAttempt = decode(&projected)?;
-        if request.v != 3
-            || request.reservation.reserved_microcredits < 0
-            || request.quota_per_credit <= 0
-        {
-            return Err(invalid("Paid request amounts are malformed"));
-        }
-        row.record.value = projected;
-        row.mapping.transform = Transform::PaidRequest;
     } else if starts(p, &["uos_ai", "paid_fallback", "v3", "pending"]) {
         if p.len() != 6 {
             return Err(invalid("Paid pending identity malformed"));

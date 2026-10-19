@@ -263,7 +263,7 @@ fn source_adoption_refuses_actual_v1_v2_private_rows_before_target_writes() {
             });
             let error = prepare(&forged, &CanonicalDates).err().unwrap();
             assert_eq!(
-                error.envelope.error.message,
+                error.diagnostic(),
                 "Source capture cannot mint Rust authority or adoption metadata"
             );
             assert_eq!(snapshot(&store, &path), before);

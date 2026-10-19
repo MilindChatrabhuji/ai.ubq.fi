@@ -104,17 +104,16 @@ fn source_key_audit_keeps_malformed_pair_counter_and_model_rejections() {
         assert!(!audit::valid_source_key_policy(&id, true), "{models}");
         let (pairs, findings) = audit::inspect_key_pairs(&rows(&id, &hash)).unwrap();
         assert!(pairs.is_empty());
+        assert!(findings.errors.iter().any(|error| {
+            error
+                .try_utf8()
+                .is_ok_and(|text| text.contains("invalid v2 policy"))
+        }));
         assert!(
             findings
                 .errors
                 .iter()
-                .any(|error| error.contains("invalid v2 policy"))
-        );
-        assert!(
-            findings
-                .errors
-                .iter()
-                .any(|error| error.contains("orphaned"))
+                .any(|error| error.try_utf8().is_ok_and(|text| text.contains("orphaned")))
         );
     }
     let (id, hash) = policies(r#"["scalar"]"#);
@@ -132,22 +131,20 @@ fn source_key_audit_keeps_malformed_pair_counter_and_model_rejections() {
     let mismatch = source::object_keys(fields).unwrap();
     let (pairs, findings) = audit::inspect_key_pairs(&rows(&id, &mismatch)).unwrap();
     assert!(pairs.is_empty());
-    assert!(
-        findings
-            .errors
-            .iter()
-            .any(|error| error.contains("missing or inconsistent"))
-    );
+    assert!(findings.errors.iter().any(|error| {
+        error
+            .try_utf8()
+            .is_ok_and(|text| text.contains("missing or inconsistent"))
+    }));
     let mut missing = rows(&id, &hash);
     missing.pop();
     let (pairs, findings) = audit::inspect_key_pairs(&missing).unwrap();
     assert!(pairs.is_empty());
-    assert!(
-        findings
-            .errors
-            .iter()
-            .any(|error| error.contains("count mismatch"))
-    );
+    assert!(findings.errors.iter().any(|error| {
+        error
+            .try_utf8()
+            .is_ok_and(|text| text.contains("count mismatch"))
+    }));
 }
 
 #[test]

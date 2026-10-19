@@ -8,7 +8,8 @@ use crate::{
 use futures_util::lock::Mutex;
 use gateway_authority::{Authority, AuthorityClock, TokenSource, quota::KernelTerminal};
 use gateway_core::{
-    GatewayError, lifecycle::TransportObservation, provider::UpstreamProvider, query::QueryStore,
+    GatewayError, lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
+    query::QueryStore, source_json::SourceJson, source_serialization as source,
 };
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -111,6 +112,7 @@ pub struct AdmissionHandle<S, I, C, H> {
     parent: String,
     lock: Rc<Mutex<()>>,
     input: RoutingInput,
+    source_collator: std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>,
 }
 impl<
     S: QueryStore + Clone,
@@ -139,6 +141,7 @@ impl<
             parent: self.id().into(),
             lock: self.extra_lock.clone(),
             input: self.input.clone(),
+            source_collator: self.source_collator.clone(),
         }
     }
 }
@@ -151,13 +154,14 @@ impl<
 {
     fn authority(&self) -> Authority<S, I> {
         Authority::with_clock(self.store.clone(), self.tokens.clone(), self.clock.clone())
+            .with_source_string_collator(self.source_collator.clone())
     }
     /// Source image child transport is Codex-only. It never obtains a paid
     /// authorization, performs admission again, or settles the outer kernel.
     pub async fn prepare_image_child(
         &self,
         child: &ChildScope,
-        body: serde_json::Value,
+        body: SourceJson,
     ) -> RoutingResult<ImageChildAttempt> {
         let (_, row) = journal::load(&self.store, &self.parent).await?;
         settlement::ensure_active(&row)?;
@@ -171,7 +175,10 @@ impl<
                 journal::unavailable("This scope cannot prepare a Codex image child.").into(),
             );
         }
-        let model = gateway_schema::request::resolve_model(body.get("model"), None)?;
+        let model = ModelId::from_source(gateway_schema::source_request::resolve_model(
+            source::member(&body, "model").as_ref(),
+            None,
+        )?);
         crate::policy::validate_model(&self.input, &model, self.clock.now_ms()?)?;
         for _ in 0..3 {
             if self.host.cancelled() {
@@ -403,12 +410,7 @@ impl<
             .await?
         {
             if current.model_sibling_retries >= 1 {
-                return Err(GatewayError::new(
-                    404,
-                    format!("The model '{model}' is not available for these subscriptions."),
-                    Some("model_not_found"),
-                )
-                .into());
+                return Err(crate::classify::model_unavailable_error(model).into());
             }
             journal::change(
                 &self.store,

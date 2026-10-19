@@ -36,7 +36,7 @@ fn config() -> ResetConfig {
 }
 fn proof(authority: &TestAuthority, at: i64) -> CohortProof {
     let RouteSelection::QuotaBlocked { proof, .. } =
-        run(authority.select_account("gpt-test", CodexQuotaClass::Standard, at)).unwrap()
+        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, at)).unwrap()
     else {
         panic!("requires actual exhausted source cohort")
     };
@@ -352,7 +352,8 @@ fn expired_probe_claim_preserves_source_generation_and_checks_current_expiry() {
     run(authority.record_quota_block(&account, expired, NOW)).unwrap();
     store.clock(NOW + 2);
     let RouteSelection::Eligible(selected) =
-        run(authority.select_account("gpt-test", CodexQuotaClass::Standard, NOW + 2)).unwrap()
+        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW + 2))
+            .unwrap()
     else {
         panic!("expired source quota circuit must be probe eligible")
     };

@@ -1,5 +1,8 @@
 mod support;
-use gateway_core::{source_usage::extract_usage_tokens, state::StoredRecord, tuple_key::TupleKey};
+use gateway_core::{
+    js_string::JsString16, source_usage::extract_usage_tokens, state::StoredRecord,
+    tuple_key::TupleKey,
+};
 use gateway_observability::{ObservabilityRuntime, ledger::TerminalUsageRollup};
 use serde_json::Value;
 use support::{Host, Memory, run};
@@ -39,10 +42,11 @@ fn actual_source_terminal_writer_cases_match_shared_usage_and_bounded_atomic_sto
         }
         let runtime = ObservabilityRuntime::new(store.clone(), host);
         let usage = extract_usage_tokens(Some(&case["raw"]));
+        let model = case["model"].as_str().map(JsString16::from_utf8);
         let mut result = Ok(false);
         for _ in 0..case["calls"].as_u64().unwrap() {
             result = run(runtime.record_terminal_usage_rollup(TerminalUsageRollup {
-                model: case["model"].as_str(),
+                model: model.as_ref(),
                 provider: case["provider"].as_str(),
                 request_id: case["request_id"].as_str().unwrap(),
                 request_created_at_ms: if case["created_nonfinite"] == true {
@@ -120,9 +124,10 @@ fn source_number_version_does_not_discard_a_valid_existing_aggregate() {
     host.at.set(NOW);
     let runtime = ObservabilityRuntime::new(store.clone(), host);
     let usage = extract_usage_tokens(Some(&case["raw"]));
+    let model = case["model"].as_str().map(JsString16::from_utf8);
     assert!(
         run(runtime.record_terminal_usage_rollup(TerminalUsageRollup {
-            model: case["model"].as_str(),
+            model: model.as_ref(),
             provider: case["provider"].as_str(),
             request_id: case["request_id"].as_str().unwrap(),
             request_created_at_ms: case["created"].as_f64(),

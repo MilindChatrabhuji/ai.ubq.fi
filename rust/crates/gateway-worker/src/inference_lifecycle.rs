@@ -16,11 +16,12 @@ pub(crate) type Session =
 
 pub(crate) struct Lifecycle {
     pub(crate) session: Rc<Session>,
+    pub(crate) currentness: crate::inference_currentness::CurrentnessGuard,
     pub(crate) attempt: PreparedAttempt,
     pub(crate) provider_request_id: Option<String>,
     pub(crate) status: u16,
     pub(crate) store: RemoteAuthorityStore,
-    pub(crate) pricing: Option<Value>,
+    pub(crate) pricing: Option<gateway_core::source_json::SourceJson>,
 }
 
 impl Lifecycle {
@@ -66,6 +67,7 @@ impl Lifecycle {
             .finish(observation)
             .await
             .map_err(|error| *error.error)?;
+        self.currentness.stop();
         Ok(())
     }
 }

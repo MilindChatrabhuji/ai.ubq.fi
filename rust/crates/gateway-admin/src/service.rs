@@ -6,10 +6,13 @@ use gateway_auth::{
     store,
 };
 use gateway_core::query::QueryStore;
-use serde_json::{Value, json};
+use gateway_core::source_json::SourceJson;
+use serde_json::json;
 use url::Url;
 
-use crate::{AdminHost, AdminInput, AdminOperation, keys::KeyService, match_route};
+use crate::{
+    AdminHost, AdminInput, AdminOperation, keys::KeyService, match_route, source_input as input,
+};
 
 pub struct AdminService<'a, S, H, A> {
     pub store: &'a S,
@@ -40,8 +43,19 @@ impl<'a, S: QueryStore, H: AuthHost, A: AdminHost> AdminService<'a, S, H, A> {
         // Every console operation, including formerly super-admin-only ones, authenticates first.
         let auth = AuthService::new(self.store, self.host, self.config);
         let actor = auth.authenticate_admin(request).await?;
-        let body = if matches!(request.method.as_str(), "GET" | "HEAD") {
-            Value::Null
+        let body = if matches!(request.method.as_str(), "GET" | "HEAD")
+            || matches!(
+                route.operation,
+                AdminOperation::DebugDelete
+                    | AdminOperation::PromptsPurge
+                    | AdminOperation::ModelsRefresh
+                    | AdminOperation::CodexRecheck
+                    | AdminOperation::KernelPublicKeysDelete
+                    | AdminOperation::ClaudeAuthDelete
+                    | AdminOperation::QuotaProjectionBackfill
+            ) {
+            // These source handlers do not consume a request body.
+            input::json(&())
         } else if route.operation == AdminOperation::KvMigrationImport {
             const MAX_MIGRATION_BYTES: usize = 5 * 1024 * 1024;
             let announced = request
@@ -58,7 +72,7 @@ impl<'a, S: QueryStore, H: AuthHost, A: AdminHost> AdminService<'a, S, H, A> {
                     Some("invalid_request_error"),
                 ));
             }
-            Value::String(text)
+            input::json(&text)
         } else if route.operation == AdminOperation::CacheExperimentSet {
             let text = request_text(&request.body);
             let whitespace = |value: char| matches!(value, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}');
@@ -67,16 +81,39 @@ impl<'a, S: QueryStore, H: AuthHost, A: AdminHost> AdminService<'a, S, H, A> {
                     "Prompt-cache scope experiment does not accept request fields",
                 ));
             }
-            Value::String(text)
-        } else if request.body.is_empty() {
-            json!({})
+            input::json(&text)
         } else {
-            if request.body.len() > 32 * 1024 * 1024 {
+            // Source declaredContentLength accepts only canonical decimal safe
+            // integers, not leading zeros, signs, exponents or ignored garbage.
+            let announced = request
+                .header("content-length")
+                .map(|value| {
+                    if value.is_empty()
+                        || (value.len() > 1 && value.starts_with('0'))
+                        || !value.bytes().all(|byte| byte.is_ascii_digit())
+                    {
+                        return Err(invalid("Invalid JSON body"));
+                    }
+                    value
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|length| *length <= gateway_core::identity::MAX_SAFE_INTEGER as u64)
+                        .ok_or_else(|| invalid("Invalid JSON body"))
+                })
+                .transpose()?;
+            if request.body.is_empty()
+                || request.body.len() > 32 * 1024 * 1024
+                || announced.is_some_and(|value| value > 32 * 1024 * 1024)
+            {
                 return Err(invalid("Invalid JSON body"));
             }
-            let parsed: Value =
-                serde_json::from_slice(&request.body).map_err(|_| invalid("Invalid JSON body"))?;
-            if !parsed.is_object() {
+            // JSON.parse(TextDecoder.decode(bytes)): replace malformed UTF8 and
+            // consume exactly one BOM before the ONE authoritative source parse.
+            let parsed = SourceJson::parse(&request_text(&request.body))
+                .map_err(|_| invalid("Invalid JSON body"))?;
+            // Source isRecord accepts arrays too; their absent fields fail at
+            // the original field validation, never at an object-only preflight.
+            if !input::is_record(&parsed) {
                 return Err(invalid("Invalid JSON body"));
             }
             parsed
@@ -111,17 +148,17 @@ impl<'a, S: QueryStore, H: AuthHost, A: AdminHost> AdminService<'a, S, H, A> {
                 crate::kernel_keys::delete(self.store, self.host, &query).await?
             }
             AdminOperation::PasskeyUsersUpdate => {
-                let id = body
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
+                let id = input::member(&body, "id")
+                    .as_ref()
+                    .and_then(input::text)
+                    .map(|value| input::trim(&value))
+                    .filter(|value| !value.as_units().is_empty())
                     .ok_or_else(|| invalid("id is required"))?;
-                let is_admin = body
-                    .get("is_admin")
-                    .and_then(Value::as_bool)
+                let is_admin = input::member(&body, "is_admin")
+                    .as_ref()
+                    .and_then(input::boolean)
                     .ok_or_else(|| invalid("is_admin must be a boolean"))?;
-                let key = gateway_auth::passkeys::key("users", id);
+                let key = input::selected_key(&["uos_ai", "auth", "users"], &id)?;
                 let row = self.store.read(&key).await?;
                 let mut user: PasskeyUser = store::decode(row.as_ref(), self.host.now_ms())?
                     .ok_or_else(|| {

@@ -12,7 +12,9 @@ use gateway_admin_runtime::{
     claude::{self, AccountBinding, AccountUpdate, Credential, Workspace},
 };
 use gateway_auth::{AuthHost, AuthResponse, AuthResponseBody};
-use gateway_core::{GatewayError, source_json::SourceJson};
+use gateway_core::{
+    GatewayError, js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use gateway_observability::{ObservabilityHost, ObservabilityRuntime};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -22,7 +24,7 @@ const UNVALIDATED: &str = "Stored unvalidated: the models listing could not be r
 struct Validation {
     status: Option<u16>,
     detail: Option<&'static str>,
-    snapshot: Option<(Vec<Value>, i64)>,
+    snapshot: Option<(Vec<SourceJson>, i64)>,
 }
 impl Validation {
     fn unavailable(status: Option<u16>) -> Self {
@@ -255,15 +257,15 @@ async fn validate(
 ) -> Result<Validation, GatewayError> {
     let cancellation = Cancellation::background()?;
     let _deadline = cancellation.set_timeout_ms(8_000)?;
-    let mut models = Vec::<Value>::new();
+    let mut models = Vec::<SourceJson>::new();
     let mut cursors = BTreeSet::new();
-    let mut cursor: Option<String> = None;
+    let mut cursor: Option<JsString16> = None;
     for _ in 0..20 {
         let mut url = worker::Url::parse("https://api.anthropic.com/v1/models")
             .map_err(|_| super::invalid("Claude model URL is invalid."))?;
         url.query_pairs_mut().append_pair("limit", "100");
         if let Some(cursor) = &cursor {
-            url.query_pairs_mut().append_pair("after_id", cursor);
+            super::catalog::append_cursor(&mut url, cursor);
         }
         let destination = PinnedDestination::new(url.as_str())?;
         let mut response = match send_http(
@@ -288,7 +290,7 @@ async fn validate(
             Ok(bytes) => bytes,
             Err(_) => return Ok(Validation::unavailable(Some(status))),
         };
-        let parsed: Value = match serde_json::from_str(&String::from_utf8_lossy(&bytes)) {
+        let parsed = match SourceJson::parse(&String::from_utf8_lossy(&bytes)) {
             Ok(value) => value,
             Err(_) => return Ok(Validation::unavailable(Some(status))),
         };
@@ -300,9 +302,12 @@ async fn validate(
             Err(_) => return Ok(Validation::unavailable(Some(status))),
         };
         for model in page {
+            let id = source::member(&model, "id")
+                .as_ref()
+                .and_then(source::string);
             if let Some(old) = models
                 .iter_mut()
-                .find(|old| old.get("id") == model.get("id"))
+                .find(|old| source::member(old, "id").as_ref().and_then(source::string) == id)
             {
                 *old = model;
             } else {

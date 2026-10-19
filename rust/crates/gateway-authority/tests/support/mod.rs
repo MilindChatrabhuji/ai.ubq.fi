@@ -189,8 +189,20 @@ impl TokenSource for Tokens {
     }
 }
 pub type TestAuthority = Authority<MemoryStore, Tokens>;
+struct FixtureCollator;
+impl gateway_schema::aliases::SourceStringCollator for FixtureCollator {
+    fn compare(
+        &self,
+        left: &gateway_core::js_string::JsString16,
+        right: &gateway_core::js_string::JsString16,
+    ) -> Result<std::cmp::Ordering, GatewayError> {
+        // Fixed test input ordering only; pinned locale-equivalence survivors are tested separately.
+        Ok(left.as_units().cmp(right.as_units()))
+    }
+}
 pub fn authority(store: &MemoryStore) -> TestAuthority {
     Authority::with_clock(store.clone(), Tokens::default(), store.clone())
+        .with_source_string_collator(Arc::new(FixtureCollator))
 }
 
 pub fn run<F: Future>(future: F) -> F::Output {
@@ -297,7 +309,8 @@ pub fn policy() -> ApiKeyPolicy {
     }
 }
 pub fn admitted(authority: &TestAuthority) -> AdmittedAccount {
-    match run(authority.select_account("gpt-test", CodexQuotaClass::Standard, NOW)).unwrap() {
+    match run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap()
+    {
         RouteSelection::Eligible(account) => account,
         _ => panic!("expected eligible account"),
     }

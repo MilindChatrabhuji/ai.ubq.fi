@@ -1,0 +1,162 @@
+{
+  "source_sha": "5c177d8c228b5e4f96043b9a81076a46e6a366cc",
+  "source_tree": "7613c181b41638520542db4a39eae63a16f904b6",
+  "archive_sha256": "bd5a24fecb5de9cf6ab9801afb6fc30fbb2246ba937c3473ac1fce5f55e30995",
+  "command": [
+    "/usr/bin/sandbox-exec",
+    "-f",
+    "/tmp/ai-rust-wasm-20261018/mac-bootstrap/check.sb",
+    "/usr/bin/env",
+    "-i",
+    "HOME=/Users/nv",
+    "PATH=/tmp/ai-rust-wasm-20261018/mac-rustup/toolchains/1.98.1-aarch64-apple-darwin/bin:/tmp/ai-rust-wasm-20261018/mac-tools/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "RUSTUP_HOME=/tmp/ai-rust-wasm-20261018/mac-rustup",
+    "RUSTUP_TOOLCHAIN=1.98.1-aarch64-apple-darwin",
+    "CARGO_HOME=/tmp/ai-rust-wasm-20261018/mac-cargo",
+    "CARGO_TARGET_DIR=/tmp/ai-rust-wasm-20261018/mac-target-m39-terminal-controls-5c177d8c228b-v1",
+    "TMPDIR=/tmp/ai-rust-wasm-20261018/mac-tmp",
+    "XDG_CACHE_HOME=/tmp/ai-rust-wasm-20261018/mac-cache",
+    "CARGO_BUILD_JOBS=2",
+    "CARGO_INCREMENTAL=0",
+    "CARGO_PROFILE_DEV_DEBUG=0",
+    "CARGO_PROFILE_TEST_DEBUG=0",
+    "CARGO_TERM_COLOR=never",
+    "RUSTC=/tmp/ai-rust-wasm-20261018/mac-rustup/toolchains/1.98.1-aarch64-apple-darwin/bin/rustc",
+    "RUSTDOC=/tmp/ai-rust-wasm-20261018/mac-rustup/toolchains/1.98.1-aarch64-apple-darwin/bin/rustdoc",
+    "GIT_CONFIG_NOSYSTEM=1",
+    "GIT_CONFIG_GLOBAL=/dev/null",
+    "CARGO_NET_OFFLINE=true",
+    "WASM_BINDGEN_BIN=/tmp/ai-rust-wasm-20261018/mac-tools/wasm-bindgen/wasm-bindgen-0.2.129-aarch64-apple-darwin/wasm-bindgen",
+    "WASM_OPT_BIN=/tmp/ai-rust-wasm-20261018/mac-tools/binaryen/binaryen-version_132/bin/wasm-opt",
+    "ESBUILD_BIN=/tmp/ai-rust-wasm-20261018/mac-tools/esbuild/package/bin/esbuild",
+    "/tmp/ai-rust-wasm-20261018/mac-rustup/toolchains/1.98.1-aarch64-apple-darwin/bin/cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--target",
+    "aarch64-apple-darwin",
+    "-p",
+    "gateway-observability",
+    "--test",
+    "terminal_source_controls",
+    "--",
+    "--nocapture"
+  ],
+  "exit": 0,
+  "log": "/tmp/ai-rust-wasm-20261018/mac-receipts/m39-terminal-controls-5c177d8c228b-v1/0-terminal-source-controls3.log",
+  "log_sha256": "d0b0831dab9a3cfbfc213a895134a6458184d0d449c40c1b39302861d04ccb9b",
+  "ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/ce9c004e-9c58-4895-8915-1845b06ae05d",
+  "fixtures": [
+    {
+      "family": "paid_usage_rollup_v1",
+      "rows": [
+        {
+          "key": "tuple-v1:02756f735f61690002706169645f66616c6c6261636b00027633000275736167655f726f6c6c75700021800000000000000002efbfbd0002636861746770745f636f6465780021c018000000000000",
+          "record": {
+            "schema_version": 1,
+            "value_encoding": "profile-v2",
+            "revision": "03000000-0000-4000-8300-000000000000",
+            "value": {
+              "type": "object_utf16",
+              "value": [
+                [
+                  [118],
+                  {
+                    "type": "number_bits",
+                    "value": "3ff0000000000000"
+                  }
+                ],
+                [
+                  [98, 117, 99, 107, 101, 116, 95, 115, 116, 97, 114, 116, 95, 97, 116, 95, 109, 115],
+                  {
+                    "type": "number_bits",
+                    "value": "0000000000000000"
+                  }
+                ],
+                [
+                  [109, 111, 100, 101, 108],
+                  {
+                    "type": "string_utf16",
+                    "value": [55296]
+                  }
+                ],
+                [
+                  [112, 114, 111, 118, 105, 100, 101, 114],
+                  {
+                    "type": "string_utf16",
+                    "value": [99, 104, 97, 116, 103, 112, 116, 95, 99, 111, 100, 101, 120]
+                  }
+                ],
+                [
+                  [114, 101, 113, 117, 101, 115, 116, 95, 99, 111, 117, 110, 116],
+                  {
+                    "type": "number_bits",
+                    "value": "4008000000000000"
+                  }
+                ],
+                [
+                  [113, 117, 111, 116, 97, 95, 115, 117, 109],
+                  {
+                    "type": "number_bits",
+                    "value": "0000000000000000"
+                  }
+                ],
+                [
+                  [105, 110, 112, 117, 116, 95, 116, 111, 107, 101, 110, 115],
+                  {
+                    "type": "number_bits",
+                    "value": "403e000000000000"
+                  }
+                ],
+                [
+                  [99, 97, 99, 104, 101, 100, 95, 105, 110, 112, 117, 116, 95, 116, 111, 107, 101, 110, 115],
+                  {
+                    "type": "number_bits",
+                    "value": "4018000000000000"
+                  }
+                ],
+                [
+                  [111, 117, 116, 112, 117, 116, 95, 116, 111, 107, 101, 110, 115],
+                  {
+                    "type": "number_bits",
+                    "value": "4022000000000000"
+                  }
+                ],
+                [
+                  [115, 112, 101, 110, 100, 95, 109, 105, 99, 114, 111, 99, 114, 101, 100, 105, 116, 115],
+                  {
+                    "type": "number_bits",
+                    "value": "0000000000000000"
+                  }
+                ],
+                [
+                  [102, 105, 114, 115, 116, 95, 114, 101, 113, 117, 101, 115, 116, 95, 97, 116, 95, 109, 115],
+                  {
+                    "type": "number_bits",
+                    "value": "408f400000000000"
+                  }
+                ],
+                [
+                  [108, 97, 115, 116, 95, 114, 101, 113, 117, 101, 115, 116, 95, 97, 116, 95, 109, 115],
+                  {
+                    "type": "number_bits",
+                    "value": "408f400000000000"
+                  }
+                ],
+                [
+                  [117, 112, 100, 97, 116, 101, 100, 95, 97, 116, 95, 109, 115],
+                  {
+                    "type": "number_bits",
+                    "value": "408f400000000000"
+                  }
+                ]
+              ]
+            },
+            "expires_at_ms": null
+          }
+        }
+      ]
+    }
+  ],
+  "scope": "Actual terminal writer performed three source-key-colliding high/low/replacement model writes through Memory atomic fixture with restart. First stored model retained, sums preserved, no TTL; synthetic clock1000, not live owner evidence."
+}
