@@ -383,22 +383,104 @@ fn source_prelude(
     Ok((document, client_stream, requested, model))
 }
 
+impl PreparedClaudeOrdinary {
+    /// Finish the one ordinary source phase before any selected-account capability lookup.
+    pub fn prepare(
+        surface: ClientSurface,
+        original: &SourceJson,
+        selected_model: &ModelId,
+        options: &OrdinaryPhaseOptions,
+    ) -> s::Result<Self> {
+        let (_, stream, requested, model) = source_prelude(
+            UpstreamProvider::ClaudeCode,
+            surface,
+            original,
+            selected_model,
+            &options.allowed_models,
+        )?;
+        prepare_claude_ordinary_resolved(surface, original, requested, model, stream, options)
+    }
+}
+fn prepare_claude_ordinary_resolved(
+    surface: ClientSurface,
+    raw: &SourceJson,
+    requested: ModelId,
+    model: ModelId,
+    mut client_stream: bool,
+    options: &OrdinaryPhaseOptions,
+) -> s::Result<PreparedClaudeOrdinary> {
+    let normalized =
+        controls::ordinary(raw, surface, &model, options.ordinary_preparation.as_ref())?;
+    if surface == ClientSurface::Chat {
+        client_stream = s::boolean(&s::get(&normalized, "stream")).unwrap_or(false);
+    }
+    // Syntax/default/mapping already ran in the shared coordinator. This is only
+    // the exact data outcome used for account-bound lookup, never a proof.
+    let effective_effort = json::member(&normalized, "reasoning")
+        .and_then(|reasoning| json::member(&reasoning, "effort"))
+        .as_ref()
+        .and_then(json::string);
+    Ok(PreparedClaudeOrdinary {
+        normalized,
+        surface,
+        requested,
+        model,
+        client_stream,
+        effective_effort,
+    })
+}
 impl PreparedClaudeBody {
-    /// Complete pure source body validation/stringification before actual headers.
+    /// Convenience API: the same single ordinary phase followed by native finalization.
     pub fn prepare(
         surface: ClientSurface,
         raw: &SourceJson,
         selected_model: &ModelId,
         options: &ClaudeBodyOptions,
     ) -> s::Result<Self> {
-        let (_, stream, requested, model) = source_prelude(
-            UpstreamProvider::ClaudeCode,
+        let phase = PreparedClaudeOrdinary::prepare(
             surface,
             raw,
             selected_model,
-            &options.allowed_models,
+            &OrdinaryPhaseOptions {
+                allowed_models: options.allowed_models.clone(),
+                ordinary_preparation: options.ordinary_preparation.clone(),
+            },
         )?;
-        prepare_claude_resolved(surface, raw, requested, model, stream, options)
+        Self::from_ordinary(phase, raw, options)
+    }
+    /// Consume the existing outcome once after real same-account capability selection.
+    /// The caller retains the immutable original binding/echo; no normalization runs here.
+    pub fn from_ordinary(
+        phase: PreparedClaudeOrdinary,
+        original: &SourceJson,
+        options: &ClaudeBodyOptions,
+    ) -> s::Result<Self> {
+        let mut body = source_anthropic::native_claude(&phase.normalized, options).ok_or_else(|| invalid(
+            "Claude request cannot be represented losslessly with the current credential/workspace capability proof",
+            "reasoning",
+        ))?;
+        controls::claude_transport(&mut body, options.kind);
+        let stream = s::boolean(&s::get(&body, "stream")) == Some(true);
+        let body = s::canonical(&body)?;
+        Ok(Self {
+            body,
+            kind: options.kind,
+            stream,
+            warnings: Vec::new(),
+            decode: DecodePlan {
+                provider: UpstreamProvider::ClaudeCode,
+                surface: phase.surface,
+                decode: ResponseDecode::AnthropicToResponses,
+                model: phase.requested,
+                upstream_model: phase.model,
+                response_id: options.response_id.clone(),
+                created_at: options.created_at,
+                stream: phase.client_stream,
+                request: original.clone(),
+                tool_names: ToolMap::new(),
+                reasoning_summary: options.reasoning_summary.clone(),
+            },
+        })
     }
 }
 fn prepare_claude_resolved(
@@ -406,40 +488,21 @@ fn prepare_claude_resolved(
     raw: &SourceJson,
     requested: ModelId,
     model: ModelId,
-    mut client_stream: bool,
+    client_stream: bool,
     options: &ClaudeBodyOptions,
 ) -> s::Result<PreparedClaudeBody> {
-    let normalized =
-        controls::ordinary(raw, surface, &model, options.ordinary_preparation.as_ref())?;
-    if surface == ClientSurface::Chat {
-        client_stream = s::boolean(&s::get(&normalized, "stream")).unwrap_or(false);
-    }
-    let mut body = source_anthropic::native_claude(&normalized, options).ok_or_else(|| invalid(
-        "Claude request cannot be represented losslessly with the current credential/workspace capability proof",
-        "reasoning",
-    ))?;
-    controls::claude_transport(&mut body, options.kind);
-    let stream = s::boolean(&s::get(&body, "stream")) == Some(true);
-    let body = s::canonical(&body)?;
-    Ok(PreparedClaudeBody {
-        body,
-        kind: options.kind,
-        stream,
-        warnings: Vec::new(),
-        decode: DecodePlan {
-            provider: UpstreamProvider::ClaudeCode,
-            surface,
-            decode: ResponseDecode::AnthropicToResponses,
-            model: requested,
-            upstream_model: model,
-            response_id: options.response_id.clone(),
-            created_at: options.created_at,
-            stream: client_stream,
-            request: raw.clone(),
-            tool_names: ToolMap::new(),
-            reasoning_summary: options.reasoning_summary.clone(),
+    let phase = prepare_claude_ordinary_resolved(
+        surface,
+        raw,
+        requested,
+        model,
+        client_stream,
+        &OrdinaryPhaseOptions {
+            allowed_models: options.allowed_models.clone(),
+            ordinary_preparation: options.ordinary_preparation.clone(),
         },
-    })
+    )?;
+    PreparedClaudeBody::from_ordinary(phase, raw, options)
 }
 fn finalize_scalar_claude(body: PreparedClaudeBody, auth: &AuthMaterial) -> PreparedRequest {
     let mut headers = bearer_headers(
