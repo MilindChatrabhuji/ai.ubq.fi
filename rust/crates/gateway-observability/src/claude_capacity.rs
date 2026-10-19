@@ -446,6 +446,14 @@ pub fn point_for_observation(
     if parsed.windows.is_empty() && parsed.standard.is_empty() {
         return Ok(None);
     }
+    let standard_order = source::entries(
+        &source::member(&observation, "standard")
+            .ok_or_else(|| store::error("Accepted Claude standard metadata is missing"))?,
+    )
+    .ok_or_else(|| store::error("Accepted Claude standard metadata is invalid"))?
+    .into_iter()
+    .map(|(name, _)| name.try_utf8())
+    .collect::<Result<Vec<_>, _>>()?;
     let digest = source::object(vec![
         ("account", SourceJson::from_serializable(&event.account_id)?),
         (
@@ -497,8 +505,9 @@ pub fn point_for_observation(
             five_hour: window("5h"),
             seven_day: window("7d"),
         },
-        standard: ["requests", "input-tokens", "output-tokens"]
-            .into_iter()
+        standard: standard_order
+            .iter()
+            .map(String::as_str)
             .filter_map(|name| {
                 parsed.standard.get(name).map(|w| Standard {
                     family: name.into(),
@@ -560,11 +569,13 @@ fn retain_source(
         } else {
             &mut flags.seven_day
         };
-        if let Some(after) = after {
-            if before.is_none_or(|b| b.reset_at_ms != after.reset_at_ms) && !*flag && !retain {
-                *flag = true;
-                retain = true;
-            }
+        if let Some(after) = after
+            && before.is_none_or(|b| b.reset_at_ms != after.reset_at_ms)
+            && !*flag
+            && !retain
+        {
+            *flag = true;
+            retain = true;
         }
     }
     if !retain {

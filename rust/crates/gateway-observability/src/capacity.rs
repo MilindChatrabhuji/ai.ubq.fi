@@ -70,14 +70,15 @@ pub fn claude_source(
     let mut observed = Vec::new();
     for document in [&windows, &standard] {
         if document.as_str().trim_start().starts_with('{') {
-            for (_, value) in document.object_entries()? {
-                if value.as_str().trim_start().starts_with('{') {
-                    if let Some(at) = SourceObject::parse(&value)?
+            for (_, value) in source::entries(document)
+                .ok_or_else(|| store::error("Invalid Claude numeric observation metadata"))?
+            {
+                if value.as_str().trim_start().starts_with('{')
+                    && let Some(at) = SourceObject::parse(&value)?
                         .get("observed_at_ms")
                         .and_then(number)
-                    {
-                        observed.push(at);
-                    }
+                {
+                    observed.push(at);
                 }
             }
         }

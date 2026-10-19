@@ -243,6 +243,16 @@ fn named_source_validators_keep_complete_key_version_numeric_flags_and_encoding_
             ])
         };
         assert!(validate(&key(parts.clone()), &record).is_err());
+        for index in 0..parts.as_array().unwrap().len() {
+            let mut wrong = parts.clone();
+            wrong[index] = wrong[index]
+                .as_f64()
+                .map_or_else(|| json!("wrong"), |n| json!(n + 1.0));
+            assert!(
+                validate(&key(wrong), &record).is_err(),
+                "accepted mismatched key part {index}"
+            );
+        }
         parts[3] = json!("v2");
         assert!(validate(&key(parts), &record).is_err());
     }
