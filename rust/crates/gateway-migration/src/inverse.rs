@@ -301,6 +301,26 @@ pub(crate) async fn export_rows<S: QueryStore>(
         if starts(&p, &["uos_ai", "migration"]) {
             continue;
         }
+        if starts(&p, &["uos_ai", "native_live"]) {
+            record.validate_version()?;
+            if p.len() != 5 || p[2] != "v1" || record.expires_at_ms.is_some() {
+                return Err(invalid(
+                    "Native live custody key or permanent retention is invalid",
+                ));
+            }
+            gateway_authority::native_live::validate_live_custody(
+                p[3].as_str()
+                    .ok_or_else(|| invalid("Native live custody kind is invalid"))?,
+                p[4].as_str()
+                    .ok_or_else(|| invalid("Native live custody reference is invalid"))?,
+                record.json_value()?,
+            )?;
+            controls.push(CustodyRecord {
+                key: k.clone(),
+                record: record.clone(),
+            });
+            continue;
+        }
         if starts(
             &p,
             &["uos_ai", "codex_live_calls", "v1", "pending_retirement"],
