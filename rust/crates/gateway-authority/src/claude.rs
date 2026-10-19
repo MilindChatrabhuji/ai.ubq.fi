@@ -7,7 +7,6 @@ use gateway_core::{
     GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
     source_serialization as source,
 };
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::store::Transaction;
@@ -20,7 +19,7 @@ struct Binding {
     credential_fingerprint: String,
     evidence_generation: String,
     credential_kind: String,
-    workspace_id: Option<String>,
+    workspace_id: Option<JsString16>,
 }
 
 /// Only a successful strong-read/check-only CAS can construct this secretless proof.
@@ -53,49 +52,70 @@ struct View {
     proven: bool,
 }
 
-fn source_trim(value: &str) -> &str {
-    value.trim_matches(|c| {
-        matches!(c,
-        '\u{9}'..='\u{d}' | '\u{20}' | '\u{a0}' | '\u{1680}' |
-        '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' |
-        '\u{205f}' | '\u{3000}' | '\u{feff}')
-    })
+fn source_trim(value: JsString16) -> JsString16 {
+    let units = value.as_units();
+    let whitespace =
+        |u: &u16| char::from_u32(u32::from(*u)).is_some_and(gateway_schema::util::js_whitespace);
+    let start = units
+        .iter()
+        .position(|u| !whitespace(u))
+        .unwrap_or(units.len());
+    let end = units
+        .iter()
+        .rposition(|u| !whitespace(u))
+        .map_or(start, |i| i + 1);
+    JsString16::from_units(units[start..end].to_vec())
 }
-
-fn opaque(value: &Value) -> Option<&str> {
-    value.as_str().filter(|value| {
-        value.len() == 36
-            && value
-                .bytes()
-                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c) || c == b'-')
-    })
+fn member(value: &SourceJson, name: &str) -> Option<SourceJson> {
+    source::member(value, name)
 }
-
-fn fingerprint(kind: &str, secret: &str, workspace: Option<&str>) -> Result<String, GatewayError> {
-    let input = serde_json::to_vec(&(kind, secret, workspace))
-        .map_err(|_| invalid("Claude credential binding could not be encoded."))?;
+fn scalar(value: &SourceJson, name: &str) -> Option<String> {
+    source::string(&member(value, name)?).and_then(|v| v.try_utf8().ok())
+}
+fn opaque(value: String) -> Option<String> {
+    (value.len() == 36
+        && value
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c) || c == b'-'))
+    .then_some(value)
+}
+fn fingerprint(
+    kind: &str,
+    secret: &JsString16,
+    workspace: Option<&JsString16>,
+) -> Result<String, GatewayError> {
+    let input = source::json_array(&[
+        SourceJson::from_serializable(kind)?,
+        secret.to_source_json()?,
+        SourceJson::from_serializable(&workspace)?,
+    ])?;
+    let input = source::canonical(&input)?;
     let mut output = String::with_capacity(64);
-    for byte in Sha256::digest(input) {
+    for byte in Sha256::digest(input.as_bytes()) {
         output.push(char::from(b"0123456789abcdef"[usize::from(byte >> 4)]));
         output.push(char::from(b"0123456789abcdef"[usize::from(byte & 15)]));
     }
     Ok(output)
 }
-
-fn safe_integer(value: &Value) -> Option<i64> {
-    let number = value.as_f64()?;
+fn safe_integer(value: &SourceJson) -> Option<i64> {
+    let number = source::number(value)?;
     (number.is_finite()
         && number.fract() == 0.0
         && number.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64)
         .then_some(number as i64)
 }
-
-fn parse_binding(value: &Value) -> Result<Binding, GatewayError> {
+fn parse_binding(value: &SourceJson) -> Result<Binding, GatewayError> {
     let fail = || invalid("Claude account roster binding is malformed.");
-    let account_id = opaque(&value["account_id"]).ok_or_else(fail)?;
-    let account_cohort_id = opaque(&value["account_cohort_id"]).ok_or_else(fail)?;
-    let evidence_generation = opaque(&value["evidence_generation"]).ok_or_else(fail)?;
-    let expected = value["credential_fingerprint"].as_str().ok_or_else(fail)?;
+    let account_id = scalar(value, "account_id")
+        .and_then(opaque)
+        .ok_or_else(fail)?;
+    let account_cohort_id = scalar(value, "account_cohort_id")
+        .and_then(opaque)
+        .ok_or_else(fail)?;
+    let evidence_generation = scalar(value, "evidence_generation")
+        .and_then(opaque)
+        .ok_or_else(fail)?;
+    let expected = scalar(value, "credential_fingerprint").ok_or_else(fail)?;
     if expected.len() != 64
         || !expected
             .bytes()
@@ -103,20 +123,26 @@ fn parse_binding(value: &Value) -> Result<Binding, GatewayError> {
     {
         return Err(fail());
     }
-    let credential = value
-        .get("credential")
-        .filter(|value| value.is_object())
+    let credential = member(value, "credential")
+        .filter(|v| source::entries(v).is_some())
         .ok_or_else(fail)?;
-    let secret = source_trim(credential["secret"].as_str().ok_or_else(fail)?);
-    if secret.is_empty() || secret.encode_utf16().count() > 512 {
+    let secret = source_trim(
+        member(&credential, "secret")
+            .as_ref()
+            .and_then(source::string)
+            .ok_or_else(fail)?,
+    );
+    if secret.as_units().is_empty() || secret.as_units().len() > 512 {
         return Err(fail());
     }
-    let kind = match credential["kind"].as_str() {
+    let kind = match scalar(&credential, "kind").as_deref() {
         Some("api_key") => "api_key",
         Some("oauth") => "oauth",
         _ => {
-            let prefix = secret.to_ascii_lowercase();
-            if prefix.starts_with("sk-ant-oat") || prefix.starts_with("sk-ant-ort") {
+            let prefix = secret.prefix_units(10).try_utf8().ok();
+            if prefix.as_deref().is_some_and(|s| {
+                s.eq_ignore_ascii_case("sk-ant-oat") || s.eq_ignore_ascii_case("sk-ant-ort")
+            }) {
                 "oauth"
             } else {
                 "api_key"
@@ -124,84 +150,89 @@ fn parse_binding(value: &Value) -> Result<Binding, GatewayError> {
         }
     };
     if !matches!(
-        credential["source"].as_str(),
+        scalar(&credential, "source").as_deref(),
         Some("kv" | "CLAUDE_API_KEY" | "CLAUDE_CODE_OAUTH_TOKEN")
     ) {
         return Err(fail());
     }
-    if let Some(updated) = credential
-        .get("updated_at_ms")
-        .filter(|value| !value.is_null())
-        && !updated
-            .as_f64()
-            .is_some_and(|value| value.is_finite() && value > 0.0)
-    {
-        return Err(fail());
-    }
-    let workspace_id = match value.get("workspace") {
-        Some(Value::Null) => None,
-        Some(workspace) if workspace.is_object() => {
-            let id = source_trim(workspace["id"].as_str().ok_or_else(fail)?);
-            if id.is_empty() || id.encode_utf16().count() > 256 {
-                return Err(fail());
-            }
-            Some(id.to_owned())
+    if let Some(updated) = member(&credential, "updated_at_ms").filter(|v| v.as_str() != "null") {
+        if !source::number(&updated).is_some_and(|v| v.is_finite() && v > 0.0) {
+            return Err(fail());
         }
-        _ => return Err(fail()),
+    }
+    let workspace = member(value, "workspace").ok_or_else(fail)?;
+    let workspace_id = if workspace.as_str() == "null" {
+        None
+    } else {
+        if source::entries(&workspace).is_none() {
+            return Err(fail());
+        }
+        let id = source_trim(
+            member(&workspace, "id")
+                .as_ref()
+                .and_then(source::string)
+                .ok_or_else(fail)?,
+        );
+        if id.as_units().is_empty() || id.as_units().len() > 256 {
+            return Err(fail());
+        }
+        Some(id)
     };
-    if expected != fingerprint(kind, secret, workspace_id.as_deref())? {
+    if expected != fingerprint(kind, &secret, workspace_id.as_ref())? {
         return Err(invalid(
             "Claude credential fingerprint does not match its current binding.",
         ));
     }
     Ok(Binding {
-        account_id: account_id.to_owned(),
-        account_cohort_id: account_cohort_id.to_owned(),
-        credential_fingerprint: expected.to_owned(),
-        evidence_generation: evidence_generation.to_owned(),
-        credential_kind: kind.to_owned(),
+        account_id,
+        account_cohort_id,
+        credential_fingerprint: expected,
+        evidence_generation,
+        credential_kind: kind.into(),
         workspace_id,
     })
 }
-
-fn roster(value: &Value) -> Result<Option<View>, GatewayError> {
+fn roster(value: &SourceJson) -> Result<Option<View>, GatewayError> {
     let fail = || invalid("Claude account roster is malformed.");
-    if value.is_null() {
+    if value.as_str() == "null" {
         return Ok(None);
     }
-    if safe_integer(&value["v"]) != Some(1)
-        || !value["active_reason"].is_string()
-        || safe_integer(&value["updated_at_ms"])
-            .and_then(|value| positive(value).ok())
+    if member(value, "v").as_ref().and_then(safe_integer) != Some(1)
+        || member(value, "active_reason")
+            .as_ref()
+            .and_then(source::string)
+            .is_none()
+        || member(value, "updated_at_ms")
+            .as_ref()
+            .and_then(safe_integer)
+            .and_then(|v| positive(v).ok())
             .is_none()
     {
         return Err(fail());
     }
-    let rows = value["accounts"]
-        .as_array()
-        .filter(|rows| rows.len() <= 32)
+    let rows = member(value, "accounts")
+        .as_ref()
+        .and_then(source::array)
+        .filter(|v| v.len() <= 32)
         .ok_or_else(fail)?;
     let bindings = rows
         .iter()
         .map(parse_binding)
         .collect::<Result<Vec<_>, _>>()?;
     let mut ids = BTreeSet::new();
-    if bindings
-        .iter()
-        .any(|binding| !ids.insert(binding.account_id.clone()))
-    {
+    if bindings.iter().any(|b| !ids.insert(b.account_id.clone())) {
         return Err(fail());
     }
-    let active = value.get("active_account_id").ok_or_else(fail)?;
-    if active.is_null() {
+    let active = member(value, "active_account_id").ok_or_else(fail)?;
+    if active.as_str() == "null" {
         return Ok(None);
     }
-    let active = active
-        .as_str()
-        .filter(|active| ids.contains(*active))
+    let active = source::string(&active)
+        .and_then(|v| v.try_utf8().ok())
+        .filter(|v| ids.contains(v))
         .ok_or_else(fail)?;
     Ok(Some(View {
-        active_account_id: active.to_owned(),
+        active_account_id: active,
         bindings,
         proven: false,
     }))
@@ -353,7 +384,10 @@ async fn read_view<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     model: &ModelId,
 ) -> Result<Option<View>, GatewayError> {
-    let Some(raw) = tx.read::<Value>(&keys::claude_accounts()).await? else {
+    let Some(raw) = tx
+        .read_source_control::<SourceJson>(&keys::claude_accounts())
+        .await?
+    else {
         return Ok(None);
     };
     let Some(mut view) = roster(&raw)? else {
@@ -444,3 +478,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "claude_source_binding_tests.rs"]
+mod source_binding_tests;
