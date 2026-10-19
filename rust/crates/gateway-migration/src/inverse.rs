@@ -496,12 +496,12 @@ pub(crate) async fn export_rows<S: QueryStore>(
 async fn export_internal<S: QueryStore>(
     store: &S,
     now_ms: i64,
-) -> Result<(PrivateCapture, Vec<CustodyRecord>), GatewayError> {
+) -> Result<(PrivateCapture, Vec<CustodyRecord>), MigrationError> {
     let (manifest, rows, controls) = export_rows(store, now_ms).await?;
     if manifest.native_revision.is_some() {
-        return Err(unavailable(
+        return Err(MigrationError::from(unavailable(
             "A native graph capture requires explicit native latest-state export",
-        ));
+        )));
     }
     let mut entries = Vec::new();
     for row in rows {
@@ -553,13 +553,13 @@ async fn export_internal<S: QueryStore>(
 pub async fn export_latest<S: QueryStore>(
     store: &S,
     now_ms: i64,
-) -> Result<PrivateCapture, GatewayError> {
+) -> Result<PrivateCapture, MigrationError> {
     let (source, controls) = export_internal(store, now_ms).await?;
     if !controls.is_empty() {
-        return Err(GatewayError::unavailable(
+        return Err(MigrationError::from(GatewayError::unavailable(
             "Rust-only control/replay custody requires export_rollback_bundle; source-only export would omit it",
             "migration_control_custody_required",
-        ));
+        )));
     }
     Ok(source)
 }
@@ -590,7 +590,7 @@ pub async fn export_rollback_bundle<S: QueryStore>(
     store: &S,
     now_ms: i64,
     artifacts: ArtifactContext,
-) -> Result<PrivateRollbackBundle, GatewayError> {
+) -> Result<PrivateRollbackBundle, MigrationError> {
     validate_artifacts(&artifacts)?;
     let (source, rust_controls) = export_internal(store, now_ms).await?;
     Ok(PrivateRollbackBundle {

@@ -2,6 +2,7 @@
 //! This library neither opens a source VM database nor grants runtime/publication ownership.
 mod capture;
 mod engine;
+mod error;
 pub mod graph_transport;
 mod graph_tree;
 mod indexes;
@@ -21,6 +22,7 @@ mod projection;
 
 pub use capture::{PrivateCapture, SourceEntry};
 pub use engine::{AdoptionReceipt, PreparedAdoption, adopt_empty, prepare};
+pub use error::MigrationError;
 pub use gateway_admin_data::profile::{CanonicalDates, SourceDateHost};
 pub use inverse::{
     ArtifactContext, CustodyRecord, PrivateRollbackBundle, export_latest, export_rollback_bundle,

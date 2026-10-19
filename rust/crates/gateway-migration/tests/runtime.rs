@@ -1041,12 +1041,7 @@ fn rust_control_nonce_custody_is_separate_and_source_only_export_cannot_drop_it(
     let owner = gateway_authority::keys::paid_control_owner();
     store.put(owner.clone(),StoredRecord::json("current-owner-revision",json!({"v":1,"owner_id":"fixture-owner","owner_epoch":"fixture-epoch","key_fingerprint":"f".repeat(64)}),None));
     assert_eq!(
-        run(export_latest(&store, 2300))
-            .unwrap_err()
-            .envelope
-            .error
-            .code
-            .as_deref(),
+        run(export_latest(&store, 2300)).unwrap_err().code(),
         Some("migration_control_custody_required")
     );
     let context = ArtifactContext {
@@ -1102,12 +1097,7 @@ fn inverse_refuses_to_drop_derived_kernel_policy_without_matching_source_default
     changed.value["usage_limit_requests"] = json!(17);
     store.put(key, changed);
     assert_eq!(
-        run(export_latest(&store, 2300))
-            .unwrap_err()
-            .envelope
-            .error
-            .code
-            .as_deref(),
+        run(export_latest(&store, 2300)).unwrap_err().code(),
         Some("migration_state_invalid")
     );
     store.put(

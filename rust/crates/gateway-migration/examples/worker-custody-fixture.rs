@@ -6,7 +6,7 @@ mod host;
 #[path = "worker-custody-fixture/port.rs"]
 mod port;
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), gateway_core::GatewayError> {
+fn main() -> Result<(), gateway_migration::MigrationError> {
     use gateway_core::state::AuthorityStore;
     use gateway_migration::{operational::ArtifactInput, *};
     use serde::{Deserialize, Serialize};
@@ -44,7 +44,7 @@ fn main() -> Result<(), gateway_core::GatewayError> {
     );
     let init: Initialize = port::read()?;
     if init.v != 1 {
-        return Err(port::error("Unsupported fixture initialization"));
+        return Err(port::error("Unsupported fixture initialization").into());
     }
     let store = port::Store::default();
     let fixed = host::Host::from_stopped_fixture(&init.directory, &init.capture, init.now_ms)?;
@@ -55,7 +55,7 @@ fn main() -> Result<(), gateway_core::GatewayError> {
     })?;
     let export: Export = port::read()?;
     if export.v != 1 {
-        return Err(port::error("Unsupported fixture export"));
+        return Err(port::error("Unsupported fixture export").into());
     }
     let current =
         support_run(store.read(&gateway_auth::provider_credentials::codex_source_pool_key()))?
@@ -73,7 +73,8 @@ fn main() -> Result<(), gateway_core::GatewayError> {
         source,
         rust_controls,
         artifacts,
-    })
+    })?;
+    Ok(())
 }
 #[cfg(not(target_arch = "wasm32"))]
 fn support_run<F: std::future::Future>(future: F) -> F::Output {
