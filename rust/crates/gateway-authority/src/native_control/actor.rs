@@ -74,6 +74,8 @@ pub(crate) struct StoredNativeActor {
     owner_revision: Option<String>,
     config_revision: Option<String>,
     runtime_revision: Option<String>,
+    #[serde(deserialize_with = "required_expiry")]
+    source_valid_until_ms: Option<i64>,
     source: SourceActor,
 }
 impl StoredNativeActor {
@@ -91,7 +93,7 @@ enum SourceActor {
         key_id: String,
         token_hash: String,
         hash_revision: String,
-        policy_revision: String,
+        policy_revision: Option<String>,
         #[serde(deserialize_with = "required_expiry")]
         expires_at_ms: Option<i64>,
     },
@@ -237,12 +239,12 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
                     Some(expires_at_ms.map_or(source_expiry, |expiry| expiry.min(source_expiry)));
             }
             let policy_key = keys::api_policy(key_id);
-            let _: crate::quota::ApiKeyPolicy = tx.read(&policy_key).await?.ok_or_else(fail)?;
+            let _: Option<crate::quota::ApiKeyPolicy> = tx.read(&policy_key).await?;
             SourceActor::ApiKey {
                 key_id: key_id.clone(),
                 token_hash: policy.token_hash.clone(),
                 hash_revision: tx.revision(&key).ok_or_else(fail)?,
-                policy_revision: tx.revision(&policy_key).ok_or_else(fail)?,
+                policy_revision: tx.revision(&policy_key),
                 expires_at_ms,
             }
         }
@@ -348,7 +350,7 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
     let owner_revision = observed(&mut tx, &keys::paid_control_owner()).await?;
     let config_revision = observed(&mut tx, &keys::paid_control_config()).await?;
     let runtime_revision = observed(&mut tx, &runtime_key()).await?;
-    let stored = StoredNativeActor {
+    let mut stored = StoredNativeActor {
         v: 1,
         principal: principal_id(&principal),
         scope,
@@ -356,9 +358,24 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
         owner_revision,
         config_revision,
         runtime_revision,
+        source_valid_until_ms: None,
         source,
     };
     tx.now = authority.fresh_time(now)?;
+    read_current(&mut tx, &stored, config).await?;
+    for key in source_keys(&stored)? {
+        let record = authority.store().read(&key).await?;
+        if tx.revision(&key).as_deref() != record.as_ref().map(|row| row.revision.as_str()) {
+            return Err(fail());
+        }
+        if let Some(expiry) = record.and_then(|row| row.expires_at_ms) {
+            stored.source_valid_until_ms = Some(
+                stored
+                    .source_valid_until_ms
+                    .map_or(expiry, |prior| prior.min(expiry)),
+            );
+        }
+    }
     let current = read_current(&mut tx, &stored, config).await?;
     tx.now = authority.fresh_time(tx.now)?;
     ensure_lifetime(&stored, tx.now)?;
@@ -436,15 +453,18 @@ pub(crate) async fn read_current<S: AuthorityStore, I: TokenSource>(
             let record: api_keys::ApiKeyHashRecord = tx.read(&key).await?.ok_or_else(fail)?;
             let policy = api_keys::policy_from_record(token_hash.clone(), record, tx.now)?;
             let policy_key = keys::api_policy(key_id);
-            let normalized: crate::quota::ApiKeyPolicy =
-                tx.read(&policy_key).await?.ok_or_else(fail)?;
-            normalized.validate(&gateway_core::identity::ApiKeyId(key_id.clone()), tx.now)?;
+            let normalized: Option<crate::quota::ApiKeyPolicy> = tx.read(&policy_key).await?;
+            if let Some(normalized) = &normalized {
+                normalized.validate(&gateway_core::identity::ApiKeyId(key_id.clone()), tx.now)?;
+            }
             if policy.key_id != *key_id
                 || tx.revision(&key).as_ref() != Some(hash_revision)
-                || tx.revision(&policy_key).as_ref() != Some(policy_revision)
-                || policy.expires_at_ms != normalized.expires_at_ms
-                || policy.window_ms != normalized.window_ms
-                || policy.usage_limit_requests != normalized.usage_limit_requests
+                || tx.revision(&policy_key) != *policy_revision
+                || normalized.as_ref().is_some_and(|normalized| {
+                    policy.expires_at_ms != normalized.expires_at_ms
+                        || policy.window_ms != normalized.window_ms
+                        || policy.usage_limit_requests != normalized.usage_limit_requests
+                })
             {
                 return Err(fail());
             }
@@ -523,6 +543,12 @@ pub(crate) async fn read_current<S: AuthorityStore, I: TokenSource>(
 }
 
 fn ensure_lifetime(stored: &StoredNativeActor, now: i64) -> Result<(), GatewayError> {
+    if stored
+        .source_valid_until_ms
+        .is_some_and(|expiry| expiry <= now)
+    {
+        return Err(fail());
+    }
     let expiry = match &stored.source {
         SourceActor::Session { expires_at_ms, .. } | SourceActor::Kernel { expires_at_ms, .. } => {
             Some(*expires_at_ms)
@@ -637,3 +663,31 @@ async fn kernel_before<S: AuthorityStore, I: TokenSource>(
 #[cfg(test)]
 #[path = "actor_tests.rs"]
 mod tests;
+
+fn source_keys(stored: &StoredNativeActor) -> Result<Vec<RecordKey>, GatewayError> {
+    let mut selected = vec![
+        keys::paid_control_owner(),
+        keys::paid_control_config(),
+        runtime_key(),
+    ];
+    match &stored.source {
+        SourceActor::ApiKey {
+            key_id, token_hash, ..
+        } => selected.extend([api_keys::hash_key(token_hash), keys::api_policy(key_id)]),
+        SourceActor::Session {
+            digest, user_id, ..
+        } => selected.extend([
+            session_index::index_key(digest)?,
+            passkeys::key("users", user_id),
+        ]),
+        SourceActor::Kernel { owner, repo, .. } => selected.extend([
+            keys::kernel_policy(owner, Some(repo)),
+            keys::kernel_policy(owner, None),
+            keys::kernel_defaults(),
+            keys::kernel_cutover(),
+            upstream::kernel_public_keys_key(),
+        ]),
+        _ => {}
+    }
+    Ok(selected)
+}
