@@ -27,6 +27,8 @@ type MixedReport = {
   versions: Record<string, string>;
   actualSQLiteDurableObject: boolean;
   actualBunHttpClients: number;
+  originalActualBunHttpClients: number;
+  nativeBindingVerificationClients: number;
   actualWorkerClients: boolean;
   providerCalls: number;
   originalProviderCalls: number;
@@ -40,6 +42,19 @@ type MixedReport = {
   bundleSha256: string;
   persistedFiles: string[];
   final: { paidRequestCount: number; paidRequestBytes: number; permanentRollups: number; permanentGuards: number };
+  control: {
+    state: string;
+    orderedCaseIds: string[];
+    cases: {
+      id: string;
+      clients: { bun: number; worker: number };
+      before: { doId: string };
+      after: { doId: string; active: number; clients: { bun: number; worker: number }; rows: Record<string, unknown[]>; verifications: unknown[] };
+    }[];
+    clients: { bun: number; worker: number };
+    cleanupCalls: number;
+    sqliteObjects: string[];
+  };
 };
 
 test("real mixed Bun HTTP and Worker clients preserve native authority contention, histories, persistence and transport", async () => {
@@ -83,6 +98,7 @@ test("real mixed Bun HTTP and Worker clients preserve native authority contentio
       "../../../src/authority/native-authority.ts",
       "../../../src/authority/native-codex-contracts.ts",
       "../../../src/authority/native-paid.ts",
+      "./principal-control-sources.mjs",
       "cloudflare:workers",
     ]);
     expect(report.actualSQLiteDurableObject).toBe(true);
@@ -115,6 +131,27 @@ test("real mixed Bun HTTP and Worker clients preserve native authority contentio
       "R2-refresh-revision",
     ]);
     expect(report.reviews.every((item) => item.clients.bun > 0 && item.clients.worker > 0)).toBe(true);
+    expect(report.control.state).toBe("passed");
+    expect(report.control.orderedCaseIds).toEqual(Array.from({ length: 28 }, (_, index) => "P" + String(index + 1).padStart(2, "0")));
+    expect(report.control.cases.map((item) => item.id)).toEqual(report.control.orderedCaseIds);
+    expect(new Set(report.control.sqliteObjects).size).toBe(28);
+    expect(report.control.clients.bun).toBeGreaterThanOrEqual(28);
+    expect(report.control.clients.worker).toBeGreaterThanOrEqual(28);
+    expect(report.control.cleanupCalls).toBeGreaterThanOrEqual(7);
+    expect(report.originalActualBunHttpClients).toBeGreaterThanOrEqual(12);
+    expect(report.nativeBindingVerificationClients).toBe(1);
+    expect(report.actualBunHttpClients).toBe(report.originalActualBunHttpClients + report.control.clients.bun);
+    for (const item of report.control.cases) {
+      expect(item.clients.bun).toBeGreaterThan(0);
+      expect(item.clients.worker).toBeGreaterThan(0);
+      expect(item.after.clients.bun).toBeGreaterThan(0);
+      expect(item.after.clients.worker).toBeGreaterThan(0);
+      expect(item.after.active).toBe(0);
+      expect(item.after.doId).toBe(item.before.doId);
+      expect(item.after.verifications.length).toBeGreaterThan(0);
+      for (const table of ["api_key_id", "api_key_hash", "key_control_grant", "key_control_receipt", "api_key_audit", "paid_deletion_guard"])
+        expect(Array.isArray(item.after.rows[table]), table).toBe(true);
+    }
     expect(report.children).toBe(0);
     expect(report.assertions).toEqual(ASSERTIONS);
     expect(report.phases.map((phase) => phase.name)).toEqual(PHASES);
@@ -127,6 +164,8 @@ test("real mixed Bun HTTP and Worker clients preserve native authority contentio
       ["fixture-worker.mjs", new URL("./fixtures/native-authority/fixture-worker.mjs", import.meta.url)],
       ["bun-client.ts", new URL("./fixtures/native-authority/bun-client.ts", import.meta.url)],
       ["mixed-client-workerd.mjs", new URL("./fixtures/native-authority/mixed-client-workerd.mjs", import.meta.url)],
+      ["principal-control-cases.mjs", new URL("./fixtures/native-authority/principal-control-cases.mjs", import.meta.url)],
+      ["principal-control-sources.mjs", new URL("./fixtures/native-authority/principal-control-sources.mjs", import.meta.url)],
     ] as const) {
       expect(createHash("sha256").update(readFileSync(url)).digest("hex"), name).toBe(report.fixtureHashes[name]);
     }
@@ -143,6 +182,14 @@ test("real mixed Bun HTTP and Worker clients preserve native authority contentio
         suffix
       ).toBe(true);
     }
+    for (const path of [
+      "src/authority/native-principal-contracts.ts",
+      "src/authority/native-authority-principals.ts",
+      "src/paid-fallback/index.ts",
+      "src/auth/local-development-key.ts",
+      "src/provider/metered.ts",
+    ])
+      expect(typeof report.sourceHashes[path], path).toBe("string");
     const bundlePath = resolve(dirname(reportPath), "workerd-bundle.mjs");
     expect(createHash("sha256").update(readFileSync(bundlePath)).digest("hex")).toBe(report.bundleSha256);
     const evidenceDirectory = resolve(ROOT, ".tmp/native-authority-evidence");
