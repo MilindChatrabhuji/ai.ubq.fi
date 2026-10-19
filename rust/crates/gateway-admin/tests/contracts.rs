@@ -937,7 +937,7 @@ async fn prepare_paid_fixture_custody(store: &Store, host: &Host) {
         source_valid_until_ms: None,
         stale: false,
         models: vec![
-            json!({"id":"paid-model","supported_endpoint_types":["openai-response"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002}),
+            source(&json!({"id":"paid-model","supported_endpoint_types":["openai-response"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002})),
         ],
         source_checks: Vec::new(),
     };
@@ -1085,7 +1085,7 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
                 &request,
                 &PaidRequestContext {
                     original_model: request.model.clone(),
-                    body: json!({"model":request.model,"stream":false}),
+                    body: source(&json!({"model":request.model,"stream":false})),
                     surface: gateway_providers::ClientSurface::Responses,
                     synthetic_hop: None,
                 },
