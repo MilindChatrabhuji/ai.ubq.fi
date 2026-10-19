@@ -232,10 +232,16 @@ impl CatalogHost for Host {
             CatalogFetch::Provider {
                 provider: CatalogProvider::Surplus,
                 ..
-            }
+            } | CatalogFetch::AnonymousSurplus
         ));
         self.requests.borrow_mut().push(request);
         Ok(CatalogFetchResponse::json(self.status,source_catalog::json(&json!({"data":[{"id":"gpt-known","supported_endpoint_types":["openai-response","openai"],"supported_parameters":["tools","tool_choice"],"supported_features":["tools"],"pricing":{"prompt":"0.001","completion":"0.002"}}]})).as_str().to_owned()))
+    }
+}
+struct Clock;
+impl gateway_authority::AuthorityClock for Clock {
+    fn now_ms(&self) -> Result<i64, GatewayError> {
+        Ok(NOW)
     }
 }
 struct Tokens;
@@ -272,7 +278,7 @@ fn selected_paid_credential_publishes_real_fenced_catalog_once_before_authority_
         let store = Store::default();
         let inputs = install(&store).await;
         let host = Host::new(Some(&inputs));
-        let authority = Authority::new(store.clone(), Tokens)
+        let authority = Authority::with_clock(store.clone(), Tokens, Clock)
             .with_source_string_collator(Arc::new(source_catalog::Collator::captured()));
         let (request, context) = request();
         let missing = authority
@@ -408,7 +414,7 @@ fn failed_discovery_does_not_invent_an_observation_or_paid_authority() {
         let mut host = Host::new(Some(&inputs));
         host.status = 500;
         let _ = prepare_credential_catalog(UpstreamProvider::Surplus, &store, &host).await;
-        let authority = Authority::new(store.clone(), Tokens)
+        let authority = Authority::with_clock(store.clone(), Tokens, Clock)
             .with_source_string_collator(Arc::new(source_catalog::Collator::captured()));
         let (request, context) = request();
         assert!(
