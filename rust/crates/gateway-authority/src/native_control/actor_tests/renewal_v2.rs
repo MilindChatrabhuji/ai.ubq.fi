@@ -744,11 +744,13 @@ fn native_action_source_custody_is_lossless_data_not_an_operation_capability() {
             .get(&rows::key("action", action.action_ref()).0)
             .unwrap()
             .clone();
+        validate_native_control_custody(&rows::key("action", action.action_ref()), &record)
+            .expect("actual prepared action must satisfy its source custody schema");
         let template: rows::ActionRow = decode_source_control_record(&record)
             .unwrap()
             .deserialize()
             .unwrap();
-        for units in [
+        for (case, units) in [
             "fixture-model".encode_utf16().collect(),
             vec![0xd800],
             vec![0xdc00],
@@ -757,7 +759,10 @@ fn native_action_source_custody_is_lossless_data_not_an_operation_capability() {
             vec![0, 10, 34, 92],
             r"\ud800".encode_utf16().collect(),
             vec![u16::from(b'm'); 4097],
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             // A data-only custody fixture is never passed off as an admitted
             // Journal or a minted native control/refresh permission.
             let mut row = template.clone();
@@ -786,7 +791,8 @@ fn native_action_source_custody_is_lossless_data_not_an_operation_capability() {
                     ValueEncoding::ProfileV2
                 }
             );
-            validate_native_control_custody(&key, &record).unwrap();
+            validate_native_control_custody(&key, &record)
+                .unwrap_or_else(|error| panic!("source custody case {case}: {error:?}"));
             let reopened: StoredRecord =
                 serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
             let roundtrip: rows::ActionRow = decode_source_control_record(&reopened)
