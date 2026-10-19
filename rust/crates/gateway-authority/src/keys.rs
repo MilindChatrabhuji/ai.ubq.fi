@@ -279,6 +279,28 @@ pub fn paid_rollup(bucket: i64, model: &str, provider: &str, shard: u8) -> Recor
         Number(i64::from(shard)),
     ])
 }
+/// Source physical model component. Distinct logical UTF16 labels may intentionally
+/// share the existing TextEncoder key bytes; callers retain each logical label.
+pub fn paid_rollup_model(
+    bucket: i64,
+    model: &gateway_core::model::ModelId,
+    provider: &str,
+    shard: u8,
+) -> RecordKey {
+    use gateway_core::tuple_key::KeyPart;
+    TupleKey::from_parts(&[
+        KeyPart::String("uos_ai".into()),
+        KeyPart::String("paid_fallback".into()),
+        KeyPart::String("v3".into()),
+        KeyPart::String("usage_rollup".into()),
+        KeyPart::Number(bucket as f64),
+        KeyPart::source_string_utf16(model.as_js_string().as_units()),
+        KeyPart::String(provider.into()),
+        KeyPart::Number(f64::from(shard)),
+    ])
+    .expect("Integer bucket/shard and source string parts are finite tuple inputs")
+    .to_record_key()
+}
 pub fn reset_redemption(hash: &str, generation: &str) -> RecordKey {
     key(&[
         Text("uos_ai"),

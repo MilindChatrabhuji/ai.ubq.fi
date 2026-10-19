@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use gateway_core::GatewayError;
 use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
@@ -7,6 +8,7 @@ use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
     StoredRecord,
 };
+use gateway_schema::aliases::SourceStringCollator;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -27,6 +29,22 @@ pub struct Authority<S, I> {
     pub(crate) store: S,
     pub(crate) tokens: I,
     clock: Option<Box<dyn AuthorityClock>>,
+    source_string_collator: Option<Arc<dyn SourceStringCollator>>,
+}
+
+struct MissingSourceStringCollator;
+static MISSING_SOURCE_STRING_COLLATOR: MissingSourceStringCollator = MissingSourceStringCollator;
+impl SourceStringCollator for MissingSourceStringCollator {
+    fn compare(
+        &self,
+        _left: &gateway_core::js_string::JsString16,
+        _right: &gateway_core::js_string::JsString16,
+    ) -> Result<std::cmp::Ordering, GatewayError> {
+        Err(GatewayError::unavailable(
+            "Source string comparison requires the trusted runtime capability.",
+            "source_string_collation_unavailable",
+        ))
+    }
 }
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
@@ -35,6 +53,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             store,
             tokens,
             clock: None,
+            source_string_collator: None,
         }
     }
 
@@ -43,7 +62,20 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             store,
             tokens,
             clock: Some(Box::new(clock)),
+            source_string_collator: None,
         }
+    }
+
+    /// Trusted source-runtime comparison capability, never a request/token field.
+    pub fn with_source_string_collator(mut self, collator: Arc<dyn SourceStringCollator>) -> Self {
+        self.source_string_collator = Some(collator);
+        self
+    }
+
+    pub(crate) fn source_string_collator(&self) -> &dyn SourceStringCollator {
+        self.source_string_collator
+            .as_deref()
+            .unwrap_or(&MISSING_SOURCE_STRING_COLLATOR)
     }
 
     pub(crate) fn fresh_time(&self, started_at: i64) -> Result<i64, GatewayError> {
@@ -154,7 +186,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         &mut self,
         account_id: &str,
         cohort_id: &str,
-    ) -> Result<Option<serde_json::Value>, GatewayError> {
+    ) -> Result<Option<SourceJson>, GatewayError> {
         let key = crate::keys::claude_quota(account_id, cohort_id);
         self.cached_record(&key)
             .await?
@@ -162,7 +194,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
                 gateway_core::value::ValueEncoding::ProfileV2 => Ok(
                     crate::claude::quota_proof_metadata(&row.profile_v2_value()?),
                 ),
-                _ => row.json_value().cloned(),
+                _ => SourceJson::from_serializable(row.json_value()?),
             })
             .transpose()
     }
