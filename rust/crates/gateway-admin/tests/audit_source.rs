@@ -60,6 +60,27 @@ fn run<F: Future>(future: F) -> F::Output {
     }
 }
 struct Rows(Vec<QueryEntry>);
+impl gateway_core::state::AuthorityStore for Rows {
+    async fn read(
+        &self,
+        key: &gateway_core::state::RecordKey,
+    ) -> Result<Option<StoredRecord>, GatewayError> {
+        Ok(self
+            .0
+            .iter()
+            .find(|entry| &entry.key == key)
+            .map(|entry| entry.record.clone()))
+    }
+    async fn commit(
+        &self,
+        _: gateway_core::state::AtomicTransition,
+    ) -> Result<gateway_core::state::CommitOutcome, GatewayError> {
+        Err(GatewayError::unavailable(
+            "Audit read fixture refuses writes",
+            "fixture_write_denied",
+        ))
+    }
+}
 impl QueryStore for Rows {
     async fn query(&self, request: QueryRequest) -> Result<QueryPage, GatewayError> {
         assert_eq!(request.limit, 20);
