@@ -1,5 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   PRIVATE_WIRE_MAX_BYTES,
   compareLatest,
@@ -207,3 +208,92 @@ test("private stream refuses a line beyond the original native32MiB wire bound",
       assert(line);
   });
 });
+
+async function framed(bytes: Uint8Array, chunkSize: number): Promise<string[]> {
+  let at = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (at === bytes.length) {
+        controller.close();
+        return;
+      }
+      const end = Math.min(bytes.length, at + chunkSize);
+      controller.enqueue(bytes.slice(at, end));
+      at = end;
+    },
+  });
+  const result: string[] = [];
+  for await (const frame of privateLines(stream)) result.push(frame);
+  return result;
+}
+test("actual multiline native-source capture is one lossless frame, including original structural LF", async () => {
+  const source = readFileSync(new URL("../rust/crates/gateway-migration/tests/fixtures/native-source.json", import.meta.url), "utf8");
+  const raw = `{"operation":"candidate","capture":${source}}`;
+  const bytes = new TextEncoder().encode(raw + "\n");
+  for (const size of [1, 7, bytes.length]) {
+    const frames = await framed(bytes, size);
+    assert.equal(frames.length, 1);
+    assert(frames[0] === raw, "Every original multiline capture byte must survive framing.");
+    const value: unknown = JSON.parse(frames[0]);
+    assert(typeof value === "object" && value !== null);
+  }
+});
+test("byte framing retains exact UTF16 escapes, numbers, quotes, backslashes and braces inside strings", async () => {
+  const raw =
+    String.raw` { "tokens": [1e3,-0,9007199254740993],
+    "strings": ["\ud800", "\" \\ {} []", "escaped\nnot-a-frame"], "nested": {"α":[{},[]]} } ` + "\r";
+  const bytes = new TextEncoder().encode(raw + "\n");
+  for (const size of [1, 2, 3, bytes.length]) {
+    const frames = await framed(bytes, size);
+    assert(frames.length === 1 && frames[0] === raw, "Framer cannot normalize native source JSON.");
+    JSON.parse(frames[0]);
+  }
+});
+test("coalesced and byte-split multiline request/response frames retain original fixed ids and raw request token", async () => {
+  const request = `{\n"operation":"store_request","id":7,"request":{"operation":"read",\n"key":"tuple-v1:00"}}`;
+  const response = `{\n"operation":"read","record":null\n}`;
+  const wire = new TextEncoder().encode(request + "\n" + response + "\n");
+  for (const size of [1, 5, wire.length]) {
+    const frames = await framed(wire, size);
+    assert.deepEqual(frames, [request, response]);
+    const message = decodeStoreMessage(frames[0], 6);
+    assert.equal(message.id, 7);
+    assert.equal(message.rawRequest, '{"operation":"read",\n"key":"tuple-v1:00"}');
+    assert.equal(storeResponse(message, frames[1]), `{"operation":"store_response","id":7,"response":${response}}`);
+    assert.throws(() => decodeStoreMessage(frames[0], 7));
+  }
+});
+test("incomplete/mismatched/trailing roots and non-UTF8 framing are refused without yielding a false complete document", async () => {
+  for (const raw of ["{", "{}", '{"x":"unfinished', '{"x":[}]}\n', "{}{}\n", "{}x\n", "\n", "[]\n"])
+    await assert.rejects(framed(new TextEncoder().encode(raw), 1));
+  await assert.rejects(framed(new Uint8Array([123, 34, 115, 34, 58, 34, 255, 34, 125, 10]), 1));
+  for (const raw of ['{"x":}\n', '{"x":"\\q"}\n'])
+    await assert.rejects(async () => {
+      for (const frame of await framed(new TextEncoder().encode(raw), 2)) JSON.parse(frame);
+    });
+});
+test("the32MiB bound is cumulative across structuralLF, not a fresh allowance per physical line", async () => {
+  const chunk = new Uint8Array(1024 * 1024).fill(32);
+  chunk[chunk.length - 1] = 10;
+  let emitted = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (emitted++ === 0) controller.enqueue(new TextEncoder().encode("{\n"));
+      else if (emitted <= 33) controller.enqueue(chunk);
+      else controller.close();
+    },
+  });
+  await assert.rejects(async () => {
+    for await (const frame of privateLines(stream)) assert(frame);
+  }, /frame exceeded its bound/);
+}, 10_000);
+test("the original whole-frame limit includes and permits its final requiredLF at exactly32MiB", async () => {
+  const bytes = new Uint8Array(PRIVATE_WIRE_MAX_BYTES).fill(32);
+  bytes[bytes.length - 3] = 123;
+  bytes[bytes.length - 2] = 125;
+  bytes[bytes.length - 1] = 10;
+  const frames = await framed(bytes, 1024 * 1024);
+  assert.equal(frames.length, 1);
+  assert.equal(new TextEncoder().encode(frames[0]).length, PRIVATE_WIRE_MAX_BYTES - 1);
+  assert(frames[0].endsWith("{}"));
+}, 10_000);
