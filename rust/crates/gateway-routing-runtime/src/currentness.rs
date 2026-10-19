@@ -130,6 +130,7 @@ pub enum RoutingLeaseState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ObservedRoutingLease {
     observed_at_ms: i64,
+    // Request-journal coordination only; never a caller or API/kernel deadline.
     request_expires_at_ms: i64,
     kernel_expires_at_ms: Option<i64>,
     state: RoutingLeaseState,
@@ -138,6 +139,7 @@ impl ObservedRoutingLease {
     pub fn observed_at_ms(&self) -> i64 {
         self.observed_at_ms
     }
+    /// Actual journal coordination expiry, not a source client-abort deadline.
     pub fn request_expires_at_ms(&self) -> i64 {
         self.request_expires_at_ms
     }

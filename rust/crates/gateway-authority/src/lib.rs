@@ -9,6 +9,7 @@ pub mod claude;
 pub mod full_pool_reset;
 mod kernel;
 pub mod keys;
+pub mod local_api_release;
 pub mod local_completion;
 pub mod manual_reset;
 pub mod native_control;

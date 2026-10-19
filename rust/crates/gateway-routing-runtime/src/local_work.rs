@@ -26,8 +26,12 @@ use gateway_schema::{catalog::CatalogInput, source_request::SourceRequestDocumen
 
 #[path = "local_completion_runtime.rs"]
 mod completion;
+#[path = "local_coordination.rs"]
+mod coordination;
 pub use completion::{
-    LocalCompletionAdvance, LocalCompletionChoice, LocalCompletionRefusal, PendingLocalCompletion,
+    BuiltLocalResponse, LocalAccountingProgress, LocalCompletionAdvance, LocalCompletionChoice,
+    LocalCompletionRefusal, LocalObservationSink, LocalSelectedResponse, LocalWireDecision,
+    LocalWireKind, PendingLocalCompletion,
 };
 
 /// Existing request metadata only. No caller supplies a replacement normalized body.
@@ -82,6 +86,7 @@ pub struct LocalWorkCurrentness<'a, S, I, C, H> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LocalWorkLease {
     observed_at_ms: i64,
+    // Request-journal coordination only; never a caller or API/kernel deadline.
     request_expires_at_ms: i64,
     kernel_expires_at_ms: Option<i64>,
 }
@@ -89,6 +94,7 @@ impl LocalWorkLease {
     pub fn observed_at_ms(&self) -> i64 {
         self.observed_at_ms
     }
+    /// Actual journal coordination expiry, not a source client-abort deadline.
     pub fn request_expires_at_ms(&self) -> i64 {
         self.request_expires_at_ms
     }
@@ -234,6 +240,7 @@ impl<
                     api: &row.api,
                     kernel: &row.kernel,
                     allow_unbound_admission: true,
+                    api_release_done: false,
                 }),
             )
             .await?;
@@ -344,6 +351,7 @@ impl<
         self.checkpoint_phase(
             &[LocalWorkPhase::Running, LocalWorkPhase::ResponsePending],
             None,
+            false,
         )
         .await
     }
@@ -351,7 +359,11 @@ impl<
         &self,
         phases: &[LocalWorkPhase],
         next: Option<LocalWorkPhase>,
+        refresh_coordination: bool,
     ) -> RoutingResult<LocalWorkLease> {
+        if refresh_coordination && self.kernel.is_some() {
+            return Err(invalid().into());
+        }
         if self.host.cancelled() {
             return Err(self.host.cancellation_error().into());
         }
@@ -444,6 +456,11 @@ impl<
                 {
                     return Err(invalid());
                 }
+                if refresh_coordination {
+                    current.lease_expires_at_ms = at
+                        .checked_add(gateway_authority::REQUEST_LEASE_MS)
+                        .ok_or_else(invalid)?;
+                }
                 if let Some(next) = next {
                     current.local_work.as_mut().ok_or_else(invalid)?.phase = next;
                 }
@@ -467,45 +484,13 @@ impl<
             kernel_expires_at_ms: kernel_expires,
         })
     }
-    pub async fn renew_kernel(&self) -> RoutingResult<LocalWorkLease> {
-        self.checkpoint().await?;
-        if let Some(kernel) = &self.kernel {
-            let operation_at = self.now()?;
-            let expiry =
-                Authority::with_clock(self.store.clone(), self.tokens.clone(), self.clock.clone())
-                    .renew_kernel(kernel, operation_at)
-                    .await?;
-            journal::change(
-                &self.store,
-                &self.tokens,
-                self.id(),
-                self.now()?,
-                &[],
-                |row| {
-                    self.owned(row)?;
-                    if self.host.cancelled()
-                        || row.lease_expires_at_ms <= operation_at
-                        || row.local_work.as_ref().is_none_or(|v| {
-                            !matches!(
-                                v.phase,
-                                LocalWorkPhase::Running | LocalWorkPhase::ResponsePending
-                            )
-                        })
-                    {
-                        return Err(invalid());
-                    }
-                    row.kernel.as_mut().ok_or_else(invalid)?.lease_expires_at_ms = expiry;
-                    row.lease_expires_at_ms = expiry;
-                    Ok(())
-                },
-            )
-            .await?;
-        }
-        self.checkpoint().await
-    }
     pub async fn resume_original(self) -> RoutingResult<LocalProviderAdmission<S, I, C, H>> {
         if let Err(error) = self
-            .checkpoint_phase(&[LocalWorkPhase::Running], Some(LocalWorkPhase::Planning))
+            .checkpoint_phase(
+                &[LocalWorkPhase::Running],
+                Some(LocalWorkPhase::Planning),
+                false,
+            )
             .await
         {
             finish_local_record(
@@ -531,6 +516,7 @@ impl<
             .checkpoint_phase(
                 &[LocalWorkPhase::Running],
                 Some(LocalWorkPhase::ResponsePending),
+                false,
             )
             .await
         {
@@ -596,6 +582,7 @@ impl<
             .checkpoint_phase(
                 &[LocalWorkPhase::Planning],
                 Some(LocalWorkPhase::ProviderPlanned),
+                false,
             )
             .await?;
         let LocalWorkHandle {
@@ -790,11 +777,15 @@ pub(crate) async fn finish_local_record<
             .await;
     }
     let authority = Authority::with_clock(store.clone(), tokens.clone(), clock.clone());
-    if let Some(api) = &intent.api {
+    if let Some(api) = &intent.api
+        && expected
+            .as_ref()
+            .is_none_or(|binding| !binding.api_release_done)
+    {
         authority
             .release_api_key(
                 api,
-                true,
+                false,
                 "local_work_without_provider_dispatch",
                 clock.now_ms()?,
             )

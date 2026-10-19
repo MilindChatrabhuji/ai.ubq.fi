@@ -1,0 +1,126 @@
+{
+  "provenance": {
+    "actual_source_sha": "8214a7eeba7657b6798b19ae8f79debdbca6bed3",
+    "ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/4e76bb4e-bfb9-4666-99a1-b6ae215556bf",
+    "script_sha256": "5d0b4c244b23fe4dcf553146c07355d92053a7defa3973fc336521a29ba4e876"
+  },
+  "policies": [
+    {
+      "input": "1e100",
+      "normalized": {
+        "v": 2,
+        "scope": "org",
+        "owner": "owner",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": 1e100,
+        "created_at_ms": 1000,
+        "updated_at_ms": 1000
+      }
+    },
+    {
+      "input": "-1",
+      "normalized": {
+        "v": 2,
+        "scope": "org",
+        "owner": "owner",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1000,
+        "updated_at_ms": 1000
+      }
+    },
+    {
+      "input": "0",
+      "normalized": {
+        "v": 2,
+        "scope": "org",
+        "owner": "owner",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": 0,
+        "created_at_ms": 1000,
+        "updated_at_ms": 1000
+      }
+    },
+    {
+      "input": "900.8",
+      "normalized": {
+        "v": 2,
+        "scope": "org",
+        "owner": "owner",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": 900,
+        "created_at_ms": 1000,
+        "updated_at_ms": 1000
+      }
+    },
+    {
+      "input": "null",
+      "normalized": {
+        "v": 2,
+        "scope": "org",
+        "owner": "owner",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1000,
+        "updated_at_ms": 1000
+      }
+    },
+    {
+      "input": "bad",
+      "normalized": {
+        "v": 2,
+        "scope": "org",
+        "owner": "owner",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1000,
+        "updated_at_ms": 1000
+      }
+    },
+    {
+      "input": "1e309",
+      "normalized": {
+        "v": 2,
+        "scope": "org",
+        "owner": "owner",
+        "usage_limit_requests": 7,
+        "window_ms": 60000,
+        "expires_at_ms": -1,
+        "created_at_ms": 1000,
+        "updated_at_ms": 1000
+      }
+    }
+  ],
+  "windows": [
+    {
+      "v": 2,
+      "scope": "repo",
+      "owner": "owner",
+      "repo": "repo",
+      "usage_requests": 0,
+      "reserved_requests": 0,
+      "usage_reset_at_ms": 2000,
+      "applied_window_ms": 1000,
+      "created_at_ms": 1000,
+      "updated_at_ms": 1000
+    },
+    {
+      "v": 2,
+      "scope": "repo",
+      "owner": "owner",
+      "repo": "repo",
+      "usage_requests": 0,
+      "reserved_requests": 1,
+      "usage_reset_at_ms": 2000,
+      "applied_window_ms": 1000,
+      "created_at_ms": 1000,
+      "updated_at_ms": 1000
+    }
+  ]
+}

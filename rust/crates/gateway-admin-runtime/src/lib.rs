@@ -7,6 +7,7 @@ pub mod claude_generation;
 mod defaults;
 mod errors;
 mod kernel;
+mod kernel_data;
 mod paid;
 pub mod parse;
 mod state;
@@ -134,12 +135,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 let account_id_hash = String::from_utf16(hash.as_units())
                     .expect("closed lowercase ASCII account hash");
                 self.capabilities
-                    .codex(
-                        CodexRequest::ConsumeReset {
-                            account_id_hash: account_id_hash.into(),
-                        },
-                        context,
-                    )
+                    .codex(CodexRequest::ConsumeReset { account_id_hash }, context)
                     .await
             }
             CodexResetUpdate | CodexOverageUpdate => {
@@ -267,7 +263,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
             ClaudeAuthSet => {
                 self.capabilities
                     .claude(
-                        ClaudeRequest::SetCredential(parse::claude(&input.body)?),
+                        ClaudeRequest::SetCredential(parse::claude_source(&input.body)?),
                         context,
                     )
                     .await
@@ -276,46 +272,34 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 self.capabilities
                     .claude(
                         ClaudeRequest::DeleteAccount {
-                            account_id: parse::first(&input.query, "account_id").map(str::to_owned),
+                            account_id: parse::first(&input.query, "account_id")
+                                .map(gateway_core::js_string::JsString16::from_utf8),
                         },
                         context,
                     )
                     .await
             }
             ClaudeAccountSelect => {
-                let id = input
-                    .body
-                    .get("account_id")
-                    .and_then(Value::as_str)
+                let id = source_body::member(&input.body, "account_id")
+                    .as_ref()
+                    .and_then(source_body::text)
                     .ok_or_else(|| invalid("account_id is required"))?;
                 self.capabilities
-                    .claude(
-                        ClaudeRequest::SelectAccount {
-                            account_id: id.into(),
-                        },
-                        context,
-                    )
+                    .claude(ClaudeRequest::SelectAccount { account_id: id }, context)
                     .await
             }
             ClaudeQuotaClear => {
-                if input.body.get("account_id").is_some_and(|v| !v.is_string()) {
+                let account_value = source_body::member(&input.body, "account_id");
+                if account_value
+                    .as_ref()
+                    .is_some_and(|value| source_body::text(value).is_none())
+                {
                     return Err(invalid("account_id must be a string"));
                 }
-                let account_id = input
-                    .body
-                    .get("account_id")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                let cohort_id = input
-                    .body
-                    .get("account_cohort_id")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                if account_id.as_ref().is_some_and(|id| !id.is_empty()) && cohort_id.is_none() {
-                    return Err(invalid(
-                        "account_cohort_id is required for a targeted clear",
-                    ));
-                }
+                let account_id = account_value.as_ref().and_then(source_body::text);
+                let cohort_id = source_body::member(&input.body, "account_cohort_id");
+                // Account lookup and the targeted-cohort check belong to the
+                // actual owner in this source order; no early UUID/scalar gate.
                 self.capabilities
                     .claude(
                         ClaudeRequest::ClearQuota {

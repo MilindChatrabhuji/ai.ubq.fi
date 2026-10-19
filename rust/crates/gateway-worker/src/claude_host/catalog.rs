@@ -47,10 +47,7 @@ pub async fn publication(
             &snapshot,
             Some(&account),
             &account.credential,
-            account
-                .workspace
-                .as_ref()
-                .map(|workspace| workspace.id.as_str()),
+            account.workspace.as_ref().map(|workspace| &workspace.id),
         )
         .ok_or_else(|| super::invalid("Claude catalog generation changed."))?;
     Ok(Some(Publication {
@@ -145,10 +142,7 @@ pub(super) async fn for_account(
             &snapshot,
             Some(account),
             &account.credential,
-            account
-                .workspace
-                .as_ref()
-                .map(|workspace| workspace.id.as_str()),
+            account.workspace.as_ref().map(|workspace| &workspace.id),
         )
         .as_deref()
         != Some(identity.identity.as_str())
@@ -305,10 +299,7 @@ pub(super) async fn prime(
             &snapshot,
             Some(account),
             &account.credential,
-            account
-                .workspace
-                .as_ref()
-                .map(|workspace| workspace.id.as_str()),
+            account.workspace.as_ref().map(|workspace| &workspace.id),
         )
         .ok_or_else(|| super::invalid("Claude validation generation changed."))?;
     let identity = ProviderBinding { identity };

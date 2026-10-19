@@ -30,11 +30,11 @@ pub enum CatalogRequest {
 pub enum CodexRequest {
     /// The native credential owner validates ownership, refresh effects, fingerprint and upstream auth.
     ImportCredentials {
-        document: Value,
+        document: SourceJson,
     },
     ResetSettings,
     SetResetSettings {
-        document: Value,
+        document: SourceJson,
     },
     /// Exact selected subscription; the host must mint current authenticated admin authority.
     ConsumeReset {
@@ -42,7 +42,7 @@ pub enum CodexRequest {
     },
     OverageSettings,
     SetOverageSettings {
-        document: Value,
+        document: SourceJson,
     },
     ShadowDecisions,
     Recheck {
@@ -61,7 +61,7 @@ pub enum ProviderRequest {
         live: bool,
     },
     Observations {
-        document: Value,
+        document: SourceJson,
     },
     Rollups {
         query: BTreeMap<String, Vec<String>>,
@@ -89,7 +89,8 @@ pub enum ClaudeRequest {
     },
     ClearQuota {
         account_id: Option<gateway_core::js_string::JsString16>,
-        cohort_id: Option<gateway_core::js_string::JsString16>,
+        /// None is absent only; every present source leaf retains its type/value.
+        cohort_id: Option<SourceJson>,
     },
 }
 
@@ -170,7 +171,11 @@ fn unavailable(name: &str) -> GatewayError {
 /// Defaults fail closed; an unbound capability cannot return an empty or successful placeholder.
 pub trait RuntimeCapabilities {
     /// Source String.localeCompare for operator labels; an unbound collation never substitutes byte order.
-    fn compare_admin_labels(&self, _: &str, _: &str) -> Result<std::cmp::Ordering, GatewayError> {
+    fn compare_admin_labels(
+        &self,
+        _: &gateway_core::js_string::JsString16,
+        _: &gateway_core::js_string::JsString16,
+    ) -> Result<std::cmp::Ordering, GatewayError> {
         Err(unavailable("admin_label_collation"))
     }
     fn catalog(
