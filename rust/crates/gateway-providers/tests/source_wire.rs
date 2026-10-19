@@ -632,3 +632,40 @@ fn custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mi
     assert_eq!(delta.field("delta").unwrap(), parse(r#""raw\udc00""#));
     assert!(delta.encode_sse().contains("\\udc00"));
 }
+
+#[test]
+fn source_model_echoes_in_buffered_and_sse_composition_are_ordinary_json_strings() {
+    use gateway_core::model::ModelId;
+    for model in [JsString16::from_units(vec![0xd800]), JsString16::from_units(vec![0xdc00]), JsString16::from_utf8(r"\ud800"), JsString16::from_utf8("m\ncontrol")] {
+        let raw = json::object(vec![("model", model.to_source_json().unwrap()), ("input", parse(r#""x""#))]).unwrap();
+        let selected = ModelId::from_source(model.clone());
+        let prepared = prepare_source_request(UpstreamProvider::Surplus, ClientSurface::Responses, &raw, &selected, &options()).unwrap();
+        assert_eq!(text(&get(&prepared.body,"model")),model);
+        // Select the existing scalar Chat upstream codec to exercise its synthesized
+        // request-derived envelope; this is not a new router/provider selection.
+        let mut plan=prepared.decode.clone();
+        plan.decode=gateway_providers::ResponseDecode::ChatToResponses(gateway_providers::ChatProfile::Deepseek);
+        let buffered=decode_response(&plan,200,&Default::default(),reply()).unwrap();
+        assert_eq!(text(&get(&buffered.body,"model")),model);
+        let mut writer=gateway_providers::writer::ResponseWriter::new(prepared.decode);
+        let mut events=writer.text("answer",false);
+        events.extend(writer.finish());
+        for event in events.iter().filter(|event| event.field("response").is_some()) {
+            assert_eq!(text(&get(&event.field("response").unwrap(),"model")),model);
+            let encoded=event.encode_sse();
+            let data=encoded.lines().find_map(|line|line.strip_prefix("data: ")).unwrap();
+            assert_eq!(text(&path(&parse(data), &["response","model"])),model);
+        }
+    }
+}
+#[test]
+fn opaque_model_refusal_body_does_not_replace_or_scalarize_request_units() {
+    use gateway_core::model::ModelId;
+    let raw=parse(r#"{"model":"\ud800","input":"x"}"#);
+    let model=ModelId::from_source(JsString16::from_units(vec![0xd800]));
+    let error=prepare_source_request(UpstreamProvider::Deepseek,ClientSurface::Responses,&raw,&model,&options()).unwrap_err();
+    assert_eq!(error.status,404);
+    let message=text(&path(error.body(),&["error","message"]));
+    assert_eq!(message.as_units(),"The model '".encode_utf16().chain([0xd800]).chain("' does not exist or is not available.".encode_utf16()).collect::<Vec<_>>());
+    assert!(error.body().as_str().contains(r"\ud800"));
+}
