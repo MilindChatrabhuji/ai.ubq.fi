@@ -39,6 +39,12 @@ impl<
     H: RoutingHost,
 > RoutingSession<S, I, C, H>
 {
+    pub fn original_source(&self) -> &gateway_core::source_json::SourceJson {
+        self.input.original_source()
+    }
+    pub fn original_context(&self) -> &gateway_core::identity::RequestContext {
+        &self.input.context
+    }
     pub fn elapsed_wait_ms(&self) -> i64 {
         self.elapsed_wait_ms.get()
     }
@@ -90,14 +96,17 @@ impl<
         } else {
             policy::plan(&input, now)?
         };
-        let streamed = input.raw["stream"] == true;
+        let streamed = input.streamed();
         let mut row = Journal {
-            v: 1,
+            // Fresh ordinary requests identify the new original-source binding explicitly.
+            // Existing generated extras keep their exact legacy scalar-serialized bytes.
+            v: if family.is_some() { 1 } else { 3 },
             context: input.context.clone(),
-            input_digest: gateway_auth::crypto::sha256_hex(
-                &serde_json::to_vec(&input.raw)
-                    .map_err(|_| journal::unavailable("Request encoding failed."))?,
-            ),
+            input_digest: if family.is_some() {
+                gateway_auth::crypto::sha256_hex(input.original_source().as_bytes())
+            } else {
+                crate::local_work::original_source_digest(input.original_source())?
+            },
             api: None,
             kernel: None,
             cursor: 0,
@@ -120,67 +129,18 @@ impl<
             extras_dispatch: None,
             children: Vec::new(),
             kernel_override: None,
+            local_work: None,
         };
         journal::create(&store, &tokens, &row).await?;
         let authority = Authority::with_clock(store.clone(), tokens.clone(), clock.clone());
-        let admission = async {
-            if let AuthMethod::KvApiKey { key_id, .. } = &input.principal.method {
-                let id = ApiKeyId(key_id.clone());
-                if input.context.key_id.as_ref() != Some(&id) {
-                    return Err(journal::unavailable(
-                        "Principal and original key identity differ.",
-                    ));
-                }
-                row.api = Some(
-                    authority
-                        .reserve_api_key_deferred(
-                            &id,
-                            &input.context.request_id,
-                            &input.context.route,
-                            clock.now_ms()?,
-                        )
-                        .await?,
-                );
-                journal::change(
-                    &store,
-                    &tokens,
-                    &input.context.request_id.0,
-                    clock.now_ms()?,
-                    &[],
-                    |j| {
-                        j.api = row.api.clone();
-                        Ok(())
-                    },
-                )
-                .await?;
-            }
-            if let AuthMethod::GithubToken { owner, repo, .. } = &input.principal.method {
-                row.kernel = Some(
-                    authority
-                        .reserve_kernel(
-                            owner,
-                            repo,
-                            &input.context.request_id,
-                            &input.context.route,
-                            clock.now_ms()?,
-                        )
-                        .await?,
-                );
-                journal::change(
-                    &store,
-                    &tokens,
-                    &input.context.request_id.0,
-                    clock.now_ms()?,
-                    &[],
-                    |j| {
-                        j.kernel = row.kernel.clone();
-                        Ok(())
-                    },
-                )
-                .await?;
-            }
-            Ok::<_, GatewayError>(())
-        }
+        let admission = reserve_original(
+            &input.principal,
+            &input.context,
+            &mut row,
+            &store,
+            &tokens,
+            &clock,
+        )
         .await;
         if let Err(error) = admission {
             if let Some(api) = &row.api {
@@ -220,6 +180,76 @@ impl<
             host,
             input,
             plan,
+            lithos: RefCell::new(LithosWindows::default()),
+            waits: RefCell::new(WaitBudget {
+                waits: 0,
+                waited_ms: 0,
+                streamed,
+            }),
+            conversation_id,
+            elapsed_wait_ms: std::cell::Cell::new(0),
+            extra_lock: std::rc::Rc::new(futures_util::lock::Mutex::new(())),
+        })
+    }
+    /// Consume M34's original Planning capability; never reserve another lifetime.
+    pub async fn from_local_admission(
+        admission: crate::local_work::LocalProviderAdmission<S, I, C, H>,
+    ) -> RoutingResult<Self> {
+        let metadata = admission.original_metadata();
+        let input = RoutingInput::from_source_request(
+            crate::local_work::LocalRequestMetadata {
+                context: metadata.context.clone(),
+                principal: metadata.principal.clone(),
+                catalog: metadata.catalog.clone(),
+                runtime: metadata.runtime.clone(),
+                client_version: metadata.client_version.clone(),
+                native_session_id: metadata.native_session_id.clone(),
+                retry_prohibited: metadata.retry_prohibited,
+            },
+            admission
+                .original
+                .input
+                .original
+                .for_surface(gateway_schema::request::RequestSurface::Responses),
+        );
+        let planned: RoutingResult<(RoutePlan, String)> = (|| {
+            if admission.original.host.cancelled() {
+                return Err(admission.original.host.cancellation_error().into());
+            }
+            let now = admission.original.clock.now_ms()?;
+            if now < input.context.started_at_ms || now > 9_007_199_254_740_991 {
+                return Err(
+                    journal::unavailable("Invalid original request identity or clock.").into(),
+                );
+            }
+            let plan = policy::plan(&input, now)?;
+            let conversation = admission.original.tokens.next_token()?;
+            Ok((plan, conversation))
+        })();
+        let (plan, conversation_id) = match planned {
+            Ok(planned) => planned,
+            Err(error) => {
+                return Err(match admission.fail_planning().await {
+                    Ok(_) => error,
+                    Err(cleanup) => error.with_cleanup_diagnostic(&cleanup),
+                });
+            }
+        };
+        let parts = admission.attest_plan(plan).await?;
+        // The opaque parts came from the SAME original admission and checked revisions.
+        debug_assert_eq!(
+            parts.input.original.original_source(),
+            input.original_source()
+        );
+        debug_assert_eq!(parts.input.metadata.context, input.context);
+        let streamed = input.streamed();
+        Ok(Self {
+            store: parts.store,
+            tokens: parts.tokens,
+            clock: parts.clock,
+            host: parts.host,
+            input,
+            plan: parts.plan,
             lithos: RefCell::new(LithosWindows::default()),
             waits: RefCell::new(WaitBudget {
                 waits: 0,
@@ -319,7 +349,7 @@ impl<
         model: &str,
         publication: &PublishedCredential,
         nonce: &str,
-    ) -> Result<gateway_providers::PreparedRequest, GatewayError> {
+    ) -> RoutingResult<gateway_providers::PreparedRequest> {
         crate::wire::prepare(
             &self.input,
             &self.conversation_id,
@@ -404,4 +434,71 @@ impl<
             Ok(PaidAuthorization::DirectPaidModel)
         }
     }
+}
+
+/// The one original admission operation shared by ordinary and local work.
+pub(crate) async fn reserve_original<
+    S: QueryStore + Clone,
+    I: TokenSource + Clone,
+    C: AuthorityClock + Clone + 'static,
+>(
+    principal: &gateway_auth::AuthPrincipal,
+    context: &gateway_core::identity::RequestContext,
+    row: &mut Journal,
+    store: &S,
+    tokens: &I,
+    clock: &C,
+) -> Result<(), GatewayError> {
+    let authority = Authority::with_clock(store.clone(), tokens.clone(), clock.clone());
+    if let AuthMethod::KvApiKey { key_id, .. } = &principal.method {
+        let id = ApiKeyId(key_id.clone());
+        if context.key_id.as_ref() != Some(&id) {
+            return Err(journal::unavailable(
+                "Principal and original key identity differ.",
+            ));
+        }
+        row.api = Some(
+            authority
+                .reserve_api_key_deferred(&id, &context.request_id, &context.route, clock.now_ms()?)
+                .await?,
+        );
+        journal::change(
+            store,
+            tokens,
+            &context.request_id.0,
+            clock.now_ms()?,
+            &[],
+            |j| {
+                j.api = row.api.clone();
+                Ok(())
+            },
+        )
+        .await?;
+    }
+    if let AuthMethod::GithubToken { owner, repo, .. } = &principal.method {
+        row.kernel = Some(
+            authority
+                .reserve_kernel(
+                    owner,
+                    repo,
+                    &context.request_id,
+                    &context.route,
+                    clock.now_ms()?,
+                )
+                .await?,
+        );
+        journal::change(
+            store,
+            tokens,
+            &context.request_id.0,
+            clock.now_ms()?,
+            &[],
+            |j| {
+                j.kernel = row.kernel.clone();
+                Ok(())
+            },
+        )
+        .await?;
+    }
+    Ok(())
 }

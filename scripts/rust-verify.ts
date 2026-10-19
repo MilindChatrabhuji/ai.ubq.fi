@@ -55,9 +55,12 @@ const sourceHasTests = (directory: string): boolean =>
 // in the portable closure so a new or malformed cfg cannot hide native code.
 const excludesWasmTarget = (selector: string): boolean => /^cfg\(\s*all\(\s*unix\s*,\s*not\(\s*target_arch\s*=\s*"wasm32"\s*\)\s*\)\s*\)$/.test(selector);
 const portableTargetDependencies = (value: unknown, names: ReadonlySet<string>, includeTests: boolean): string[] =>
-  Object.entries(table(value))
-    .filter(([selector]) => !excludesWasmTarget(selector))
-    .flatMap(([, configuration]) => packageDependencies(configuration, names, includeTests, true));
+  Object.entries(table(value)).flatMap(([selector, configuration]) => {
+    // Only NORMAL edges use the reviewed target exclusion. BUILD dependencies
+    // may depend on the host; retain them until separately proven safe.
+    const selected = Object.entries(table(configuration)).filter(([kind]) => kind !== "dependencies" || !excludesWasmTarget(selector));
+    return packageDependencies(Object.fromEntries(selected), names, includeTests, true);
+  });
 const packageDependencies = (value: unknown, names: ReadonlySet<string>, includeTests = true, portable = false): string[] => {
   const found: string[] = [];
   const entries = Object.entries(table(value)).filter(([key]) => includeTests || key !== "dev-dependencies");

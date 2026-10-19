@@ -30,7 +30,7 @@ fn plan(profile: ChatProfile) -> DecodePlan {
         response_id: "resp_parity".into(),
         created_at: 1_780_000_000,
         stream: true,
-        request: json!({}),
+        request: gateway_core::source_json::SourceJson::from_serializable(&json!({})).unwrap(),
         tool_names: ToolMap::new(),
         reasoning_summary: None,
     }
@@ -76,13 +76,13 @@ fn frozen_waterfalls_distinguish_quota_from_serving_failure() {
 #[test]
 fn codex_replay_repair_is_exact_and_does_not_damage_provider_history() {
     let input = json!([{"type":"reasoning","id":"resp_old_rs_0","summary":[]},{"type":"reasoning","id":"rs_resp_old_0","encrypted_content":"signed"},{"type":"function_call","id":"fc_resp_old_0_0","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"reasoning","id":"rs_upstream","summary":[]}]);
-    let repaired = request::codex_replay_input(&input);
+    let repaired = scalar(&request::codex_replay_input(&input));
     assert_eq!(
         repaired,
         json!([{"type":"reasoning","encrypted_content":"signed"},{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"reasoning","id":"rs_upstream","summary":[]}])
     );
     assert_eq!(input.as_array().unwrap().len(), 4);
-    let body=request::build_codex_body(&json!({"model":"gpt-fixture","input":[],"reasoning":{"effort":"none"},"stream":false,"store":true})).unwrap();
+    let body=scalar(&request::build_codex_body(&json!({"model":"gpt-fixture","input":[],"reasoning":{"effort":"none"},"stream":false,"store":true})).unwrap());
     assert_eq!(body["reasoning"]["effort"], "none");
     assert_eq!(body["stream"], true);
     assert_eq!(body["store"], false);
@@ -92,14 +92,24 @@ fn namespace_and_freeform_round_trip_keeps_identity() {
     let raw = json!({"input":"hello","reasoning":{"effort":"none"},"tools":[{"type":"namespace","name":"first","tools":[{"type":"function","name":"read","parameters":{"type":"object"}}]},{"type":"namespace","name":"second","tools":[{"type":"function","name":"read","parameters":{"type":"object"}}]},{"type":"custom","name":"apply_patch"}]});
     let result =
         chat::project_responses(&raw, "deepseek-flash", true, ChatProfile::Deepseek).unwrap();
-    assert_eq!(result.body["tools"][0]["function"]["name"], "read");
-    assert_eq!(result.body["tools"][1]["function"]["name"], "second_read");
+    assert_eq!(scalar(&result.body)["tools"][0]["function"]["name"], "read");
     assert_eq!(
-        result.tool_names["read"].namespace.as_deref(),
+        scalar(&result.body)["tools"][1]["function"]["name"],
+        "second_read"
+    );
+    assert_eq!(
+        result.tool_names["read"]
+            .namespace
+            .as_ref()
+            .map(|v| v.try_utf8().unwrap())
+            .as_deref(),
         Some("first")
     );
     assert!(result.tool_names["apply_patch"].custom);
-    assert_eq!(result.body["stream_options"], json!({"include_usage":true}));
+    assert_eq!(
+        scalar(&result.body)["stream_options"],
+        json!({"include_usage":true})
+    );
     let item = gateway_providers::tools::function_item(
         "ctc_resp_1_0",
         "call_1",
@@ -108,8 +118,8 @@ fn namespace_and_freeform_round_trip_keeps_identity() {
         &result.tool_names,
         "completed",
     );
-    assert_eq!(item["type"], "custom_tool_call");
-    assert_eq!(item["input"], "*** Begin Patch");
+    assert_eq!(scalar(&item)["type"], "custom_tool_call");
+    assert_eq!(scalar(&item)["input"], "*** Begin Patch");
 }
 #[test]
 fn thinking_conflict_and_reasoning_profiles_are_provider_specific() {
@@ -135,7 +145,8 @@ fn declared_payload_bound_keeps_unicode_and_disabled_rejects() {
         ChatProfile::Deepseek,
     )
     .unwrap();
-    let forwarded = result.body["messages"][0]["content"].as_str().unwrap();
+    let scalar_body = scalar(&result.body);
+    let forwarded = scalar_body["messages"][0]["content"].as_str().unwrap();
     assert!(forwarded.len() <= 65_536);
     assert!(forwarded.contains("the model did not receive the elided bytes"));
     assert!(!result.elisions.is_empty());
@@ -163,7 +174,7 @@ fn reasoning_closes_before_text_and_fragmented_tools_keep_announced_indexes() {
     events.extend(writer.finish());
     let kinds = events
         .iter()
-        .map(|e| e.data["type"].as_str().unwrap())
+        .map(|e| e.type_name().unwrap())
         .collect::<Vec<_>>();
     let done = kinds
         .iter()
@@ -172,16 +183,17 @@ fn reasoning_closes_before_text_and_fragmented_tools_keep_announced_indexes() {
     let message = events
         .iter()
         .position(|e| {
-            e.data["type"] == "response.output_item.added" && e.data["item"]["type"] == "message"
+            scalar(&e.data)["type"] == "response.output_item.added"
+                && scalar(&e.data)["item"]["type"] == "message"
         })
         .unwrap();
     assert!(done < message);
     assert_eq!(
-        events.last().unwrap().data["response"]["output"][0]["type"],
+        scalar(&events.last().unwrap().data)["response"]["output"][0]["type"],
         "reasoning"
     );
     assert_eq!(
-        events.last().unwrap().data["response"]["output"][1]["type"],
+        scalar(&events.last().unwrap().data)["response"]["output"][1]["type"],
         "message"
     );
     let mut writer = gateway_providers::writer::ResponseWriter::new(plan(ChatProfile::Deepseek));
@@ -190,7 +202,7 @@ fn reasoning_closes_before_text_and_fragmented_tools_keep_announced_indexes() {
     writer.tool_delta(1, None, None, "2}");
     writer.tool_delta(0, None, None, "1}");
     let events = writer.finish();
-    let output = &events.last().unwrap().data["response"]["output"];
+    let output = &scalar(&events.last().unwrap().data)["response"]["output"];
     assert_eq!(output[0]["name"], "second");
     assert_eq!(output[0]["arguments"], "{\"b\":2}");
     assert_eq!(output[1]["name"], "first");
@@ -201,18 +213,24 @@ fn truthful_terminals_distinguish_explicit_truncation_and_empty_stop() {
     let mut writer = gateway_providers::writer::ResponseWriter::new(plan(ChatProfile::Deepseek));
     writer.reasoning("only reasoning");
     let events = writer.finish();
-    assert_eq!(events.last().unwrap().data["type"], "response.failed");
     assert_eq!(
-        events.last().unwrap().data["response"]["error"]["code"],
+        scalar(&events.last().unwrap().data)["type"],
+        "response.failed"
+    );
+    assert_eq!(
+        scalar(&events.last().unwrap().data)["response"]["error"]["code"],
         "empty_upstream_completion"
     );
     let mut writer = gateway_providers::writer::ResponseWriter::new(plan(ChatProfile::Deepseek));
     writer.reasoning("only reasoning");
     writer.finish_reason = Some("length".into());
     let events = writer.finish();
-    assert_eq!(events.last().unwrap().data["type"], "response.incomplete");
     assert_eq!(
-        events.last().unwrap().data["response"]["incomplete_details"]["reason"],
+        scalar(&events.last().unwrap().data)["type"],
+        "response.incomplete"
+    );
+    assert_eq!(
+        scalar(&events.last().unwrap().data)["response"]["incomplete_details"]["reason"],
         "max_output_tokens"
     );
 }
@@ -242,7 +260,10 @@ fn sse_incremental_utf8_mixed_line_endings_and_eof_fail_closed() {
         .push(&frame(&chunk(json!({"content":"answer"}), json!("stop"))))
         .unwrap();
     events.extend(decoder.push(b"data: [DONE]\n\n").unwrap());
-    assert_eq!(events.last().unwrap().data["type"], "response.completed");
+    assert_eq!(
+        scalar(&events.last().unwrap().data)["type"],
+        "response.completed"
+    );
     decoder.finish().unwrap();
 }
 #[test]
@@ -269,13 +290,13 @@ fn usage_preserves_missingness_and_native_cache_gross_input() {
 #[test]
 fn transport_profiles_cerebras_and_openrouter_preserve_actual_wires() {
     let cerebras=prepare_request(UpstreamProvider::Cerebras,ClientSurface::Chat,&json!({"model":"qwen-3.8-27b","messages":[{"role":"developer","content":"a"},{"role":"system","content":"b"},{"role":"user","content":"x"}],"stream":true,"store":null,"metadata":null}),&options()).unwrap();
-    assert_eq!(cerebras.body["stream"], false);
+    assert_eq!(scalar(&cerebras.body)["stream"], false);
     assert_eq!(
-        cerebras.body["messages"][0],
+        scalar(&cerebras.body)["messages"][0],
         json!({"role":"system","content":"a\n\nb"})
     );
-    assert!(cerebras.body.get("store").is_none());
-    assert!(cerebras.body.get("metadata").is_none());
+    assert!(scalar(&cerebras.body).get("store").is_none());
+    assert!(scalar(&cerebras.body).get("metadata").is_none());
     let mut opts = options();
     opts.allowed_models = vec!["~openai/gpt-fixture".into()];
     let request = prepare_request(
@@ -287,7 +308,7 @@ fn transport_profiles_cerebras_and_openrouter_preserve_actual_wires() {
     .unwrap();
     assert_eq!(request.url, "https://openrouter.ai/api/v1/responses");
     assert_eq!(
-        request.body["tools"],
+        scalar(&request.body)["tools"],
         json!([{"type":"openrouter:web_search"},{"type":"openrouter:web_fetch"}])
     );
     assert!(!format!("{request:?}").contains("fixture-secret"));
@@ -295,7 +316,7 @@ fn transport_profiles_cerebras_and_openrouter_preserve_actual_wires() {
 #[test]
 fn cerebras_schema_preserves_property_names_and_collapses_root_union() {
     let schema = json!({"oneOf":[{"type":"object","properties":{"operationId":{"const":"a"},"format":{"type":"string","pattern":"x"}},"required":["operationId","format"]},{"type":"object","properties":{"operationId":{"const":"b"},"count":{"type":"number"}},"required":["operationId"]}]});
-    let projected = request::project_cerebras_schema(&schema);
+    let projected = scalar(&request::project_cerebras_schema(&schema));
     assert_eq!(projected["type"], "object");
     assert_eq!(
         projected["properties"]["operationId"]["enum"],
@@ -311,7 +332,7 @@ fn native_disabled_thinking_requires_exact_independent_proof() {
     assert!(gateway_providers::anthropic::try_native_messages(&body, &options()).is_none());
     let mut opts = options();
     opts.supports_disabled_thinking = true;
-    let native = gateway_providers::anthropic::try_native_messages(&body, &opts).unwrap();
+    let native = scalar(&gateway_providers::anthropic::try_native_messages(&body, &opts).unwrap());
     assert_eq!(native["thinking"], json!({"type":"disabled"}));
     assert!(native.get("output_config").is_none());
     assert_eq!(
@@ -396,7 +417,7 @@ fn additional_inference_routes_have_provider_payloads_and_image_billing_boundary
     )
     .unwrap();
     assert_eq!(
-        embedding.body,
+        scalar(&embedding.body),
         json!({"model":"voyage-4-large","input":"hello","input_type":"document","output_dimension":256,"output_dtype":"float","truncation":true})
     );
     assert_eq!(embedding.url, "https://api.voyageai.com/v1/embeddings");
@@ -406,7 +427,7 @@ fn additional_inference_routes_have_provider_payloads_and_image_billing_boundary
         &options(),
     )
     .unwrap();
-    assert_eq!(system.body["model"], "~typesafe/jev-latest");
+    assert_eq!(scalar(&system.body)["model"], "~typesafe/jev-latest");
     assert_eq!(system.url, "https://openrouter.ai/api/v1/systemone");
     let image = extras::prepare_image(
         &json!({"prompt":"edit","images":[{"image_url":"https://example.test/image.png"}],"n":2}),
@@ -441,7 +462,10 @@ fn direct_chat_empty_stop_is_preserved_while_responses_rejects_it() {
         &serde_json::to_vec(&completion).unwrap(),
     )
     .unwrap();
-    assert_eq!(decoded.body["choices"][0]["message"]["content"], "");
+    assert_eq!(
+        scalar(&decoded.body)["choices"][0]["message"]["content"],
+        ""
+    );
     plan.surface = ClientSurface::Responses;
     plan.decode = ResponseDecode::ChatToResponses(ChatProfile::Deepseek);
     assert!(
@@ -467,7 +491,7 @@ fn signed_claude_chat_details_are_private_and_do_not_duplicate_reasoning() {
     );
     events.extend(decoder.push(b"data: [DONE]\n\n").unwrap());
     assert_eq!(
-        events.last().unwrap().data["response"]["output"][0]["summary"][0]["text"],
+        scalar(&events.last().unwrap().data)["response"]["output"][0]["summary"][0]["text"],
         "think"
     );
     assert!(
@@ -525,10 +549,14 @@ fn responses_chat_reconciles_terminal_only_output_without_duplicate_deltas() {
     events.extend(decoder.push(&frame(&json!({"type":"response.completed","response":{"id":"resp_parity","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}]}}))).unwrap());
     let text = events
         .iter()
-        .filter_map(|e| e.data["choices"][0]["delta"]["content"].as_str())
+        .filter_map(|e| {
+            scalar(&e.data)["choices"][0]["delta"]["content"]
+                .as_str()
+                .map(str::to_owned)
+        })
         .collect::<String>();
     assert_eq!(text, "answer");
-    assert_eq!(events.last().unwrap().data, "[DONE]");
+    assert!(events.last().unwrap().is_done());
 }
 #[test]
 fn codex_transport_strips_accepted_ignored_controls_and_keeps_session_scope() {
@@ -536,10 +564,10 @@ fn codex_transport_strips_accepted_ignored_controls_and_keeps_session_scope() {
     opts.conversation_id = Some("generated-conversation-uuid".into());
     opts.client_version = "0.1.0".into();
     let prepared=prepare_request(UpstreamProvider::ChatgptCodex,ClientSurface::Responses,&json!({"model":"gpt-fixture","input":[{"role":"user","content":[{"type":"input_text","text":"x","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"max_output_tokens":10,"prompt_cache_key":"raw-affinity","prompt_cache_options":{"mode":"explicit"}}),&opts).unwrap();
-    assert!(prepared.body.get("max_output_tokens").is_none());
-    assert!(prepared.body.get("prompt_cache_options").is_none());
+    assert!(scalar(&prepared.body).get("max_output_tokens").is_none());
+    assert!(scalar(&prepared.body).get("prompt_cache_options").is_none());
     assert!(
-        prepared.body["input"][0]["content"][0]
+        scalar(&prepared.body)["input"][0]["content"][0]
             .get("prompt_cache_breakpoint")
             .is_none()
     );
@@ -574,4 +602,10 @@ fn native_messages_unclosed_blocks_fail_before_terminal() {
             .push(&frame(&json!({"type":"message_stop"})))
             .is_err()
     );
+}
+
+fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+    value
+        .deserialize()
+        .expect("This frozen regression fixture has scalar text")
 }

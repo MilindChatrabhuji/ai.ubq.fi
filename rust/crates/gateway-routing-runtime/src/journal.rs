@@ -5,6 +5,7 @@ use gateway_authority::{
     paid::{PaidCorrelation, PaidReservation, PaidUsage},
     quota::{ApiReservation, KernelReservation},
 };
+use gateway_core::local_work::{LocalWorkRecord, journal_local_work};
 use gateway_core::provider::UpstreamProvider;
 use gateway_core::{
     GatewayError,
@@ -119,6 +120,26 @@ pub struct Journal {
     pub extras_dispatch: Option<crate::extras::ExtraDispatch>,
     pub children: Vec<crate::extras::ChildRecord>,
     pub kernel_override: Option<crate::extras::KernelIntent>,
+    /// Legacy v1 omits this field exactly; a v2 local row must carry it completely.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_work: Option<LocalWorkRecord>,
+}
+impl Journal {
+    pub(crate) fn decode(value: &serde_json::Value) -> Result<Self, GatewayError> {
+        let local = journal_local_work(value)?;
+        let row: Self = serde_json::from_value(value.clone())
+            .map_err(|_| unavailable("Routing session is corrupt."))?;
+        if row.local_work != local
+            || serde_json::to_value(&row)
+                .map_err(|_| unavailable("Routing session encoding failed."))?
+                != *value
+        {
+            return Err(unavailable(
+                "Routing session has an incomplete or unknown shape.",
+            ));
+        }
+        Ok(row)
+    }
 }
 pub fn key(id: &str) -> RecordKey {
     TupleKey::from_scalar_parts(&[
@@ -160,9 +181,8 @@ pub async fn load<S: AuthorityStore>(
         .read(&key(id))
         .await?
         .ok_or_else(|| unavailable("Routing session is missing."))?;
-    let value: Journal = serde_json::from_value(row.json_value()?.clone())
-        .map_err(|_| unavailable("Routing session is corrupt."))?;
-    if value.v != 1 || value.context.request_id.0 != id {
+    let value = Journal::decode(row.json_value()?)?;
+    if value.context.request_id.0 != id {
         return Err(unavailable("Routing session identity mismatch."));
     }
     Ok((row, value))
@@ -183,14 +203,12 @@ fn mutations<I: TokenSource>(
     } else {
         None
     };
+    let value = serde_json::to_value(journal)
+        .map_err(|_| unavailable("Routing journal encoding failed."))?;
+    Journal::decode(&value)?;
     let mut rows = vec![RecordMutation::Put {
         key: key(&journal.context.request_id.0),
-        record: StoredRecord::json(
-            &revision,
-            serde_json::to_value(journal)
-                .map_err(|_| unavailable("Routing journal encoding failed."))?,
-            expires,
-        ),
+        record: StoredRecord::json(&revision, value, expires),
     }];
     if journal.finished {
         rows.push(RecordMutation::Delete {

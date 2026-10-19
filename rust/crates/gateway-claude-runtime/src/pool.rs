@@ -174,16 +174,14 @@ impl ClaudePoolSession {
             account_id: Some(binding.account_id.clone()),
             workspace_id: binding.workspace.as_ref().map(|w| w.id.clone()),
         };
-        let effort = input
-            .raw
-            .get("reasoning")
-            .and_then(Value::as_object)
-            .and_then(|r| r.get("effort"));
+        let effort = gateway_core::source_serialization::member(input.raw, "reasoning")
+            .filter(|reasoning| gateway_core::source_serialization::entries(reasoning).is_some())
+            .and_then(|reasoning| gateway_core::source_serialization::member(&reasoning, "effort"));
         if retained.is_none() {
             options.native_reasoning_efforts = Some(Vec::new());
             options.supports_native_effort = false;
             options.supports_disabled_thinking = false;
-            if let Some(effort) = effort {
+            if let Some(effort) = effort.as_ref() {
                 let catalog = host
                     .catalog(
                         &binding,
@@ -216,8 +214,10 @@ impl ClaudePoolSession {
                         .as_ref()
                         .is_some_and(|a| !a.is_empty());
                 }
-                if !(effort == "none" && options.supports_disabled_thinking
-                    || effort.as_str().is_some_and(|e| {
+                let effort = gateway_core::source_serialization::string(effort)
+                    .and_then(|value| value.try_utf8().ok());
+                if !(effort.as_deref() == Some("none") && options.supports_disabled_thinking
+                    || effort.as_deref().is_some_and(|e| {
                         e != "none"
                             && options
                                 .native_reasoning_efforts
@@ -269,7 +269,10 @@ impl ClaudePoolSession {
             key_id: input.key_id.into(),
             model: input.model.into(),
             raw: input.raw.clone(),
-            disabled: effort.and_then(Value::as_str) == Some("none"),
+            disabled: effort
+                .as_ref()
+                .and_then(gateway_core::source_serialization::string)
+                .is_some_and(|value| value.as_units().iter().copied().eq("none".encode_utf16())),
             native_checks,
             workspace_continuation: retained.is_some(),
         })
@@ -281,7 +284,7 @@ impl ClaudePoolSession {
         selected: &SelectedAccount,
         key_id: &str,
         model: &str,
-        raw: &Value,
+        raw: &SourceJson,
     ) -> Result<(), GatewayError> {
         if selected.key_id != key_id
             || selected.model != model

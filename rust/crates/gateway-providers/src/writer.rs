@@ -1,6 +1,7 @@
 //! Ordered Responses item lifecycles shared by Chat and native Messages decoders.
-use crate::{tools, types::*};
+use crate::{source as s, tools, types::*};
 use gateway_core::lifecycle::SemanticTerminal;
+use gateway_core::source_json::SourceJson;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 #[derive(Clone, Debug)]
@@ -24,7 +25,7 @@ struct Call {
 #[derive(Clone, Debug)]
 pub struct ResponseWriter {
     pub plan: DecodePlan,
-    pub output: Vec<Value>,
+    pub output: Vec<SourceJson>,
     active: Option<Active>,
     pending_reasoning: String,
     calls: BTreeMap<usize, Call>,
@@ -34,8 +35,8 @@ pub struct ResponseWriter {
     pub finish_reason: Option<String>,
     pub terminal: Option<SemanticTerminal>,
 }
-pub fn envelope(plan: &DecodePlan, status: &str) -> Value {
-    json!({"id":plan.response_id,"object":"response","created_at":plan.created_at,"status":status,"model":plan.model,"output":[],"error":null,"incomplete_details":null,"instructions":plan.request.get("instructions").cloned().unwrap_or(Value::Null),"metadata":{},"parallel_tool_calls":plan.request["parallel_tool_calls"].as_bool().unwrap_or(true),"tool_choice":plan.request.get("tool_choice").cloned().unwrap_or(json!("auto")),"tools":plan.request["tools"].as_array().cloned().unwrap_or_default(),"temperature":null,"top_p":null,"max_output_tokens":null,"previous_response_id":null,"reasoning":null,"store":false,"truncation":"disabled","usage":null})
+pub fn envelope(plan: &DecodePlan, status: &str) -> SourceJson {
+    crate::source_echo::envelope(plan, status)
 }
 pub fn finish_disposition(
     reason: Option<&str>,
@@ -79,14 +80,17 @@ impl ResponseWriter {
         }
         self.started = true;
         vec![
-            ProviderEvent::responses(
-                json!({"type":"response.created","response":envelope(&self.plan,"in_progress")}),
+            crate::source_echo::response_event(
+                "response.created",
+                envelope(&self.plan, "in_progress"),
             ),
-            ProviderEvent::responses(
-                json!({"type":"response.in_progress","response":envelope(&self.plan,"in_progress")}),
+            crate::source_echo::response_event(
+                "response.in_progress",
+                envelope(&self.plan, "in_progress"),
             ),
         ]
     }
+
     fn allocate(&mut self, kind: &'static str) -> Active {
         let index = self.output.len();
         let prefix = if kind == "reasoning" { "rs" } else { "msg" };
@@ -97,7 +101,7 @@ impl ResponseWriter {
             json!({"id":id,"type":"message","status":"in_progress","role":"assistant","content":[]})
         };
         item["status"] = json!("in_progress");
-        self.output.push(item);
+        self.output.push(s::generated(&item));
         Active {
             kind,
             id,
@@ -109,8 +113,10 @@ impl ResponseWriter {
         }
     }
     fn added(&self, active: &Active) -> ProviderEvent {
-        ProviderEvent::responses(
-            json!({"type":"response.output_item.added","output_index":active.index,"item":self.output[active.index]}),
+        crate::source_echo::item_event(
+            "response.output_item.added",
+            active.index,
+            s::generated(&self.output[active.index]),
         )
     }
     pub fn close(&mut self) -> Vec<ProviderEvent> {
@@ -141,9 +147,11 @@ impl ResponseWriter {
             parts.sort_by_key(|(i, _)| *i);
             json!({"id":active.id,"type":"message","status":"completed","role":"assistant","content":parts.into_iter().map(|(_,v)|v).collect::<Vec<_>>()})
         };
-        self.output[active.index] = item.clone();
-        events.push(ProviderEvent::responses(
-            json!({"type":"response.output_item.done","output_index":active.index,"item":item}),
+        self.output[active.index] = s::generated(&item);
+        events.push(crate::source_echo::item_event(
+            "response.output_item.done",
+            active.index,
+            s::generated(&item),
         ));
         events
     }
@@ -272,8 +280,10 @@ impl ResponseWriter {
                 "in_progress",
             );
             self.output.push(item.clone());
-            events.push(ProviderEvent::responses(
-                json!({"type":"response.output_item.added","output_index":index,"item":item}),
+            events.push(crate::source_echo::item_event(
+                "response.output_item.added",
+                index,
+                s::generated(&item),
             ));
             if !call.args.is_empty() {
                 events.push(ProviderEvent::responses(json!({"type":"response.function_call_arguments.delta","item_id":item_id,"output_index":index,"delta":call.args})));
@@ -366,13 +376,21 @@ impl ResponseWriter {
                     "in_progress",
                 );
                 self.output.push(item.clone());
-                events.push(ProviderEvent::responses(
-                    json!({"type":"response.output_item.added","output_index":index,"item":item}),
+                events.push(crate::source_echo::item_event(
+                    "response.output_item.added",
+                    index,
+                    s::generated(&item),
                 ));
                 index
             };
             if identity.custom {
-                events.push(ProviderEvent::responses(json!({"type":"response.custom_tool_call_input.delta","item_id":call.item_id,"output_index":index,"call_id":call.id,"delta":tools::custom_input(&call.args)})));
+                events.push(ProviderEvent::responses_source(s::object(vec![
+                    ("type", s::text("response.custom_tool_call_input.delta")),
+                    ("item_id", s::text(&call.item_id)),
+                    ("output_index", s::generated(&index)),
+                    ("call_id", s::text(&call.id)),
+                    ("delta", s::quoted(&tools::custom_input(&call.args))),
+                ])));
             } else {
                 events.push(ProviderEvent::responses(json!({"type":"response.function_call_arguments.done","item_id":call.item_id,"output_index":index,"arguments":call.args})));
             }
@@ -385,25 +403,42 @@ impl ResponseWriter {
                 status,
             );
             self.output[index] = item.clone();
-            events.push(ProviderEvent::responses(
-                json!({"type":"response.output_item.done","output_index":index,"item":item}),
+            events.push(crate::source_echo::item_event(
+                "response.output_item.done",
+                index,
+                s::generated(&item),
             ));
         }
         let mut response = envelope(&self.plan, status);
-        response["output"] = json!(self.output);
-        response["usage"] = self.usage.clone().unwrap_or(Value::Null);
+        s::set(&mut response, "output", s::array(&self.output));
+        s::set(&mut response, "usage", s::generated(&self.usage));
         if let Some(reason) = incomplete {
-            response["incomplete_details"] = json!({"reason":reason});
+            s::set(
+                &mut response,
+                "incomplete_details",
+                s::generated(&json!({"reason":reason})),
+            );
         }
         if let Some(error) = error {
-            response["error"] =
-                json!({"code":error,"message":format!("Upstream stopped generating: {error}")});
+            s::set(
+                &mut response,
+                "error",
+                s::generated(
+                    &json!({"code":error,"message":format!("Upstream stopped generating: {error}")}),
+                ),
+            );
         }
         let empty = terminal == SemanticTerminal::Completed
-            && !crate::policy::response_has_answer(&response);
+            && !crate::source_policy::response_has_answer(&response);
         let terminal = if empty {
-            response["status"] = json!("failed");
-            response["error"] = json!({"code":"empty_upstream_completion","message":"Upstream response completed with no translated semantic output."});
+            s::set(&mut response, "status", s::text("failed"));
+            s::set(
+                &mut response,
+                "error",
+                s::generated(
+                    &json!({"code":"empty_upstream_completion","message":"Upstream response completed with no translated semantic output."}),
+                ),
+            );
             SemanticTerminal::Failed
         } else {
             terminal
@@ -413,9 +448,7 @@ impl ResponseWriter {
             SemanticTerminal::Incomplete => "response.incomplete",
             _ => "response.failed",
         };
-        events.push(ProviderEvent::responses(
-            json!({"type":kind,"response":response}),
-        ));
+        events.push(crate::source_echo::response_event(kind, response));
         self.terminal = Some(terminal);
         self.finished = true;
         events

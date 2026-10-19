@@ -31,7 +31,7 @@ fn prepared(
             ("Content-Type".into(), "application/json".into()),
             ("Accept".into(), "application/json".into()),
         ]),
-        body,
+        body: crate::source::generated(&body),
         decode: DecodePlan {
             provider,
             surface,
@@ -41,7 +41,7 @@ fn prepared(
             response_id: options.response_id.clone(),
             created_at: options.created_at,
             stream: false,
-            request: raw.clone(),
+            request: crate::source::generated(raw),
             tool_names: ToolMap::new(),
             reasoning_summary: None,
         },
@@ -357,41 +357,7 @@ pub fn prepare_embeddings(
         ResponseDecode::Voyage,
     ))
 }
-pub fn decode_embeddings(value: &Value, plan: &DecodePlan) -> Result<Value, GatewayError> {
-    let profile = parse_embeddings(&plan.request, false)?;
-    let rows = value["data"]
-        .as_array()
-        .ok_or_else(|| malformed("Voyage embeddings returned invalid JSON."))?;
-    if rows.len() != profile.inputs.len() {
-        return Err(malformed(
-            "Voyage embeddings returned a different vector count.",
-        ));
-    }
-    let mut data = vec![];
-    for (index, row) in rows.iter().enumerate() {
-        let vector = row["embedding"]
-            .as_array()
-            .filter(|v| v.len() == profile.dimensions as usize && v.iter().all(Value::is_number))
-            .ok_or_else(|| malformed("Voyage embedding dimensions or values are invalid."))?;
-        let embedding = if profile.encoding_format == "base64" {
-            let mut bytes = vec![];
-            for value in vector {
-                bytes.extend_from_slice(&(value.as_f64().unwrap_or(0.0) as f32).to_le_bytes());
-            }
-            json!(base64_encode(&bytes))
-        } else {
-            json!(vector)
-        };
-        data.push(json!({"object":"embedding","index":index,"embedding":embedding}));
-    }
-    let total = value["usage"]["total_tokens"]
-        .as_f64()
-        .filter(|v| v.is_finite())
-        .map(|v| v.max(0.0).trunc());
-    Ok(
-        json!({"object":"list","model":profile.model,"data":data,"usage":{"prompt_tokens":total,"total_tokens":total}}),
-    )
-}
+pub use crate::source_embeddings::decode_embeddings;
 pub fn base64_encode(bytes: &[u8]) -> String {
     const CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = String::new();

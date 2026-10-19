@@ -314,7 +314,10 @@ pub fn input(id: &str, model: &str, providers: &[&str]) -> RoutingInput {
             started_at_ms: NOW,
         },
         principal,
-        raw: json!({"model":model,"input":"source fixture","reasoning":{"effort":"none"}}),
+        raw: gateway_core::source_json::SourceJson::from_serializable(
+            &json!({"model":model,"input":"source fixture","reasoning":{"effort":"none"}}),
+        )
+        .unwrap(),
         surface: ClientSurface::Responses,
         catalog,
         runtime: None,
@@ -463,7 +466,7 @@ impl RoutingHost for Host {
         &self,
         _principal: &AuthPrincipal,
         _model: &str,
-        _raw: &Value,
+        _raw: &gateway_core::source_json::SourceJson,
     ) -> Result<ClaudeSelection, GatewayError> {
         if self.claude_internal_error {
             return Ok(ClaudeSelection::InternalServerError);
