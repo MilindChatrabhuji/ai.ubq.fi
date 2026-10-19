@@ -335,6 +335,48 @@ fn one_physical_generation_cannot_refresh_twice_across_live_contexts() {
             service.start(&mut claim).await.unwrap(),
             NativeRenewalMode::ReconcileOnly
         );
+        let prefix = crate::native_control::rows::prefix().0;
+        for (key, record) in store
+            .rows
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(key, _)| key.starts_with(&prefix))
+        {
+            crate::native_control::validate_native_control_custody(&RecordKey(key.clone()), record)
+                .unwrap();
+        }
+        let action_key = crate::native_control::rows::key("action", create.action_ref());
+        let mut stale = store
+            .rows
+            .lock()
+            .unwrap()
+            .get(&action_key.0)
+            .unwrap()
+            .json_value()
+            .unwrap()
+            .clone();
+        stale["fence"]["v"] = json!(1);
+        assert!(
+            crate::native_control::validate_native_control_custody(
+                &action_key,
+                &StoredRecord::json("stale-version", stale, None)
+            )
+            .is_err()
+        );
+        let effect_key = crate::native_control::rows::generation_key(create.fence()).unwrap();
+        let effect = store
+            .rows
+            .lock()
+            .unwrap()
+            .get(&effect_key.0)
+            .unwrap()
+            .clone();
+        let mut expiring = effect.clone();
+        expiring.expires_at_ms = Some(2_000_000);
+        assert!(
+            crate::native_control::validate_native_control_custody(&effect_key, &expiring).is_err()
+        );
         let mapped = service
             .prepare_live_mapped_renewal(&actor, "renew-call")
             .await

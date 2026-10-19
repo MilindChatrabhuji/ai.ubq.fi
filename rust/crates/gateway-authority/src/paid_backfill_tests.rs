@@ -532,3 +532,62 @@ fn genuine_fractional_source_rollup_spend_is_not_rounded_to_fit_the_live_dto() {
     assert_eq!(merged["spend_microcredits"].as_f64(), Some(5.25));
     assert_eq!(merged["quota_sum"].as_f64(), Some(3.0));
 }
+
+fn pending_for_live_settlement(store: &Store, model: &str) -> PaidAttempt {
+    let mut raw = request("a", false);
+    raw["model"] = json!(model);
+    let row: PaidAttempt = serde_json::from_value(raw.clone()).unwrap();
+    store.put(key("a"), raw);
+    store.put(
+        keys::paid_pending("key", "a"),
+        json!({"key_id":"key","attempt_id":"a","created_at_ms":NOW-1000,
+            "next_reconciliation_at_ms":NOW}),
+    );
+    let mut active = window(NOW);
+    active["reserved_microcredits"] = json!(10);
+    active["pending_count"] = json!(1);
+    store.put(keys::paid_window("key", NOW), active);
+    row
+}
+fn live_usage() -> crate::paid::PaidUsage {
+    crate::paid::PaidUsage {
+        provider_quota: 5.0,
+        input_tokens: 10,
+        cached_input_tokens: Some(2),
+        output_tokens: 3,
+        correlation: crate::paid::PaidCorrelation::ProviderRequestId("a".into()),
+    }
+}
+#[test]
+fn pending_backfill_marker_does_not_block_later_real_settlement_or_double_fold() {
+    // Actual frozen source oracle under pinned Bun1.4: a pending backfill marker
+    // does not suppress paidFallbackSettlementRollupV3's later actual usage fold.
+    let store = Store::default();
+    let row = pending_for_live_settlement(&store, "model");
+    assert_eq!(backfill(&store, 10).requests.rollups_written, 0);
+    assert_eq!(store.value(&key("a"))["usage_rollup_at_ms"], NOW);
+    let authority = store.authority();
+    assert!(run(authority.settle_paid(&row.reservation, &live_usage(), NOW + 1)).unwrap());
+    assert_eq!(store.value(&key("a"))["billing_state"], "settled");
+    assert_eq!(store.value(&rollup_key("a"))["request_count"], 1);
+    assert_eq!(store.value(&rollup_key("a"))["spend_microcredits"], 5);
+    assert!(!run(authority.settle_paid(&row.reservation, &live_usage(), NOW + 2)).unwrap());
+    assert_eq!(backfill(&store, 10).requests.rollups_written, 0);
+    assert_eq!(store.value(&rollup_key("a"))["request_count"], 1);
+}
+#[test]
+fn later_live_settlement_uses_the_same_source_trimmed_rollup_identity() {
+    let store = Store::default();
+    let row = pending_for_live_settlement(&store, " model ");
+    assert!(
+        run(store
+            .authority()
+            .settle_paid(&row.reservation, &live_usage(), NOW))
+        .unwrap()
+    );
+    let rollup = store.value(&rollup_key("a"));
+    assert_eq!(rollup["model"], "model");
+    assert_eq!(rollup["quota_sum"].as_f64(), Some(5.0));
+    assert_eq!(backfill(&store, 10).requests.rollups_written, 0);
+    assert_eq!(store.value(&rollup_key("a"))["request_count"], 1);
+}

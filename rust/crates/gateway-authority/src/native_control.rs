@@ -7,6 +7,7 @@ use gateway_core::GatewayError;
 use serde::{Deserialize, Serialize};
 
 pub mod actor;
+mod custody;
 mod facts;
 mod live_renewal;
 mod managed;
@@ -14,6 +15,7 @@ mod owners;
 mod receiver;
 mod rows;
 pub mod wire;
+pub use custody::validate_native_control_custody;
 pub use managed::{NativeManagedPublication, NativeManagedPublicationDisposition};
 pub use owners::RegisteredRenewalOwners;
 pub use receiver::{NativeRenewalAuthority, RegisteredRenewalOwner};
