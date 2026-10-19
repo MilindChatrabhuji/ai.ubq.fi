@@ -1,0 +1,108 @@
+{
+  "runtime": "bun@1.4.0",
+  "source": "893c14045e9aaaf436fe135a0b7743d3ea3fd9ac",
+  "cases": [
+    {
+      "op": "content",
+      "name": "high text",
+      "input": "{\"type\":\"input_text\",\"text\":\"\\ud800\"}",
+      "expected": "{\"ok\":true,\"value\":{\"type\":\"input_text\",\"text\":\"\\ud800\"}}"
+    },
+    {
+      "op": "content",
+      "name": "low file",
+      "input": "{\"type\":\"input_file\",\"file_data\":\"\\udfff\",\"filename\":\"a\\ud800\"}",
+      "expected": "{\"ok\":true,\"value\":{\"type\":\"input_file\",\"file_data\":\"\\udfff\",\"filename\":\"a\\ud800\"}}"
+    },
+    {
+      "op": "content",
+      "name": "image lone URL",
+      "input": "{\"type\":\"input_image\",\"image_url\":\" \\ud800 \"}",
+      "expected": "{\"ok\":true,\"value\":{\"type\":\"input_image\",\"image_url\":\"\\ud800\"}}"
+    },
+    {
+      "op": "content",
+      "name": "unknown lone key",
+      "input": "{\"type\":\"input_text\",\"text\":\"x\",\"\\ud800\":1}",
+      "expected": "{\"ok\":false,\"message\":\"Unknown content field: \\ud800\",\"param\":\"input[0].\\ud800\"}"
+    },
+    {
+      "op": "content",
+      "name": "lone kind",
+      "input": "{\"type\":\"input_\\ud800\",\"text\":\"x\"}",
+      "expected": "{\"ok\":false,\"message\":\"input[0].type is not supported\",\"param\":\"input[0].type\"}"
+    },
+    {
+      "op": "message",
+      "name": "assistant low",
+      "input": "{\"role\":\"assistant\",\"content\":\"\\udfff\"}",
+      "expected": "{\"ok\":true,\"value\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"\\udfff\"}]}}"
+    },
+    {
+      "op": "message",
+      "name": "unknown role",
+      "input": "{\"role\":\"\\udfff\",\"content\":\"x\"}",
+      "expected": "{\"ok\":false,\"message\":\"input[0].role is invalid\",\"param\":\"input[0].role\"}"
+    },
+    {
+      "op": "function",
+      "name": "opaque object",
+      "input": "{\"type\":\"function_call_output\",\"call_id\":\"\\ud800\",\"output\":{\"2\":2,\"x\":-0,\"\\udfff\":\"\\ud800\"}}",
+      "expected": "{\"ok\":true,\"value\":{\"type\":\"function_call_output\",\"call_id\":\"\\ud800\",\"output\":{\"2\":2,\"x\":0,\"\\udfff\":\"\\ud800\"}}}"
+    },
+    {
+      "op": "function",
+      "name": "output array",
+      "input": "{\"type\":\"function_call_output\",\"call_id\":\"\\ud800\",\"output\":[{\"type\":\"input_text\",\"text\":\"\\udfff\"}]}",
+      "expected": "{\"ok\":true,\"value\":{\"type\":\"function_call_output\",\"call_id\":\"\\ud800\",\"output\":[{\"type\":\"input_text\",\"text\":\"\\udfff\"}]}}"
+    },
+    {
+      "op": "chat",
+      "name": "system high",
+      "input": "{\"role\":\"system\",\"content\":\" \\ud800 \"}",
+      "expected": "{\"ok\":true,\"value\":{\"instruction\":\" \\ud800 \",\"instructionContent\":[{\"type\":\"input_text\",\"text\":\" \\ud800 \"}],\"input\":[]}}"
+    },
+    {
+      "op": "chat",
+      "name": "tool output low",
+      "input": "{\"role\":\"tool\",\"tool_call_id\":\" \\ud800 \",\"content\":\"\\udfff\"}",
+      "expected": "{\"ok\":true,\"value\":{\"instruction\":null,\"instructionContent\":null,\"input\":[{\"type\":\"function_call_output\",\"call_id\":\"\\ud800\",\"output\":\"\\udfff\"}]}}"
+    },
+    {
+      "op": "chat",
+      "name": "tool call arguments",
+      "input": "{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\" \\ud800 \",\"type\":\"function\",\"function\":{\"name\":\"n\\udfff\",\"arguments\":\" { \\\"2\\\":1, \\\"2\\\":2 } \\ud800\"}}]}",
+      "expected": "{\"ok\":true,\"value\":{\"instruction\":null,\"instructionContent\":null,\"input\":[{\"type\":\"function_call\",\"call_id\":\"\\ud800\",\"name\":\"n\\udfff\",\"arguments\":\" { \\\"2\\\":1, \\\"2\\\":2 } \\ud800\"}]}}"
+    },
+    {
+      "op": "chat",
+      "name": "assistant refusal",
+      "input": "{\"role\":\"assistant\",\"content\":null,\"refusal\":\"\\udfff\"}",
+      "expected": "{\"ok\":true,\"value\":{\"instruction\":null,\"instructionContent\":null,\"input\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"\\udfff\"}]}]}}"
+    },
+    {
+      "op": "chat",
+      "name": "unknown content key",
+      "input": "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"x\",\"\\udfff\":1}]}",
+      "expected": "{\"ok\":false,\"message\":\"Unknown content field: \\udfff\",\"param\":\"messages[0].content[0].\\udfff\"}"
+    },
+    {
+      "op": "chat",
+      "name": "explicit developer",
+      "input": "{\"role\":\"developer\",\"content\":[{\"type\":\"text\",\"text\":\"\\ud800\",\"prompt_cache_breakpoint\":{\"mode\":\"explicit\"}}]}",
+      "expected": "{\"ok\":true,\"value\":{\"instruction\":\"\\ud800\",\"instructionContent\":[{\"type\":\"input_text\",\"text\":\"\\ud800\",\"prompt_cache_breakpoint\":{\"mode\":\"explicit\"}}],\"input\":[]}}"
+    },
+    {
+      "op": "cache",
+      "name": "unknown option",
+      "input": "{\"prompt_cache_options\":{\"\\ud800\":1}}",
+      "expected": "{\"ok\":false,\"message\":\"Unknown prompt cache option: \\ud800\",\"param\":\"prompt_cache_options.\\ud800\"}"
+    },
+    {
+      "op": "cache",
+      "name": "lone key",
+      "input": "{\"prompt_cache_key\":\"\\udfff\",\"prompt_cache_options\":{\"ttl\":\"30m\"}}",
+      "expected": "{\"ok\":true}"
+    }
+  ]
+}

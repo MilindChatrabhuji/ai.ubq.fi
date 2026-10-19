@@ -600,3 +600,206 @@ fn f13_wrong_active_attempt_and_expired_dispatch_lease_are_refused() {
         .is_err()
     );
 }
+
+fn local_phase_record(
+    phase: gateway_core::local_work::LocalWorkPhase,
+) -> gateway_core::local_work::LocalWorkRecord {
+    use gateway_core::local_work::{
+        LocalSemanticOutcome, LocalTerminalObservation, LocalWorkKind, LocalWorkPhase,
+        LocalWorkRecord, SOURCE_REQUEST_BINDING_VERSION,
+    };
+    LocalWorkRecord {
+        kind: LocalWorkKind::CodexResponsesCompaction,
+        owner_nonce: "f13-local-data-only".into(),
+        binding_version: SOURCE_REQUEST_BINDING_VERSION,
+        phase,
+        terminal: matches!(
+            phase,
+            LocalWorkPhase::TerminalPending | LocalWorkPhase::Terminal
+        )
+        .then_some(LocalTerminalObservation {
+            semantic: LocalSemanticOutcome::Incomplete,
+            reader_termination: None,
+            body: None,
+            delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+        }),
+    }
+}
+fn set_local_phase(
+    store: &MemoryStore,
+    input: &PaidRequest,
+    phase: gateway_core::local_work::LocalWorkPhase,
+) {
+    let key = super::paid_original::journal_key(&input.request_id.0);
+    let mut journal = store.row(&key).unwrap().value;
+    journal["v"] = json!(2);
+    journal["local_work"] = serde_json::to_value(local_phase_record(phase)).unwrap();
+    if phase == gateway_core::local_work::LocalWorkPhase::Terminal {
+        journal["finished"] = json!(true);
+    }
+    store.seed(key, &journal);
+}
+#[test]
+fn f13_local_phase_legacy_and_planned_preserve_both_binding_stages_and_dispatched_api() {
+    use gateway_core::local_work::LocalWorkPhase;
+    for local in [false, true] {
+        for dispatched in [false, true] {
+            let (store, authority, input, _) = setup();
+            if dispatched {
+                let journal = store
+                    .row(&super::paid_original::journal_key(&input.request_id.0))
+                    .unwrap()
+                    .value;
+                let api: gateway_authority::quota::ApiReservation =
+                    serde_json::from_value(journal["api"].clone()).unwrap();
+                assert!(
+                    run(authority.dispatch_api_key(&api, UpstreamProvider::Metered, NOW)).unwrap()
+                );
+            }
+            if local {
+                set_local_phase(&store, &input, LocalWorkPhase::ProviderPlanned);
+            }
+            let original = original_context(&store, &input);
+            let pre = run(authority.bind_paid_original_request(
+                &fresh_route(&authority, &input),
+                &original,
+                NOW,
+            ))
+            .unwrap();
+            let PaidAdmission::Reserved(paid) =
+                run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &pre, NOW))
+                    .unwrap()
+            else {
+                panic!("expected new exposure once")
+            };
+            let before = window_value(&store, paid.window_reset_at_ms);
+            publish_active_paid(&store, &input, &paid);
+            let route = fresh_route(&authority, &input);
+            assert!(run(authority.bind_paid_original_request(&route, &original, NOW)).is_err());
+            let existing =
+                run(authority.bind_paid_original_dispatch(&route, &original, &paid, NOW)).unwrap();
+            assert!(
+                matches!(run(authority.reserve_paid(&input,&PaidAuthorization::DirectPaidModel,&existing,NOW)).unwrap(),PaidAdmission::Existing(same) if same==paid)
+            );
+            assert_eq!(window_value(&store, paid.window_reset_at_ms), before);
+        }
+    }
+}
+#[test]
+fn f13_local_phase_other_valid_local_phases_never_authorize_provider_exposure() {
+    use gateway_core::local_work::{LocalWorkPhase, journal_local_work};
+    for phase in [
+        LocalWorkPhase::Admitting,
+        LocalWorkPhase::Running,
+        LocalWorkPhase::Planning,
+        LocalWorkPhase::ResponsePending,
+        LocalWorkPhase::TerminalPending,
+        LocalWorkPhase::Terminal,
+    ] {
+        let (store, authority, input, _) = setup();
+        set_local_phase(&store, &input, phase);
+        let row = store
+            .row(&super::paid_original::journal_key(&input.request_id.0))
+            .unwrap()
+            .value;
+        assert_eq!(journal_local_work(&row).unwrap().unwrap().phase, phase);
+        assert!(
+            run(authority.bind_paid_original_request(
+                &fresh_route(&authority, &input),
+                &original_context(&store, &input),
+                NOW
+            ))
+            .is_err()
+        );
+        assert!(
+            store
+                .row(&keys::paid_attempt("key-a", &input.attempt_id.0))
+                .is_none()
+        );
+        assert!(
+            store
+                .row(&keys::paid_window("key-a", NOW + gateway_authority::DAY_MS))
+                .is_none()
+        );
+    }
+}
+#[test]
+fn f13_local_phase_malformed_missing_and_phase_only_permission_are_refused() {
+    use gateway_core::local_work::LocalWorkPhase;
+    for defect in [
+        "missing_extension",
+        "missing_owner",
+        "legacy_extension",
+        "unknown_phase",
+        "foreign_field",
+        "expired_owner",
+    ] {
+        let (store, authority, input, _) = setup();
+        set_local_phase(&store, &input, LocalWorkPhase::ProviderPlanned);
+        let key = super::paid_original::journal_key(&input.request_id.0);
+        let mut journal = store.row(&key).unwrap().value;
+        match defect {
+            "missing_extension" => {
+                journal.as_object_mut().unwrap().remove("local_work");
+            }
+            "missing_owner" => {
+                journal["local_work"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("owner_nonce");
+            }
+            "legacy_extension" => journal["v"] = json!(1),
+            "unknown_phase" => journal["local_work"]["phase"] = json!("foreign_phase"),
+            "foreign_field" => journal["local_work"]["grants_permission"] = json!(true),
+            "expired_owner" => journal["lease_expires_at_ms"] = json!(NOW),
+            _ => unreachable!(),
+        }
+        store.seed(key, &journal);
+        assert!(
+            run(authority.bind_paid_original_request(
+                &fresh_route(&authority, &input),
+                &original_context(&store, &input),
+                NOW
+            ))
+            .is_err(),
+            "{defect}"
+        );
+        assert!(
+            store
+                .row(&keys::paid_attempt("key-a", &input.attempt_id.0))
+                .is_none()
+        );
+    }
+}
+#[test]
+fn f13_local_phase_nonplanned_or_malformed_active_dispatch_cannot_add_exposure() {
+    use gateway_core::local_work::LocalWorkPhase;
+    for malformed in [false, true] {
+        let (store, authority, input, pre) = setup();
+        let PaidAdmission::Reserved(paid) =
+            run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &pre, NOW))
+                .unwrap()
+        else {
+            panic!("expected original paid exposure")
+        };
+        let before = window_value(&store, paid.window_reset_at_ms);
+        publish_active_paid(&store, &input, &paid);
+        set_local_phase(&store, &input, LocalWorkPhase::Planning);
+        if malformed {
+            let key = super::paid_original::journal_key(&input.request_id.0);
+            let mut row = store.row(&key).unwrap().value;
+            row.as_object_mut().unwrap().remove("local_work");
+            store.seed(key, &row);
+        }
+        assert!(
+            run(authority.bind_paid_original_dispatch(
+                &fresh_route(&authority, &input),
+                &original_context(&store, &input),
+                &paid,
+                NOW
+            ))
+            .is_err()
+        );
+        assert_eq!(window_value(&store, paid.window_reset_at_ms), before);
+    }
+}

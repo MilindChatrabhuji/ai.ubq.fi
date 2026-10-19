@@ -2,6 +2,7 @@
 mod attempt;
 pub mod classify;
 pub mod custody;
+pub mod local_work;
 mod dispatch;
 pub mod extras;
 mod journal;

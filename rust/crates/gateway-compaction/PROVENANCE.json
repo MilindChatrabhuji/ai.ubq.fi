@@ -17,5 +17,8 @@
   },
   "source_golden_ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/1786175f-efff-4f60-b8e2-38eb338fb87a",
   "first_native_golden_ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/9db08922-e2c6-4578-aea0-e744f87fc8e2",
-  "status": "provisional implementation, full gates/runtime pending"
+  "status": "source implementation; native/WASM acceptance requires matching immutable receipt, runtime acceptance separate",
+  "fitting_source_golden_ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/686589d4-731b-4228-a29d-f0ec98dbc8b9",
+  "fitting_fixture_encoding": "lossless string and [pattern,count] segments; compare complete UTF16 summary, not a digest",
+  "extra_state_source_golden_ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/6001f00d-8158-4330-bf5d-96c7f53b6c95"
 }

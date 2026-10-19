@@ -1,5 +1,5 @@
 //! src/request-policy.ts:98-163,412-451,565-613; tiers are deliberately open strings.
-use crate::util::{invalid, normalized_string, push_unique};
+use crate::util::{normalized_string, push_unique};
 use gateway_core::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -66,52 +66,20 @@ impl ModelReasoning {
     }
 }
 pub fn parse_effort(value: Option<&Value>, field: &str) -> Result<Option<String>, GatewayError> {
-    let Some(value) = value.filter(|v| !v.is_null()) else {
-        return Ok(None);
-    };
-    if !value.is_string() {
-        return Err(invalid(format!("{field} must be a string"), Some(field)));
-    }
-    normalized_string(Some(value))
-        .map(Some)
-        .ok_or_else(|| invalid(format!("{field} must be a non-empty string"), Some(field)))
+    let value = crate::source_request::scalar_value(value)?;
+    crate::source_request::parse_effort(value.as_ref(), field)
+        .map_err(crate::source_request::SourceRequestError::into_scalar)?
+        .map(|value| value.try_utf8())
+        .transpose()
 }
 pub fn parse_reasoning(value: Option<&Value>) -> Result<Option<Map<String, Value>>, GatewayError> {
-    let Some(value) = value.filter(|v| !v.is_null()) else {
-        return Ok(None);
-    };
-    let Some(record) = value.as_object() else {
-        return Err(invalid("reasoning must be an object", Some("reasoning")));
-    };
-    let mut normalized = record.clone();
-    if let Some(effort) = record.get("effort") {
-        let parsed = parse_effort(Some(effort), "reasoning.effort").map_err(|mut e| {
-            e.envelope.error.param = Some(Some("reasoning".into()));
-            e
-        })?;
-        match parsed {
-            Some(effort) => {
-                normalized.insert("effort".into(), Value::String(effort));
-            }
-            None => {
-                normalized.shift_remove("effort");
-            }
-        }
-    }
-    for field in ["summary", "generate_summary"] {
-        if let Some(value) = record.get(field) {
-            if value.is_null() {
-                normalized.shift_remove(field);
-            } else if !value.is_string() {
-                return Err(invalid(
-                    format!("reasoning.{field} must be a string"),
-                    Some("reasoning"),
-                ));
-            }
-        }
-    }
-    Ok((!normalized.is_empty()).then_some(normalized))
+    let value = crate::source_request::scalar_value(value)?;
+    crate::source_request::parse_reasoning(value.as_ref())
+        .map_err(crate::source_request::SourceRequestError::into_scalar)?
+        .map(|value| value.deserialize())
+        .transpose()
 }
+
 pub fn effort_for_codex(effort: &str, model: &ModelReasoning) -> String {
     match effort {
         "none" => "none".into(),

@@ -9,38 +9,56 @@ pub struct SourceRequestError {
     diagnostic: Box<GatewayError>,
 }
 impl SourceRequestError {
-    pub fn invalid(message: impl Into<JsString16>, param: Option<JsString16>) -> Self {
+    pub fn new(
+        status: u16,
+        message: impl Into<JsString16>,
+        error_type: &str,
+        code: Option<&str>,
+        param: Option<Option<JsString16>>,
+    ) -> Self {
         #[derive(Serialize)]
-        struct ErrorBody {
-            error: ErrorFields,
+        struct ErrorBody<'a> {
+            error: ErrorFields<'a>,
         }
         #[derive(Serialize)]
-        struct ErrorFields {
+        struct ErrorFields<'a> {
             message: JsString16,
             #[serde(rename = "type")]
-            kind: &'static str,
-            code: &'static str,
+            kind: &'a str,
             #[serde(skip_serializing_if = "Option::is_none")]
-            param: Option<JsString16>,
+            code: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            param: Option<Option<JsString16>>,
         }
         let body = SourceJson::from_serializable(&ErrorBody {
             error: ErrorFields {
                 message: message.into(),
-                kind: "invalid_request_error",
-                code: "invalid_request_error",
+                kind: error_type,
+                code,
                 param,
             },
         })
         .expect("Source error fields are valid JSON");
         Self {
-            status: 400,
+            status,
             body,
-            diagnostic: Box::new(GatewayError::new(
-                400,
-                "Invalid source request.",
-                Some("invalid_request_error"),
-            )),
+            diagnostic: Box::new(
+                GatewayError::new(status, "Invalid source request.", code).with_type(error_type),
+            ),
         }
+    }
+    pub fn invalid(message: impl Into<JsString16>, param: Option<JsString16>) -> Self {
+        Self::new(
+            400,
+            message,
+            "invalid_request_error",
+            Some("invalid_request_error"),
+            param.map(Some),
+        )
+    }
+    /// Lift an existing scalar error without altering status, fields, or exact body.
+    pub fn from_gateway(error: GatewayError) -> Self {
+        Self::from_scalar(error)
     }
     pub(crate) fn from_scalar(error: GatewayError) -> Self {
         let body = SourceJson::from_serializable(&error.envelope)
@@ -85,6 +103,11 @@ impl SourceRequestError {
                         .with_type(&fields.kind);
                 if let Some(param) = fields.param {
                     error = error.with_param(Some(&param));
+                } else if gateway_core::source_serialization::member(&self.body, "error")
+                    .and_then(|body| gateway_core::source_serialization::member(&body, "param"))
+                    .is_some()
+                {
+                    error = error.with_param(None);
                 }
                 error
             }
