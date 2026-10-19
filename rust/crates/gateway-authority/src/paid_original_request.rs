@@ -11,9 +11,18 @@ use gateway_core::{
     GatewayError,
     identity::RequestContext,
     local_work::{LocalWorkPhase, journal_local_work},
+    source_json::SourceJson,
+    source_serialization as source,
     state::AuthorityStore,
 };
-use serde_json::Value;
+use serde::de::DeserializeOwned;
+
+fn field<T: DeserializeOwned>(value: &SourceJson, name: &str) -> Option<T> {
+    source::member(value, name)?.deserialize().ok()
+}
+fn absent_or_null(value: &SourceJson, name: &str) -> bool {
+    source::member(value, name).is_none_or(|value| value.as_str() == "null")
+}
 
 pub(super) async fn require_current<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
@@ -41,7 +50,10 @@ pub(super) async fn require_current<S: AuthorityStore, I: TokenSource>(
         "session",
         &original.request_id.0,
     ]);
-    let journal = tx.read::<Value>(&key).await?.ok_or_else(error)?;
+    let journal = tx
+        .read_source_control::<SourceJson>(&key)
+        .await?
+        .ok_or_else(error)?;
     // This shared data-only parser is not ownership permission; all checks below still apply.
     if journal_local_work(&journal)
         .map_err(|_| error())?
@@ -49,16 +61,13 @@ pub(super) async fn require_current<S: AuthorityStore, I: TokenSource>(
     {
         return Err(error());
     }
-    let context: RequestContext =
-        serde_json::from_value(journal["context"].clone()).map_err(|_| error())?;
+    let context: RequestContext = field(&journal, "context").ok_or_else(error)?;
     if &context != original
-        || journal["finished"].as_bool() != Some(false)
-        || journal["recovering"].as_bool() != Some(false)
-        || journal["semantic_committed"].as_bool() != Some(false)
-        || !journal.get("terminal_intent").is_none_or(Value::is_null)
-        || !journal["lease_expires_at_ms"]
-            .as_i64()
-            .is_some_and(|lease| lease > tx.now)
+        || field::<bool>(&journal, "finished") != Some(false)
+        || field::<bool>(&journal, "recovering") != Some(false)
+        || field::<bool>(&journal, "semantic_committed") != Some(false)
+        || !absent_or_null(&journal, "terminal_intent")
+        || !field::<i64>(&journal, "lease_expires_at_ms").is_some_and(|lease| lease > tx.now)
     {
         return Err(error());
     }
@@ -71,26 +80,27 @@ pub(super) async fn require_current<S: AuthorityStore, I: TokenSource>(
         {
             return Err(error());
         }
-        let active = journal["active"].as_str().ok_or_else(error)?;
-        let attempt = journal["attempts"]
-            .as_array()
+        let active: String = field(&journal, "active").ok_or_else(error)?;
+        let attempt = source::member(&journal, "attempts")
+            .and_then(|value| source::array(&value))
             .and_then(|attempts| {
                 attempts
-                    .iter()
-                    .find(|attempt| attempt["id"].as_str() == Some(active))
+                    .into_iter()
+                    .find(|attempt| field::<String>(attempt, "id").as_ref() == Some(&active))
             })
             .ok_or_else(error)?;
-        let paid: PaidReservation =
-            serde_json::from_value(attempt["paid"].clone()).map_err(|_| error())?;
+        let paid: PaidReservation = field(&attempt, "paid").ok_or_else(error)?;
         if &paid != expected {
             return Err(error());
         }
-    } else if !journal.get("active").is_none_or(Value::is_null) {
+    } else if !absent_or_null(&journal, "active") {
         return Err(error());
     }
-    let api: Option<ApiReservation> =
-        serde_json::from_value(journal.get("api").cloned().unwrap_or(Value::Null))
-            .map_err(|_| error())?;
+    let api: Option<ApiReservation> = if source::member(&journal, "api").is_none() {
+        None
+    } else {
+        field(&journal, "api").ok_or_else(error)?
+    };
     if original.key_id.is_some() && api.is_none() {
         return Err(error());
     }
@@ -122,9 +132,11 @@ pub(super) async fn require_current<S: AuthorityStore, I: TokenSource>(
             _ => return Err(error()),
         }
     }
-    let kernel: Option<KernelReservation> =
-        serde_json::from_value(journal.get("kernel").cloned().unwrap_or(Value::Null))
-            .map_err(|_| error())?;
+    let kernel: Option<KernelReservation> = if source::member(&journal, "kernel").is_none() {
+        None
+    } else {
+        field(&journal, "kernel").ok_or_else(error)?
+    };
     if let Some(expected) = kernel {
         let key = keys::kernel_request(
             &expected.owner,
@@ -187,7 +199,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             if let Some(expected) = existing {
                 let key = keys::paid_attempt(&expected.key_id.0, &expected.attempt_id.0);
                 let row: PaidAttempt = tx
-                    .read(&key)
+                    .read_source_control(&key)
                     .await?
                     .ok_or_else(|| control_error("Existing paid history is missing or expired."))?;
                 if &row.reservation != expected {
