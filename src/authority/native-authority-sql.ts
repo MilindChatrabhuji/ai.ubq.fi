@@ -285,6 +285,9 @@ export class NativeAuthoritySql {
     if (raw?.id !== keyId || raw.revoked_at_ms !== null) return null;
     const api = apiKeyPolicyFromHashRecord(tokenHash, raw, now);
     if (!api) return null;
-    return { ...source, value: { ...source.value, api } };
+    // API admission rolls this source anchor at its own request time. Paid admission
+    // must retain it so an older request still selects its original billing window.
+    const anchored = { ...api, window_start_ms: raw.usage_reset_at_ms - api.window_ms, usage_reset_at_ms: raw.usage_reset_at_ms };
+    return { ...source, value: { ...source.value, api: anchored } };
   }
 }

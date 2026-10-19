@@ -23,7 +23,19 @@ import type {
 
 type Outcome = Exclude<NativeControlReply, { kind: "historical_ack" }>;
 type Target = Readonly<{ record: ApiKeyRecord; id: NativeRead<ApiKeyRecord>; hashRevision: string | null; projection: NativeRead<NativeKeyPolicy> }>;
-type Commit = (() => Readonly<{ reply: Outcome; cleanup?: NativeControlReceipt["cleanup"] }>) & { onFailure?: () => void };
+type Commit = (() => Readonly<{ reply: Outcome; cleanup?: NativeControlReceipt["cleanup"] }>) & { onFailure?: () => void; prepare?: () => void };
+type CreateFlight = {
+  intent: string;
+  work?: Promise<Commit>;
+  token?: string;
+  now?: number;
+  defaults?: ReturnType<NativePrincipalControlInitial["sources"]["defaults"]>;
+  hash?: string;
+  pricing?: ReturnType<NativePrincipalControlInitial["sources"]["defaultPaidPolicy"]>;
+  pricingReady?: boolean;
+  id?: string;
+  prepared?: NativeKeyCreatePreparation;
+};
 const refusal = (status: number, message: string, code = "invalid_request_error"): Outcome => ({ kind: "refused", status, code, message });
 const conflict = () => refusal(409, "API key was modified concurrently; retry");
 const activeGrant = (value: unknown): value is NativeKeyControlGrant =>
@@ -42,7 +54,8 @@ const digest = async (value: string): Promise<string> =>
 
 /** Private source-control SPI. Every effect and historical acknowledgment rechecks its durable grant. */
 export class NativeAuthorityPrincipals {
-  private readonly _creating = new Map<string, Readonly<{ intent: string; work: Promise<Commit> }>>();
+  private readonly _creating = new Map<string, CreateFlight>();
+  private readonly _cleaning = new Map<string, Promise<void>>();
   constructor(
     private readonly _sql: NativeAuthoritySql,
     private readonly _api: NativeAuthorityApi,
@@ -209,7 +222,8 @@ export class NativeAuthorityPrincipals {
   private async _create(
     command: Extract<NativeControlCommand, { method: "createKey" }>,
     admin: VerifiedKeyAdmin,
-    persist: (prepared: NativeKeyCreatePreparation) => NativeKeyCreatePreparation
+    persist: (prepared: NativeKeyCreatePreparation) => NativeKeyCreatePreparation,
+    flight: CreateFlight
   ): Promise<Commit> {
     const raw = command.args.input;
     const name = policy.normalizeApiKeyName(raw.name);
@@ -217,22 +231,25 @@ export class NativeAuthorityPrincipals {
     const provided = policy.normalizeOptionalApiKeyToken(admin.createToken);
     if (admin.createToken !== undefined && admin.createToken !== null && provided === null)
       return () => ({ reply: refusal(400, "token must use the u_ prefix followed by 64 lowercase hexadecimal characters") });
-    const token = provided ?? this._initial.sources.generateToken();
-    const now = this._initial.sources.audit.now();
-    const fields = policy.resolveApiKeyCreateFields(raw, now, this._initial.sources.defaults(now));
+    const token = (flight.token ??= provided ?? this._initial.sources.generateToken());
+    const now = (flight.now ??= this._initial.sources.audit.now());
+    const defaults = (flight.defaults ??= this._initial.sources.defaults(now));
+    const fields = policy.resolveApiKeyCreateFields(raw, now, defaults);
     if (!fields.ok) return () => ({ reply: refusal(400, fields.error) });
-    const hash = await this._initial.sources.hashToken(token);
+    const hash = (flight.hash ??= await this._initial.sources.hashToken(token));
     const original = this._sql.transaction(() => this._sql.read("api_key_hash", apiKeyHashKey(hash), this._clock()));
     if (original.value) return () => ({ reply: refusal(409, "API key already exists") });
-    let pricing = this._initial.sources.defaultPaidPolicy();
-    if (fields.fields.paidFallbackEnabled) {
+    let pricing = (flight.pricing ??= this._initial.sources.defaultPaidPolicy());
+    if (fields.fields.paidFallbackEnabled && !flight.pricingReady) {
       try {
         pricing = { ...pricing, ...(await this._initial.sources.initializePricing()) };
+        flight.pricing = pricing;
+        flight.pricingReady = true;
       } catch (error) {
         return () => ({ reply: this._initial.sources.pricingFailure(error) });
       }
     }
-    const id = this._initial.sources.randomUUID();
+    const id = (flight.id ??= this._initial.sources.randomUUID());
     const { record } = policy.buildApiKeyCreateRecords(
       { id, name, prefix: token.slice(0, 12), hash },
       fields.fields,
@@ -240,7 +257,15 @@ export class NativeAuthorityPrincipals {
       now
     );
     const projection = this._projection(record, admin, null, now);
-    return this._createCommit(persist({ record, projection, atMs: now, hashRevision: original.revision }), admin);
+    const prepared = (flight.prepared ??= { record, projection, atMs: now, hashRevision: original.revision });
+    let accepted = prepared;
+    const commit: Commit = () => this._createCommit(accepted, admin)();
+    // Keep the completed in-memory preparation when its separate durable write
+    // fails. Retrying persistence must not mint token, pricing, time or ID again.
+    commit.prepare = () => {
+      accepted = persist(prepared);
+    };
+    return commit;
   }
   private async _update(command: Extract<NativeControlCommand, { method: "updateKey" }>, admin: VerifiedKeyAdmin, target: Target): Promise<Commit> {
     const record = target.record,
@@ -417,13 +442,17 @@ export class NativeAuthorityPrincipals {
     command: NativeControlCommand,
     admin: VerifiedKeyAdmin,
     persist: (prepared: NativeKeyCreatePreparation) => NativeKeyCreatePreparation,
-    authorize: () => void
+    authorize: () => void,
+    flight: CreateFlight | undefined
   ): Promise<Commit> {
     if (command.method === "createKey" || command.method === "updateKey") {
       const retired = policy.rejectRetiredApiKeyResetSetting(command.args.input);
       if (retired) return () => ({ reply: refusal(400, retired) });
     }
-    if (command.method === "createKey") return await this._create(command, admin, persist);
+    if (command.method === "createKey") {
+      if (!flight) throw new NativeAuthorityError("control_create_state_missing", 503);
+      return await this._create(command, admin, persist, flight);
+    }
     const target = this._sql.transaction(() => this._target(admin, this._clock()));
     if (!target) return () => ({ reply: refusal(404, "Not found", "not_found") });
     if (command.method === "deleteKey") return this._delete(admin, target, authorize);
@@ -431,7 +460,7 @@ export class NativeAuthorityPrincipals {
     if (command.method === "updateKey") return await this._update(command, admin, target);
     return this._revocation(command, admin, target);
   }
-  private async _cleanup(
+  private async _cleanupOwned(
     binding: NativeControlBinding,
     command: NativeControlCommand,
     verified: VerifiedKeyAdmin | VerifiedKeyAuth,
@@ -464,6 +493,62 @@ export class NativeAuthorityPrincipals {
       }
       this._sql.write("key_control_receipt", key, { ...current, cleanup: null });
     });
+  }
+  private async _cleanup(
+    binding: NativeControlBinding,
+    command: NativeControlCommand,
+    verified: VerifiedKeyAdmin | VerifiedKeyAuth,
+    intentDigest: string,
+    key: readonly string[],
+    receipt: NativeControlReceipt
+  ): Promise<void> {
+    if (!receipt.cleanup) return;
+    const ownerKey = nativeCommandBytes({ key, cleanup: receipt.cleanup });
+    let work = this._cleaning.get(ownerKey);
+    if (!work) {
+      work = this._cleanupOwned(binding, command, verified, intentDigest, key, receipt);
+      this._cleaning.set(ownerKey, work);
+    }
+    try {
+      await work;
+    } finally {
+      if (this._cleaning.get(ownerKey) === work) this._cleaning.delete(ownerKey);
+    }
+    // Every waiting caller needs current authority before its own acknowledgment.
+    this._sql.transaction(() => {
+      this._authorize(binding, command, verified, intentDigest);
+    });
+  }
+  private async _preparedCommit(
+    command: NativeControlCommand,
+    admin: VerifiedKeyAdmin,
+    preparation: Readonly<{
+      operationKey: string;
+      intent: string;
+      prior?: NativeKeyCreatePreparation;
+      persist: (prepared: NativeKeyCreatePreparation) => NativeKeyCreatePreparation;
+      authorize: () => void;
+    }>
+  ): Promise<Commit> {
+    let active = this._creating.get(preparation.operationKey);
+    if (active && active.intent !== preparation.intent) throw new NativeAuthorityError("control_operation_replay_conflict");
+    if (command.method === "createKey" && !active) {
+      active = { intent: preparation.intent };
+      this._creating.set(preparation.operationKey, active);
+    }
+    let work = active?.work;
+    if (!work) {
+      work = preparation.prior
+        ? Promise.resolve(this._createCommit(preparation.prior, admin))
+        : this._prepare(command, admin, preparation.persist, preparation.authorize, active);
+      if (active) active.work = work;
+    }
+    try {
+      return await work;
+    } catch (error) {
+      if (active?.work === work) active.work = undefined;
+      throw error;
+    }
   }
   async control(binding: NativeControlBinding, input: NativeControlCommand): Promise<NativeControlReply> {
     const command = parseNativeControlCommand(input),
@@ -498,22 +583,21 @@ export class NativeAuthorityPrincipals {
         const existing = this._sql.read("key_control_receipt", key, this._clock()).value;
         if (existing && existing.intent !== intent) throw new NativeAuthorityError("control_operation_replay_conflict");
         if (existing?.prepared) return existing.prepared;
+        if (existing?.reply) return prepared;
         this._sql.write("key_control_receipt", key, { intent, targetKeyId, reply: null, cleanup: null, prepared });
         return prepared;
       });
-    const operationKey = nativeCommandBytes(key),
-      active = this._creating.get(operationKey);
-    if (active && active.intent !== intent) throw new NativeAuthorityError("control_operation_replay_conflict");
-    let work = active?.work;
-    if (!work) {
-      work = prior.receipt?.prepared
-        ? Promise.resolve(this._createCommit(prior.receipt.prepared, verified))
-        : this._prepare(command, verified, persist, () => {
-            this._authorize(binding, command, verified, intentDigest);
-          });
-      if (command.method === "createKey") this._creating.set(operationKey, { intent, work });
-    }
-    const commit = await work;
+    const operationKey = nativeCommandBytes(key);
+    const commit = await this._preparedCommit(command, verified, {
+      operationKey,
+      intent,
+      prior: prior.receipt?.prepared,
+      persist,
+      authorize: () => {
+        this._authorize(binding, command, verified, intentDigest);
+      },
+    });
+    commit.prepare?.();
     const apply = () =>
       this._sql.transaction(() => {
         this._authorize(binding, command, verified, intentDigest);

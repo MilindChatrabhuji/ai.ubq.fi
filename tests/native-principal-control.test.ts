@@ -14,7 +14,7 @@ import { API_KEY_USAGE_V3_RETENTION_MS } from "../src/authority/native-api-key.t
 import { API_KEY_CHANGE_RETENTION_MS } from "../src/authority/native-api-key-audit.ts";
 import { NativeAuthority } from "../src/authority/native-authority.ts";
 import { NativeAuthoritySql } from "../src/authority/native-authority-sql.ts";
-import { paidFallbackDeletionGuardV3Key, paidFallbackReconciliationLeaseV3Key } from "../src/authority/native-paid.ts";
+import { paidFallbackDeletionGuardV3Key, paidFallbackReconciliationLeaseV3Key, paidFallbackWindowV3Key } from "../src/authority/native-paid.ts";
 import type { NativeAuthorityInitial, NativeCapability, NativeSqlStorage } from "../src/authority/native-authority-contracts.ts";
 import type { NativeControlReply, NativeKeyControlGrant, NativePrincipalControlInitial } from "../src/authority/native-principal-contracts.ts";
 import {
@@ -74,10 +74,12 @@ const grant = (role: "key_admin" | "principal_resolver"): NativeKeyControlGrant 
   revoked: false,
   targetKeyIds: null,
 });
+const sqlObservers = new WeakMap<Database, (query: string) => void>();
 const storage = (database: Database): NativeSqlStorage => ({
   sql: {
     exec(query, ...bindings) {
       const rows = database.query<Record<string, unknown>, (string | number | null)[]>(query).all(...bindings);
+      sqlObservers.get(database)?.(query);
       return { toArray: () => rows };
     },
   },
@@ -235,6 +237,9 @@ const fixture = (record = rawRecord(), path = ":memory:") => {
     admin,
     resolver,
     client,
+    observeSql: (observer: (query: string) => void) => {
+      sqlObservers.set(db, observer);
+    },
     pricing: (hook: () => Promise<void>) => {
       pricing = hook;
     },
@@ -864,6 +869,184 @@ test("native no-op and revocation administration do not invent a quota-migration
     });
     expect(audits(f)).toHaveLength(2);
   } finally {
+    f.db.close();
+  }
+});
+
+test("review P1 original paid window remains charged when paid admission occurs after rollover", async () => {
+  const f = fixture(rawRecord("key", true));
+  try {
+    f.clock.now = NOW + 59_000;
+    const handles = await Promise.all(Array.from({ length: 6 }, (_, index) => apiReserve(f, `original-window-${index}`)));
+    expect(await f.client().call("reservePaidAttempt", { handle: handles[0], hopId: "paid" })).toMatchObject({ kind: "reserved" });
+    f.clock.now = NOW + 60_001;
+    const first = await f.client().call("reservePaidAttempt", { handle: handles[1], hopId: "paid" });
+    const attempt = f.sql.read("attempt_lifetime", [required(first.attemptHandle)], f.clock.now).value;
+    console.log(
+      JSON.stringify({ regression: "P1-original-window", requestCreatedAtMs: NOW + 59_000, reservedAtMs: f.clock.now, actualReset: attempt?.windowResetAtMs })
+    );
+    expect(attempt?.windowResetAtMs).toBe(NOW + 60_000);
+    for (const handle of handles.slice(2, 5))
+      expect(await f.client().call("reservePaidAttempt", { handle, hopId: "paid" })).toMatchObject({ kind: "reserved" });
+    expect(await f.client().call("reservePaidAttempt", { handle: handles[5], hopId: "paid" })).toMatchObject({ kind: "blocked", detail: "limit_exceeded" });
+    const following = await apiReserve(f, "following-window");
+    expect(await f.client().call("reservePaidAttempt", { handle: following, hopId: "paid" })).toMatchObject({ kind: "reserved" });
+    expect(f.sql.read("paid_window", paidFallbackWindowV3Key("key", NOW + 60_000), f.clock.now).value).toMatchObject({ reserved_microcredits: 200 });
+    expect(f.sql.read("paid_window", paidFallbackWindowV3Key("key", NOW + 120_000), f.clock.now).value).toMatchObject({ reserved_microcredits: 40 });
+  } finally {
+    f.db.close();
+  }
+});
+
+test("review P1 concurrent deletion replay cannot complete while original cleanup effects remain active", async () => {
+  const f = fixture(rawRecord("local-development")),
+    paused = barrier();
+  let cleanupCalls = 0,
+    originalEffectsSettled = false;
+  const pending: Promise<NativeControlReply>[] = [];
+  try {
+    await f.admin().call("revokeKey", {});
+    f.cleanup(async () => {
+      cleanupCalls++;
+      if (cleanupCalls === 1) {
+        await paused.hook();
+        originalEffectsSettled = true;
+      }
+    });
+    pending.push(f.admin().call("deleteKey", {}, "cleanup-race"));
+    await paused.ready;
+    // A resolved observational hook marks a real SQLite receipt read. Its following
+    // synchronous path has entered cleanup before the next event-loop check.
+    let receiptObserved = () => {};
+    const observed = new Promise<void>((resolve) => {
+      receiptObserved = resolve;
+    });
+    f.observeSql((query) => {
+      if (query.startsWith("SELECT row_json,revision,expires_at_ms FROM uos_native_key_control_receipt")) receiptObserved();
+    });
+    pending.push(f.admin().call("deleteKey", {}, "cleanup-race"));
+    await observed;
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    const guard = f.sql.read("paid_deletion_guard", paidFallbackDeletionGuardV3Key("local-development"), NOW).value;
+    console.log(JSON.stringify({ regression: "P1-cleanup-owner", cleanupCalls, originalEffectsSettled, guard }));
+    expect(originalEffectsSettled).toBe(false);
+    expect(guard).toMatchObject({ local_deletion: { completed_at_ms: null } });
+    expect(cleanupCalls).toBe(1);
+    paused.release();
+    const results = await Promise.all(pending);
+    expect(results.map((reply) => reply.kind)).toEqual(["applied", "historical_ack"]);
+    expect(originalEffectsSettled).toBe(true);
+    expect(f.sql.read("paid_deletion_guard", paidFallbackDeletionGuardV3Key("local-development"), NOW).value).toMatchObject({
+      local_deletion: { completed_at_ms: NOW },
+    });
+    expect(audits(f).filter((entry) => entry.row.value?.action === "delete")).toHaveLength(1);
+  } finally {
+    paused.release();
+    await Promise.allSettled(pending);
+    f.db.close();
+  }
+});
+
+test("review P2 failed preparation write recovers on the same authority and operation without reminting", async () => {
+  const f = fixture();
+  try {
+    f.db.run(
+      "CREATE TRIGGER synthetic_preparation_fault BEFORE INSERT ON uos_native_key_control_receipt WHEN json_extract(NEW.row_json,'$.prepared') IS NOT NULL BEGIN SELECT RAISE(ABORT,'synthetic preparation fault'); END"
+    );
+    const args = { input: { name: "recoverable preparation" } };
+    await assert.rejects(f.admin(null).call("createKey", args, "failed-preparation"), /synthetic preparation fault/);
+    expect(f.sql.page("api_key_id", NOW, "", 100)).toHaveLength(1);
+    expect(audits(f)).toHaveLength(0);
+    expect(f.sql.page("key_control_receipt", NOW, "", 100)).toHaveLength(0);
+    const before = [...f.calls];
+    f.db.run("DROP TRIGGER synthetic_preparation_fault");
+    const result = await f.admin(null).call("createKey", args, "failed-preparation");
+    console.log(JSON.stringify({ regression: "P2-preparation-retry", kind: result.kind, sourceCallsAfterFailure: f.calls.slice(before.length) }));
+    expect(result).toMatchObject({ kind: "applied", keyId: "synthetic-uuid-1" });
+    expect(f.calls.slice(before.length)).toEqual(["audit-uuid", "release"]);
+    expect(await f.admin(null).call("createKey", args, "failed-preparation")).toMatchObject({ kind: "historical_ack" });
+    expect(audits(f)).toHaveLength(1);
+  } finally {
+    f.db.close();
+  }
+});
+
+test("review P2 early source failure retries the same private token and preparation stages", async () => {
+  const f = fixture();
+  try {
+    let attempts = 0;
+    const owner = new NativeAuthority(storage(f.db), f.options, () => f.clock.now, {
+      ...f.control,
+      sources: {
+        ...f.control.sources,
+        hashToken: async (token) => {
+          if (++attempts === 1) throw new Error("synthetic hash source unavailable");
+          return await f.control.sources.hashToken(token);
+        },
+      },
+    });
+    const args = { input: { name: "recover source" } },
+      client = f.admin(null, undefined, owner);
+    await assert.rejects(client.call("createKey", args, "source-retry"), /synthetic hash source unavailable/);
+    expect(await client.call("createKey", args, "source-retry")).toMatchObject({ kind: "applied", keyId: "synthetic-uuid-1" });
+    expect(f.calls.filter((call) => call === "token")).toHaveLength(1);
+    expect(f.calls.filter((call) => call === "clock")).toHaveLength(1);
+    expect(f.calls.filter((call) => call === "defaults")).toHaveLength(1);
+    expect(f.calls.filter((call) => call === "uuid")).toHaveLength(1);
+    expect(attempts).toBe(2);
+    expect(await client.call("createKey", args, "source-retry")).toMatchObject({ kind: "historical_ack" });
+    expect(audits(f)).toHaveLength(1);
+  } finally {
+    f.db.close();
+  }
+});
+
+test("review P1 joined cleanup failure remains pending and same-authority retry survives restart", async () => {
+  const f = fixture(rawRecord("local-development")),
+    paused = barrier();
+  const pending: Promise<NativeControlReply>[] = [];
+  try {
+    await f.admin().call("revokeKey", {});
+    let cleanupCalls = 0;
+    f.cleanup(async () => {
+      cleanupCalls++;
+      await paused.hook();
+      throw new Error("synthetic joined cleanup failure");
+    });
+    pending.push(f.admin().call("deleteKey", {}, "cleanup-failure"));
+    await paused.ready;
+    let receiptObserved = () => {};
+    const observed = new Promise<void>((resolve) => {
+      receiptObserved = resolve;
+    });
+    f.observeSql((query) => {
+      if (query.startsWith("SELECT row_json,revision,expires_at_ms FROM uos_native_key_control_receipt")) receiptObserved();
+    });
+    pending.push(f.admin().call("deleteKey", {}, "cleanup-failure"));
+    await observed;
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    paused.release();
+    const results = await Promise.allSettled(pending);
+    expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    expect(cleanupCalls).toBe(1);
+    const guard = required(f.sql.read("paid_deletion_guard", paidFallbackDeletionGuardV3Key("local-development"), NOW).value);
+    expect(guard).toMatchObject({ local_deletion: { completed_at_ms: null } });
+    f.cleanup(() => Promise.resolve());
+    expect(await f.admin().call("deleteKey", {}, "cleanup-failure")).toMatchObject({ kind: "historical_ack" });
+    expect(f.sql.read("paid_deletion_guard", paidFallbackDeletionGuardV3Key("local-development"), NOW).value).toMatchObject({
+      local_deletion: { completed_at_ms: NOW },
+    });
+    const before = [...f.calls];
+    expect(await f.admin("local-development", undefined, f.restart()).call("deleteKey", {}, "cleanup-failure")).toMatchObject({ kind: "historical_ack" });
+    expect(f.calls).toEqual(before);
+    expect(audits(f).filter((entry) => entry.row.value?.action === "delete")).toHaveLength(1);
+  } finally {
+    paused.release();
+    await Promise.allSettled(pending);
     f.db.close();
   }
 });
