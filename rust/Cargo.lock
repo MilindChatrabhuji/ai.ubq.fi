@@ -1004,6 +1004,7 @@ dependencies = [
  "gateway-claude-runtime",
  "gateway-core",
  "gateway-native",
+ "gateway-observability",
  "gateway-routing-runtime",
  "gateway-schema",
  "rusqlite",
