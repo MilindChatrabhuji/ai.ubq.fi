@@ -3,7 +3,7 @@
 #[path = "../src/import_client.rs"]
 mod import_client;
 use gateway_auth::{
-    AuthConfig, AuthHost, AuthRequest, AuthUpstreamRequest, AuthUpstreamResponse, GatewayError,
+    AuthConfig, AuthHost, AuthRequest, GatewayError,
     crypto::{Secret, base64url, sha256_hex},
     native::*,
     native_auth::{
@@ -17,6 +17,7 @@ use gateway_auth::{
         ManagedNativeSource, codex_source_pool_key,
     },
     session_index,
+    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
 };
 use gateway_authority::{
     Authority, AuthorityClock, TokenSource, keys,
@@ -78,7 +79,13 @@ impl AuthorityStore for Store {
         self.captures
             .lock()
             .unwrap()
-            .push(serde_json::to_string(&tx).unwrap());
+             .push(json!({
+                "checks": tx.checks.iter().map(|check| json!({"key":check.key.0,"expected_revision":check.expected_revision})).collect::<Vec<_>>(),
+                "mutations": tx.mutations.iter().map(|mutation| match mutation {
+                    RecordMutation::Put{key,record} => json!({"put":{"key":key.0,"record":record}}),
+                    RecordMutation::Delete{key} => json!({"delete":{"key":key.0}}),
+                }).collect::<Vec<_>>()
+            }).to_string());
         let mut rows = self.rows.lock().unwrap();
         if tx
             .checks
