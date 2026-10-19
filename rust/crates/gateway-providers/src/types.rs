@@ -1,5 +1,5 @@
 use gateway_core::{
-    js_string::JsString16, provider::UpstreamProvider, source_json::SourceJson,
+    js_string::JsString16, provider::UpstreamProvider, model::ModelId, source_json::SourceJson,
     source_serialization,
 };
 use serde::{Deserialize, Serialize};
@@ -59,32 +59,28 @@ impl std::fmt::Debug for AuthMaterial {
 /// Immutable Rust-only selected-model observations, never request JSON or authority.
 #[derive(Clone, Debug)]
 pub struct OrdinaryPreparationContext {
-    prompt_cache: Option<Value>,
+    prompt_cache: Option<SourceJson>,
     reasoning: gateway_schema::reasoning::ModelReasoning,
-    default_effort: String,
+    default_effort: JsString16,
 }
 impl OrdinaryPreparationContext {
     pub fn from_metadata(
         metadata: &gateway_schema::catalog::RequestModelMetadata,
-        default_effort: &str,
+        default_effort: &JsString16,
     ) -> Self {
         Self {
-            prompt_cache: metadata
-                .record
-                .as_ref()
-                .and_then(|record| record.get("prompt_cache"))
-                .cloned(),
+            prompt_cache: metadata.prompt_cache(),
             reasoning: metadata.reasoning.clone(),
-            default_effort: default_effort.to_owned(),
+            default_effort: default_effort.clone(),
         }
     }
-    pub fn prompt_cache(&self) -> Option<&Value> {
+    pub fn prompt_cache(&self) -> Option<&SourceJson> {
         self.prompt_cache.as_ref()
     }
     pub fn reasoning(&self) -> &gateway_schema::reasoning::ModelReasoning {
         &self.reasoning
     }
-    pub fn default_effort(&self) -> &str {
+    pub fn default_effort(&self) -> &JsString16 {
         &self.default_effort
     }
 }
@@ -96,15 +92,15 @@ pub struct PrepareOptions {
     pub response_id: String,
     pub created_at: i64,
     /// Host-supplied discovery evidence; absence must not invent provider support.
-    pub allowed_models: Vec<String>,
+    pub allowed_models: Vec<ModelId>,
     pub catalog_max_output_tokens: Option<u64>,
-    pub native_reasoning_efforts: Option<Vec<String>>,
+    pub native_reasoning_efforts: Option<Vec<JsString16>>,
     pub supports_native_effort: bool,
     pub supports_disabled_thinking: bool,
     pub supports_parallel_tools: Option<bool>,
     /// Random per request unless a verified native-session identity is supplied.
     pub conversation_id: Option<String>,
-    pub reasoning_summary: Option<String>,
+    pub reasoning_summary: Option<JsString16>,
     /// Restored by ReplayStore in the same authenticated context, never by client input.
     pub restored_native_messages: Option<Vec<Value>>,
     /// Runtime callers supply Some even for unknown metadata. None is the legacy pure adapter contract.
@@ -136,14 +132,14 @@ pub struct DecodePlan {
     pub provider: UpstreamProvider,
     pub surface: ClientSurface,
     pub decode: ResponseDecode,
-    pub model: String,
-    pub upstream_model: String,
+    pub model: ModelId,
+    pub upstream_model: ModelId,
     pub response_id: String,
     pub created_at: i64,
     pub stream: bool,
     pub request: SourceJson,
     pub tool_names: ToolMap,
-    pub reasoning_summary: Option<String>,
+    pub reasoning_summary: Option<JsString16>,
 }
 #[derive(Clone)]
 pub struct PreparedRequest {
