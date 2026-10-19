@@ -78,15 +78,6 @@ impl PreparedManagedAccessCommand {
     }
 }
 
-pub(crate) fn parse(body: &[u8]) -> Result<ManagedAccessWire, GatewayError> {
-    if body.len() > MANAGED_PUBLICATION_MAX_BYTES {
-        return Err(invalid());
-    }
-    let ManagedCommandWire::ManagedAccessPublish(w) =
-        serde_json::from_slice(body).map_err(|_| invalid())?;
-    validate(&w)?;
-    Ok(w)
-}
 fn identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 256
