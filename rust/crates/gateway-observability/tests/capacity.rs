@@ -53,6 +53,11 @@ impl CapacityHost {
     }
 }
 impl ObservabilityHost for CapacityHost {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        self.base.source_string_collator()
+    }
     fn now_ms(&self) -> i64 {
         self.clock.0.load(Ordering::SeqCst)
     }

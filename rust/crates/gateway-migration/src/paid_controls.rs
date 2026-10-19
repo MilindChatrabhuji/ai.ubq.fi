@@ -27,7 +27,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<bool, GatewayError> {
         &row.parts,
         &["uos_ai", "paid_fallback", "v3", "usage_rollup"],
     ) {
-        gateway_authority::paid::decode_paid_rollup_record(&row.key, &row.record)?;
+        crate::rollup_source::validate(&row.key, &row.record)?;
         return Ok(true);
     }
     if !starts(&row.parts, &["uos_ai", "paid_fallback", "v3", "request"]) {

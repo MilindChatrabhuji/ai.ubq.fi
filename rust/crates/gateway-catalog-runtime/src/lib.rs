@@ -8,9 +8,10 @@ mod versioned;
 pub use host::*;
 pub use state::CatalogState;
 
-use gateway_core::{GatewayError, query::QueryStore};
+use gateway_core::{
+    GatewayError, query::QueryStore, source_json::SourceJson, source_serialization as source,
+};
 use gateway_schema::{catalog::ProviderCatalog, catalog_cache::CatalogResponse};
-use serde_json::Value;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -382,9 +383,9 @@ impl CatalogRuntime {
         host: &H,
         provider: CatalogProvider,
         identity: &MemoIdentity,
-    ) -> Result<Vec<Value>, GatewayError> {
+    ) -> Result<Vec<SourceJson>, GatewayError> {
         let started = host.now_ms();
-        let mut all = Vec::<Value>::new();
+        let mut all = Vec::<SourceJson>::new();
         let mut cursors = BTreeSet::new();
         let mut cursor = None;
         for _ in 0..if provider == CatalogProvider::ClaudeCode {
@@ -422,11 +423,14 @@ impl CatalogRuntime {
                     "Claude model discovery exceeded its request deadline",
                 ));
             }
-            let parsed = serde_json::from_str(&response.body)
+            let parsed = SourceJson::parse(&response.body)
                 .map_err(|_| unavailable("Provider model discovery did not return JSON"))?;
             let (rows, next) = providers::parse_page(provider, &parsed)?;
             for row in rows {
-                if let Some(old) = all.iter_mut().find(|old| old.get("id") == row.get("id")) {
+                if let Some(old) = all.iter_mut().find(|old| {
+                    source::member(old, "id").as_ref().and_then(source::string)
+                        == source::member(&row, "id").as_ref().and_then(source::string)
+                }) {
                     *old = row;
                 } else {
                     all.push(row);
@@ -452,7 +456,7 @@ impl CatalogRuntime {
         store: &S,
         host: &H,
         binding: &ProviderBinding,
-        models: Vec<Value>,
+        models: Vec<SourceJson>,
         fetched_at_ms: i64,
     ) -> Result<bool, GatewayError> {
         let publication = host.publication().await?;

@@ -207,11 +207,9 @@ pub fn capabilities(input: &CatalogInput) -> SourceJson {
         ("upstream_provider", c::json("codex_chatgpt")),
         (
             "source",
-            c::json(
-                snapshot
-                    .map(|s| s.source.as_str())
-                    .unwrap_or("stored_codex_models"),
-            ),
+            snapshot
+                .map(|s| c::json(&s.source))
+                .unwrap_or_else(|| c::json("stored_codex_models")),
         ),
         (
             "client_version",
