@@ -93,6 +93,10 @@ duplicate `already_would_spend_once` therefore permit the same one bounded overa
 an unsubmitted local reset claim (`unsubmitted_transaction`) also permits it because no provider submission occurred.
 Live arming, submitted, unknown, in-progress, and completed live redemption remain ineligible.
 
+Enabled overage requests do not take the reset recovery-probe lease. That lease exists to serialize reset recovery, not
+ordinary allowed spending, so concurrent requests may each make one bounded upstream attempt without returning a
+single-flight 429.
+
 The fallback claim reuses the probe-lease machinery (one live attempt at a time) under a scoped pre-transport lease
 fence, so it never weakens the durable routing fences. The choice is per account; one subscription's switch never
 changes another account's routing.
