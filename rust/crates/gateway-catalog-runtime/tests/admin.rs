@@ -1015,3 +1015,20 @@ fn actual_admin_source_documents_publish_opaque_models_source_labels_and_whiteli
         serde_json::to_string(&(catalog_store::codex_snapshot_key(), snapshot)).unwrap()
     );
 }
+
+#[test]
+fn blank_source_label_is_rejected_before_admin_publication_mutates_rows() {
+    let runtime = CatalogRuntime::new();
+    let store = Store::default();
+    let host = Host::new();
+    let document = SourceJson::parse(r#"{"models":[{"slug":"a"}],"source":""}"#).unwrap();
+    let error = run(runtime.admin_catalog(
+        &store,
+        &host,
+        AdminCatalogOperation::CodexModelsSet { document },
+    ))
+    .unwrap_err();
+    assert_eq!(error.status, 409);
+    assert!(store.rows.borrow().is_empty());
+    assert!(host.requests.borrow().is_empty());
+}
