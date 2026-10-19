@@ -1,5 +1,5 @@
 //! The owner publishes references, never bearer tokens, into this catalog boundary.
-use gateway_core::{GatewayError, state::RevisionCheck};
+use gateway_core::{GatewayError, js_string::JsString16, state::RevisionCheck};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, future::Future};
 
@@ -109,7 +109,7 @@ pub enum CatalogFetch {
         provider: CatalogProvider,
         binding: ProviderBinding,
         /// Claude-only after_id cursor. Other sources must reject this field.
-        after_id: Option<String>,
+        after_id: Option<JsString16>,
         /// One absolute deadline for the whole Claude pagination sequence.
         deadline_ms: Option<i64>,
     },
