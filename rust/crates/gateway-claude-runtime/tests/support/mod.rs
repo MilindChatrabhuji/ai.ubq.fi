@@ -276,9 +276,21 @@ impl AuthHost for Host {
     }
 }
 impl ClaudePoolHost for Host {
-    fn compare_principals(&self, left: &str, right: &str) -> Result<Ordering, GatewayError> {
-        assert!(left.is_ascii() && right.is_ascii());
-        Ok(left.cmp(right))
+    fn compare_principals(
+        &self,
+        left: &JsString16,
+        right: &JsString16,
+    ) -> Result<Ordering, GatewayError> {
+        // This fixture has one principal. Its exact same-operand result is
+        // known; every other operand is outside this finite source oracle.
+        let principal = JsString16::from_utf8(KEY);
+        if left != &principal || right != &principal {
+            return Err(GatewayError::unavailable(
+                "Unknown finite Claude principal oracle operand.",
+                "fixture_claude_principal_oracle_unknown_operand",
+            ));
+        }
+        Ok(Ordering::Equal)
     }
     fn parse_retry_after_date(&self, raw: &str) -> Option<i64> {
         (raw == "fixture-date").then_some(NOW + 1234)

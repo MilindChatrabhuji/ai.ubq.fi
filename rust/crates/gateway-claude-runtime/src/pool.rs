@@ -61,10 +61,7 @@ impl ClaudePoolSession {
                 host.compare_principals(a, b)
             })
             .await?;
-        Ok(
-            (!key.is_empty() && access.policy.allowed_key_ids.iter().any(|id| id == key))
-                .then_some(access.check),
-        )
+        Ok(access.policy.allows_scalar(key).then_some(access.check))
     }
     pub async fn select<S: AuthorityStore, H: ClaudePoolHost>(
         &self,

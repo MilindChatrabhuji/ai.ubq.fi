@@ -168,7 +168,11 @@ pub struct WorkspaceResponse {
 
 pub trait ClaudePoolHost: AuthHost {
     /// The real source localeCompare primitive, not byte ordering.
-    fn compare_principals(&self, left: &str, right: &str) -> Result<Ordering, GatewayError>;
+    fn compare_principals(
+        &self,
+        left: &JsString16,
+        right: &JsString16,
+    ) -> Result<Ordering, GatewayError>;
     /// Source Date.parse for Retry-After's date form; invalid text returns None.
     fn parse_retry_after_date(&self, raw: &str) -> Option<i64>;
     /// Bind the existing source/native owner. Missing enforcement is explicit unavailability.
