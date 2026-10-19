@@ -820,7 +820,7 @@ fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() 
                     404
                 );
             } else {
-                assert_eq!(result.unwrap().body, json!({"id":id}));
+                assert_eq!(wire_json(&result.unwrap().body), json!({"id":id}));
             }
             let checks = vec![RevisionCheck {
                 key: deletion_key(id),
@@ -1091,6 +1091,45 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
                 },
                 1_000_000,
             )
+            .await
+            .unwrap();
+        // Controlled authority regression: use the canonical finite original
+        // fixture chain, not a route-only receipt or a Worker-runtime claim.
+        let original = gateway_core::identity::RequestContext {
+            request_id: request.request_id.clone(),
+            principal: gateway_core::identity::PrincipalId("fixture-original-principal".into()),
+            key_id: Some(request.key_id.clone()),
+            route: request.route.clone(),
+            started_at_ms: request.created_at_ms,
+        };
+        let api = authority
+            .reserve_api_key(&request.key_id, &request.request_id, &request.route, 1_000_000)
+            .await
+            .unwrap();
+        let journal_key = gateway_auth::store::key(json!([
+            "uos_ai",
+            "routing_runtime",
+            "v1",
+            "session",
+            request.request_id.0
+        ]));
+        store.rows.borrow_mut().insert(
+            journal_key.0,
+            StoredRecord::json(
+                "fixture-original-journal",
+                json!({
+                    "v":1,"context":original,"input_digest":gateway_auth::crypto::sha256_hex(b"fixture-original-input"),
+                    "api":api,"kernel":null,"cursor":0,"attempts":[],"active":null,
+                    "model_sibling_retries":0,"refreshed_versions":[],"recovery_attempted":false,"claude_unavailable":false,
+                    "semantic_committed":false,"terminal_intent":null,"finished":false,"recovering":false,
+                    "lease_expires_at_ms":1_000_000+gateway_authority::REQUEST_LEASE_MS,"updated_at_ms":1_000_000,"extras_family":null,
+                    "extras_child_count":null,"extras_dispatch":null,"children":[],"kernel_override":null
+                }),
+                None,
+            ),
+        );
+        let receipt = authority
+            .bind_paid_original_request(&receipt, &original, 1_000_000)
             .await
             .unwrap();
         assert!(
