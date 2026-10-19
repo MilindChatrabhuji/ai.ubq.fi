@@ -5,7 +5,6 @@ import {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY,
 } from "./native-codex-contracts.ts";
-import { apiKeyHashKey } from "../api-keys.ts";
 import * as paid from "./native-paid.ts";
 import { currentApiKeyUsageWindow } from "./native-api-key.ts";
 import type { NativePaidReleasePlan, PaidFallbackRequestV3 } from "./native-paid-contracts.ts";
@@ -54,9 +53,9 @@ export class NativeAuthorityPaid {
     this._sql.write("paid_gate", paid.paidFallbackReconciliationGateV3Key(), paid.paidFallbackReconciliationGateDueNow(entry, now));
   }
   private _policy(cap: NativeCapability, now: number) {
-    const source = this._sql.read("api_policy", apiKeyHashKey(cap.tokenHash), now);
+    const source = this._sql.currentKeyPolicy(cap.tokenHash, cap.keyId, now);
     if (
-      !source.value ||
+      !source?.value ||
       source.value.revoked ||
       source.value.api.key_id !== cap.keyId ||
       !source.value.api.paid_fallback_enabled ||
@@ -215,10 +214,14 @@ export class NativeAuthorityPaid {
     if (!attempt) return;
     this.lifecycle(cap, { attemptHandle: attempt.handle, patch: {}, fetchStarted: true }, now);
   }
+  private _assertFetchStart(cap: NativeCapability, attempt: NativeAttempt, fetchStarted: boolean | undefined, now: number): void {
+    if (fetchStarted && !attempt.fetchStarted && !this._policy(cap, now)) throw new NativeAuthorityError("api_policy_revoked", 403);
+  }
   lifecycle(cap: NativeCapability, args: NativeArguments["recordPaidAttemptLifecycle"], now: number): NativeReply {
     const attempt = this.attempt(cap, args.attemptHandle, now),
       hop = this._hop(attempt.hopId),
       entry = this._request(attempt, now);
+    this._assertFetchStart(cap, attempt, args.fetchStarted, now);
     if (!entry.value) return { kind: "missing" };
     const plan = paid.planPaidFallbackLifecycleV3(
       entry.value,
@@ -469,18 +472,18 @@ export class NativeAuthorityPaid {
       has_outstanding: pendingRequests + unresolvedRequests + markers > 0,
     };
   }
-  deletion(cap: NativeCapability, now: number): NativeReply {
-    const guardKey = paid.paidFallbackDeletionGuardV3Key(cap.keyId),
+  deleteForKey(keyId: string, now: number) {
+    const guardKey = paid.paidFallbackDeletionGuardV3Key(keyId),
       guard = paid.planPaidFallbackDeletionGuardV3(this._sql.read("paid_deletion_guard", guardKey, now).value, now);
-    if (guard) this._sql.write("paid_deletion_guard", guardKey, guard, null, { scope: cap.keyId });
-    const outstanding = this._outstanding(cap.keyId, now);
+    if (guard) this._sql.write("paid_deletion_guard", guardKey, guard, null, { scope: keyId });
+    const outstanding = this._outstanding(keyId, now);
     const decision = paid.planPaidFallbackDeletionV3(outstanding);
-    if (decision.kind !== "delete") return { kind: decision.kind, detail: outstanding };
+    if (decision.kind !== "delete") return { kind: "blocked" as const, outstanding };
     const deleted: Record<string, number> = {};
     for (const table of ["paid_request", "paid_window", "paid_pending"] as const) {
       let count = 0;
       for (;;) {
-        const page = this._sql.page(table, now, "", 100, { scope: cap.keyId });
+        const page = this._sql.page(table, now, "", 100, { scope: keyId });
         for (const item of page) {
           this._sql.delete(table, item.key);
           count++;
@@ -489,7 +492,11 @@ export class NativeAuthorityPaid {
       }
       deleted[table] = count;
     }
-    this._sql.delete("paid_lease", paid.paidFallbackReconciliationLeaseV3Key(cap.keyId));
-    return { kind: "deleted", detail: deleted };
+    this._sql.delete("paid_lease", paid.paidFallbackReconciliationLeaseV3Key(keyId));
+    return { kind: "deleted" as const, deleted };
+  }
+  deletion(cap: NativeCapability, now: number): NativeReply {
+    const result = this.deleteForKey(cap.keyId, now);
+    return { kind: result.kind, detail: result.kind === "blocked" ? result.outstanding : result.deleted };
   }
 }

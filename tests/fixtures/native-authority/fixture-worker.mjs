@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { NativeAuthority } from "../../../src/authority/native-authority.ts";
-import { NativeAuthorityClient, NativeAuthorityRpcServer } from "../../../src/authority/native-authority-rpc.ts";
+import { NativeAuthorityClient, NativeAuthorityRpcServer, NativePrincipalControlClient } from "../../../src/authority/native-authority-rpc.ts";
 import { NativeAuthorityError } from "../../../src/authority/native-authority-contracts.ts";
 import { NativeAuthoritySql } from "../../../src/authority/native-authority-sql.ts";
 import {
@@ -10,6 +10,7 @@ import {
   CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY,
 } from "../../../src/authority/native-codex-contracts.ts";
 import { PAID_FALLBACK_REQUEST_LOG_RETENTION_MS } from "../../../src/authority/native-paid.ts";
+import { CONTROL_CASE_IDS, PrincipalControlFixture } from "./principal-control-sources.mjs";
 const reviewScenarios = [
   "F01",
   "F02-terminal",
@@ -323,9 +324,79 @@ class SharedNativeAuthority extends DurableObject {
   }
 }
 const boundClient = (stub, principal) => new NativeAuthorityClient({ execute: (command) => stub.execute(principal, command) }, epoch);
+class PrincipalNativeAuthority extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.incarnation = crypto.randomUUID();
+    this.fixture = new PrincipalControlFixture(ctx, env.FIXTURE_OWNER, initial(), fixedNow, epoch);
+  }
+  setup(owner, scenario) {
+    return this.fixture.setup(owner, scenario);
+  }
+  action(owner, action, value) {
+    return this.fixture.action(owner, action, value);
+  }
+  evidence(owner) {
+    return { ...this.fixture.evidence(owner), incarnation: this.incarnation };
+  }
+  control(profile, command, clientType) {
+    return this.fixture.control(profile, command, clientType);
+  }
+  async execute(principal, command) {
+    const reply = await new NativeAuthorityRpcServer(this.fixture.authority, principal).execute(command);
+    if (command.method === "reserveApiUsage" && reply.result?.kind === "reserved") this.fixture.recordLog(command.args.requestId);
+    return reply;
+  }
+}
+const principalRoute = async (request, env, match) => {
+  const [, scenario, path] = match;
+  if (!CONTROL_CASE_IDS.includes(scenario)) return new Response(null, { status: 403 });
+  const stub = env.PRINCIPAL.getByName("native-principal-" + scenario);
+  if (path.startsWith("/__fixture/")) {
+    if (request.headers.get("x-fixture-owner") !== env.FIXTURE_OWNER) return new Response(null, { status: 403 });
+    if (path === "/__fixture/setup") return Response.json(await stub.setup(env.FIXTURE_OWNER, scenario));
+    if (path === "/__fixture/evidence") return Response.json(await stub.evidence(env.FIXTURE_OWNER));
+    if (path === "/__fixture/action") {
+      const { action, value } = await request.json();
+      return Response.json(await stub.action(env.FIXTURE_OWNER, action, value));
+    }
+    return new Response(null, { status: 404 });
+  }
+  const route = /^\/(control-rpc|control-client|control-raw|rpc|client)\/([^/]+)$/.exec(path);
+  if (!route) return new Response(null, { status: 404 });
+  const [, surface, profile] = route,
+    command = await request.json();
+  if (["rpc", "client"].includes(surface)) {
+    if (!["control", "foreign"].includes(profile)) return new Response(null, { status: 403 });
+    if (surface === "rpc") return Response.json(await stub.execute(profile, command));
+    try {
+      return Response.json({ result: await boundClient(stub, profile).call(command.method, command.args, command.operationId) });
+    } catch (error) {
+      if (!(error instanceof NativeAuthorityError)) throw error;
+      return Response.json({ error: { code: error.code, status: error.status } });
+    }
+  }
+  if (surface !== "control-client") return Response.json(await stub.control(profile, command, surface === "control-rpc" ? "bun" : "worker"));
+  const transport = {
+    control: async (input) => {
+      const reply = await stub.control(profile, input, "worker");
+      if (reply.fixtureFault) throw Object.assign(new Error(reply.fixtureFault.message), { fixtureFault: true });
+      return reply;
+    },
+  };
+  try {
+    return Response.json({ result: await new NativePrincipalControlClient(transport, epoch).call(command.method, command.args, command.operationId) });
+  } catch (error) {
+    if (error.fixtureFault) return Response.json({ fixtureFault: { message: error.message } });
+    if (!(error instanceof NativeAuthorityError)) throw error;
+    return Response.json({ error: { code: error.code, status: error.status } });
+  }
+};
 var stdin_default = {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const principal = /^\/control\/([^/]+)(\/.*)$/.exec(url.pathname);
+    if (principal) return await principalRoute(request, env, principal);
     const review = /^\/review\/([^/]+)(\/.*)$/.exec(url.pathname);
     const scenario = review?.[1] ?? null;
     if (scenario !== null && !reviewScenarios.includes(scenario)) return new Response(null, { status: 403 });
@@ -429,4 +500,4 @@ var stdin_default = {
     );
   },
 };
-export { SharedNativeAuthority, stdin_default as default };
+export { SharedNativeAuthority, PrincipalNativeAuthority, stdin_default as default };
