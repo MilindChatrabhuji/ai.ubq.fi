@@ -228,16 +228,8 @@ fn codec_refuses_nonfinite_and_non_json_profile_nodes_without_converting_them() 
 }
 
 #[test]
-fn wrong_encoding_metadata_duplicate_profile_keys_and_versions_fail_closed() {
+fn wrong_encoding_duplicate_profile_keys_and_versions_fail_closed() {
     let document = SourceJson::parse(r#"{"model":"x"}"#).unwrap();
-    for (revision, expiry) in [
-        ("", None),
-        ("  ", None),
-        ("revision", Some(-1)),
-        ("revision", Some(MAX_SAFE_INTEGER + 1)),
-    ] {
-        assert!(encode_source_control_record(revision, &document, expiry).is_err());
-    }
     let v1 = StoredRecord::profile("profile-v1", PortableValue::Null, None).unwrap();
     assert!(decode_source_control_record(&v1).is_err());
     let mut record = encode_source_control_record("valid", &document, None).unwrap();
@@ -257,4 +249,39 @@ fn wrong_encoding_metadata_duplicate_profile_keys_and_versions_fail_closed() {
         StoredRecord::json("duplicates", serde_json::to_value(duplicate).unwrap(), None);
     record.value_encoding = ValueEncoding::ProfileV2;
     assert!(decode_source_control_record(&record).is_err());
+}
+
+#[test]
+fn codec_preserves_the_full_existing_i64_expiry_domain_without_family_time_policy() {
+    for raw in [r#"{"model":"scalar"}"#, r#"{"model":"\ud800"}"#] {
+        let document = SourceJson::parse(raw).unwrap();
+        for expiry in [
+            None,
+            Some(i64::MIN),
+            Some(-1),
+            Some(0),
+            Some(MAX_SAFE_INTEGER + 1),
+            Some(i64::MAX),
+        ] {
+            for revision in ["", "  ", "revision-exact"] {
+                let record = encode_source_control_record(revision, &document, expiry).unwrap();
+                assert_eq!(record.expires_at_ms, expiry);
+                let stored = serde_json::to_string(&record).unwrap();
+                let restored: StoredRecord = serde_json::from_str(&stored).unwrap();
+                assert_eq!(restored.expires_at_ms, expiry);
+                assert_eq!(restored.revision, revision);
+                let decoded = decode_source_control_record(&restored).unwrap();
+                assert_eq!(
+                    source::member(&decoded, "model")
+                        .unwrap()
+                        .deserialize::<ModelId>()
+                        .unwrap(),
+                    source::member(&document, "model")
+                        .unwrap()
+                        .deserialize::<ModelId>()
+                        .unwrap()
+                );
+            }
+        }
+    }
 }

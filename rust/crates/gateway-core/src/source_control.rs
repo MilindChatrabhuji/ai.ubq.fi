@@ -2,7 +2,6 @@
 //! This data codec never reads storage, validates a family, renews expiry or grants authority.
 use crate::{
     GatewayError,
-    identity::MAX_SAFE_INTEGER,
     js_string::JsString16,
     source_json::SourceJson,
     source_serialization as source,
@@ -52,15 +51,6 @@ pub fn source_json_tree(value: &SourceJson) -> Result<PortableValue, GatewayErro
     }
 }
 
-fn metadata(revision: &str, expiry: Option<i64>) -> Result<(), GatewayError> {
-    if revision.trim().is_empty()
-        || expiry.is_some_and(|expiry| !(0..=MAX_SAFE_INTEGER).contains(&expiry))
-    {
-        return Err(invalid());
-    }
-    Ok(())
-}
-
 /// Keep the existing ordinary Json representation whenever Value can retain the
 /// document. A lone string/key unit requires the existing explicit ProfileV2,
 /// never a literal escape string or a new private encoding. Numeric family
@@ -71,7 +61,6 @@ pub fn encode_source_control_record(
     absolute_expiry: Option<i64>,
 ) -> Result<StoredRecord, GatewayError> {
     let revision = revision.into();
-    metadata(&revision, absolute_expiry)?;
     let tree = source_json_tree(document)?;
     match document.deserialize::<Value>() {
         Ok(value) => Ok(StoredRecord::json(revision, value, absolute_expiry)),
@@ -123,7 +112,6 @@ fn tree_source(value: &PortableValue) -> Result<SourceJson, GatewayError> {
 /// Decode data only. No automatic ProfileV1/graph conversion or permissive
 /// json_value change; consumers must still validate their exact family schema.
 pub fn decode_source_control_record(record: &StoredRecord) -> Result<SourceJson, GatewayError> {
-    metadata(&record.revision, record.expires_at_ms)?;
     record.validate_version()?;
     match record.value_encoding {
         ValueEncoding::Json => SourceJson::from_serializable(record.json_value()?),
