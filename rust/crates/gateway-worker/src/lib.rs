@@ -11,6 +11,7 @@ mod admission;
 mod agent_messages;
 mod assets;
 pub mod authority;
+mod cache_experiment_host;
 mod catalog;
 mod catalog_host;
 mod claude_host;
