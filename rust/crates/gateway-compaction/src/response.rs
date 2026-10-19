@@ -230,11 +230,11 @@ pub async fn build<H: CompactionHost>(
         let started = engine::now(host)?;
         if let Some(rewritten) =
             hybrid::run(&summary, host, hybrid::CHUNK_CHARS, RESIDUE_TIMEOUT_MS).await
+            && !rewritten.blank()
+            && rewritten.len() < summary.len()
         {
-            if !rewritten.blank() && rewritten.len() < summary.len() {
-                summary = rewritten;
-                hybrid_applied = true;
-            }
+            summary = rewritten;
+            hybrid_applied = true;
         }
         hybrid_ms = Some(engine::now(host)? - started);
     }
