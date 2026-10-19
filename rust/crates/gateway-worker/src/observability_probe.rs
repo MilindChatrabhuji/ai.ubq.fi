@@ -194,7 +194,11 @@ impl RequestHost {
                 super::Host,
                 super::shared_state(),
             );
-            let event = if status == 401 {
+            let event = if status == 401
+                || (status == 403
+                    && codex::codex_access_expiry_ms(&account.access_token).is_some_and(|expiry| {
+                        crate::storage::now_ms().is_ok_and(|at| expiry <= at as f64)
+                    })) {
                 HealthEvent::AuthInvalid
             } else if status == 429 {
                 HealthEvent::QuotaExhausted
@@ -497,7 +501,8 @@ impl RequestHost {
         let url = worker::Url::parse(&base)
             .and_then(|u| u.join("/backend-api/wham/usage"))
             .map_err(|_| unavailable("Capacity source URL is invalid."))?;
-        let headers = codex_headers(current);
+        let mut headers = codex_headers(current);
+        headers.remove("originator");
         let mut reply = match self.fixed_get(url.as_str(), &headers, deadline).await {
             Ok(reply) => reply,
             Err(error)

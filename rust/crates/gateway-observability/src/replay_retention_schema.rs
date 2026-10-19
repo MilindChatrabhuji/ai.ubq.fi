@@ -30,9 +30,7 @@ impl RetentionLimits {
     /// Source's injectable test seam; the public runtime always uses Default.
     pub fn for_fixture(bytes: u64) -> Self {
         Self {
-            budget: bytes
-                .max(65_536)
-                .min(gateway_core::identity::MAX_SAFE_INTEGER as u64) as f64,
+            budget: bytes.clamp(65_536, gateway_core::identity::MAX_SAFE_INTEGER as u64) as f64,
         }
     }
     pub(crate) fn reserve(self) -> f64 {

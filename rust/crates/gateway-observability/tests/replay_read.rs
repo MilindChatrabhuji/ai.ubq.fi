@@ -205,7 +205,8 @@ fn safe_incident_group_retries_preserves_first_identity_and_surrogate_extensions
             .json_value()
             .unwrap()
             .to_string()
-            .trim_end_matches('}')
+            .strip_suffix('}')
+            .unwrap()
     ))
     .unwrap();
     let mut fields = Vec::new();

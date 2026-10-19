@@ -4,6 +4,8 @@ use gateway_core::identity::RequestId;
 use gateway_observability::{ObservabilityHost, host_types::BuildIdentity};
 use gateway_observability::{ObservabilityRuntime, ObservabilityState, replay_crypto::ReplayBody};
 use std::rc::Rc;
+#[path = "observability_diagnostics.rs"]
+mod diagnostics;
 #[path = "observability_inventory.rs"]
 mod inventory;
 #[path = "observability_probe.rs"]
@@ -143,6 +145,28 @@ impl ObservabilityHost for Host {
 }
 
 impl ObservabilityHost for RequestHost {
+    async fn codex_reset_available_count(
+        &self,
+        account: &gateway_observability::host_types::CapacityAccountRef,
+        deadline: i64,
+    ) -> Result<Option<i64>, GatewayError> {
+        self.reset_count(account, deadline).await
+    }
+    async fn codex_reset_credits(
+        &self,
+        account: &gateway_observability::host_types::CapacityAccountRef,
+        deadline: i64,
+    ) -> Result<Option<Vec<gateway_observability::host_types::ResetCreditDiagnostic>>, GatewayError>
+    {
+        self.reset_credits(account, deadline).await
+    }
+    async fn codex_overage_diagnostics(
+        &self,
+        account: &gateway_observability::host_types::CapacityAccountRef,
+        deadline: i64,
+    ) -> Result<Option<serde_json::Value>, GatewayError> {
+        self.overage(account, deadline).await
+    }
     fn now_ms(&self) -> i64 {
         Host.now_ms()
     }
