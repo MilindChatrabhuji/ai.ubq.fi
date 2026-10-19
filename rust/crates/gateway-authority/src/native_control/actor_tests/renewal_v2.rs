@@ -772,6 +772,13 @@ fn native_action_source_custody_is_lossless_data_not_an_operation_capability() {
                 model: ModelId::from_source(JsString16::from_units(units)),
                 slot: 0,
             };
+            let context_document = SourceJson::from_serializable(&row.fence.context).unwrap();
+            let _: ModelId = gateway_core::source_serialization::member(&context_document, "model")
+                .unwrap()
+                .deserialize()
+                .expect("the actual context model token must decode losslessly");
+            let _: NativeRenewalContext = serde_json::from_str(context_document.as_str())
+                .unwrap_or_else(|error| panic!("source custody case {case} context decode: {error}"));
             row.action_ref = facts::digest(&(
                 "uos-native-renewal-action-v2",
                 &row.fence.original_request_id,
