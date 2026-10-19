@@ -9,6 +9,7 @@ pub mod claude;
 pub mod full_pool_reset;
 mod kernel;
 pub mod keys;
+pub mod local_completion;
 pub mod manual_reset;
 pub mod native_control;
 pub mod native_live;
@@ -28,6 +29,7 @@ mod routing_types;
 mod source_models;
 mod store;
 
+pub use paid_types::model_map as source_model_map;
 pub use store::{Authority, AuthorityClock, TokenSource};
 
 use gateway_core::GatewayError;

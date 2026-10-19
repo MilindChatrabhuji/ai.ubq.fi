@@ -4,7 +4,7 @@ use crate::routing::CohortProof;
 use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
 use gateway_core::{js_string::JsString16, model::ModelId};
 #[path = "paid_model_map.rs"]
-pub(crate) mod model_map;
+pub mod model_map;
 use gateway_core::lifecycle::{BillingState, DispatchState, PaidTerminalState};
 use gateway_core::provider::PaidProvider;
 use serde::{Deserialize, Serialize};
