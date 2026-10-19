@@ -1,0 +1,50 @@
+{
+  "source_blob": "f2cf7a41e7c59e73bf5db9604027c4c42a0b15cb",
+  "source_sha": "118144f82306a907339946b6addba91caa21ab54",
+  "cases": [
+    {
+      "name": "object-state",
+      "state": "{\"messages\":[{\"role\":\"user\",\"content\":\"fixture\"}]}",
+      "questions": "{\"call_t0\":{\"type\":\"noul\",\"instructions\":\"Retain this fixture?\"}}",
+      "url": "https://openrouter.ai/api/v1/systemone",
+      "headers": {
+        "authorization": "Bearer fixture-key",
+        "content-type": "application/json"
+      },
+      "body": "{\"model\":\"~typesafe/jev-latest\",\"state\":{\"messages\":[{\"role\":\"user\",\"content\":\"fixture\"}]},\"questions\":{\"call_t0\":{\"type\":\"noul\",\"instructions\":\"Retain this fixture?\"}}}"
+    },
+    {
+      "name": "string-state",
+      "state": "\"source string state\"",
+      "questions": "{\"call_t0\":{\"type\":\"noul\",\"instructions\":\"Retain this fixture?\"}}",
+      "url": "https://openrouter.ai/api/v1/systemone",
+      "headers": {
+        "authorization": "Bearer fixture-key",
+        "content-type": "application/json"
+      },
+      "body": "{\"model\":\"~typesafe/jev-latest\",\"state\":\"source string state\",\"questions\":{\"call_t0\":{\"type\":\"noul\",\"instructions\":\"Retain this fixture?\"}}}"
+    },
+    {
+      "name": "wide-questions",
+      "state": "{}",
+      "questions": "{\"call_t0\":{\"type\":\"noul\",\"instructions\":\"fixture 0\"},\"call_t1\":{\"type\":\"noul\",\"instructions\":\"fixture 1\"},\"call_t2\":{\"type\":\"noul\",\"instructions\":\"fixture 2\"},\"call_t3\":{\"type\":\"noul\",\"instructions\":\"fixture 3\"},\"call_t4\":{\"type\":\"noul\",\"instructions\":\"fixture 4\"},\"call_t5\":{\"type\":\"noul\",\"instructions\":\"fixture 5\"},\"call_t6\":{\"type\":\"noul\",\"instructions\":\"fixture 6\"},\"call_t7\":{\"type\":\"noul\",\"instructions\":\"fixture 7\"},\"call_t8\":{\"type\":\"noul\",\"instructions\":\"fixture 8\"},\"call_t9\":{\"type\":\"noul\",\"instructions\":\"fixture 9\"},\"call_t10\":{\"type\":\"noul\",\"instructions\":\"fixture 10\"},\"call_t11\":{\"type\":\"noul\",\"instructions\":\"fixture 11\"},\"call_t12\":{\"type\":\"noul\",\"instructions\":\"fixture 12\"},\"call_t13\":{\"type\":\"noul\",\"instructions\":\"fixture 13\"},\"call_t14\":{\"type\":\"noul\",\"instructions\":\"fixture 14\"},\"call_t15\":{\"type\":\"noul\",\"instructions\":\"fixture 15\"},\"call_t16\":{\"type\":\"noul\",\"instructions\":\"fixture 16\"},\"call_t17\":{\"type\":\"noul\",\"instructions\":\"fixture 17\"},\"call_t18\":{\"type\":\"noul\",\"instructions\":\"fixture 18\"},\"call_t19\":{\"type\":\"noul\",\"instructions\":\"fixture 19\"},\"call_t20\":{\"type\":\"noul\",\"instructions\":\"fixture 20\"},\"call_t21\":{\"type\":\"noul\",\"instructions\":\"fixture 21\"},\"call_t22\":{\"type\":\"noul\",\"instructions\":\"fixture 22\"},\"call_t23\":{\"type\":\"noul\",\"instructions\":\"fixture 23\"},\"call_t24\":{\"type\":\"noul\",\"instructions\":\"fixture 24\"},\"call_t25\":{\"type\":\"noul\",\"instructions\":\"fixture 25\"},\"call_t26\":{\"type\":\"noul\",\"instructions\":\"fixture 26\"},\"call_t27\":{\"type\":\"noul\",\"instructions\":\"fixture 27\"},\"call_t28\":{\"type\":\"noul\",\"instructions\":\"fixture 28\"},\"call_t29\":{\"type\":\"noul\",\"instructions\":\"fixture 29\"}}",
+      "url": "https://openrouter.ai/api/v1/systemone",
+      "headers": {
+        "authorization": "Bearer fixture-key",
+        "content-type": "application/json"
+      },
+      "body": "{\"model\":\"~typesafe/jev-latest\",\"state\":{},\"questions\":{\"call_t0\":{\"type\":\"noul\",\"instructions\":\"fixture 0\"},\"call_t1\":{\"type\":\"noul\",\"instructions\":\"fixture 1\"},\"call_t2\":{\"type\":\"noul\",\"instructions\":\"fixture 2\"},\"call_t3\":{\"type\":\"noul\",\"instructions\":\"fixture 3\"},\"call_t4\":{\"type\":\"noul\",\"instructions\":\"fixture 4\"},\"call_t5\":{\"type\":\"noul\",\"instructions\":\"fixture 5\"},\"call_t6\":{\"type\":\"noul\",\"instructions\":\"fixture 6\"},\"call_t7\":{\"type\":\"noul\",\"instructions\":\"fixture 7\"},\"call_t8\":{\"type\":\"noul\",\"instructions\":\"fixture 8\"},\"call_t9\":{\"type\":\"noul\",\"instructions\":\"fixture 9\"},\"call_t10\":{\"type\":\"noul\",\"instructions\":\"fixture 10\"},\"call_t11\":{\"type\":\"noul\",\"instructions\":\"fixture 11\"},\"call_t12\":{\"type\":\"noul\",\"instructions\":\"fixture 12\"},\"call_t13\":{\"type\":\"noul\",\"instructions\":\"fixture 13\"},\"call_t14\":{\"type\":\"noul\",\"instructions\":\"fixture 14\"},\"call_t15\":{\"type\":\"noul\",\"instructions\":\"fixture 15\"},\"call_t16\":{\"type\":\"noul\",\"instructions\":\"fixture 16\"},\"call_t17\":{\"type\":\"noul\",\"instructions\":\"fixture 17\"},\"call_t18\":{\"type\":\"noul\",\"instructions\":\"fixture 18\"},\"call_t19\":{\"type\":\"noul\",\"instructions\":\"fixture 19\"},\"call_t20\":{\"type\":\"noul\",\"instructions\":\"fixture 20\"},\"call_t21\":{\"type\":\"noul\",\"instructions\":\"fixture 21\"},\"call_t22\":{\"type\":\"noul\",\"instructions\":\"fixture 22\"},\"call_t23\":{\"type\":\"noul\",\"instructions\":\"fixture 23\"},\"call_t24\":{\"type\":\"noul\",\"instructions\":\"fixture 24\"},\"call_t25\":{\"type\":\"noul\",\"instructions\":\"fixture 25\"},\"call_t26\":{\"type\":\"noul\",\"instructions\":\"fixture 26\"},\"call_t27\":{\"type\":\"noul\",\"instructions\":\"fixture 27\"},\"call_t28\":{\"type\":\"noul\",\"instructions\":\"fixture 28\"},\"call_t29\":{\"type\":\"noul\",\"instructions\":\"fixture 29\"}}}"
+    },
+    {
+      "name": "utf16-state-and-question",
+      "state": "{\"text\":\"fixture \\ud800 \\udc00 😀\"}",
+      "questions": "{\"call_t0\":{\"type\":\"noul\",\"instructions\":\"Keep \\udfff?\"}}",
+      "url": "https://openrouter.ai/api/v1/systemone",
+      "headers": {
+        "authorization": "Bearer fixture-key",
+        "content-type": "application/json"
+      },
+      "body": "{\"model\":\"~typesafe/jev-latest\",\"state\":{\"text\":\"fixture \\ud800 \\udc00 😀\"},\"questions\":{\"call_t0\":{\"type\":\"noul\",\"instructions\":\"Keep \\udfff?\"}}}"
+    }
+  ]
+}
