@@ -76,10 +76,11 @@ pub(crate) async fn bind<S: QueryStore>(
     }
     if starts(p, &["ubq_ai", "api_keys", "id"]) || starts(p, &["ubq_ai", "api_keys", "hash"]) {
         let mut ids = BTreeSet::new();
-        if p.len() == 4 && p[2] == "id" {
-            if let Some(id) = p[3].as_str() {
-                ids.insert(id.to_owned());
-            }
+        if p.len() == 4
+            && p[2] == "id"
+            && let Some(id) = p[3].as_str()
+        {
+            ids.insert(id.to_owned());
         }
         for row in [previous, Some(record)].into_iter().flatten() {
             if let Ok(value) = row.json_value()
