@@ -1,10 +1,11 @@
 //! Full uploaded snapshot normalization and evidence-preserving refresh projection.
 use crate::{prompt_cache, reasoning::advertised_effort, util::*};
+use gateway_core::{model::ModelId, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModelSnapshot {
-    pub models: Vec<Value>,
+    pub models: Vec<SourceJson>,
     pub source: String,
     pub updated_at_ms: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -193,7 +194,7 @@ pub fn normalize_snapshot(
     })
 }
 impl ModelSnapshot {
-    pub fn default_model(&self) -> Option<String> {
+    pub fn default_model(&self) -> Option<ModelId> {
         self.models.iter().find_map(|m| {
             identifier(m)
                 .map(crate::util::js_trim)
@@ -201,7 +202,7 @@ impl ModelSnapshot {
                 .map(str::to_owned)
         })
     }
-    pub fn find(&self, id: &str) -> Option<&Value> {
+    pub fn find(&self, id: &ModelId) -> Option<&SourceJson> {
         self.models.iter().find(|m| {
             identifier(m).is_some_and(|s| {
                 s.trim_matches(crate::util::js_whitespace)
@@ -209,7 +210,7 @@ impl ModelSnapshot {
             })
         })
     }
-    pub fn unique(&self, id: &str) -> Option<&Value> {
+    pub fn unique(&self, id: &ModelId) -> Option<&SourceJson> {
         let matches: Vec<_> = self
             .models
             .iter()
@@ -223,7 +224,7 @@ impl ModelSnapshot {
             .collect();
         (matches.len() == 1).then(|| matches[0])
     }
-    pub fn preserve_default(&self, candidate: Option<&str>) -> Option<String> {
+    pub fn preserve_default(&self, candidate: Option<&ModelId>) -> Option<ModelId> {
         candidate
             .map(crate::util::js_trim)
             .filter(|s| !s.is_empty() && self.find(s).is_some())

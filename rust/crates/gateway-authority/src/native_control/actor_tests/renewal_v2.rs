@@ -698,3 +698,132 @@ fn fixed_registry_selects_the_second_mapped_owner_without_home_or_environment_gu
         );
     });
 }
+
+#[test]
+fn native_action_source_custody_is_lossless_data_not_an_operation_capability() {
+    use crate::native_control::{facts, rows, validate_native_control_custody};
+    use gateway_core::{
+        model::ModelId,
+        source_control::{decode_source_control_record, encode_source_control_record},
+        source_json::SourceJson,
+        value::ValueEncoding,
+    };
+    run(async {
+        let store = Store::default();
+        let id = identity();
+        seed_owned(&store, &id);
+        let token = session_setup(&store, true, true);
+        let auth =
+            Authority::with_clock(store.clone(), Sequence(AtomicUsize::new(1)), store.clone());
+        let cfg = config();
+        let host = Host::new(&store);
+        let actor = authenticate_client_actor(
+            &auth,
+            &host,
+            &cfg,
+            &request(&token),
+            &context("passkey-user:user-fixture", None),
+        )
+        .await
+        .unwrap();
+        let registered = RegisteredRenewalOwner::configured(
+            "native-owner".into(),
+            "/tmp/ai-rust-wasm-20261018/synthetic-home".into(),
+        )
+        .unwrap();
+        let alive = Alive;
+        let service = NativeRenewalAuthority::configured(&auth, &id, &registered, &cfg, &alive);
+        let action = service
+            .prepare_live_mapped_renewal(&actor, "renew-call")
+            .await
+            .unwrap();
+        let record = store
+            .rows
+            .lock()
+            .unwrap()
+            .get(&rows::key("action", action.action_ref()).0)
+            .unwrap()
+            .clone();
+        let template: rows::ActionRow = decode_source_control_record(&record)
+            .unwrap()
+            .deserialize()
+            .unwrap();
+        for units in [
+            "fixture-model".encode_utf16().collect(),
+            vec![0xd800],
+            vec![0xdc00],
+            vec![0xfffd],
+            vec![0xd83d, 0xde80],
+            vec![0, 10, 34, 92],
+            r"\ud800".encode_utf16().collect(),
+            vec![u16::from(b'm'); 4097],
+        ] {
+            // A data-only custody fixture is never passed off as an admitted
+            // Journal or a minted native control/refresh permission.
+            let mut row = template.clone();
+            row.fence.context = NativeRenewalContext::Inference {
+                attempt_id: "source-custody-attempt".into(),
+                original_admission_digest: "f".repeat(64),
+                model: ModelId::from_source(JsString16::from_units(units)),
+                slot: 0,
+            };
+            row.action_ref = facts::digest(&(
+                "uos-native-renewal-action-v2",
+                &row.fence.original_request_id,
+                &row.fence.context,
+                &row.fence.source_native_generation,
+            ))
+            .unwrap();
+            let key = rows::key("action", &row.action_ref);
+            let document = SourceJson::from_serializable(&row).unwrap();
+            let record =
+                encode_source_control_record("opaque-custody-revision", &document, None).unwrap();
+            assert_eq!(
+                record.value_encoding,
+                if document.deserialize::<Value>().is_ok() {
+                    ValueEncoding::Json
+                } else {
+                    ValueEncoding::ProfileV2
+                }
+            );
+            validate_native_control_custody(&key, &record).unwrap();
+            let reopened: StoredRecord =
+                serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+            let roundtrip: rows::ActionRow = decode_source_control_record(&reopened)
+                .unwrap()
+                .deserialize()
+                .unwrap();
+            assert_eq!(roundtrip.fence, row.fence);
+            assert_eq!(reopened.revision, "opaque-custody-revision");
+            assert_eq!(reopened.expires_at_ms, None);
+            let mut expired = reopened.clone();
+            expired.expires_at_ms = Some(1_000_001);
+            assert!(validate_native_control_custody(&key, &expired).is_err());
+            let mut incompatible = reopened;
+            incompatible.value_encoding = ValueEncoding::ProfileV1;
+            assert!(validate_native_control_custody(&key, &incompatible).is_err());
+            let mut corrupt = row;
+            corrupt.fence.principal = "replaced-principal".into();
+            let record = encode_source_control_record(
+                "changed",
+                &SourceJson::from_serializable(&corrupt).unwrap(),
+                None,
+            )
+            .unwrap();
+            assert!(validate_native_control_custody(&key, &record).is_err());
+        }
+        let scalar = NativeRenewalContext::Inference {
+            attempt_id: "scalar-attempt".into(),
+            original_admission_digest: "scalar-digest".into(),
+            model: "fixture-model".into(),
+            slot: 1,
+        };
+        let frozen = br#"{"kind":"inference","attempt_id":"scalar-attempt","original_admission_digest":"scalar-digest","model":"fixture-model","slot":1}"#;
+        assert_eq!(serde_json::to_vec(&scalar).unwrap(), frozen);
+        assert_eq!(
+            facts::digest(&scalar).unwrap(),
+            gateway_auth::crypto::sha256_hex(frozen)
+        );
+        assert_eq!(host.fetches.load(Ordering::SeqCst), 0);
+    });
+}

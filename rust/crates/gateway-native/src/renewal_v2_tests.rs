@@ -312,7 +312,10 @@ fn request_bytes(stream: &mut impl Read) -> (String, Vec<u8>) {
         bytes.extend_from_slice(&block[..n]);
     }
 }
-fn signed_recheck(value: Value, replayed_body: bool) -> Result<Response, GatewayError> {
+fn signed_recheck<T: serde::Serialize + Send + 'static>(
+    value: T,
+    replayed_body: bool,
+) -> Result<Response, GatewayError> {
     let (client, peer, port) = pair();
     peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
     peer.set_write_timeout(Some(Duration::from_secs(3)))
@@ -333,8 +336,18 @@ fn signed_recheck(value: Value, replayed_body: bool) -> Result<Response, Gateway
             Request::parse(&body).unwrap(),
             Request::Recheck { v: 1, .. }
         ));
-        let response =
-            serde_json::to_vec(&json!({"v":1,"operation":"recheck","fence":value})).unwrap();
+        #[derive(serde::Serialize)]
+        struct RecheckFrame<T> {
+            v: u8,
+            operation: &'static str,
+            fence: T,
+        }
+        let response = serde_json::to_vec(&RecheckFrame {
+            v: 1,
+            operation: "recheck",
+            fence: value,
+        })
+        .unwrap();
         let old = serde_json::to_vec(&Request::Recheck {
             v: 1,
             operation_id: "old-opaque-operation".into(),
@@ -384,8 +397,42 @@ fn actual_signed_v2_rechecks_preserve_four_contexts_and_opaque_old_new_versions(
             "opaque-new"
         }
         .into();
-        let response = signed_recheck(serde_json::to_value(&expected).unwrap(), false).unwrap();
+        let response = signed_recheck(expected.clone(), false).unwrap();
         assert!(matches!(response,Response::Recheck{v:1,fence} if fence==expected));
+    }
+}
+#[test]
+fn actual_signed_v2_rechecks_preserve_source_model_units_as_ordinary_strings() {
+    use gateway_core::{js_string::JsString16, model::ModelId};
+    for units in [
+        vec![0xd800],
+        vec![0xdc00],
+        vec![0xfffd],
+        vec![0xd83d, 0xde80],
+        vec![0, 10, 34, 92],
+        r"\ud800".encode_utf16().collect(),
+        vec![u16::from(b'm'); 4097],
+    ] {
+        let model = ModelId::from_source(JsString16::from_units(units.clone()));
+        let expected = fence(NativeRenewalContext::Inference {
+            attempt_id: "actual-fixture-attempt".into(),
+            original_admission_digest: "opaque-admission-digest".into(),
+            model,
+            slot: 1,
+        });
+        let wire = serde_json::to_vec(&expected).unwrap();
+        assert!(wire.windows(8).any(|part| part == b"\"model\":"));
+        assert!(!wire.windows(11).any(|part| part == b"model_utf16"));
+        let response = signed_recheck(expected.clone(), false).unwrap();
+        let Response::Recheck { v: 1, fence } = response else {
+            panic!("expected the actual signed v1 recheck response");
+        };
+        assert_eq!(fence, expected);
+        assert!(
+            matches!(fence.context, NativeRenewalContext::Inference { model, .. }
+            if model.as_js_string().as_units() == units)
+        );
+        assert!(signed_recheck(expected, true).is_err());
     }
 }
 #[test]

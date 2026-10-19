@@ -94,17 +94,17 @@ pub fn prepare_source_request(
     );
     let mut client_stream = client_stream;
     let mut effort = None;
-    if surface == ClientSurface::Chat && !native_openrouter {
+    if surface == ClientSurface::Chat && direct {
         let messages = s::get(raw, "messages");
         let values = json::array(&messages)
             .filter(|values| !values.is_empty())
             .ok_or_else(|| invalid("messages must be a non-empty array", "messages"))?;
-        if direct && values.iter().any(|value| json::entries(value).is_none()) {
+        if values.iter().any(|value| json::entries(value).is_none()) {
             return Err(invalid("messages must contain objects", "messages"));
         }
         effort = view.reasoning_effort()?;
         // The direct model tier rule precedes stream/stream_options at this surface.
-        if direct && let Some(value) = &effort {
+        if let Some(value) = &effort {
             project_effort(value, profile(provider), "reasoning_effort")?;
         }
         client_stream = view.stream()?;
@@ -221,7 +221,11 @@ pub fn prepare_source_request(
             controls::openrouter(&mut body, &model);
         }
         UpstreamProvider::ChatgptCodex => {
-            let normalized = controls::ordinary(raw, surface, &model)?;
+            let normalized =
+                controls::ordinary(raw, surface, &model, options.ordinary_preparation.as_ref())?;
+            if surface == ClientSurface::Chat {
+                client_stream = s::boolean(&s::get(&normalized, "stream")).unwrap_or(false);
+            }
             body = controls::codex(&normalized)?;
             controls::strip_codex(&mut body, &mut warnings);
             decode = if surface == ClientSurface::Chat {
@@ -263,7 +267,11 @@ pub fn prepare_source_request(
             headers.insert("conversation_id".into(), conversation.clone());
         }
         UpstreamProvider::Surplus | UpstreamProvider::Metered | UpstreamProvider::ClaudeCode => {
-            let normalized = controls::ordinary(raw, surface, &model)?;
+            let normalized =
+                controls::ordinary(raw, surface, &model, options.ordinary_preparation.as_ref())?;
+            if surface == ClientSurface::Chat {
+                client_stream = s::boolean(&s::get(&normalized, "stream")).unwrap_or(false);
+            }
             body = normalized.clone();
             decode = if surface == ClientSurface::Chat {
                 ResponseDecode::ResponsesToChat

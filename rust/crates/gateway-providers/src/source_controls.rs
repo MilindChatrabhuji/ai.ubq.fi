@@ -88,18 +88,49 @@ pub(crate) fn codex(raw: &SourceJson) -> s::Result<SourceJson> {
     }
     Ok(body)
 }
+/// One ordinary phase coordinator; direct/OpenRouter branches never enter it.
 pub(crate) fn ordinary(
     raw: &SourceJson,
     surface: ClientSurface,
     model: &str,
+    context: Option<&OrdinaryPreparationContext>,
 ) -> s::Result<SourceJson> {
     let document = SourceRequestDocument::new(raw.clone())?;
+    let model_raw = match document.model_request()? {
+        gateway_schema::source_request::SourceModelRequest::Default => JsString16::from_utf8(model),
+        gateway_schema::source_request::SourceModelRequest::Named(name) => name,
+    };
     let mut body = if surface == ClientSurface::Chat {
+        let view = document.for_surface(gateway_schema::request::RequestSurface::ChatCompletions);
+        let messages = s::get(raw, "messages");
+        let messages = json::array(&messages).ok_or_else(|| {
+            gateway_schema::source_request::SourceRequestError::new(
+                400,
+                "messages must be an array",
+                "invalid_request_error",
+                Some("invalid_request_error"),
+                None,
+            )
+        })?;
+        if messages.is_empty() {
+            return Err(gateway_schema::source_request::SourceRequestError::new(
+                400,
+                "messages must be a non-empty array",
+                "invalid_request_error",
+                Some("invalid_request_error"),
+                None,
+            ));
+        }
+        // Chat effort syntax and stream options precede content conversion; metadata mapping does not.
+        let effort = view.reasoning_effort()?;
+        let stream = view.stream()?;
+        view.chat_stream_options()?;
         let normalized = document.normalize_chat_for_codex()?;
+        validate_cache(context, &model_raw, raw, &normalized.input, "messages")?;
         let mut body = s::object(vec![
             ("model", s::text(model)),
             ("input", s::array(&normalized.input)),
-            ("stream", s::generated(&document.stream()?)),
+            ("stream", s::generated(&stream)),
             ("store", s::generated(&false)),
         ]);
         if let Some(instructions) = normalized.instructions {
@@ -117,14 +148,13 @@ pub(crate) fn ordinary(
                 s::set(&mut body, key, value);
             }
         }
-        if let Some(effort) = document
-            .for_surface(gateway_schema::request::RequestSurface::ChatCompletions)
-            .reasoning_effort()?
-        {
+        let effort = effort
+            .or_else(|| context.map(|context| JsString16::from_utf8(context.default_effort())));
+        if let Some(effort) = effort {
             s::set(
                 &mut body,
                 "reasoning",
-                s::object(vec![("effort", s::quoted(&effort))]),
+                s::object(vec![("effort", map_effort(&effort, context))]),
             );
         }
         if let Some(max) =
@@ -142,24 +172,71 @@ pub(crate) fn ordinary(
         body
     } else {
         let input = document.normalize_responses_input()?;
+        validate_cache(context, &model_raw, raw, &input, "input")?;
+        let reasoning = document.reasoning()?;
+        let instructions = document.instructions()?;
+        // Both syntax phases finish before selected-model effort mapping/default injection.
+        let reasoning = match reasoning {
+            Some(mut value) => {
+                if let Some(effort) = s::string(&s::get(&value, "effort")) {
+                    s::set(&mut value, "effort", map_effort(&effort, context));
+                }
+                Some(value)
+            }
+            None => context.map(|context| {
+                s::object(vec![(
+                    "effort",
+                    map_effort(
+                        &JsString16::from_utf8(context.default_effort()),
+                        Some(context),
+                    ),
+                )])
+            }),
+        };
         let mut body = raw.clone();
         s::set(&mut body, "input", s::array(&input));
-        // These are deliberately after input, in the ordinary Responses phase only.
-        let reasoning = document.reasoning()?;
         if let Some(value) = reasoning {
             s::set(&mut body, "reasoning", value);
         } else {
             s::remove(&mut body, "reasoning");
         }
-        match document.instructions()? {
+        match instructions {
             SourceField::Missing => (),
-            SourceField::Null => s::set(&mut body, "instructions", s::null()),
+            SourceField::Null => s::remove(&mut body, "instructions"),
             SourceField::Value(text) => s::set(&mut body, "instructions", s::quoted(&text)),
         }
         body
     };
     s::set(&mut body, "model", s::text(model));
     Ok(body)
+}
+fn map_effort(effort: &JsString16, context: Option<&OrdinaryPreparationContext>) -> SourceJson {
+    // A catalog wire-map key is scalar metadata. An unknown source-unit tier stays verbatim.
+    let mapped = context.and_then(|context| {
+        effort
+            .try_utf8()
+            .ok()
+            .map(|effort| gateway_schema::reasoning::effort_for_codex(&effort, context.reasoning()))
+    });
+    mapped.as_deref().map_or_else(|| s::quoted(effort), s::text)
+}
+fn validate_cache(
+    context: Option<&OrdinaryPreparationContext>,
+    model: &JsString16,
+    raw: &SourceJson,
+    input: &[SourceJson],
+    input_key: &str,
+) -> s::Result<()> {
+    if let Some(context) = context {
+        gateway_schema::source_request::validate_known_unsupported_prompt_cache(
+            model,
+            context.prompt_cache(),
+            raw,
+            input,
+            input_key,
+        )?;
+    }
+    Ok(())
 }
 pub(crate) fn ultra(body: &mut SourceJson) {
     let mut reasoning = s::get(body, "reasoning");

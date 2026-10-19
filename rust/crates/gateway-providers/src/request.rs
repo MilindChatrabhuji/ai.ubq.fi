@@ -102,6 +102,7 @@ pub fn chat_request_to_responses(raw: &Value) -> Result<SourceJson, GatewayError
         &crate::source::generated(raw),
         ClientSurface::Chat,
         raw["model"].as_str().unwrap_or(""),
+        None,
     )
     .map_err(crate::source::scalar_error)
 }
