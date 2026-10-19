@@ -9,7 +9,7 @@ use std::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Text {
+pub struct Text {
     units: JsString16,
     scalar: Option<String>,
 }
@@ -65,7 +65,7 @@ impl Serialize for Text {
 }
 
 #[derive(Clone, Debug)]
-pub(super) enum Value {
+pub enum Value {
     Null,
     Bool(bool),
     Number(SourceJson),
@@ -147,6 +147,53 @@ impl Value {
                     .collect::<Result<Vec<_>, GatewayError>>()?,
             ),
         }
+    }
+    pub fn as_object(&self) -> Option<&Vec<(JsString16, Self)>> {
+        if let Self::Object(fields) = self.resolve() {
+            Some(fields)
+        } else {
+            None
+        }
+    }
+    pub fn as_object_mut(&mut self) -> Option<&mut Vec<(JsString16, Self)>> {
+        if let Self::Object(fields) = self.mutable() {
+            Some(fields)
+        } else {
+            None
+        }
+    }
+    pub fn as_array_mut(&mut self) -> Option<&mut Vec<Self>> {
+        if let Self::Array(items) = self.mutable() {
+            Some(items)
+        } else {
+            None
+        }
+    }
+    pub fn as_f64(&self) -> Option<f64> {
+        if let Self::Number(raw) = self {
+            source::number(raw)
+        } else {
+            None
+        }
+    }
+    pub fn as_bool(&self) -> Option<bool> {
+        if let Self::Bool(value) = self {
+            Some(*value)
+        } else {
+            None
+        }
+    }
+    pub fn is_number(&self) -> bool {
+        matches!(self, Self::Number(_))
+    }
+    pub fn remove(&mut self, key: &str) -> Option<Self> {
+        let Self::Object(fields) = self.mutable() else {
+            return None;
+        };
+        let index = fields
+            .iter()
+            .position(|(name, _)| name.as_units().iter().copied().eq(key.encode_utf16()))?;
+        Some(fields.remove(index).1)
     }
     pub fn is_object(&self) -> bool {
         matches!(self.resolve(), Self::Object(_))
