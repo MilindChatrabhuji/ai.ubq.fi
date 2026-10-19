@@ -9,25 +9,29 @@ use gateway_authority::quota::{ApiKeyPolicy as AuthorityKeyPolicy, ApiUsageWindo
 use gateway_core::identity::ApiKeyId;
 use gateway_core::{
     GatewayError,
-    state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck},
+    js_string::JsString16,
+    model::ModelId,
+    source_control::{decode_source_control_record, encode_source_control_record},
+    source_json::SourceJson,
+    state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck, StoredRecord},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{AdminHost, AdminOperation, PaidKeyFields, audit};
+use crate::{AdminHost, AdminOperation, PaidKeyFields, audit, source_input as input};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ApiKeyRecord {
     #[serde(flatten)]
     pub policy: ApiKeyHashRecord,
-    pub name: String,
+    pub name: JsString16,
     pub prefix: String,
     pub hash: String,
     pub created_at_ms: i64,
-    pub paid_fallback_model_ids: Vec<String>,
+    pub paid_fallback_model_ids: Vec<ModelId>,
     pub paid_fallback_quota_per_credit: i64,
-    #[serde(default)]
-    pub paid_fallback_max_exposure_microcredits: std::collections::BTreeMap<String, i64>,
+    #[serde(default, with = "gateway_authority::source_model_map")]
+    pub paid_fallback_max_exposure_microcredits: std::collections::BTreeMap<ModelId, i64>,
     pub paid_fallback_pricing_checked_at_ms: Option<i64>,
 }
 
@@ -76,19 +80,132 @@ fn usage_window(id: &str, window: i64, now: i64) -> ApiUsageWindow {
     }
 }
 
-pub fn public_record(record: &ApiKeyRecord) -> Value {
-    json!({"id":record.policy.id,"name":record.name,"prefix":record.prefix,"created_at_ms":record.created_at_ms,"expires_at_ms":record.policy.expires_at_ms,"revoked_at_ms":record.policy.revoked_at_ms,"usage_limit_requests":record.policy.usage_limit_requests,"usage_requests":record.policy.usage_requests,"usage_reset_at_ms":record.policy.usage_reset_at_ms,"window_ms":record.policy.window_ms,"paid_fallback_enabled":record.policy.paid_fallback_enabled,"paid_fallback_limit_credits":record.policy.paid_fallback_limit_microcredits as f64/1_000_000.0,"paid_fallback_spent_credits":record.policy.paid_fallback_spent_microcredits as f64/1_000_000.0,"paid_fallback_reserved_credits":record.policy.paid_fallback_reserved_microcredits as f64/1_000_000.0,"paid_fallback_model_ids":record.paid_fallback_model_ids})
+/// Complete named DTO decode; callers retain their original key/expiry/currentness guards.
+pub fn decode_record(record: &StoredRecord) -> Result<ApiKeyRecord, GatewayError> {
+    let source = decode_source_control_record(record)?;
+    if !gateway_admin_data::migration::audit::valid_source_key_policy(&source, true) {
+        return Err(GatewayError::unavailable(
+            "API key state is corrupt",
+            "api_key_policy_invalid",
+        ));
+    }
+    source.deserialize().map_err(|_| {
+        GatewayError::unavailable("API key state is corrupt", "api_key_policy_invalid")
+    })
+}
+/// Validate the complete named family and its original physical key before projection.
+pub fn decode_id_record(
+    key: &RecordKey,
+    record: &StoredRecord,
+) -> Result<ApiKeyRecord, GatewayError> {
+    let value = decode_record(record)?;
+    if key != &api_keys::id_key(&value.policy.id) {
+        return Err(GatewayError::unavailable(
+            "API key record identity is invalid",
+            "api_key_policy_invalid",
+        ));
+    }
+    Ok(value)
+}
+/// Retain absolute storage expiry/currentness, independently of policy expiry.
+pub fn current_record(
+    key: &RecordKey,
+    row: Option<&StoredRecord>,
+    now: i64,
+) -> Result<Option<ApiKeyRecord>, GatewayError> {
+    let Some(row) = row else { return Ok(None) };
+    row.validate_version()?;
+    if row.expires_at_ms.is_some_and(|at| at <= now) {
+        return Ok(None);
+    }
+    decode_id_record(key, row).map(Some)
+}
+/// ID-record family only. Model-free auth hash and unrelated records keep their existing codecs.
+pub fn record_mutation(
+    key: RecordKey,
+    record: &ApiKeyRecord,
+    expiry: Option<i64>,
+    revision: &str,
+) -> Result<RecordMutation, GatewayError> {
+    if key != api_keys::id_key(&record.policy.id) {
+        return Err(GatewayError::unavailable(
+            "API key record identity is invalid",
+            "api_key_policy_invalid",
+        ));
+    }
+    Ok(RecordMutation::Put {
+        key,
+        record: encode_source_control_record(
+            revision,
+            &SourceJson::from_serializable(record)?,
+            expiry,
+        )?,
+    })
+}
+fn policy_mutation(
+    record: &ApiKeyRecord,
+    now: i64,
+    revision: &str,
+) -> Result<RecordMutation, GatewayError> {
+    Ok(RecordMutation::Put {
+        key: authority_policy_key(&record.policy.id),
+        record: encode_source_control_record(
+            revision,
+            &SourceJson::from_serializable(&authority_policy(record, now))?,
+            None,
+        )?,
+    })
+}
+pub fn public_record(record: &ApiKeyRecord) -> SourceJson {
+    input::object(vec![
+        ("id", input::json(&record.policy.id)),
+        ("name", input::json(&record.name)),
+        ("prefix", input::json(&record.prefix)),
+        ("created_at_ms", input::json(&record.created_at_ms)),
+        ("expires_at_ms", input::json(&record.policy.expires_at_ms)),
+        ("revoked_at_ms", input::json(&record.policy.revoked_at_ms)),
+        (
+            "usage_limit_requests",
+            input::json(&record.policy.usage_limit_requests),
+        ),
+        ("usage_requests", input::json(&record.policy.usage_requests)),
+        (
+            "usage_reset_at_ms",
+            input::json(&record.policy.usage_reset_at_ms),
+        ),
+        ("window_ms", input::json(&record.policy.window_ms)),
+        (
+            "paid_fallback_enabled",
+            input::json(&record.policy.paid_fallback_enabled),
+        ),
+        (
+            "paid_fallback_limit_credits",
+            input::json(&(record.policy.paid_fallback_limit_microcredits as f64 / 1_000_000.0)),
+        ),
+        (
+            "paid_fallback_spent_credits",
+            input::json(&(record.policy.paid_fallback_spent_microcredits as f64 / 1_000_000.0)),
+        ),
+        (
+            "paid_fallback_reserved_credits",
+            input::json(&(record.policy.paid_fallback_reserved_microcredits as f64 / 1_000_000.0)),
+        ),
+        (
+            "paid_fallback_model_ids",
+            input::json(&record.paid_fallback_model_ids),
+        ),
+    ])
 }
 
-fn safe_integer(value: &Value) -> Option<i64> {
-    let number = value.as_f64()?.trunc();
+fn safe_integer(value: &SourceJson) -> Option<i64> {
+    let number = input::number(value)?.trunc();
     (number.is_finite() && number.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64)
         .then_some(number as i64)
 }
-fn limit(raw: Option<&Value>, default: i64) -> Result<i64, GatewayError> {
+fn limit(raw: Option<&SourceJson>, default: i64) -> Result<i64, GatewayError> {
     let value = match raw {
         None => default,
-        Some(Value::Null) => 50,
+        Some(value) if value.as_str() == "null" => 50,
         Some(value) => safe_integer(value).ok_or_else(|| {
             invalid("usage_limit_requests must be a non-negative number or -1 for unlimited")
         })?,
@@ -100,18 +217,23 @@ fn limit(raw: Option<&Value>, default: i64) -> Result<i64, GatewayError> {
     }
     Ok(value)
 }
-fn name(raw: Option<&Value>) -> Result<String, GatewayError> {
+fn name(raw: Option<&SourceJson>) -> Result<JsString16, GatewayError> {
     let name = raw
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty() && s.encode_utf16().count() <= 80 && !s.contains(['\r', '\n']))
+        .and_then(input::text)
+        .map(|value| input::trim(&value))
+        .filter(|value| {
+            !value.as_units().is_empty()
+                && value.as_units().len() <= 80
+                && !value.as_units().iter().any(|unit| matches!(unit, 10 | 13))
+        })
         .ok_or_else(|| invalid("name must be a non-empty string (<=80 chars)"))?;
-    Ok(name.into())
+    Ok(name)
 }
-fn expiry(raw: Option<&Value>, default: i64, now: i64) -> Result<i64, GatewayError> {
+
+fn expiry(raw: Option<&SourceJson>, default: i64, now: i64) -> Result<i64, GatewayError> {
     let expiry = match raw {
         None => default,
-        Some(Value::Null) => now + 7_776_000_000,
+        Some(value) if value.as_str() == "null" => now + 7_776_000_000,
         Some(value) => safe_integer(value).ok_or_else(|| {
             invalid("expires_at_ms must be a Unix epoch ms timestamp in the future, or -1")
         })?,
@@ -123,29 +245,34 @@ fn expiry(raw: Option<&Value>, default: i64, now: i64) -> Result<i64, GatewayErr
     }
     Ok(expiry)
 }
-fn window(raw: Option<&Value>, default: i64) -> Result<i64, GatewayError> {
+fn window(raw: Option<&SourceJson>, default: i64) -> Result<i64, GatewayError> {
     let normalized = raw
         .map(|value| {
-            if let Some(text) = value.as_str() {
-                text.trim()
-                    .parse::<f64>()
-                    .ok()
-                    .filter(|n| {
-                        n.is_finite() && n.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64
-                    })
-                    .map(|n| n.trunc() as i64)
+            if let Some(text) = input::text(value) {
+                // This field must become a finite Number. An unpaired unit cannot
+                // form its numeric grammar; it gets the same window validation error.
+                text.try_utf8().ok().and_then(|text| {
+                    let n = gateway_admin_data::profile::js_number(&Value::String(text));
+                    (n.is_finite() && n.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64)
+                        .then_some(n.trunc() as i64)
+                })
             } else {
                 safe_integer(value)
             }
         })
         .unwrap_or(Some(default));
-    let window = normalized
-        .filter(|v| *v > 0)
-        .ok_or_else(|| invalid("window_ms must be a positive number"))?;
-    Ok(window)
+    normalized
+        .filter(|value| *value > 0)
+        .ok_or_else(|| invalid("window_ms must be a positive number"))
 }
-fn retired_reset(raw: &Value) -> Result<(), GatewayError> {
-    if raw.get("banked_reset_enabled").is_some() || raw.get("codex_banked_reset_enabled").is_some()
+
+fn retired_reset(raw: &SourceJson) -> Result<(), GatewayError> {
+    if input::member(raw, "banked_reset_enabled")
+        .as_ref()
+        .is_some()
+        || input::member(raw, "codex_banked_reset_enabled")
+            .as_ref()
+            .is_some()
     {
         return Err(invalid(
             "Banked reset settings are account-owned; use provider controls",
@@ -156,22 +283,21 @@ fn retired_reset(raw: &Value) -> Result<(), GatewayError> {
 
 async fn paid_fields<A: AdminHost>(
     host: &A,
-    raw: &Value,
+    raw: &SourceJson,
     old: Option<&ApiKeyRecord>,
 ) -> Result<PaidKeyFields, GatewayError> {
-    if raw
-        .get("paid_fallback_enabled")
-        .is_some_and(|v| !v.is_boolean())
+    if input::member(raw, "paid_fallback_enabled")
+        .as_ref()
+        .is_some_and(|v| input::boolean(v).is_none())
     {
         return Err(invalid("paid_fallback_enabled must be a boolean"));
     }
-    let enabled = raw
-        .get("paid_fallback_enabled")
-        .and_then(Value::as_bool)
+    let enabled = input::member(raw, "paid_fallback_enabled")
+        .as_ref()
+        .and_then(input::boolean)
         .unwrap_or(old.is_some_and(|v| v.policy.paid_fallback_enabled));
-    let limit = if let Some(value) = raw.get("paid_fallback_limit_credits") {
-        let credit = value
-            .as_f64()
+    let limit = if let Some(value) = input::member(raw, "paid_fallback_limit_credits").as_ref() {
+        let credit = input::number(value)
             .filter(|n| n.is_finite() && (*n >= 0.0 || *n == -1.0))
             .ok_or_else(|| {
                 invalid("paid_fallback_limit_credits must be a non-negative number or -1")
@@ -212,12 +338,16 @@ async fn paid_fields<A: AdminHost>(
         return Ok(fields);
     }
     let mut effective = raw.clone();
-    effective["paid_fallback_enabled"] = Value::Bool(true);
-    effective["paid_fallback_limit_credits"] = json!(if limit == -1 {
-        -1.0
-    } else {
-        limit as f64 / 1_000_000.0
-    });
+    input::set(&mut effective, "paid_fallback_enabled", input::json(&true));
+    input::set(
+        &mut effective,
+        "paid_fallback_limit_credits",
+        input::json(&if limit == -1 {
+            -1.0
+        } else {
+            limit as f64 / 1_000_000.0
+        }),
+    );
     let fields = host.paid_key_policy(&effective).await?;
     if !fields.enabled
         || fields.limit_microcredits != limit
@@ -245,23 +375,36 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
     }
     pub async fn create(
         &self,
-        raw: &Value,
+        raw: &SourceJson,
         actor: &AuthPrincipal,
         request_id: &str,
     ) -> Result<AuthResponse, GatewayError> {
         retired_reset(raw)?;
-        let name = name(raw.get("name"))?;
-        let token = match raw.get("token") {
-            None | Some(Value::Null) => api_keys::generate_token(&self.host.random_bytes(32)?)?,
+        let name = name(input::member(raw, "name").as_ref())?;
+        let token = match input::member(raw, "token") {
+            None => api_keys::generate_token(&self.host.random_bytes(32)?)?,
+            Some(value) if value.as_str() == "null" => {
+                api_keys::generate_token(&self.host.random_bytes(32)?)?
+            }
             Some(value) => {
-                let value=value.as_str().map(str::trim).filter(|s|api_keys::api_key_shape(s)).ok_or_else(||invalid("token must use the u_ prefix followed by 64 lowercase hexadecimal characters"))?;
-                Secret::new(value.into())
+                let units = input::text(&value).map(|value| input::trim(&value)).filter(|value| {
+                    let u = value.as_units();
+                    u.len() == 66 && u[..2] == [117, 95] && u[2..].iter().all(|u| (48..=57).contains(u) || (97..=102).contains(u))
+                }).ok_or_else(|| invalid("token must use the u_ prefix followed by 64 lowercase hexadecimal characters"))?;
+                // Proven closed ASCII token grammar above; no arbitrary string fallback.
+                Secret::new(
+                    String::from_utf16(units.as_units()).expect("validated ASCII API-key token"),
+                )
             }
         };
         let now = self.host.now_ms();
-        let expires = expiry(raw.get("expires_at_ms"), now + 7_776_000_000, now)?;
-        let usage = limit(raw.get("usage_limit_requests"), 50)?;
-        let window = window(raw.get("window_ms"), WEEK_MS)?;
+        let expires = expiry(
+            input::member(raw, "expires_at_ms").as_ref(),
+            now + 7_776_000_000,
+            now,
+        )?;
+        let usage = limit(input::member(raw, "usage_limit_requests").as_ref(), 50)?;
+        let window = window(input::member(raw, "window_ms").as_ref(), WEEK_MS)?;
         let paid = paid_fields(self.capabilities, raw, None).await?;
         let hash = sha256_base64url(token.expose().as_bytes());
         let hk = api_keys::hash_key(&hash);
@@ -309,9 +452,9 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
         ];
         let rev = self.revision()?;
         let mut writes = vec![
-            store::put(ik, &record, None, &rev)?,
+            record_mutation(ik, &record, None, &rev)?,
             store::put(hk, &record.policy, None, &rev)?,
-            store::put(pk, &authority_policy(&record, now), None, &rev)?,
+            policy_mutation(&record, now, &rev)?,
             store::put(
                 wk,
                 &usage_window(&id, window, now),
@@ -338,8 +481,8 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
             return Err(conflict("API key was modified concurrently; retry"));
         }
         let mut result = public_record(&record);
-        result["token"] = json!(token.expose());
-        let mut response = AuthResponse::json(200, result);
+        input::set(&mut result, "token", input::json(token.expose()));
+        let mut response = AuthResponse::source_json(200, result);
         response
             .headers
             .insert("x-uos-upstream".into(), "chatgpt_codex".into());
@@ -348,20 +491,29 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
     pub async fn mutate(
         &self,
         operation: AdminOperation,
-        raw: &Value,
+        raw: &SourceJson,
         actor: &AuthPrincipal,
         request_id: &str,
     ) -> Result<AuthResponse, GatewayError> {
         retired_reset(raw)?;
-        let id = raw
-            .get("id")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
+        let target_id = input::member(raw, "id")
+            .as_ref()
+            .and_then(input::text)
+            .filter(|id| !id.as_units().is_empty())
             .ok_or_else(|| invalid("id is required"))?;
-        let ik = api_keys::id_key(id);
+        // Source accepts any nonempty string selector, not just UUIDs/scalars.
+        let ik = input::selected_key(&["ubq_ai", "api_keys", "id"], &target_id)?;
         let ir = self.store.read(&ik).await?;
-        let mut record: ApiKeyRecord = store::decode(ir.as_ref(), self.host.now_ms())?
+        let mut record = current_record(&ik, ir.as_ref(), self.host.now_ms())?
             .ok_or_else(|| GatewayError::new(404, "Not found", Some("not_found")))?;
+        if api_keys::id_key(&record.policy.id) != ik {
+            return Err(GatewayError::unavailable(
+                "API key record identity is invalid",
+                "api_key_policy_invalid",
+            ));
+        }
+        let stored_id = record.policy.id.clone();
+        let id = stored_id.as_str();
         let original = record.clone();
         if record.policy.usage_quota_version != 3 {
             return Err(GatewayError::unavailable(
@@ -432,32 +584,40 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
                     ));
                 }
                 if record.policy.revoked_at_ms.is_none() {
-                    return Ok(AuthResponse::json(
+                    return Ok(AuthResponse::source_json(
                         200,
-                        json!({"id":id,"revoked_at_ms":null}),
+                        input::object(vec![
+                            ("id", input::json(&target_id)),
+                            ("revoked_at_ms", input::json(&())),
+                        ]),
                     ));
                 }
                 record.policy.revoked_at_ms = None;
                 "unrevoke"
             }
             AdminOperation::ApiKeysUpdate => {
-                if let Some(value) = raw.get("name") {
+                if let Some(value) = input::member(raw, "name").as_ref() {
                     record.name = name(Some(value))?;
                 }
-                if let Some(value) = raw.get("expires_at_ms") {
+                if let Some(value) = input::member(raw, "expires_at_ms").as_ref() {
                     record.policy.expires_at_ms =
                         expiry(Some(value), record.policy.expires_at_ms, now)?;
                 }
                 record.policy.usage_limit_requests = limit(
-                    raw.get("usage_limit_requests"),
+                    input::member(raw, "usage_limit_requests").as_ref(),
                     record.policy.usage_limit_requests,
                 )?;
-                let new_window = window(raw.get("window_ms"), record.policy.window_ms)?;
-                let reset = raw.get("reset_usage");
-                if reset.is_some_and(|v| !v.is_boolean()) {
+                let new_window = window(
+                    input::member(raw, "window_ms").as_ref(),
+                    record.policy.window_ms,
+                )?;
+                let reset = input::member(raw, "reset_usage");
+                if reset.as_ref().is_some_and(|v| input::boolean(v).is_none()) {
                     return Err(invalid("reset_usage must be a boolean"));
                 }
-                if new_window != record.policy.window_ms || reset == Some(&Value::Bool(true)) {
+                if new_window != record.policy.window_ms
+                    || reset.as_ref().and_then(input::boolean) == Some(true)
+                {
                     record.policy.window_ms = new_window;
                     record.policy.usage_reset_at_ms = now + new_window;
                     record.policy.usage_requests = 0;
@@ -497,9 +657,9 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
         if operation != AdminOperation::ApiKeysDelete {
             let rev = self.revision()?;
             writes.extend([
-                store::put(ik, &record, None, &rev)?,
+                record_mutation(ik, &record, None, &rev)?,
                 store::put(hk, &record.policy, None, &rev)?,
-                store::put(pk, &authority_policy(&record, now), None, &rev)?,
+                policy_mutation(&record, now, &rev)?,
             ]);
         }
         let changed = change_fields(Some(&original), &record, action, raw);
@@ -527,13 +687,14 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
             self.capabilities.finish_key_deletion(id, prepared).await?;
         }
         let body = match operation {
-            AdminOperation::ApiKeysDelete => json!({"id":id}),
-            AdminOperation::ApiKeysRevoke | AdminOperation::ApiKeysUnrevoke => {
-                json!({"id":id,"revoked_at_ms":record.policy.revoked_at_ms})
-            }
+            AdminOperation::ApiKeysDelete => input::object(vec![("id", input::json(&target_id))]),
+            AdminOperation::ApiKeysRevoke | AdminOperation::ApiKeysUnrevoke => input::object(vec![
+                ("id", input::json(&target_id)),
+                ("revoked_at_ms", input::json(&record.policy.revoked_at_ms)),
+            ]),
             _ => public_record(&record),
         };
-        let mut response = AuthResponse::json(200, body);
+        let mut response = AuthResponse::source_json(200, body);
         response
             .headers
             .insert("x-uos-upstream".into(), "chatgpt_codex".into());
@@ -545,39 +706,64 @@ fn change_fields(
     old: Option<&ApiKeyRecord>,
     record: &ApiKeyRecord,
     action: &str,
-    raw: &Value,
-) -> Value {
+    raw: &SourceJson,
+) -> SourceJson {
     if action == "delete" {
-        return json!({});
+        return input::object(Vec::new());
     }
-    let credits = |value: i64| {
-        if value == -1 {
-            -1.0
-        } else {
-            value as f64 / 1_000_000.0
-        }
+    let fields = |record: &ApiKeyRecord| {
+        input::object(vec![
+            ("name", input::json(&record.name)),
+            ("expires_at_ms", input::json(&record.policy.expires_at_ms)),
+            (
+                "usage_limit_requests",
+                input::json(&record.policy.usage_limit_requests),
+            ),
+            ("window_ms", input::json(&record.policy.window_ms)),
+            (
+                "paid_fallback_enabled",
+                input::json(&record.policy.paid_fallback_enabled),
+            ),
+            (
+                "paid_fallback_limit_credits",
+                input::json(&if record.policy.paid_fallback_limit_microcredits == -1 {
+                    -1.0
+                } else {
+                    record.policy.paid_fallback_limit_microcredits as f64 / 1_000_000.0
+                }),
+            ),
+        ])
     };
-    let all = json!({"name":record.name,"expires_at_ms":record.policy.expires_at_ms,"usage_limit_requests":record.policy.usage_limit_requests,"window_ms":record.policy.window_ms,"paid_fallback_enabled":record.policy.paid_fallback_enabled,"paid_fallback_limit_credits":credits(record.policy.paid_fallback_limit_microcredits)});
+    let all = fields(record);
     if action == "create" {
         return all;
     }
     if matches!(action, "revoke" | "unrevoke") {
-        return json!({"revoked_at_ms":record.policy.revoked_at_ms});
+        return input::object(vec![(
+            "revoked_at_ms",
+            input::json(&record.policy.revoked_at_ms),
+        )]);
     }
-    let Some(old) = old else {
-        return all;
-    };
-    let previous = json!({"name":old.name,"expires_at_ms":old.policy.expires_at_ms,"usage_limit_requests":old.policy.usage_limit_requests,"window_ms":old.policy.window_ms,"paid_fallback_enabled":old.policy.paid_fallback_enabled,"paid_fallback_limit_credits":credits(old.policy.paid_fallback_limit_microcredits)});
-    let mut changed = serde_json::Map::new();
-    for (key, value) in all.as_object().into_iter().flatten() {
-        if previous.get(key) != Some(value) {
-            changed.insert(key.clone(), value.clone());
+    let Some(old) = old else { return all };
+    let previous = fields(old);
+    let mut changed = input::object(Vec::new());
+    for (key, value) in
+        gateway_core::source_serialization::entries(&all).expect("constructed audit fields")
+    {
+        // All names come from the closed source audit allowlist above.
+        let key = key.try_utf8().expect("closed ASCII audit field name");
+        if input::member(&previous, &key).as_ref() != Some(&value) {
+            input::set(&mut changed, &key, value);
         }
     }
-    if raw.get("reset_usage") == Some(&Value::Bool(true)) {
-        changed.insert("reset_usage".into(), Value::Bool(true));
+    if input::member(raw, "reset_usage")
+        .as_ref()
+        .and_then(input::boolean)
+        == Some(true)
+    {
+        input::set(&mut changed, "reset_usage", input::json(&true));
     }
-    Value::Object(changed)
+    changed
 }
 
 fn append_audit<H: AuthHost>(

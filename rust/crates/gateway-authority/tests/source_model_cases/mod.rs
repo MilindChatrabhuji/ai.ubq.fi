@@ -27,7 +27,7 @@ fn source_model_learning_preserves_raw_catalogs_and_unknown_metadata() {
             &gateway_core::source_json::SourceJson::from_serializable(&result).unwrap()
         )
         .unwrap()
-        .unsupported["a"][&"gpt-test".into()],
+        .unsupported["a"][&gateway_core::model::ModelId::from_scalar("gpt-test")],
         NOW
     );
 }

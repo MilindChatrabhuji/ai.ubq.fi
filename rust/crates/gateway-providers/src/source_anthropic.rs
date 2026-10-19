@@ -317,7 +317,7 @@ fn native_reasoning(raw: &SourceJson, options: &PrepareOptions) -> Option<Source
             .map(gateway_core::js_string::JsString16::from_utf8)
             .to_vec()
     });
-    allowed.iter().any(|value| *value == effort).then(|| {
+    allowed.contains(&effort).then(|| {
         s::object(vec![
             (
                 "thinking",

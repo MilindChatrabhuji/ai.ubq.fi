@@ -637,7 +637,7 @@ fn claude_model_scope_clock_and_current_paid_policy_remain_required() {
         .unwrap()
         .unwrap();
     let mut input = paid_request("claude-wrong-model", PaidProvider::Surplus);
-    input.model = "gpt-test".to_owned();
+    input.model = "gpt-test".into();
     assert!(
         run(reserve_paid(
             &authority,
@@ -691,7 +691,7 @@ fn claude_json_integer_representations_and_codex_precedence_match_source() {
         .unwrap()
         .unwrap();
     let mut input = paid_request("claude-codex", PaidProvider::Surplus);
-    input.model = "gpt-test".to_owned();
+    input.model = "gpt-test".into();
     let error = run(reserve_paid(
         &authority,
         &input,

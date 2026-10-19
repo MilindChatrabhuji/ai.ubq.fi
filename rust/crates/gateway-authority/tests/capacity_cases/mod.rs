@@ -315,7 +315,7 @@ fn unavailable_and_stale_samples_cannot_mint_quota_invalidity_reset_or_paid_auth
         .unwrap();
         assert!(
             !run(authority.materialize_capacity_quota_blocks(
-                "gpt-test",
+                &"gpt-test".into(),
                 gateway_core::provider::CodexQuotaClass::Standard,
                 NOW
             ))
@@ -399,7 +399,7 @@ fn capacity_materialization_keeps_stable_ambiguous_reset_lookup_only() {
     store.inner.clock(NOW + 1000);
     assert!(
         run(authority.materialize_capacity_quota_blocks(
-            "gpt-test",
+            &"gpt-test".into(),
             gateway_core::provider::CodexQuotaClass::Standard,
             NOW + 1000
         ))
@@ -444,7 +444,7 @@ fn capacity_materialization_refuses_owned_probe_and_preserves_foreign_class_leas
         run(authority.record_codex_capacity_observations(&fence, &[sample(NOW, 100.0)])).unwrap();
         assert_eq!(
             run(authority.materialize_capacity_quota_blocks(
-                "gpt-test",
+                &"gpt-test".into(),
                 CodexQuotaClass::Standard,
                 NOW
             ))

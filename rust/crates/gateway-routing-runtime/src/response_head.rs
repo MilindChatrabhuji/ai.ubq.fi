@@ -163,7 +163,14 @@ impl<
             ClaudeOutcome::WorkspaceContinuation(publication) => {
                 // Disabled thinking preserves the original refusal without any
                 // re-encoding, dropped flag, or follow-up transport.
-                if attempt.request.body["thinking"]["type"] == "disabled"
+                if gateway_core::source_serialization::member(&attempt.request.body, "thinking")
+                    .and_then(|thinking| {
+                        gateway_core::source_serialization::member(&thinking, "type")
+                    })
+                    .and_then(|kind| gateway_core::source_serialization::string(&kind))
+                    .is_some_and(|kind| {
+                        kind == gateway_core::js_string::JsString16::from_utf8("disabled")
+                    })
                     || record.workspace_continuations != 0
                 {
                     return Ok(ResponseDecision::Return);
