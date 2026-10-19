@@ -6,6 +6,18 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Client Retry-After is bounded independently of quota deadlines - 2026-10-19
+
+Gateway routing errors retain their durable quota or reset deadline, but the client-facing `Retry-After` hint is capped
+at 60 seconds. A weekly Codex quota block previously emitted the full remaining duration, such as 561,000 seconds, and
+clients slept for days instead of retrying or entering an available failover.
+
+Reason: routing availability can change through paid failover, reset recovery, or operator action long before the
+upstream subscription window resets. The upstream deadline is still enforced internally and is not shortened.
+
+Reversal risk: removing the cap restores multi-day client sleeps on ordinary weekly exhaustion. Emitting no header
+would instead invite tight retry loops.
+
 ## Shadow banked-reset decisions do not suppress enabled overage - 2026-10-19
 
 In banked-reset shadow mode, `shadow_selected` and `already_would_spend_once` prove that no reset credit was
