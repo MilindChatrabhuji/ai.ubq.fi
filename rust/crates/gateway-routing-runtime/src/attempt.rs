@@ -247,6 +247,10 @@ impl<
                         .authority()
                         .authorize_paid_route(&input, &context, self.now()?)
                         .await?;
+                    let receipt = self
+                        .authority()
+                        .bind_paid_original_request(&receipt, &self.input.context, self.now()?)
+                        .await?;
                     Self::check_paid_credential(&credential.fence, &receipt)?;
                     let reservation=match self.authority().reserve_paid(&input,&authorization,&receipt,self.now()?).await?{PaidAdmission::Reserved(r)=>r,PaidAdmission::Existing(_)=>return Err(journal::unavailable("A retained paid attempt cannot be redispatched without reconciliation.").into())};
                     (upstream, model, credential, Some(reservation))
