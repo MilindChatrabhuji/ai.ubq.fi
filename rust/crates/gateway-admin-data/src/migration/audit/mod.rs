@@ -1,8 +1,9 @@
 //! Audits complete supplied source-schema inventories; does not adopt them as authority state.
 mod keys;
 mod paid;
+mod source_fields;
 mod usage;
-pub use keys::{inspect_key_pairs, valid_key_policy};
+pub use keys::{AuditedKeyPair, inspect_key_pairs, valid_key_policy, valid_source_key_policy};
 pub use paid::inspect_paid;
 pub use usage::{inspect_api_usage, inspect_kernel};
 
@@ -216,14 +217,12 @@ pub fn inspect_source_rows(
         ));
     }
     let (pairs, mut audit) = inspect_key_pairs(rows)?;
-    let known: std::collections::BTreeSet<String> = pairs
-        .iter()
-        .filter_map(|(id, _)| text(id, "id").map(str::to_owned))
-        .collect();
+    let known: std::collections::BTreeSet<String> =
+        pairs.iter().map(|pair| pair.key_id.clone()).collect();
     let unlimited: std::collections::BTreeSet<String> = pairs
         .iter()
-        .filter(|(id, _)| id["paid_fallback_limit_microcredits"] == -1)
-        .filter_map(|(id, _)| text(id, "id").map(str::to_owned))
+        .filter(|pair| pair.unlimited_paid)
+        .map(|pair| pair.key_id.clone())
         .collect();
     audit.merge(inspect_api_usage(rows, &known)?);
     audit.merge(inspect_kernel(rows)?);
