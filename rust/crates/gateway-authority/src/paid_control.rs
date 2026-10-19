@@ -420,6 +420,7 @@ async fn route_current<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     request: &PaidRequest,
     context: &PaidRequestContext,
+    collator: &dyn gateway_schema::aliases::SourceStringCollator,
 ) -> Result<RouteView, GatewayError> {
     if source::member(&context.body, "model")
         .as_ref()
@@ -473,7 +474,8 @@ async fn route_current<S: AuthorityStore, I: TokenSource>(
             surplus_catalog.as_deref(),
             openlux_catalog.as_deref(),
             year,
-        );
+            collator,
+        )?;
         let expected = match hop {
             PaidSyntheticHop::Surplus => aliases.surplus,
             PaidSyntheticHop::Openlux => aliases.openlux,
@@ -558,9 +560,10 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     ) -> Result<PaidRoutingReceipt, GatewayError> {
         for _ in 0..128 {
             let mut tx = self.transaction(self.fresh_time(now)?)?;
-            let _ = route_current(&mut tx, request, context).await?;
+            let _ = route_current(&mut tx, request, context, self.source_string_collator()).await?;
             tx.now = self.fresh_time(tx.now)?;
-            let route = route_current(&mut tx, request, context).await?;
+            let route =
+                route_current(&mut tx, request, context, self.source_string_collator()).await?;
             let receipt = PaidRoutingReceipt {
                 request: request.clone(),
                 context: context.clone(),
@@ -600,9 +603,10 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 return Err(control_error("Paid routing receipt source state changed."));
             }
         }
-        let _ = route_current(tx, request, &receipt.context).await?;
+        let _ = route_current(tx, request, &receipt.context, self.source_string_collator()).await?;
         tx.now = self.fresh_time(tx.now)?;
-        let route = route_current(tx, request, &receipt.context).await?;
+        let route =
+            route_current(tx, request, &receipt.context, self.source_string_collator()).await?;
         if route.owner_id != receipt.owner_id
             || route.owner_epoch != receipt.owner_epoch
             || route.configuration_generation != receipt.configuration_generation
