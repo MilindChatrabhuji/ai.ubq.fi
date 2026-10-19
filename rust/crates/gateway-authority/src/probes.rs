@@ -134,19 +134,16 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             {
                 return Ok(None);
             }
-            let next_generation = next_generation(slot.generation)?;
             let lease = ProbeLease {
                 token: self.tokens.next_token()?,
-                generation: next_generation as i64,
+                generation: slot.generation as i64,
                 circuit: crate::routing::ProbeCircuit::Quota,
                 quota_class: Some(admission.quota_class),
                 expires_at_ms: add(now, PROBE_LEASE_MS)?,
             };
             text(&lease.token)?;
-            slot.generation = next_generation;
             slot.probe_lease = Some(lease.clone());
             let mut admitted = admission.clone();
-            admitted.binding.routing_generation = next_generation;
             admitted.probe = Some(lease);
             admitted.probe_required = false;
             let mut active = view
