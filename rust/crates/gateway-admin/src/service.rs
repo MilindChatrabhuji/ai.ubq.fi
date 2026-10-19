@@ -83,13 +83,27 @@ impl<'a, S: QueryStore, H: AuthHost, A: AdminHost> AdminService<'a, S, H, A> {
             }
             input::json(&text)
         } else {
+            // Source declaredContentLength accepts only canonical decimal safe
+            // integers, not leading zeros, signs, exponents or ignored garbage.
             let announced = request
                 .header("content-length")
-                .and_then(|value| value.trim().parse::<f64>().ok());
+                .map(|value| {
+                    if value.is_empty()
+                        || (value.len() > 1 && value.starts_with('0'))
+                        || !value.bytes().all(|byte| byte.is_ascii_digit())
+                    {
+                        return Err(invalid("Invalid JSON body"));
+                    }
+                    value
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|length| *length <= gateway_core::identity::MAX_SAFE_INTEGER as u64)
+                        .ok_or_else(|| invalid("Invalid JSON body"))
+                })
+                .transpose()?;
             if request.body.is_empty()
                 || request.body.len() > 32 * 1024 * 1024
-                || announced
-                    .is_some_and(|value| value.is_finite() && value > (32 * 1024 * 1024) as f64)
+                || announced.is_some_and(|value| value > 32 * 1024 * 1024)
             {
                 return Err(invalid("Invalid JSON body"));
             }
