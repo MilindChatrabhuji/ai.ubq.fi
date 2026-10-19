@@ -115,7 +115,10 @@ fn embeddings_scalar_errors_and_precedence_match_source() {
         false,
     )
     .unwrap();
-    assert_eq!(accepted.inputs, [""]);
+    assert_eq!(
+        accepted.inputs,
+        [gateway_core::js_string::JsString16::from_utf8("")]
+    );
     assert_eq!(accepted.dimensions, 256);
     assert_eq!(accepted.input_type, "document");
     assert_eq!(
@@ -313,7 +316,11 @@ fn image_unknown_null_fields_fail_before_scalar_validation_and_nullable_options_
     )
     .unwrap();
     assert_eq!(plan.count, 1);
-    assert!(plan.responses["tools"][0].get("quality").is_none());
+    assert!(
+        scalar_source(&plan.responses)["tools"][0]
+            .get("quality")
+            .is_none()
+    );
     error(
         extras::prepare_image(&Value::Null, "gpt-base", false, "request").unwrap_err(),
         "Image requests must use an object body.",
@@ -403,8 +410,11 @@ fn systemone_default_and_exact_error_envelopes_follow_source() {
 fn opaque_image_parse_precedes_host_model_resolution_and_keeps_operation_kind() {
     let parsed = extras::parse_image(&json!({"prompt":"image","n":2}), false).unwrap();
     assert_eq!(parsed.count(), 2);
-    let plan = extras::prepare_parsed_image(&parsed, "host", "original");
-    assert_eq!(plan.responses["tools"][0]["action"], "generate");
+    let plan = extras::prepare_parsed_image(&parsed, &"host".into(), "original");
+    assert_eq!(
+        scalar_source(&plan.responses)["tools"][0]["action"],
+        "generate"
+    );
     assert!(extras::parse_image(&json!({"prompt":"image","n":0}), false).is_err());
 }
 
@@ -417,10 +427,13 @@ fn multipart_scalar_strings_follow_source_grammar_and_fail_before_file_validatio
         bytes: vec![1],
     };
     let parsed = extras::parse_multipart_image(&json!({"prompt":"image","n":" 2 ","stream":"false","output_compression":"1e2","response_format":"b64_json"}), std::slice::from_ref(&file)).unwrap();
-    let plan = extras::prepare_parsed_image(&parsed, "host", "original");
+    let plan = extras::prepare_parsed_image(&parsed, &"host".into(), "original");
     assert_eq!(plan.count, 2);
-    assert_eq!(plan.responses["tools"][0]["action"], "edit");
-    assert_eq!(plan.responses["tools"][0]["output_compression"], 100.0);
+    assert_eq!(scalar_source(&plan.responses)["tools"][0]["action"], "edit");
+    assert_eq!(
+        scalar_source(&plan.responses)["tools"][0]["output_compression"],
+        100.0
+    );
     for n in ["01", "1e0", "+1", "1.0"] {
         assert!(
             extras::parse_multipart_image(
@@ -449,4 +462,8 @@ fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
     value
         .deserialize()
         .expect("This frozen regression fixture has scalar text")
+}
+
+fn scalar_source(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+    value.deserialize().expect("actual scalar fixture output")
 }

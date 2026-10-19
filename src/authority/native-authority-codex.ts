@@ -103,7 +103,7 @@ export class NativeAuthorityCodex {
       throw new NativeAuthorityError("codex_owner_fence_stale");
   }
   select(cap: NativeCapability, handle: string, now: number): NativeReply {
-    const request = this._api.request(cap, handle, now),
+    const request = this._api.validated(cap, handle, now),
       rows = this._rows(now);
     const plan = selectCodex(
       {
@@ -235,7 +235,7 @@ export class NativeAuthorityCodex {
     return { kind: "current", detail: refreshed };
   }
   elect(cap: NativeCapability, args: NativeArguments["electCodexResetProbe"], now: number): NativeReply {
-    const request = this._api.request(cap, args.handle, now),
+    const request = this._api.validated(cap, args.handle, now),
       proof = this._sql.read("codex_reset", [args.proofId], now).value;
     if (!proof?.verified) return { kind: "refused", detail: "reset_proof_unavailable" };
     if (quotaClass(proof.account.requestedModel) !== quotaClass(request.model)) return { kind: "refused", detail: "reset_model_class_mismatch" };

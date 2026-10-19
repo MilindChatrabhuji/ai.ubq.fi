@@ -10,6 +10,10 @@ mod normalized;
 mod ordinary;
 mod reasoning;
 mod value;
+/// Data-only views over the existing lazy source facade; never dispatch or admission.
+pub mod source_value {
+    pub use super::value::{Text, Value};
+}
 pub use cache_capability::validate_known_unsupported_prompt_cache;
 pub use error::SourceRequestError;
 pub use fields::{

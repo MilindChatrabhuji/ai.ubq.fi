@@ -1,5 +1,6 @@
 use crate::{store::*, types::ExtrasHost};
 use chrono::{DateTime, SecondsFormat, Utc};
+use gateway_core::js_string::JsString16;
 use gateway_core::{
     GatewayError,
     query::{QueryRequest, QuerySelector, QueryStore},
@@ -237,10 +238,10 @@ struct Budget {
     requests: f64,
     tokens: f64,
 }
-pub(crate) fn estimate(text: &str) -> u64 {
-    (text.len() as u64).div_ceil(4)
+pub(crate) fn estimate(text: &JsString16) -> u64 {
+    (crate::store::source_utf8(text).len() as u64).div_ceil(4)
 }
-pub(crate) fn chunks(items: &[(String, String)]) -> Vec<Vec<(String, String)>> {
+pub(crate) fn chunks(items: &[(String, JsString16)]) -> Vec<Vec<(String, JsString16)>> {
     let mut out = Vec::new();
     let mut chunk = Vec::new();
     let mut tokens = 0;

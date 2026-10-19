@@ -6,6 +6,13 @@ import { NativeAuthorityPaid } from "../src/authority/native-authority-paid.ts";
 import * as nativePaid from "../src/authority/native-paid.ts";
 import { NativeAuthority } from "../src/authority/native-authority.ts";
 import { NativeAuthorityClient, NativeAuthorityRpcServer } from "../src/authority/native-authority-rpc.ts";
+import {
+  syntheticRuntimeSources,
+  admitSyntheticRequest,
+  openSyntheticRequest,
+  bindSyntheticMetadata,
+} from "./fixtures/native-authority/principal-control-sources.mjs";
+import { NativeAuthorityRuntime } from "../src/authority/native-authority-runtime.ts";
 import { nativeKey } from "../src/authority/native-authority-sql.ts";
 import { CODEX_AUTH_POOL_KV_KEY, CODEX_ACCOUNT_ROUTING_KV_KEY, CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY } from "../src/authority/native-codex-contracts.ts";
 import { NativeAuthoritySql } from "../src/authority/native-authority-sql.ts";
@@ -20,20 +27,27 @@ const required = <T>(value: T | null | undefined): T => {
   return value;
 };
 const now = 1_800_000_000_000;
-const cap: NativeCapability = {
+type FixtureInitial = NativeAuthorityInitial & { runtimeSubjects: readonly NativeCapability[]; runtimeKernel?: boolean };
+const cap: NativeCapability & { keyId: string; tokenHash: string; kernel: { owner: string; repo: string } } = {
   id: "synthetic-inference",
   epoch: "epoch-one",
-  principalId: "p",
+  principalId: "api-key:key",
+  runtimeRevision: 3,
+  runtimeGrantId: "synthetic-inference",
+  contextBinding: "synthetic-inference",
+  subjectId: "synthetic-inference",
+  principalRefId: null,
+  retainedRequestHandles: null,
   keyId: "key",
   tokenHash: "synthetic-hash",
   kernel: { owner: "org", repo: "repo" },
   roles: ["inference", "transport", "terminal", "billing", "reconcile", "quota_admin", "reset", "observer"],
   revoked: false,
 };
-const initial = (limit = 2, kernelLimit = 2): NativeAuthorityInitial => ({
+const initial = (limit = 2, kernelLimit = 2): FixtureInitial => ({
   namespace: "synthetic-native-authority",
   epoch: cap.epoch,
-  capabilities: [cap],
+  runtimeSubjects: [cap],
   keys: [
     {
       api: {
@@ -104,13 +118,56 @@ const setup = (options = initial()) => {
     sql.write("kernel_default", ["default", "kernel_policy_window_ms"], options.kernelDefaults.windowMs);
     sql.write("authority_config", ["config"], { providerHops: options.providerHops });
     for (const key of options.keys) sql.write("api_policy", apiKeyHashKey(key.api.token_hash), key);
-    for (const capability of options.capabilities) sql.write("capability", [capability.id], capability);
   });
   const api = new NativeAuthorityApi(sql);
+  const sources = syntheticRuntimeSources(options, options.runtimeSubjects, storage(db), () => now);
+  sql.transaction(() => {
+    for (const { record, hashRecord } of sources.control.records) {
+      sql.write("api_key_hash", apiKeyHashKey(record.hash), hashRecord);
+      const projection = required(sql.read("api_policy", apiKeyHashKey(record.hash), now).value);
+      sql.write("api_policy", apiKeyHashKey(record.hash), { ...projection, rawSource: true });
+    }
+  });
   return { db, sql, api, kernel: new NativeAuthorityKernel(sql, api, options), options };
 };
-const reserve = (f: ReturnType<typeof setup>, id: string, time = now) =>
-  f.sql.transaction(() => f.api.reserve(cap, { requestId: id, route: "/v1/responses", model: "fixture", stream: false }, time));
+const lowReserve = (
+  f: ReturnType<typeof setup>,
+  api: NativeAuthorityApi,
+  args: { requestId: string; route: string; model: string; stream: boolean },
+  time: number,
+  kernel = false
+) => {
+  const context = { ...cap, kernel: kernel ? cap.kernel : null };
+  const runtime = new NativeAuthorityRuntime(f.sql, api, {
+    grants: [],
+    records: [],
+    verifier: { verify: () => Promise.reject(new Error("unused")), verifyRouting: () => Promise.reject(new Error("unused")) },
+  });
+  const opened = runtime.open(context, { requestId: args.requestId, route: args.route, path: args.route }, time);
+  const reply = api.reserve(context, { handle: required(opened.handle) }, time);
+  if (reply.handle && ["reserved", "reuse"].includes(reply.kind) && !kernel) {
+    runtime.metadata(context, { handle: reply.handle, model: args.model, stream: args.stream, reasoning: null }, time);
+    runtime.bindRouting(
+      context,
+      api.validated(context, reply.handle, time),
+      {
+        subjectId: cap.subjectId,
+        contextBinding: cap.contextBinding,
+        intentDigest: "synthetic",
+        sourceRevision: "synthetic-catalog-v3",
+        cohort: "synthetic-cohort",
+        codex: "eligible",
+        providers: ["chatgpt_codex", "metered", "surplus"],
+        allowUnrosteredModel: false,
+        hops: f.options.providerHops.map((hop) => ({ hopId: hop.id, authorization: hop.authorization, upstreamModel: args.model, billingModel: args.model })),
+      },
+      time
+    );
+  }
+  return reply;
+};
+const reserve = (f: ReturnType<typeof setup>, id: string, time = now, kernel = false) =>
+  f.sql.transaction(() => lowReserve(f, f.api, { requestId: id, route: "/v1/responses", model: "fixture", stream: false }, time, kernel));
 const handle = (reply: NativeReply): string => {
   if (!reply.handle) throw new Error("reservation handle absent: " + JSON.stringify(reply));
   return reply.handle;
@@ -124,8 +181,9 @@ test("native authority C1: twenty contenders share exact native API rows and nev
       Array.from({ length: 20 }, (_, i) =>
         Promise.resolve().then(() =>
           f.sql.transaction(() =>
-            (i % 2 ? other : f.api).reserve(
-              cap,
+            lowReserve(
+              f,
+              i % 2 ? other : f.api,
               { requestId: `contention-${i}`, route: "/v1/responses", model: i % 2 ? "fixture" : "second-model", stream: false },
               now
             )
@@ -150,11 +208,11 @@ test("native authority C1: twenty contenders share exact native API rows and nev
 test("native authority C1: kernel refusal retains API reserve crash window until explicit compensation", () => {
   const f = setup(initial(3, 0));
   try {
-    const admitted = handle(reserve(f, "kernel-refused"));
+    const admitted = handle(reserve(f, "kernel-refused", now, true));
     expect(f.sql.transaction(() => f.kernel.reserve(cap, admitted, now)).kind).toBe("refused");
     const before = f.sql.page("api_request", now, "", 100)[0].row.value;
     expect(before?.state).toBe("reserved");
-    const policy = f.api.request(cap, admitted, now).api;
+    const policy = required(f.api.request(cap, admitted, now).api);
     const window = f.sql.page("api_window", now, "", 100)[0].row.value;
     const expected = planApiKeyUsageReservedRelease(policy, "kernel-refused", "kernel_quota_refused", { request: before, window }, now + 1, "/v1/responses");
     expect(f.sql.transaction(() => f.api.release(cap, { handle: admitted, reason: "kernel_quota_refused" }, now + 1)).kind).toBe("released");
@@ -171,7 +229,7 @@ test("native authority C1: kernel native terminal intent survives reclaim; live 
   const f = setup(initial(4, 1));
   try {
     expect(f.sql.transaction(() => f.kernel.policy(cap, { scope: "org", usageLimitRequests: 1, options: {} }, now))).toMatchObject({ kind: "written" });
-    const admitted = handle(reserve(f, "kernel-terminal"));
+    const admitted = handle(reserve(f, "kernel-terminal", now, true));
     expect(f.sql.transaction(() => f.kernel.reserve(cap, admitted, now)).kind).toBe("reserved");
     expect(f.sql.transaction(() => f.kernel.policy(cap, { scope: "org", usageLimitRequests: 2, options: { resetUsage: true } }, now + 1)).kind).toBe(
       "conflict"
@@ -206,7 +264,7 @@ test("native authority C1: synchronous failure rolls back all rows and revisions
     const baseline = f.db.query("SELECT sequence FROM uos_native_authority_meta").get();
     expect(() =>
       f.sql.transaction(() => {
-        f.api.reserve(cap, { requestId: "rollback", route: "/v1/responses", model: "fixture", stream: false }, now);
+        lowReserve(f, f.api, { requestId: "rollback", route: "/v1/responses", model: "fixture", stream: false }, now);
         throw new Error("synthetic commit fault");
       })
     ).toThrow("synthetic commit fault");
@@ -360,6 +418,10 @@ test("native authority paid: current H policy is re-read and bounded backfill cu
       detail: { scanned: 1 },
     });
     f.sql.transaction(() => {
+      f.sql.write("api_key_hash", apiKeyHashKey(cap.tokenHash), {
+        ...required(f.sql.read("api_key_hash", apiKeyHashKey(cap.tokenHash), now).value),
+        paid_fallback_enabled: false,
+      });
       f.sql.write("api_policy", apiKeyHashKey(cap.tokenHash), { ...f.options.keys[0], api: { ...f.options.keys[0].api, paid_fallback_enabled: false } });
     });
     expect(f.sql.transaction(() => paid.reserve(cap, { handle: handles[0], hopId: "surplus-hop" }, now + 3))).toMatchObject({
@@ -374,7 +436,7 @@ test("native authority paid: current H policy is re-read and bounded backfill cu
   }
 });
 
-const withPool = (options = initial(-1, 10)): NativeAuthorityInitial => ({
+const withPool = (options = initial(-1, 10)): FixtureInitial => ({
   ...options,
   pool: {
     identities: [
@@ -404,26 +466,41 @@ const withPool = (options = initial(-1, 10)): NativeAuthorityInitial => ({
 const serviceFixture = (options = withPool()) => {
   const db = new Database(":memory:");
   let time = now;
-  const authority = new NativeAuthority(storage(db), options, () => time);
+  const sources = syntheticRuntimeSources(
+    options,
+    options.runtimeSubjects.map((subject) => ({ ...subject, kernel: options.runtimeKernel ? subject.kernel : null })),
+    storage(db),
+    () => time
+  );
+  const authority = new NativeAuthority(storage(db), options, () => time, sources.control, sources.runtime);
+  sources.attach(authority);
   const sql = new NativeAuthoritySql(storage(db), options.namespace, options.epoch);
-  const client = new NativeAuthorityClient(new NativeAuthorityRpcServer(authority, cap.id), cap.epoch);
+  const client = new NativeAuthorityClient(new NativeAuthorityRpcServer(authority, sources.binding(cap.id)), cap.epoch);
   return {
     db,
     authority,
     sql,
     client,
     options,
+    sources,
     setTime: (value: number) => {
       time = value;
     },
   };
 };
 const clientReserve = async (f: ReturnType<typeof serviceFixture>, requestId: string) =>
-  handle(await f.client.call("reserveApiUsage", { requestId, route: "/v1/responses", model: "fixture", stream: false }));
+  handle(
+    await (f.options.runtimeKernel ? openSyntheticRequest : admitSyntheticRequest)(f.client, {
+      requestId,
+      route: "/v1/responses",
+      model: "fixture",
+      stream: false,
+    })
+  );
 
 test("native authority C2: shared global active is sticky across principals, reorder, idle and restart", async () => {
   const options = withPool();
-  const f = serviceFixture({ ...options, capabilities: [cap, { ...cap, id: "second-cap", principalId: "q" }] });
+  const f = serviceFixture({ ...options, runtimeSubjects: [cap, { ...cap, id: "second-cap", principalId: "q" }] });
   try {
     const first = await clientReserve(f, "sticky-a");
     expect(await f.client.call("selectCodexAccount", { handle: first })).toMatchObject({ kind: "eligible", detail: { accountIdHash: "a".repeat(64) } });
@@ -438,9 +515,15 @@ test("native authority C2: shared global active is sticky across principals, reo
     f.sql.transaction(() => {
       f.sql.write("codex_pool", CODEX_AUTH_POOL_KV_KEY, reordered);
     });
-    const restarted = new NativeAuthority(storage(f.db), { ...options, pool: { ...options.pool, identities: [] } }, () => now + 100_000);
-    const other = new NativeAuthorityClient(new NativeAuthorityRpcServer(restarted, "second-cap"), cap.epoch);
-    const second = handle(await other.call("reserveApiUsage", { requestId: "sticky-b", route: "/v1/responses", model: "other-model", stream: false }));
+    const restarted = new NativeAuthority(
+      storage(f.db),
+      { ...options, pool: { ...options.pool, identities: [] } },
+      () => now + 100_000,
+      f.sources.control,
+      f.sources.runtime
+    );
+    const other = new NativeAuthorityClient(new NativeAuthorityRpcServer(restarted, f.sources.binding("second-cap")), cap.epoch);
+    const second = handle(await admitSyntheticRequest(other, { requestId: "sticky-b", route: "/v1/responses", model: "other-model", stream: false }));
     expect(await other.call("selectCodexAccount", { handle: second })).toMatchObject({
       kind: "eligible",
       detail: { accountIdHash: "a".repeat(64), slot: 1, activeGeneration: original.generation },
@@ -506,17 +589,17 @@ test("native authority service: lost acknowledgments replay durable receipts, co
   const f = serviceFixture();
   try {
     const args = { requestId: "lost-ack", route: "/v1/responses", model: "fixture", stream: false };
-    const first = await f.client.call("reserveApiUsage", args, "same-operation");
+    const first = await admitSyntheticRequest(f.client, args, "same-operation");
     const sequence = f.db.query("SELECT sequence FROM uos_native_authority_meta").get();
-    const restarted = new NativeAuthority(storage(f.db), f.options, () => now);
-    const retry = new NativeAuthorityClient(new NativeAuthorityRpcServer(restarted, cap.id), cap.epoch);
-    expect(await retry.call("reserveApiUsage", args, "same-operation")).toEqual(first);
+    const restarted = new NativeAuthority(storage(f.db), f.options, () => now, f.sources.control, f.sources.runtime);
+    const retry = new NativeAuthorityClient(new NativeAuthorityRpcServer(restarted, f.sources.binding(cap.id)), cap.epoch);
+    expect(await admitSyntheticRequest(retry, args, "same-operation")).toEqual(first);
     expect(f.db.query("SELECT sequence FROM uos_native_authority_meta").get()).toEqual(sequence);
-    await assert.rejects(retry.call("reserveApiUsage", { ...args, model: "other" }, "same-operation"), /authority_operation_replay_conflict/);
+    await assert.rejects(admitSyntheticRequest(retry, { ...args, model: "other" }, "same-operation"), /authority_operation_replay_conflict/);
     f.sql.transaction(() => {
       f.sql.write("capability", [cap.id], { ...cap, revoked: true });
     });
-    await assert.rejects(retry.call("reserveApiUsage", args, "same-operation"), /capability_revoked_or_wrong_epoch/);
+    await assert.rejects(admitSyntheticRequest(retry, args, "same-operation"), /capability_revoked_or_wrong_epoch/);
     expect(f.sql.page("api_request", now, "", 100)).toHaveLength(1);
   } finally {
     f.db.close();
@@ -524,10 +607,11 @@ test("native authority service: lost acknowledgments replay durable receipts, co
 });
 
 test("native authority service: owner epoch and opaque credential publication fence stale dispatch without inventing exhaustion", async () => {
-  const f = serviceFixture();
+  const f = serviceFixture({ ...withPool(), runtimeKernel: true });
   try {
     const original = await clientReserve(f, "owner-fence");
     await f.client.call("reserveKernelUsage", { handle: original });
+    await bindSyntheticMetadata(f.client, original, { model: "fixture", stream: false });
     await f.client.call("selectCodexAccount", { handle: original });
     await f.client.call("refreshCodexAdmission", { handle: original }, "refresh-owned");
     const owner = required(f.sql.read("codex_owner", ["a".repeat(64)], now).value);
@@ -547,23 +631,38 @@ test("native authority service: owner epoch and opaque credential publication fe
 test("native authority service: closed RPC rejects generic operations, extra trust fields and cross-principal arguments", async () => {
   const f = serviceFixture();
   try {
-    const rpc = new NativeAuthorityRpcServer(f.authority, cap.id);
+    const rpc = new NativeAuthorityRpcServer(f.authority, f.sources.binding(cap.id));
     for (const method of ["get", "set", "list", "compareAndSwap", "seed", "snapshot", "publishAccess"]) {
       expect(await rpc.execute({ epoch: cap.epoch, operationId: method, method, args: {} })).toMatchObject({
         error: { code: "invalid_authority_operation", status: 400 },
       });
     }
-    const args = { requestId: "bad", route: "/v1/responses", model: "fixture", stream: false };
+    const args = { requestId: "bad", route: "/v1/responses", path: "/v1/responses" };
+    expect(
+      await rpc.execute({
+        epoch: cap.epoch,
+        operationId: "old-v2",
+        method: "reserveApiUsage",
+        args: { requestId: "old", route: "/v1/responses", model: "fixture", stream: false },
+      })
+    ).toMatchObject({ error: { code: "invalid_authority_arguments", status: 400 } });
     for (const field of ["namespace", "policyVersion", "policyCheck", "account", "credentialVersion", "providerUrl", "tokenHash", "principalId"]) {
-      expect(await rpc.execute({ epoch: cap.epoch, operationId: field, method: "reserveApiUsage", args: { ...args, [field]: "forged" } })).toMatchObject({
+      expect(
+        await rpc.execute({ epoch: cap.epoch, operationId: field, method: "openAuthenticatedRequest", args: { ...args, [field]: "forged" } })
+      ).toMatchObject({
         error: { code: "invalid_authority_arguments", status: 400 },
       });
     }
-    expect(await rpc.execute({ epoch: "wrong", operationId: "wrong", method: "reserveApiUsage", args })).toMatchObject({
+    expect(await rpc.execute({ epoch: "wrong", operationId: "wrong", method: "openAuthenticatedRequest", args })).toMatchObject({
       error: { code: "authority_epoch_mismatch", status: 403 },
     });
     expect(
-      await rpc.execute({ epoch: cap.epoch, operationId: "huge", method: "reserveApiUsage", args: { ...args, model: "x".repeat(100_000) } })
+      await rpc.execute({
+        epoch: cap.epoch,
+        operationId: "huge",
+        method: "bindValidatedRequestMetadata",
+        args: { handle: "unopened", stream: false, reasoning: null, model: "x".repeat(100_000) },
+      })
     ).toMatchObject({ error: { status: 400 } });
   } finally {
     f.db.close();
@@ -617,7 +716,7 @@ test("native authority pagination uses exact pinned native tuple ordering includ
 });
 
 test("native authority current defaults and cutover guard are read in each transaction", async () => {
-  const f = serviceFixture();
+  const f = serviceFixture({ ...withPool(), runtimeKernel: true });
   try {
     const first = await clientReserve(f, "default-first");
     expect(await f.client.call("reserveKernelUsage", { handle: first })).toMatchObject({ kind: "reserved" });
@@ -727,7 +826,7 @@ test("native authority model entitlements are request-specific and never become 
   try {
     const first = await clientReserve(f, "ordinary-model");
     expect(await f.client.call("selectCodexAccount", { handle: first })).toMatchObject({ kind: "eligible", detail: { accountIdHash: "a".repeat(64) } });
-    const request = handle(await f.client.call("reserveApiUsage", { requestId: "different-entitlement", route: "/v1/responses", model, stream: false }));
+    const request = handle(await admitSyntheticRequest(f.client, { requestId: "different-entitlement", route: "/v1/responses", model, stream: false }));
     expect(await f.client.call("selectCodexAccount", { handle: request })).toMatchObject({
       kind: "eligible",
       detail: { accountIdHash: "b".repeat(64), activeTransitionReason: "model_unavailable" },
@@ -875,7 +974,7 @@ test("review F02 nonpaid positive evidence and durable start fence API compensat
       if (evidence === "terminal") await f.client.call("recordSemanticTerminal", { handle, outcome: "completed" });
       if (evidence === "delivery") await f.client.call("recordDeliveryObservation", { handle, observation: "delivered" });
       if (evidence === "start") {
-        const rpc = new NativeAuthorityRpcServer(f.authority, cap.id);
+        const rpc = new NativeAuthorityRpcServer(f.authority, f.sources.binding(cap.id));
         expect(
           await rpc.execute({ epoch: cap.epoch, operationId: "start", method: "recordTransportStarted", args: { handle, provider: "lithos" } })
         ).toMatchObject({ result: { kind: "started" } });
@@ -967,8 +1066,8 @@ test("review F07 restarted reconciler claims usable persisted attempt handles", 
   const f = serviceFixture();
   try {
     await reviewPaid(f, "claimable");
-    const restarted = new NativeAuthority(storage(f.db), f.options, () => now);
-    const client = new NativeAuthorityClient(new NativeAuthorityRpcServer(restarted, cap.id), cap.epoch);
+    const restarted = new NativeAuthority(storage(f.db), f.options, () => now, f.sources.control, f.sources.runtime);
+    const client = new NativeAuthorityClient(new NativeAuthorityRpcServer(restarted, f.sources.binding(cap.id)), cap.epoch);
     const claim = await client.call("claimPaidReconciliation", { limit: 10 });
     expect(claim.kind).toBe("claimed");
     reviewTrace(f, "F07");
@@ -1016,7 +1115,7 @@ test("review F09 reset proof cannot cross native quota classes but permits prove
   const f = serviceFixture();
   try {
     await reviewResetProof(f);
-    const reserve = handle(await f.client.call("reserveApiUsage", { requestId: "reserve-model", route: "/v1/responses", model: "gpt-reserve", stream: false }));
+    const reserve = handle(await admitSyntheticRequest(f.client, { requestId: "reserve-model", route: "/v1/responses", model: "gpt-reserve", stream: false }));
     const before = f.sql.read("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, now);
     const rejected = await f.client.call("electCodexResetProbe", { handle: reserve, proofId: "review-proof" });
     reviewTrace(f, "F09");
@@ -1024,7 +1123,7 @@ test("review F09 reset proof cannot cross native quota classes but permits prove
     expect(f.sql.read("codex_reset", ["review-proof"], now).value?.verified).toBe(true);
     expect(f.sql.read("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, now)).toEqual(before);
     const alias = handle(
-      await f.client.call("reserveApiUsage", { requestId: "standard-alias", route: "/v1/responses", model: "another-standard", stream: false })
+      await admitSyntheticRequest(f.client, { requestId: "standard-alias", route: "/v1/responses", model: "another-standard", stream: false })
     );
     expect((await f.client.call("electCodexResetProbe", { handle: alias, proofId: "review-proof" })).kind).toBe("probe_elected");
     expect(required(f.sql.read("request_lifetime", [alias], now).value).codex?.requestedModel).toBe("another-standard");
@@ -1077,10 +1176,11 @@ test("review F11 provider terminal expedites pending marker and versions reconci
 });
 
 test("review F12 window rollover cannot replace one request's original kernel binding", async () => {
-  const f = serviceFixture();
+  const f = serviceFixture({ ...withPool(), runtimeKernel: true });
   try {
     const handle = await clientReserve(f, "kernel-lifetime");
     expect((await f.client.call("reserveKernelUsage", { handle })).kind).toBe("reserved");
+    await bindSyntheticMetadata(f.client, handle, { model: "fixture", stream: false });
     const original = required(f.sql.read("request_lifetime", [handle], now).value).kernel;
     f.setTime(now + 3_600_001);
     const replay = await f.client.call("reserveKernelUsage", { handle });
@@ -1143,8 +1243,8 @@ test("round2 R1 paid transport replay rechecks terminal and settlement states wi
       }
       const before = ["paid_request", "paid_window", "request_lifetime", "attempt_lifetime"] as const;
       const snapshot = before.map((table) => f.sql.page(table, observedAt, "", 100));
-      const restarted = new NativeAuthority(storage(f.db), f.options, () => observedAt);
-      const client = new NativeAuthorityClient(new NativeAuthorityRpcServer(restarted, cap.id), cap.epoch);
+      const restarted = new NativeAuthority(storage(f.db), f.options, () => observedAt, f.sources.control, f.sources.runtime);
+      const client = new NativeAuthorityClient(new NativeAuthorityRpcServer(restarted, f.sources.binding(cap.id)), cap.epoch);
       const outcomes = await Promise.allSettled([
         client.call("recordTransportStarted", args, "start-paid"),
         client.call("recordTransportStarted", args, "fresh-paid"),
@@ -1166,7 +1266,7 @@ const round2MixedAttempts = async (f: ReturnType<typeof serviceFixture>, other: 
   for (const index of [0, 1, 2]) {
     const client = index === foreignIndex ? other : f.client;
     const requestHandle = handle(
-      await client.call("reserveApiUsage", { requestId: "claim-" + String(index), route: "/v1/responses", model: "fixture", stream: false })
+      await admitSyntheticRequest(client, { requestId: "claim-" + String(index), route: "/v1/responses", model: "fixture", stream: false })
     );
     const attempt = required((await client.call("reservePaidAttempt", { handle: requestHandle, hopId: "openlux-hop" })).attemptHandle);
     attempts.push(attempt);
@@ -1175,8 +1275,8 @@ const round2MixedAttempts = async (f: ReturnType<typeof serviceFixture>, other: 
   return { own: pages.flat(), foreignHandle: attempts[foreignIndex], pages };
 };
 const round2ClaimPage = async (f: ReturnType<typeof serviceFixture>, other: NativeAuthorityClient, cursor: string | undefined, expected: string[]) => {
-  const restarted = new NativeAuthority(storage(f.db), f.options, () => now);
-  const client = new NativeAuthorityClient(new NativeAuthorityRpcServer(restarted, cap.id), cap.epoch);
+  const restarted = new NativeAuthority(storage(f.db), f.options, () => now, f.sources.control, f.sources.runtime);
+  const client = new NativeAuthorityClient(new NativeAuthorityRpcServer(restarted, f.sources.binding(cap.id)), cap.epoch);
   const claim = await client.call("claimPaidReconciliation", { limit: 1, ...(cursor ? { cursor } : {}) });
   expect(claim.kind).toBe("claimed");
   expect((await client.call("claimPaidReconciliation", { limit: 1 })).kind).toBe("leased");
@@ -1197,11 +1297,11 @@ test("round2 R2 shared-key mixed-principal pages retain private handles and resu
     const foreign = { ...cap, id: "foreign-cap", principalId: "foreign" };
     const f = serviceFixture({
       ...options,
-      capabilities: [cap, foreign],
+      runtimeSubjects: [cap, foreign],
       keys: options.keys.map((key) => ({ ...key, api: { ...key.api, paid_fallback_limit_microcredits: 200 } })),
     });
     try {
-      const other = new NativeAuthorityClient(new NativeAuthorityRpcServer(f.authority, foreign.id), cap.epoch);
+      const other = new NativeAuthorityClient(new NativeAuthorityRpcServer(f.authority, f.sources.binding(foreign.id)), cap.epoch);
       const attempts = await round2MixedAttempts(f, other, foreignIndex);
       const recovered: string[] = [];
       let cursor: string | undefined;

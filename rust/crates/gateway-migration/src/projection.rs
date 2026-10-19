@@ -105,7 +105,23 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
             .get(3)
             .and_then(Value::as_str)
             .ok_or_else(|| invalid("Kernel tuple missing kind"))?;
-        if kind.ends_with("_window") {
+        if matches!(kind, "repo_window" | "org_window") {
+            let (scope, owner, repo) = gateway_admin_data::migration::kernel::identity(p, "window")
+                .ok_or_else(|| invalid("Kernel source window identity is malformed"))?;
+            if gateway_admin_data::migration::kernel::normalize_window(
+                &v,
+                &scope,
+                &owner,
+                repo.as_deref(),
+            )
+            .is_none()
+            {
+                return Err(invalid("Kernel source window is malformed"));
+            }
+            // This is still source data, not a live window. The complete
+            // reservation inventory binds its exact index in indexes.rs.
+            row.mapping.transform = Transform::KernelWindow;
+        } else if kind.ends_with("_window") {
             let mut projected = v.clone();
             projected["reservations"] = json!({});
             let _: KernelWindow = decode(&projected)?;

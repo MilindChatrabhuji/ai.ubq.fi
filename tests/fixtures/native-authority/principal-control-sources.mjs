@@ -1,9 +1,418 @@
+import { NativeAuthorityError } from "../../../src/authority/native-authority-contracts.ts";
+import { API_KEY_USAGE_PROVIDERS, currentApiKeyUsageWindow, planApiKeyUsageReservation } from "../../../src/authority/native-api-key.ts";
 import { apiKeyHashKey, apiKeyIdKey, DEFAULT_USAGE_LIMIT_REQUESTS, getDefaultExpiryMs } from "../../../src/api-keys.ts";
 import { apiKeyHashRecordFor, apiKeyPolicyFromHashRecord } from "../../../src/authority/native-api-key-policy.ts";
 import { NativeAuthority } from "../../../src/authority/native-authority.ts";
-import { NativeAuthoritySql } from "../../../src/authority/native-authority-sql.ts";
-import { NativeAuthorityClient, NativeAuthorityRpcServer, NativePrincipalControlServer } from "../../../src/authority/native-authority-rpc.ts";
-import { paidFallbackDeletionGuardV3Key } from "../../../src/authority/native-paid.ts";
+import { NativeAuthoritySql, nativeKey } from "../../../src/authority/native-authority-sql.ts";
+import {
+  NativeAuthorityClient,
+  NativeAuthorityRpcServer,
+  NativePrincipalControlServer,
+  NativePrincipalControlClient,
+} from "../../../src/authority/native-authority-rpc.ts";
+import * as paidRows from "../../../src/authority/native-paid.ts";
+
+/**
+ * Restore synthetic predecessor accounting data; this never opens a request or grants an inference identity.
+ * @param {import("../../../src/authority/native-authority-contracts.ts").NativeAuthorityInitial} seed
+ * @param {import("../../../src/authority/native-authority-contracts.ts").NativeSqlStorage} storage
+ * @param {()=>number} clock
+ * @param {readonly { id: string; principalId: string; keyId: string; requestIds: readonly string[] }[]} histories
+ */
+export const syntheticRetainedHistory = (seed, storage, clock, histories) => {
+  const sql = new NativeAuthoritySql(storage, seed.namespace, seed.epoch);
+  const requests = histories.flatMap((history) =>
+    history.requestIds.map((requestId) => ({ ...history, requestId, handle: "retained-request:" + history.id + ":" + requestId }))
+  );
+  /** @type {import("../../../src/authority/native-runtime-contracts.ts").NativeRetainedHistoryGrant[]} */
+  const grants = histories.map((history) => ({
+    id: "retained-grant:" + history.id,
+    revision: 3,
+    epoch: seed.epoch,
+    subjectId: "retained-source:" + history.id,
+    contextBinding: "retained-context:" + history.id,
+    roles: ["transport", "billing", "reconcile"],
+    expiresAtMs: Number.MAX_SAFE_INTEGER,
+    revoked: false,
+    namespace: seed.namespace,
+    originalBindingId: history.id,
+    originalPrincipalId: history.principalId,
+    keyId: history.keyId,
+    requestHandles: requests.filter((request) => request.id === history.id).map((request) => request.handle),
+  }));
+  return {
+    initial: {
+      grants,
+      verifier: {
+        verify: async (context, intentDigest) => {
+          const grant = grants.find((candidate) => candidate.id === context?.retainedGrant);
+          if (!grant) throw new NativeAuthorityError("synthetic_retained_source_denied", 403);
+          return {
+            grantId: grant.id,
+            epoch: grant.epoch,
+            subjectId: grant.subjectId,
+            contextBinding: grant.contextBinding,
+            namespace: grant.namespace,
+            originalBindingId: grant.originalBindingId,
+            originalPrincipalId: grant.originalPrincipalId,
+            keyId: grant.keyId,
+            requestHandles: grant.requestHandles,
+            intentDigest,
+          };
+        },
+      },
+    },
+    /** @returns {import("../../../src/authority/native-runtime-contracts.ts").NativeRetainedHistoryBinding} */
+    binding: (id) => {
+      const grant = grants.find((candidate) => candidate.originalBindingId === id);
+      if (!grant) throw new NativeAuthorityError("synthetic_retained_source_denied", 403);
+      return { kind: "retained_history", grantId: grant.id, contextBinding: grant.contextBinding, privateContext: { retainedGrant: grant.id } };
+    },
+    restore: () =>
+      sql.transaction(() => {
+        for (const original of requests) {
+          const prior = sql.read("request_lifetime", [original.handle], clock()).value;
+          if (prior) {
+            if (prior.runtimeBindingId !== original.id || prior.principalId !== original.principalId || prior.keyId !== original.keyId)
+              throw new Error("synthetic retained restoration conflicts with durable provenance");
+            continue;
+          }
+          const now = clock(),
+            source = seed.keys.find((key) => key.api.key_id === original.keyId),
+            hop = seed.providerHops[0];
+          if (!source || !hop) throw new Error("synthetic retained source missing");
+          const window = currentApiKeyUsageWindow(source.api.usage_reset_at_ms, source.api.window_ms, now);
+          const policy = { ...source.api, window_start_ms: window.start, usage_reset_at_ms: window.reset };
+          const apiWindowKey = ["uos_ai", "api_key_usage", "v3", "window", policy.key_id, policy.policy_version, policy.window_start_ms];
+          const apiRequestKey = [...apiWindowKey.slice(0, 3), "request", ...apiWindowKey.slice(4), original.requestId];
+          const api = planApiKeyUsageReservation(
+            policy,
+            original.requestId,
+            "/v1/responses",
+            { request: null, window: sql.read("api_window", apiWindowKey, now).value },
+            now
+          );
+          if (api.kind !== "write") throw new Error("synthetic retained API snapshot invalid");
+          sql.write("api_request", apiRequestKey, api.request, now + api.expireIn, { scope: original.keyId, parent: nativeKey(apiWindowKey) });
+          sql.write("api_window", apiWindowKey, api.window, now + api.expireIn, { scope: original.keyId });
+          const billingRequestId = original.requestId + ":" + hop.billingSuffix,
+            paidKey = paidRows.paidFallbackRequestV3Key(original.keyId, billingRequestId),
+            paidWindowKey = paidRows.paidFallbackWindowV3Key(original.keyId, window.reset),
+            attemptHandle = "retained-attempt:" + original.id + ":" + original.requestId;
+          const paid = paidRows.planPaidFallbackAdmissionV3(
+            {
+              keyId: original.keyId,
+              requestId: billingRequestId,
+              createdAtMs: now,
+              policyVersion: source.paid.policyVersion,
+              limitMicrocredits: policy.paid_fallback_limit_microcredits,
+              maximumExposureMicrocredits: source.paid.modelExposure.fixture,
+              initialSettledMicrocredits: 0,
+              quotaPerCredit: source.paid.quotaPerCredit,
+              windowResetAtMs: window.reset,
+              model: "fixture",
+              route: "/v1/responses",
+              path: "/v1/responses",
+              stream: false,
+              reasoning: null,
+              dispatchIntent: true,
+            },
+            {
+              request: sql.read("paid_request", paidKey, now),
+              window: sql.read("paid_window", paidWindowKey, now),
+              deletionGuard: sql.read("paid_deletion_guard", paidRows.paidFallbackDeletionGuardV3Key(original.keyId), now),
+            },
+            { unlimited: policy.paid_fallback_limit_microcredits === -1, maximumExposure: source.paid.modelExposure.fixture },
+            now
+          );
+          if (paid.kind !== "write") throw new Error("synthetic retained paid snapshot invalid");
+          sql.write("paid_request", paidKey, paid.request, now + paid.requestExpireIn, { scope: original.keyId });
+          sql.write("paid_pending", paidRows.paidFallbackPendingV3Key(original.keyId, billingRequestId), paid.pending, null, {
+            scope: original.keyId,
+            due: paid.pending.next_reconciliation_at_ms,
+          });
+          if (paid.window) sql.write("paid_window", paidWindowKey, paid.window, now + paid.windowExpireIn, { scope: original.keyId });
+          sql.write("paid_gate", paidRows.paidFallbackReconciliationGateV3Key(), paidRows.paidFallbackReconciliationGateDueNow({ value: null }, now));
+          sql.write(
+            "request_lifetime",
+            [original.handle],
+            {
+              handle: original.handle,
+              runtimeBindingId: original.id,
+              principalId: original.principalId,
+              keyId: original.keyId,
+              requestId: original.requestId,
+              route: "/v1/responses",
+              path: "/v1/responses",
+              model: "fixture",
+              stream: false,
+              reasoning: null,
+              metadataBound: true,
+              apiApplicable: true,
+              kernelApplicable: false,
+              createdAtMs: now,
+              api: policy,
+              kernel: null,
+              routingDecision: null,
+              codex: null,
+              selection: null,
+              codexProof: null,
+              ownerFence: null,
+              semantic: null,
+              providerObserved: false,
+              delivery: null,
+              transport: null,
+              responding: null,
+              dispatch: null,
+            },
+            null,
+            { scope: original.keyId, parent: nativeKey(apiRequestKey) }
+          );
+          sql.write(
+            "attempt_lifetime",
+            [attemptHandle],
+            {
+              handle: attemptHandle,
+              runtimeBindingId: original.id,
+              requestHandle: original.handle,
+              principalId: original.principalId,
+              keyId: original.keyId,
+              hopId: hop.id,
+              billingRequestId,
+              windowResetAtMs: window.reset,
+              fetchStarted: false,
+            },
+            null,
+            { scope: original.keyId, parent: original.handle }
+          );
+        }
+        return requests.map((request) => ({
+          bindingId: request.id,
+          handle: request.handle,
+          attemptHandle: "retained-attempt:" + request.id + ":" + request.requestId,
+        }));
+      }),
+  };
+};
+
+/**
+ * Synthetic private source construction shared by local SQLite and real DO fixtures.
+ * @param {import("../../../src/authority/native-authority-contracts.ts").NativeAuthorityInitial} seed
+ * @param {readonly Pick<import("../../../src/authority/native-authority-contracts.ts").NativeCapability, "id"|"keyId"|"tokenHash"|"kernel"|"roles">[]} subjects
+ * @param {import("../../../src/authority/native-authority-contracts.ts").NativeSqlStorage} storage
+ * @param {()=>number} clock
+ * @param {import("../../../src/authority/native-principal-contracts.ts").NativePrincipalControlInitial|null} baseControl
+ */
+export const syntheticRuntimeSources = (seed, subjects, storage, clock, baseControl = null) => {
+  const records = seed.keys.map(({ api, paid }) => {
+    const original = baseControl?.records.find(({ record }) => record.id === api.key_id);
+    if (original) return original;
+    const record = {
+      id: api.key_id,
+      name: "synthetic",
+      prefix: "u_synthetic",
+      hash: api.token_hash,
+      created_at_ms: clock(),
+      expires_at_ms: api.expires_at_ms,
+      revoked_at_ms: null,
+      usage_limit_requests: api.usage_limit_requests,
+      usage_requests: 0,
+      usage_reset_at_ms: api.usage_reset_at_ms,
+      window_ms: api.window_ms,
+      usage_quota_version: 3,
+      paid_fallback_enabled: api.paid_fallback_enabled,
+      paid_fallback_limit_microcredits: api.paid_fallback_limit_microcredits,
+      paid_fallback_spent_microcredits: api.paid_fallback_spent_microcredits,
+      paid_fallback_reserved_microcredits: api.paid_fallback_reserved_microcredits,
+      paid_fallback_reservation_request_id: api.paid_fallback_reservation_request_id,
+      paid_fallback_model_ids: [...paid.eligibleModels],
+      paid_fallback_quota_per_credit: paid.quotaPerCredit,
+      paid_fallback_max_exposure_microcredits: { ...paid.modelExposure },
+      paid_fallback_pricing_checked_at_ms: 1,
+    };
+    return { record, hashRecord: apiKeyHashRecordFor(record) };
+  });
+  /** @type {import("../../../src/authority/native-runtime-contracts.ts").NativeRuntimeGrant[]} */
+  const grants = subjects.map((subject) => ({
+    id: subject.id,
+    revision: 3,
+    epoch: seed.epoch,
+    subjectId: subject.id,
+    contextBinding: subject.id,
+    roles: subject.roles,
+    expiresAtMs: Number.MAX_SAFE_INTEGER,
+    revoked: false,
+  }));
+  const resolverGrant = (keyId) => "runtime-resolver:" + keyId;
+  let authority;
+  const sql = new NativeAuthoritySql(storage, seed.namespace, seed.epoch);
+  const refs = new Map();
+  /** @type {import("../../../src/authority/native-principal-contracts.ts").NativePrincipalControlInitial} */
+  const control = {
+    ...(baseControl ?? {}),
+    grants: [
+      ...(baseControl?.grants ?? []),
+      ...records.map(({ record }) => ({
+        id: resolverGrant(record.id),
+        epoch: seed.epoch,
+        subjectId: resolverGrant(record.id),
+        contextBinding: resolverGrant(record.id),
+        roles: ["principal_resolver"],
+        expiresAtMs: Number.MAX_SAFE_INTEGER,
+        revoked: false,
+        targetKeyIds: null,
+      })),
+    ],
+    records,
+    sources: baseControl?.sources ?? {
+      localDevelopmentKeyId: "synthetic-local",
+      defaults: () => ({ expiryMs: -1, usageLimitRequests: 10 }),
+      defaultPaidPolicy: () => structuredClone(NATIVE_PAID_DEFAULTS),
+      generateToken: () => {
+        throw new Error("unexpected synthetic create");
+      },
+      hashToken: async () => {
+        throw new Error("unexpected synthetic hashing");
+      },
+      randomUUID: () => crypto.randomUUID(),
+      audit: { now: clock, randomUUID: () => crypto.randomUUID(), release: () => "synthetic-runtime" },
+      initializePricing: async () => {
+        throw new Error("unexpected synthetic pricing");
+      },
+      pricingFailure: () => ({ kind: "refused", status: 503, code: "synthetic_pricing", message: "synthetic pricing unavailable" }),
+      cleanupApiLogs: async () => {},
+    },
+    verifier: {
+      verify: async (context, intentDigest, authorityNow) => {
+        if (context?.runtimeKey) {
+          const record = records.find((entry) => entry.record.id === context.runtimeKey)?.record;
+          if (!record) throw new Error("synthetic runtime identity missing");
+          return {
+            kind: "principal_resolver",
+            subjectId: resolverGrant(record.id),
+            contextBinding: resolverGrant(record.id),
+            intentDigest,
+            principalId: "api-key:" + record.id,
+            tokenHash: record.hash,
+          };
+        }
+        if (!baseControl) throw new Error("synthetic control unavailable");
+        return await baseControl.verifier.verify(context, intentDigest, authorityNow);
+      },
+    },
+  };
+  /** @type {import("../../../src/authority/native-runtime-contracts.ts").NativeRuntimeInitial} */
+  const runtime = {
+    grants,
+    records: [],
+    verifier: {
+      verify: async (context, intentDigest) => {
+        const subject = subjects.find((candidate) => candidate.id === context?.id);
+        if (!subject || subject.keyId === null || subject.tokenHash === null) throw new Error("synthetic runtime subject denied");
+        let principalRef = refs.get(subject.id);
+        if (!principalRef) {
+          const prior = sql
+            .page("principal_resolution", clock(), "", 100, { scope: subject.keyId })
+            .find((entry) => entry.row.value?.grantId === resolverGrant(subject.keyId))?.row.value;
+          if (prior) principalRef = { id: prior.id, principalId: prior.principalId, keyId: prior.keyId, epoch: prior.epoch };
+          else {
+            const retained = sql.read("capability", [subject.id], clock()).value;
+            if (retained?.principalRefId)
+              principalRef = { id: retained.principalRefId, principalId: "api-key:" + subject.keyId, keyId: subject.keyId, epoch: seed.epoch };
+            else {
+              if (!authority) throw new Error("synthetic runtime not attached");
+              const result = await new NativePrincipalControlClient(
+                new NativePrincipalControlServer(authority, {
+                  grantId: resolverGrant(subject.keyId),
+                  contextBinding: resolverGrant(subject.keyId),
+                  privateContext: { runtimeKey: subject.keyId },
+                }),
+                seed.epoch
+              ).call("resolvePrincipal", {}, "runtime-reference:" + subject.id);
+              const outcome = result.kind === "historical_ack" ? result.outcome : result;
+              if (outcome.kind === "refused") throw new NativeAuthorityError(outcome.code, outcome.status);
+              if (outcome.kind !== "principal") throw new NativeAuthorityError("synthetic_principal_resolution_invalid", 503);
+              principalRef = outcome.principalRef;
+            }
+          }
+          refs.set(subject.id, principalRef);
+        }
+        return {
+          bindingId: subject.id,
+          subjectId: subject.id,
+          contextBinding: subject.id,
+          intentDigest,
+          identity: { kind: "kv_api_key", keyId: subject.keyId },
+          api: { principalRef, tokenHash: subject.tokenHash },
+          kernel: subject.kernel,
+        };
+      },
+      verifyRouting: async (context, request, intentDigest) => {
+        const subject = subjects.find((candidate) => candidate.id === context?.id);
+        if (!subject) throw new Error("synthetic routing subject denied");
+        const hops = sql.read("authority_config", ["config"], clock()).value?.providerHops ?? [];
+        return {
+          subjectId: subject.id,
+          contextBinding: subject.id,
+          intentDigest,
+          sourceRevision: "synthetic-catalog-v3",
+          cohort: "synthetic-cohort",
+          codex: "eligible",
+          providers: [...API_KEY_USAGE_PROVIDERS],
+          allowUnrosteredModel: context.allowUnrosteredModel === true,
+          hops: hops.map((hop) => ({ hopId: hop.id, authorization: hop.authorization, upstreamModel: request.model, billingModel: request.model })),
+        };
+      },
+    },
+  };
+  return {
+    runtime,
+    control,
+    attach: (owner) => {
+      authority = owner;
+    },
+    binding: (id, allowUnrosteredModel = false) => ({ grantId: id, contextBinding: id, privateContext: { id, allowUnrosteredModel } }),
+  };
+};
+
+/** Explicit v3 source phases; never an overload accepting a retired admission DTO. */
+export const openSyntheticRequest = async (client, args, operationId = String(crypto.randomUUID())) => {
+  const opened = await client.call(
+    "openAuthenticatedRequest",
+    { requestId: args.requestId, route: args.route, path: args.path ?? args.route },
+    operationId + ":open"
+  );
+  if (!opened.handle) return opened;
+  return await client.call("reserveApiUsage", { handle: opened.handle }, operationId + ":api");
+};
+export const bindSyntheticMetadata = async (client, handle, metadata, operationId = String(crypto.randomUUID())) => {
+  await client.call(
+    "bindValidatedRequestMetadata",
+    { handle, model: metadata.model, stream: metadata.stream, reasoning: metadata.reasoning ?? null },
+    operationId + ":metadata"
+  );
+  return await client.bindTrustedRoutingDecision(handle, operationId + ":routing");
+};
+/** A distinct fixture-source action; NativeCommand still rejects every retired admission shape. */
+export const runSyntheticRequestPhase = async (client, operation) => {
+  const id = operation.operationId ?? crypto.randomUUID();
+  if (operation.fixturePhase === "open-api") return await openSyntheticRequest(client, operation.request, id);
+  if (operation.fixturePhase === "admit-api") {
+    const admitted = await openSyntheticRequest(client, operation.request, id);
+    if (admitted.handle && ["reserved", "reuse", "not_applicable"].includes(admitted.kind))
+      await bindSyntheticMetadata(client, admitted.handle, operation.metadata, id);
+    return admitted;
+  }
+  if (operation.fixturePhase === "metadata") return await bindSyntheticMetadata(client, operation.handle, operation.metadata, id);
+  if (operation.fixturePhase === "routing") return await client.bindTrustedRoutingDecision(operation.handle, id);
+  throw new Error("unknown synthetic v3 phase");
+};
+export const admitSyntheticRequest = async (client, args, operationId = String(crypto.randomUUID())) => {
+  const admitted = await openSyntheticRequest(client, args, operationId);
+  if (admitted.handle && ["reserved", "reuse", "not_applicable"].includes(admitted.kind))
+    await bindSyntheticMetadata(client, admitted.handle, args, operationId);
+  return admitted;
+};
 
 export const CONTROL_CASE_IDS = Array.from({ length: 28 }, (_, index) => "P" + String(index + 1).padStart(2, "0"));
 const LOCAL_CASES = ["P13", "P18", "P19", "P24", "P27"];
@@ -119,13 +528,13 @@ export class PrincipalControlFixture {
     const seed = {
       ...this.seed,
       namespace: "synthetic-principal-control:" + this.ctx.id.toString(),
-      capabilities: ["control", "foreign"].map((id) => ({
+      runtimeSubjects: ["control", "foreign"].map((id) => ({
         id,
         epoch: this.epoch,
         principalId: id === "control" ? "p" : "foreign",
         keyId: this.keyId,
         tokenHash: this.original.hash,
-        kernel: { owner: "control-org", repo: "repo" },
+        kernel: this.state.scenario === "P11" && id === "control" ? { owner: "control-org", repo: "repo" } : null,
         roles: ["inference", "transport", "terminal", "billing", "reconcile", "observer"],
         revoked: false,
       })),
@@ -158,13 +567,13 @@ export class PrincipalControlFixture {
       ],
     };
     if (this.state.scenario === "P28")
-      seed.capabilities.push({
+      seed.runtimeSubjects.push({
         id: "p28-retention-admin",
         epoch: this.epoch,
         principalId: "p28-retention-admin",
         keyId: this.keyId,
         tokenHash: this.original.hash,
-        kernel: { owner: "control-org", repo: "repo" },
+        kernel: null,
         roles: ["quota_admin"],
         revoked: false,
       });
@@ -245,7 +654,7 @@ export class PrincipalControlFixture {
         this.state.cleanupSettled++;
       },
     };
-    this.authority = new NativeAuthority(this.ctx.storage, seed, clock, {
+    const nativeControl = {
       grants: [grant("key_admin"), grant("principal_resolver")],
       records: [{ record: this.original, hashRecord: apiKeyHashRecordFor(this.original) }],
       sources,
@@ -274,7 +683,23 @@ export class PrincipalControlFixture {
           };
         },
       },
-    });
+    };
+
+    this.runtimeSources = syntheticRuntimeSources(seed, seed.runtimeSubjects, this.ctx.storage, clock, nativeControl);
+    this.retainedSources = syntheticRetainedHistory(
+      seed,
+      this.ctx.storage,
+      clock,
+      this.state.scenario === "P12"
+        ? [
+            { id: "history-p", principalId: "p", keyId: this.keyId, requestIds: ["foreign-pending"] },
+            { id: "history-foreign", principalId: "foreign", keyId: this.keyId, requestIds: ["foreign-unresolved"] },
+          ]
+        : []
+    );
+    this.runtimeSources.runtime.retainedHistory = this.retainedSources.initial;
+    this.authority = new NativeAuthority(this.ctx.storage, seed, clock, this.runtimeSources.control, this.runtimeSources.runtime);
+    this.runtimeSources.attach(this.authority);
     this.sql = new NativeAuthoritySql(this.ctx.storage, seed.namespace, this.epoch);
   }
   binding(profile) {
@@ -322,6 +747,9 @@ export class PrincipalControlFixture {
   }
   rows() {
     const tables = [
+      "retained_history_grant",
+      "runtime_grant",
+      "runtime_request",
       "capability",
       "api_key_id",
       "api_key_hash",
@@ -396,9 +824,18 @@ export class PrincipalControlFixture {
   }
   action(owner, action, value) {
     this.authorize(owner);
+    if (action === "p12-restore-retained") {
+      if (this.state.scenario !== "P12" || value !== undefined) throw new Error("fixture retained restoration denied");
+      const restored = this.retainedSources.restore();
+      for (const item of restored) this.recordLog(this.sql.read("request_lifetime", [item.handle], this.state.now).value.requestId);
+      return restored;
+    }
     if (action === "p28-begin-paid-key-deletion") {
       if (this.state.scenario !== "P28" || value !== undefined) throw new Error("fixture retention administrator action denied");
-      return new NativeAuthorityClient(new NativeAuthorityRpcServer(this.authority, "p28-retention-admin"), this.epoch).call("beginPaidKeyDeletion", {});
+      return new NativeAuthorityClient(new NativeAuthorityRpcServer(this.authority, this.runtimeSources.binding("p28-retention-admin")), this.epoch).call(
+        "beginPaidKeyDeletion",
+        {}
+      );
     }
     const sql = this.sql,
       now = this.state.now,
@@ -476,7 +913,7 @@ export class PrincipalControlFixture {
         completed: { created_at_ms: now, local_deletion: { owner: "completed-owner", completed_at_ms: now } },
       };
       if (!Object.hasOwn(guards, value)) throw new Error("fixture guard denied");
-      sql.transaction(() => sql.write("paid_deletion_guard", paidFallbackDeletionGuardV3Key(this.keyId), guards[value], null, { scope: this.keyId }));
+      sql.transaction(() => sql.write("paid_deletion_guard", paidRows.paidFallbackDeletionGuardV3Key(this.keyId), guards[value], null, { scope: this.keyId }));
     } else if (action === "missing-lifetime") {
       const row = sql.page("request_lifetime", now, "", 100).find((entry) => entry.row.value.requestId === "identity-missing");
       if (!row) throw new Error("fixture missing identity setup denied");

@@ -1,6 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 import { NativeAuthority } from "../../../src/authority/native-authority.ts";
-import { NativeAuthorityClient, NativeAuthorityRpcServer, NativePrincipalControlClient } from "../../../src/authority/native-authority-rpc.ts";
+import {
+  NativeAuthorityClient,
+  NativeAuthorityRpcServer,
+  NativePrincipalControlClient,
+  NativeRetainedHistoryServer,
+} from "../../../src/authority/native-authority-rpc.ts";
 import { NativeAuthorityError } from "../../../src/authority/native-authority-contracts.ts";
 import { NativeAuthoritySql } from "../../../src/authority/native-authority-sql.ts";
 import {
@@ -10,7 +15,14 @@ import {
   CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY,
 } from "../../../src/authority/native-codex-contracts.ts";
 import { PAID_FALLBACK_REQUEST_LOG_RETENTION_MS } from "../../../src/authority/native-paid.ts";
-import { CONTROL_CASE_IDS, PrincipalControlFixture } from "./principal-control-sources.mjs";
+import {
+  CONTROL_CASE_IDS,
+  PrincipalControlFixture,
+  syntheticRuntimeSources,
+  runSyntheticRequestPhase,
+  openSyntheticRequest,
+  bindSyntheticMetadata,
+} from "./principal-control-sources.mjs";
 const reviewScenarios = [
   "F01",
   "F02-terminal",
@@ -73,7 +85,7 @@ const initial = () => {
   return {
     namespace: "synthetic-native-sqlite-do",
     epoch,
-    capabilities: specs.map((spec) => ({
+    runtimeSubjects: specs.map((spec) => ({
       id: spec.id,
       epoch,
       principalId: spec.id,
@@ -148,14 +160,28 @@ class SharedNativeAuthority extends DurableObject {
     this.ctx.storage.sql.exec("INSERT OR IGNORE INTO uos_fixture_review VALUES(1,'main',?)", fixedNow);
     const seed = initial();
     seed.namespace += ":" + ctx.id.toString();
-    this.authority = new NativeAuthority(ctx.storage, seed, () => this.fixtureClock());
+    const scenario = this.ctx.storage.sql.exec("SELECT scenario FROM uos_fixture_review WHERE id=1").one().scenario;
+    this.runtimeSubjects = seed.runtimeSubjects.map((subject) => ({
+      ...subject,
+      kernel:
+        scenario === "main" ? (["a", "b"].includes(subject.id) ? null : subject.kernel) : scenario === "F12" && subject.id === "ledger" ? subject.kernel : null,
+    }));
+    this.runtimeSources = syntheticRuntimeSources(seed, this.runtimeSubjects, ctx.storage, () => this.fixtureClock());
+    this.authority = new NativeAuthority(ctx.storage, seed, () => this.fixtureClock(), this.runtimeSources.control, this.runtimeSources.runtime);
+    this.runtimeSources.attach(this.authority);
     this.fixtureSql = new NativeAuthoritySql(ctx.storage, seed.namespace, seed.epoch);
   }
   execute(capabilityId, command) {
-    return new NativeAuthorityRpcServer(this.authority, capabilityId).execute(command);
+    return new NativeAuthorityRpcServer(this.authority, this.runtimeSources.binding(capabilityId)).execute(command);
   }
   fixtureClock() {
     return this.ctx.storage.sql.exec("SELECT now_ms FROM uos_fixture_review WHERE id=1").one().now_ms;
+  }
+  bindTrustedRoutingDecision(principal, handle, operationId) {
+    return new NativeAuthorityRpcServer(this.authority, this.runtimeSources.binding(principal)).bindTrustedRoutingDecision(handle, operationId);
+  }
+  sourcePhase(principal, operation) {
+    return runSyntheticRequestPhase(boundClient(this, principal), operation);
   }
   fixtureReviewAuth(token, scenario) {
     if (token !== this.fixtureOwner || !reviewScenarios.includes(scenario)) throw new Error("fixture review owner denied");
@@ -168,6 +194,7 @@ class SharedNativeAuthority extends DurableObject {
     if (state.scenario !== "main" && state.scenario !== scenario) throw new Error("fixture review namespace mismatch");
     if (state.scenario === scenario) return { scenario, arrangement: "existing fixed synthetic fixture" };
     this.ctx.storage.sql.exec("UPDATE uos_fixture_review SET scenario=? WHERE id=1", scenario);
+    for (const subject of this.runtimeSubjects) subject.kernel = scenario === "F12" && subject.id === "ledger" ? { owner: "ledger-org", repo: "repo" } : null;
     if (scenario === "F08")
       this.fixtureSql.transaction(() => {
         const pool = this.fixtureSql.read("codex_pool", CODEX_AUTH_POOL_KV_KEY, fixedNow).value;
@@ -277,6 +304,11 @@ class SharedNativeAuthority extends DurableObject {
   fixtureInspect() {
     const projection = {
       incarnation: this.incarnation,
+      runtimeSchemaVersion: this.ctx.storage.sql.exec("SELECT schema_version FROM uos_native_authority_meta WHERE id=1").one().schema_version,
+      runtimeBindingRevisions: this.ctx.storage.sql
+        .exec("SELECT DISTINCT json_extract(row_json,'$.revision') AS revision FROM uos_native_runtime_grant ORDER BY revision")
+        .toArray()
+        .map((row) => row.revision),
       rows: {},
       apiWindows: [],
       kernelWindows: [],
@@ -323,7 +355,14 @@ class SharedNativeAuthority extends DurableObject {
     this.ctx.abort("synthetic native authority crash after acknowledged durable phase");
   }
 }
-const boundClient = (stub, principal) => new NativeAuthorityClient({ execute: (command) => stub.execute(principal, command) }, epoch);
+const boundClient = (stub, principal) =>
+  new NativeAuthorityClient(
+    {
+      execute: (command) => stub.execute(principal, command),
+      bindTrustedRoutingDecision: (handle, operationId) => stub.bindTrustedRoutingDecision(principal, handle, operationId),
+    },
+    epoch
+  );
 class PrincipalNativeAuthority extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
@@ -343,9 +382,19 @@ class PrincipalNativeAuthority extends DurableObject {
     return this.fixture.control(profile, command, clientType);
   }
   async execute(principal, command) {
-    const reply = await new NativeAuthorityRpcServer(this.fixture.authority, principal).execute(command);
-    if (command.method === "reserveApiUsage" && reply.result?.kind === "reserved") this.fixture.recordLog(command.args.requestId);
+    const reply = await new NativeAuthorityRpcServer(this.fixture.authority, this.fixture.runtimeSources.binding(principal)).execute(command);
+    if (command.method === "reserveApiUsage" && reply.result?.kind === "reserved")
+      this.fixture.recordLog(this.fixture.sql.read("request_lifetime", [reply.result.handle], this.fixture.state.now).value.requestId);
     return reply;
+  }
+  retained(profile, command) {
+    return new NativeRetainedHistoryServer(this.fixture.authority, this.fixture.retainedSources.binding(profile)).execute(command);
+  }
+  bindTrustedRoutingDecision(principal, handle, operationId) {
+    return new NativeAuthorityRpcServer(this.fixture.authority, this.fixture.runtimeSources.binding(principal)).bindTrustedRoutingDecision(handle, operationId);
+  }
+  sourcePhase(principal, operation) {
+    return runSyntheticRequestPhase(boundClient(this, principal), operation);
   }
 }
 const principalRoute = async (request, env, match) => {
@@ -362,13 +411,33 @@ const principalRoute = async (request, env, match) => {
     }
     return new Response(null, { status: 404 });
   }
-  const route = /^\/(control-rpc|control-client|control-raw|rpc|client)\/([^/]+)$/.exec(path);
+  const route = /^\/(control-rpc|control-client|control-raw|rpc|client|trusted-routing|source-phase|retained-rpc|retained-client)\/([^/]+)$/.exec(path);
   if (!route) return new Response(null, { status: 404 });
   const [, surface, profile] = route,
     command = await request.json();
-  if (["rpc", "client"].includes(surface)) {
+  if (surface === "retained-rpc" || surface === "retained-client") {
+    if (scenario !== "P12" || !["history-p", "history-foreign"].includes(profile)) return new Response(null, { status: 403 });
+    if (surface === "retained-rpc") return Response.json(await stub.retained(profile, command));
+    try {
+      const client = new NativeAuthorityClient({ execute: (input) => stub.retained(profile, input) }, epoch);
+      return Response.json({ result: await client.call(command.method, command.args, command.operationId) });
+    } catch (error) {
+      if (!(error instanceof NativeAuthorityError)) throw error;
+      return Response.json({ error: { code: error.code, status: error.status } });
+    }
+  }
+  if (["rpc", "client", "trusted-routing", "source-phase"].includes(surface)) {
     if (!["control", "foreign"].includes(profile)) return new Response(null, { status: 403 });
     if (surface === "rpc") return Response.json(await stub.execute(profile, command));
+    if (surface === "trusted-routing") return Response.json(await stub.bindTrustedRoutingDecision(profile, command.handle, command.operationId));
+    if (surface === "source-phase") {
+      try {
+        return Response.json({ result: await stub.sourcePhase(profile, command) });
+      } catch (error) {
+        if (!(error instanceof NativeAuthorityError)) throw error;
+        return Response.json({ error: { code: error.code, status: error.status } });
+      }
+    }
     try {
       return Response.json({ result: await boundClient(stub, profile).call(command.method, command.args, command.operationId) });
     } catch (error) {
@@ -415,10 +484,23 @@ var stdin_default = {
       }
       return new Response(null, { status: 404 });
     }
+    if (path.startsWith("/source-phase/") || path.startsWith("/trusted-routing/")) {
+      const principal = path.split("/")[2];
+      if (!initial().runtimeSubjects.some((subject) => subject.id === principal)) return new Response(null, { status: 403 });
+      const operation = await request.json();
+      try {
+        if (path.startsWith("/trusted-routing/"))
+          return Response.json(await stub.bindTrustedRoutingDecision(principal, operation.handle, operation.operationId));
+        return Response.json({ result: await stub.sourcePhase(principal, operation) });
+      } catch (error) {
+        if (!(error instanceof NativeAuthorityError)) throw error;
+        return Response.json({ error: { code: error.code, status: error.status } });
+      }
+    }
     if (scenario && path.startsWith("/client/")) {
       const principal = path.slice(8),
         command = await request.json();
-      if (!initial().capabilities.some((cap) => cap.id === principal)) return new Response(null, { status: 403 });
+      if (!initial().runtimeSubjects.some((cap) => cap.id === principal)) return new Response(null, { status: 403 });
       try {
         return Response.json({ result: await boundClient(stub, principal).call(command.method, command.args, command.operationId) });
       } catch (error) {
@@ -428,14 +510,14 @@ var stdin_default = {
     }
     if (path.startsWith("/rpc/")) {
       const principal = path.slice(5);
-      if (!initial().capabilities.some((cap) => cap.id === principal)) return new Response(null, { status: 403 });
+      if (!initial().runtimeSubjects.some((cap) => cap.id === principal)) return new Response(null, { status: 403 });
       return Response.json(await stub.execute(principal, await request.json()));
     }
     if (path !== "/workflow") return new Response(null, { status: 404 });
     if (!env.SYNTHETIC_UPSTREAM) return new Response("Linux mixed transport fixture is not enabled", { status: 503 });
     const body = await request.json(),
       client = boundClient(stub, "workflow");
-    const admitted = await client.call("reserveApiUsage", {
+    const admitted = await openSyntheticRequest(client, {
       requestId: body.requestId,
       route: "/v1/responses",
       model: "fixture",
@@ -448,6 +530,7 @@ var stdin_default = {
       await client.call("releaseApiUndispatched", { handle, reason: "kernel_quota_refused" });
       return Response.json(kernel, { status: 429 });
     }
+    await bindSyntheticMetadata(client, handle, { model: "fixture", stream: body.stream === true, reasoning: null });
     const selection = await client.call("selectCodexAccount", { handle });
     if (selection.kind !== "eligible") return Response.json(selection, { status: 503 });
     await client.call("refreshCodexAdmission", { handle });
