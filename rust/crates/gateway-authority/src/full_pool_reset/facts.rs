@@ -2,7 +2,7 @@ use super::{Facts, FullPoolFence, Member, declined, invalid};
 use crate::{
     Authority, TokenSource, keys,
     reset::{ResetCandidate, ResetConfig, ResetMode, reset_invocation},
-    routing::{CohortProof, class_name, read_view, validate_cohort},
+    routing::{CohortProof, read_view, validate_cohort},
     store::Transaction,
 };
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
@@ -105,6 +105,23 @@ pub(super) async fn capture<S: AuthorityStore, I: TokenSource>(
     proof: &CohortProof,
     original: &RequestContext,
 ) -> Result<Facts, GatewayError> {
+    capture_for(tx, proof, original, CapturePurpose::NewSpend).await
+}
+pub(super) async fn capture_reconciliation<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    proof: &CohortProof,
+    original: &RequestContext,
+) -> Result<Facts, GatewayError> {
+    capture_for(tx, proof, original, CapturePurpose::ExistingLedger).await
+}
+#[derive(Clone, Copy)]
+enum CapturePurpose { NewSpend, ExistingLedger }
+async fn capture_for<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    proof: &CohortProof,
+    original: &RequestContext,
+    purpose: CapturePurpose,
+) -> Result<Facts, GatewayError> {
     if !proof.full_cohort_exhausted()
         || proof.account_bindings().is_empty()
         || !validate_cohort(tx, proof, true).await?
@@ -142,21 +159,24 @@ pub(super) async fn capture<S: AuthorityStore, I: TokenSource>(
             return Err(declined("routing_fence_stale"));
         }
         let block = state
-            .quota_blocks
-            .get(class_name(proof.quota_class()))
+            .quota_block_for(proof.quota_class())
             .ok_or_else(|| declined("routing_fence_missing"))?;
-        if !block.reset_is_stable
-            || block.reset_ambiguous
-            || state.reset_identity_ambiguous
-            || block.reset_at_ms != Some(block.blocked_until_ms)
-            || block.blocked_until_ms <= tx.now
-        {
+        let reset = block.reset_at_ms.ok_or_else(||declined("invalid_quota_generation"))?;
+        let current = match purpose {
+            CapturePurpose::NewSpend => !block.reset_ambiguous && !state.reset_identity_ambiguous
+                && reset == block.blocked_until_ms && reset > tx.now,
+            // Source staleVerifiedResetProbeEligible retains a stable old
+            // observation beneath a newer block. This read-only path grants
+            // no inventory, audit insertion or new-spend permission.
+            CapturePurpose::ExistingLedger => block.blocked_until_ms >= reset,
+        };
+        if !block.reset_is_stable || !current {
             return Err(declined("invalid_quota_generation"));
         }
         let invocation = reset_invocation(
             &account.admin_account_hash.0,
             &binding.credential_version.0,
-            block.blocked_until_ms,
+            reset,
         )?;
         let key = keys::reset_usage(&account.admin_account_hash.0);
         let setting: Option<Value> = tx.read(&key).await?;
@@ -173,12 +193,12 @@ pub(super) async fn capture<S: AuthorityStore, I: TokenSource>(
             account_id_hash: invocation.identity.account_id_hash,
             quota_generation: invocation.identity.quota_generation,
             routing_generation: binding.routing_generation,
-            quota_reset_at_ms: block.blocked_until_ms,
+            quota_reset_at_ms: reset,
         });
         members.push(Member {
             candidate: ResetCandidate {
                 binding: binding.clone(),
-                quota_reset_at_ms: block.blocked_until_ms,
+                quota_reset_at_ms: reset,
                 request_started_at_ms: tx.now,
                 proof: proof.clone(),
             },
