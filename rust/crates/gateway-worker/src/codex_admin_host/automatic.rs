@@ -36,6 +36,13 @@ fn unavailable() -> GatewayError {
         "codex_reset_request_changed",
     )
 }
+fn original_route_matches(method: &str, path: &str, route: &str) -> bool {
+    matches!(
+        (method, crate::normalized_path(path), route),
+        ("POST", "/v1/responses", "responses")
+            | ("POST", "/v1/chat/completions", "chat.completions")
+    )
+}
 async fn check_client(
     store: &RemoteAuthorityStore,
     platform: &PlatformHost,
@@ -53,7 +60,7 @@ async fn check_client(
     let url = worker::Url::parse(&original.url).map_err(|_| unavailable())?;
     if request.principal.0 != crate::lifecycle::principal_id(&principal)
         || request.key_id.as_ref().map(|id| id.0.as_str()) != key
-        || request.route != url.path()
+        || !original_route_matches(&original.method, url.path(), &request.route)
     {
         return Err(GatewayError::new(
             401,
@@ -243,4 +250,33 @@ async fn submit(
         }
     };
     authority.elect_full_pool_reset(permit, &verified).await
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn original_route_matches_only_normalized_post_inference() {
+        for (method, path, route, expected) in [
+            ("POST", "/v1/responses", "responses", true),
+            ("POST", "/v1/chat/completions", "chat.completions", true),
+            ("POST", "/v1/responses///", "responses", true),
+            ("POST", "/v1/chat/completions/", "chat.completions", true),
+            ("GET", "/v1/responses", "responses", false),
+            ("PUT", "/v1/chat/completions", "chat.completions", false),
+            ("post", "/v1/responses", "responses", false),
+            ("POST", "/v1/responses", "chat.completions", false),
+            ("POST", "/v1/chat/completions", "responses", false),
+            ("POST", "/v1/responses", "/v1/responses", false),
+            ("POST", "/v1/images/generations", "responses", false),
+            ("POST", "/v1/%72esponses", "responses", false),
+            ("POST", "//v1/responses", "responses", false),
+            ("POST", "/", "responses", false),
+        ] {
+            assert_eq!(
+                super::original_route_matches(method, path, route),
+                expected,
+                "{method} {path} with route {route}"
+            );
+        }
+    }
 }
