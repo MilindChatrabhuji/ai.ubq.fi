@@ -106,9 +106,8 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
             .and_then(Value::as_str)
             .ok_or_else(|| invalid("Kernel tuple missing kind"))?;
         if matches!(kind, "repo_window" | "org_window") {
-            let (scope, owner, repo) =
-                gateway_admin_data::migration::kernel::identity(p, "window")
-                    .ok_or_else(|| invalid("Kernel source window identity is malformed"))?;
+            let (scope, owner, repo) = gateway_admin_data::migration::kernel::identity(p, "window")
+                .ok_or_else(|| invalid("Kernel source window identity is malformed"))?;
             if gateway_admin_data::migration::kernel::normalize_window(
                 &v,
                 &scope,

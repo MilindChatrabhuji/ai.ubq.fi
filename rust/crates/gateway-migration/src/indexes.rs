@@ -148,7 +148,8 @@ pub(crate) fn bind(
                         .ok_or_else(|| invalid("Kernel request window missing"))?;
                     let source = source.json_value()?;
                     if decode::<i64>(&source["created_at_ms"])? != request.window_created_at_ms
-                        || decode::<i64>(&source["usage_reset_at_ms"])? != request.window_reset_at_ms
+                        || decode::<i64>(&source["usage_reset_at_ms"])?
+                            != request.window_reset_at_ms
                     {
                         return Err(invalid("Kernel reservation belongs to another window"));
                     }

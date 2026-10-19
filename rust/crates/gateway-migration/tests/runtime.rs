@@ -974,8 +974,7 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert() {
     assert_eq!(window.expires_at_ms, generated_window.expires_at_ms);
     let mut missing_reservation = inverse.clone();
     missing_reservation.entries.retain(|entry| {
-        entry.key.get(3)
-            != Some(&raw(json!({"type":"string","value":"org_reservation"})))
+        entry.key.get(3) != Some(&raw(json!({"type":"string","value":"org_reservation"})))
     });
     assert!(matches!(
         prepare(&missing_reservation, &CanonicalDates),
