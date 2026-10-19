@@ -329,4 +329,16 @@ fn invalid(message: &str) -> GatewayError {
     GatewayError::new(400, message, Some("claude_code_request_invalid"))
 }
 
+/// Closed observational models target using the exact caller's read binding.
+pub(crate) fn models_probe_request(
+    account: &gateway_admin_runtime::claude::AccountBinding,
+) -> Result<crate::transport::outbound::ConstructedRequest, GatewayError> {
+    let headers = platform::headers(account, true)
+        .map_err(|_| *crate::inference_local_lifecycle::wrapper_error().error)?;
+    let target =
+        crate::transport::outbound::PinnedDestination::new("https://api.anthropic.com/v1/models")?;
+    crate::transport::outbound::construct_request(&target, worker::Method::Get, headers, &[])
+        .map_err(|_| *crate::inference_local_lifecycle::wrapper_error().error)
+}
+
 pub use catalog::{fetch_catalog, publication};

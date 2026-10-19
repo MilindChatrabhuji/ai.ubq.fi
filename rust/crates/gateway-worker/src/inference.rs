@@ -12,7 +12,7 @@ use gateway_routing_runtime::{
     TransportState,
 };
 use gateway_schema::source_request::{SourceRequestDocument, parse_http_body};
-use serde_json::{Value, json};
+use serde_json::json;
 use worker::{Context, Method, Request, Response, ResponseBody};
 
 use crate::{
@@ -302,11 +302,6 @@ pub async fn run(
         mut permit,
     } = resources;
     let responses = crate::normalized_path(&request.path()) == "/v1/responses";
-    let surface = if responses {
-        ClientSurface::Responses
-    } else {
-        ClientSurface::Chat
-    };
     let route = if responses {
         "responses"
     } else {

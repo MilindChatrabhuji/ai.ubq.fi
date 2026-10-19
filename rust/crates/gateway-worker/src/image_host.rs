@@ -171,18 +171,14 @@ impl Images {
                         child.transport.get() == TransportState::NotStarted,
                     )
                 })?;
-            let gateway_routing_runtime::PreparedWireRequest::Ready(request) = &attempt.request
-            else {
-                return Err(DispatchFailure::gateway(invalid(), true));
-            };
-            let target = PinnedDestination::new(&request.url)
+            let target = PinnedDestination::new(&attempt.request.url)
                 .map_err(|error| DispatchFailure::gateway(error, true))?;
-            let wire = request.body.as_bytes().to_vec();
+            let wire = attempt.request.body.as_bytes().to_vec();
             let ticket = RefCell::new(None);
             let result = outbound::send_http(
                 &target,
                 Method::Post,
-                &request.headers,
+                &attempt.request.headers,
                 &wire,
                 &child.cancellation,
                 || async {
@@ -278,10 +274,10 @@ impl Images {
                     usage: None,
                 });
             }
-            let decoded = decode_response(&request.decode, status, &headers, &bytes)
+            let decoded = decode_response(&attempt.request.decode, status, &headers, &bytes)
                 .map_err(DispatchFailure::transport)?;
-            if !request.warnings.is_empty() {
-                headers.insert("x-uos-warning".into(), request.warnings.join(", "));
+            if !attempt.request.warnings.is_empty() {
+                headers.insert("x-uos-warning".into(), attempt.request.warnings.join(", "));
             }
             return Ok(UpstreamResponse {
                 status: decoded.status,

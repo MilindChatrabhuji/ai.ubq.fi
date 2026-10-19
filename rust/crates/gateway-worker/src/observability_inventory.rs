@@ -1,5 +1,5 @@
 //! Passive provider metadata over the same request-owned authority; never refreshes credentials.
-use super::{Host, RequestHost};
+use super::RequestHost;
 use gateway_admin_runtime::{claude, claude_access};
 use gateway_auth::{
     crypto::sha256_hex,
@@ -10,9 +10,7 @@ use gateway_core::{
     source_json::SourceJson,
     state::{AuthorityStore, RevisionCheck},
 };
-use gateway_observability::{
-    Context, HealthProvider, HealthTarget, ObservabilityHost, host_types::*,
-};
+use gateway_observability::{Context, HealthProvider, HealthTarget, host_types::*};
 use gateway_schema::selection::ProviderSelection;
 use serde_json::json;
 use std::collections::BTreeSet;
@@ -145,6 +143,12 @@ impl RequestHost {
                     label: account.credential.label.clone(),
                     updated_at_ms: account.credential.updated_at_ms,
                 };
+                let last_error = account
+                    .workspace
+                    .as_ref()
+                    .and_then(|w| w.last_error.as_ref())
+                    .map(gateway_core::js_string::JsString16::to_source_json)
+                    .transpose()?;
                 let workspace = account.workspace.as_ref().map(|w| WorkspaceMetadata {
                     id: w.id.clone(),
                     name: w.name.clone(),
@@ -152,7 +156,7 @@ impl RequestHost {
                     pinned_by_env: w.source == "env",
                     discovered_at_ms: w.discovered_at_ms,
                     verified_at_ms: w.verified_at_ms,
-                    last_error: w.last_error.as_ref().map(|s| json!(s)),
+                    last_error,
                 });
                 accounts.push(ClaudeAccountReadback {
                     target: HealthTarget {
@@ -179,10 +183,10 @@ impl RequestHost {
         }
         let access = match self.store.read(&claude_access::policy_key()).await? {
             Some(row) if row.expires_at_ms.is_none_or(|t| t > at) => {
-                let policy = claude_access::parse_policy(row.json_value()?, &|a, b| {
-                    Host.compare_labels(a, b)
-                })?;
-                Some(ClaudeAccessReadback {
+                claude_access::decode_policy_record(&row, at, &|a, b| {
+                    crate::source_collator::shared().compare(a, b)
+                })?
+                .map(|policy| ClaudeAccessReadback {
                     source: match policy.source {
                         claude_access::PolicySource::Env => "env",
                         claude_access::PolicySource::Kv => "kv",
@@ -199,7 +203,10 @@ impl RequestHost {
                 } else {
                     Some(ClaudeAccessReadback {
                         source: "env".into(),
-                        allowed_key_ids: ids,
+                        allowed_key_ids: ids
+                            .into_iter()
+                            .map(|id| gateway_core::js_string::JsString16::from_utf8(&id))
+                            .collect(),
                         updated_at_ms: None,
                     })
                 }

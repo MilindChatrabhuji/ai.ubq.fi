@@ -18,7 +18,6 @@ use gateway_routing_runtime::{
     ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest, PublishedCredential,
     RefreshOutcome, RoutingHost, direct_credential,
 };
-use serde_json::Value;
 use worker::Env;
 
 use crate::{authority::RemoteAuthorityStore, host::PlatformHost, storage::now_ms};
@@ -190,7 +189,7 @@ impl RoutingHost for Host {
                 credential_binding,
             } => {
                 let current = self.paid_credential(*provider).await?;
-                match current.fence {
+                match current.into_fence() {
                     CredentialFence::Paid {
                         owner_id: actual_owner,
                         owner_epoch: actual_epoch,

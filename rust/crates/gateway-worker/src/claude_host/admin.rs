@@ -18,7 +18,9 @@ use gateway_core::{
 };
 use gateway_observability::{ObservabilityHost, ObservabilityRuntime};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use std::collections::BTreeSet;
 
 const UNVALIDATED: &str = "Stored unvalidated: the models listing could not be read.";
@@ -280,7 +282,7 @@ async fn submit<H: ObservabilityHost>(
         data: &'a SourceJson,
         account_id: &'a str,
         validation: ValidationView,
-        hint: Option<&'a str>,
+        hint: Option<&'a JsString16>,
     }
     Ok(AuthResponse::source_json(
         200,
@@ -291,7 +293,7 @@ async fn submit<H: ObservabilityHost>(
                 status: validation.status,
                 detail: validation.detail,
             },
-            hint: input.credential.as_ref().map(|_| candidate.hint.as_str()),
+            hint: input.credential.as_ref().map(|_| &candidate.hint),
         })?,
     ))
 }
