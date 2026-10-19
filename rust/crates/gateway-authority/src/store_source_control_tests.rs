@@ -257,3 +257,24 @@ fn source_control_preserves_authority_metadata_guards() {
             .is_err()
     );
 }
+
+#[test]
+fn revision_observation_never_reinterprets_payload_or_drops_expired_cas() {
+    let store = Store::default();
+    let authority = authority(&store);
+    let row = StoredRecord::profile_v2("seed", PortableValue::Set(vec![]), Some(100)).unwrap();
+    store.rows.borrow_mut().insert(key().0, row);
+    let mut tx = authority.transaction(100).unwrap();
+    run(tx.observe_revision(&key())).unwrap();
+    assert_eq!(tx.revision(&key()).as_deref(), Some("seed"));
+    assert_eq!(tx.expiry(&key()), Some(100));
+    assert_eq!(tx.checks()[0].expected_revision.as_deref(), Some("seed"));
+    let other = crate::keys::paid_routing();
+    run(tx.observe_revision(&other)).unwrap();
+    assert!(tx.expect(&other, &None));
+    tx.put_source_control(&other, &control(&[0xd800]), None)
+        .unwrap();
+    assert!(run(tx.commit()).unwrap());
+    let mut tx = authority.transaction(99).unwrap();
+    assert!(run(tx.read_source_control::<SourceJson>(&key())).is_err());
+}
