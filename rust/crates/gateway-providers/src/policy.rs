@@ -112,53 +112,27 @@ pub fn chat_has_answer(value: &Value) -> bool {
 /// Lithos refusal windows are per rung, not one deadline per original request model.
 #[derive(Clone, Debug, Default)]
 pub struct LithosWindows {
-    deadlines: std::collections::BTreeMap<String, i64>,
+    deadlines: std::collections::BTreeMap<ModelId, i64>,
 }
-pub fn lithos_ladder(model: &str) -> Vec<String> {
-    let canonical = lithos_canonical(model);
-    let model = canonical.as_str();
-    let family = if model.starts_with("deepseek-ai/DeepSeek-V4.1-Flash") {
-        "deepseek-ai/DeepSeek-V4.1-Flash"
-    } else if model.starts_with("moonshotai/Kimi-K3") {
-        "moonshotai/Kimi-K3"
-    } else {
-        return vec![];
-    };
-    if model == format!("{family}-ultra") {
-        vec![format!("{family}-fast"), family.into()]
-    } else if model == format!("{family}-fast") {
-        vec![family.into()]
-    } else {
-        vec![]
-    }
+pub fn lithos_ladder(model:&ModelId)->Vec<ModelId>{
+    let model=lithos_canonical(model);
+    let family=if s::starts(model.as_js_string(),"deepseek-ai/DeepSeek-V4.1-Flash"){ "deepseek-ai/DeepSeek-V4.1-Flash" }else if s::starts(model.as_js_string(),"moonshotai/Kimi-K3"){ "moonshotai/Kimi-K3" }else{return vec![];};
+    if model.matches_scalar(&format!("{family}-ultra")){vec![ModelId::from_scalar(&format!("{family}-fast")),ModelId::from_scalar(family)]}else if model.matches_scalar(&format!("{family}-fast")){vec![ModelId::from_scalar(family)]}else{vec![]}
 }
-fn lithos_canonical(model: &str) -> String {
-    crate::request::LITHOS_MODELS
-        .iter()
-        .find(|known| known.eq_ignore_ascii_case(model.trim()))
-        .copied()
-        .unwrap_or(model.trim())
-        .to_owned()
+fn lithos_canonical(model:&ModelId)->ModelId{
+    let value=s::trim(model.as_js_string());
+    crate::request::LITHOS_MODELS.iter().find(|known|{
+        let literal=known.encode_utf16().collect::<Vec<_>>();
+        value.as_units().len()==literal.len()&&value.as_units().iter().zip(literal).all(|(&left,right)|{
+            let lower=|unit:u16|if (65..=90).contains(&unit){unit+32}else{unit};lower(left)==lower(right)
+        })
+    }).map_or_else(||ModelId::from_source(value),|known|ModelId::from_scalar(known))
 }
-impl LithosWindows {
-    pub fn refuse(&mut self, rung: &str, now: i64, wait_ms: i64) {
-        if wait_ms > 0
-            && let Some(deadline) = now.checked_add(wait_ms)
-        {
-            let row = self
-                .deadlines
-                .entry(lithos_canonical(rung))
-                .or_insert(deadline);
-            *row = (*row).max(deadline);
-        }
-    }
-    pub fn select(&self, model: &str, now: i64) -> String {
-        let canonical = lithos_canonical(model);
-        let model = canonical.as_str();
-        std::iter::once(model.to_owned())
-            .chain(lithos_ladder(model))
-            .find(|r| self.deadlines.get(r).is_none_or(|d| *d <= now))
-            .unwrap_or_else(|| model.to_owned())
+impl LithosWindows{
+    pub fn refuse(&mut self,rung:&ModelId,now:i64,wait_ms:i64){if wait_ms>0&&let Some(deadline)=now.checked_add(wait_ms){let row=self.deadlines.entry(lithos_canonical(rung)).or_insert(deadline);*row=(*row).max(deadline);}}
+    pub fn select(&self,model:&ModelId,now:i64)->ModelId{
+        let canonical=lithos_canonical(model);
+        std::iter::once(canonical.clone()).chain(lithos_ladder(&canonical)).find(|rung|self.deadlines.get(rung).is_none_or(|deadline|*deadline<=now)).unwrap_or(canonical)
     }
 }
 #[derive(Clone, Copy, Debug)]
