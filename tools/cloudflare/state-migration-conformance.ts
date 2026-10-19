@@ -177,24 +177,86 @@ export function storeResponse(message: StoreMessage, raw: string): string {
   assert(Buffer.byteLength(result) < PRIVATE_WIRE_MAX_BYTES);
   return result;
 }
+// SourceJson may retain structural LF. Only a complete root object followed by
+// the existing LF separator is a frame; no payload byte is rewritten.
+class PrivateFrameBoundary {
+  private readonly _openings: number[] = [];
+  private _started = false;
+  private _quoted = false;
+  private _escaped = false;
+  private _complete = false;
+  terminates(byte: number): boolean {
+    return this._complete && byte === 10;
+  }
+  accept(byte: number): boolean {
+    if (this._complete) {
+      assert([32, 9, 13, 10].includes(byte), "Private frame has data after its root object.");
+      return byte === 10;
+    }
+    if (!this._started) {
+      if ([32, 9, 13].includes(byte)) return false;
+      assert.equal(byte, 123, "Private frame must contain one root JSON object.");
+      this._started = true;
+      this._openings.push(byte);
+      return false;
+    }
+    if (this._quoted) this._stringByte(byte);
+    else this._structuralByte(byte);
+    return false;
+  }
+  private _stringByte(byte: number): void {
+    if (this._escaped) this._escaped = false;
+    else if (byte === 92) this._escaped = true;
+    else if (byte === 34) this._quoted = false;
+  }
+  private _structuralByte(byte: number): void {
+    switch (byte) {
+      case 34:
+        this._quoted = true;
+        break;
+      case 123:
+      case 91:
+        this._openings.push(byte);
+        break;
+      case 125:
+      case 93:
+        assert.equal(this._openings.pop(), byte === 125 ? 123 : 91, "Private JSON delimiters differ.");
+        this._complete = this._openings.length === 0;
+        break;
+      default:
+        break;
+    }
+  }
+}
 export async function* privateLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = stream.getReader();
-  let pending = Buffer.alloc(0);
+  let segments: Uint8Array[] = [];
+  let bytes = 0;
+  let boundary = new PrivateFrameBoundary();
   try {
     for (;;) {
       const chunk = await reader.read();
       if (chunk.done) {
-        assert.equal(pending.length, 0, "Private fixture ended in a partial message.");
+        assert.equal(bytes, 0, "Private fixture ended in a partial message.");
         return;
       }
-      pending = Buffer.concat([pending, chunk.value]);
-      let end: number;
-      while ((end = pending.indexOf(10)) !== -1) {
-        assert(end + 1 <= PRIVATE_WIRE_MAX_BYTES, "Private fixture line exceeded its bound.");
-        yield new TextDecoder("utf-8", { fatal: true }).decode(pending.subarray(0, end));
-        pending = pending.subarray(end + 1);
+      let start = 0;
+      for (let at = 0; at < chunk.value.length; at++) {
+        const byte = chunk.value[at];
+        // Reserve the original separator byte, checking BEFORE any retained copy
+        // or concatenation; the cap applies to the entire object, not each LF.
+        assert(bytes < PRIVATE_WIRE_MAX_BYTES - 1 || boundary.terminates(byte), "Private fixture frame exceeded its bound.");
+        bytes++;
+        if (boundary.accept(byte)) {
+          const raw = Buffer.concat([...segments, chunk.value.subarray(start, at)], bytes - 1);
+          segments = [];
+          bytes = 0;
+          boundary = new PrivateFrameBoundary();
+          start = at + 1;
+          yield new TextDecoder("utf-8", { fatal: true }).decode(raw);
+        }
       }
-      assert(pending.length < PRIVATE_WIRE_MAX_BYTES, "Private fixture line exceeded its bound.");
+      if (start < chunk.value.length) segments.push(chunk.value.slice(start));
     }
   } finally {
     reader.releaseLock();

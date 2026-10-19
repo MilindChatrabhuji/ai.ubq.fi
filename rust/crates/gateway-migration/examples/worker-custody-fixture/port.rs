@@ -13,31 +13,97 @@ pub fn error(message: impl std::fmt::Display) -> GatewayError {
     GatewayError::unavailable(message.to_string(), "migration_fixture_port_invalid")
 }
 
+#[derive(Default)]
+struct FrameBoundary {
+    openings: Vec<u8>,
+    started: bool,
+    quoted: bool,
+    escaped: bool,
+    complete: bool,
+}
+impl FrameBoundary {
+    fn terminates(&self, byte: u8) -> bool {
+        self.complete && byte == b'\n'
+    }
+    fn accept(&mut self, byte: u8) -> Result<bool, GatewayError> {
+        if self.complete {
+            return if matches!(byte, b' ' | b'\t' | b'\r' | b'\n') {
+                Ok(byte == b'\n')
+            } else {
+                Err(error("Fixture message has data after its root object"))
+            };
+        }
+        if !self.started {
+            if matches!(byte, b' ' | b'\t' | b'\r') {
+                return Ok(false);
+            }
+            if byte != b'{' {
+                return Err(error("Fixture message must contain one root JSON object"));
+            }
+            self.started = true;
+            self.openings.push(byte);
+            return Ok(false);
+        }
+        if self.quoted {
+            if self.escaped {
+                self.escaped = false;
+            } else if byte == b'\\' {
+                self.escaped = true;
+            } else if byte == b'"' {
+                self.quoted = false;
+            }
+        } else {
+            match byte {
+                b'"' => self.quoted = true,
+                b'{' | b'[' => self.openings.push(byte),
+                b'}' | b']' => {
+                    let expected = if byte == b'}' { b'{' } else { b'[' };
+                    if self.openings.pop() != Some(expected) {
+                        return Err(error("Fixture JSON delimiters differ"));
+                    }
+                    self.complete = self.openings.is_empty();
+                }
+                _ => {}
+            }
+        }
+        Ok(false)
+    }
+}
 pub fn read<T: serde::de::DeserializeOwned>() -> Result<T, GatewayError> {
+    read_frame(&mut std::io::stdin().lock())
+}
+fn read_frame<T: serde::de::DeserializeOwned, R: BufRead>(
+    input: &mut R,
+) -> Result<T, GatewayError> {
     let mut bytes = Vec::new();
-    let stdin = std::io::stdin();
-    let mut input = stdin.lock();
+    let mut boundary = FrameBoundary::default();
     loop {
         let available = input.fill_buf().map_err(error)?;
         if available.is_empty() {
             return Err(error("Fixture controller closed its port"));
         }
-        let count = available
-            .iter()
-            .position(|b| *b == b'\n')
-            .map_or(available.len(), |n| n + 1);
-        if bytes.len().checked_add(count).is_none_or(|n| n > MAX_BYTES) {
-            return Err(error(
-                "Fixture controller message exceeded the private wire bound",
-            ));
+        let mut count = 0;
+        let mut complete = false;
+        for &byte in available {
+            // Count the WHOLE original frame, reserving its required separator,
+            // before allocating retained payload or lexical nesting state.
+            if bytes.len() >= MAX_BYTES - 1 && !boundary.terminates(byte) {
+                return Err(error(
+                    "Fixture controller message exceeded the private wire bound",
+                ));
+            }
+            complete = boundary.accept(byte)?;
+            bytes.push(byte);
+            count += 1;
+            if complete {
+                break;
+            }
         }
-        bytes.extend_from_slice(&available[..count]);
         input.consume(count);
-        if bytes.last() == Some(&b'\n') {
-            break;
+        if complete {
+            return serde_json::from_slice(&bytes).map_err(error);
         }
     }
-    serde_json::from_slice(&bytes).map_err(error)
 }
 
 pub fn write(value: &impl Serialize) -> Result<(), GatewayError> {
@@ -244,5 +310,105 @@ impl QueryStore for Store {
             entries: result,
             next_cursor,
         })
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+    use gateway_core::source_json::SourceJson;
+    use std::io::{BufReader, Cursor};
+    fn raw(bytes: &[u8], capacity: usize) -> Result<SourceJson, GatewayError> {
+        read_frame(&mut BufReader::with_capacity(capacity, Cursor::new(bytes)))
+    }
+    #[test]
+    fn actual_multiline_native_capture_retains_all_original_source_bytes() {
+        let capture = include_str!("../../tests/fixtures/native-source.json");
+        let document = format!("{{\"operation\":\"candidate\",\"capture\":{capture}}}");
+        let framed = format!("{document}\n");
+        for capacity in [1, 7, framed.len()] {
+            let value = raw(framed.as_bytes(), capacity).unwrap();
+            assert!(
+                value.as_str() == document,
+                "Raw SourceJson must not be normalized"
+            );
+            #[derive(Deserialize)]
+            struct Envelope {
+                operation: String,
+                capture: gateway_migration::NativeCapture,
+            }
+            let parsed: Envelope = value.deserialize().unwrap();
+            assert_eq!(parsed.operation, "candidate");
+            assert_eq!(parsed.capture.v, 2);
+        }
+    }
+    #[test]
+    fn strings_numbers_utf8_nested_and_two_coalesced_frames_keep_the_original_bytes() {
+        let document = r#" {"numbers":[1e3,-0,9007199254740993],
+"strings":["\ud800","\" \\ {} []","escaped\nnot-a-frame"],"α":{"array":[{},[]]}} "#;
+        let wire = format!("{document}\n{{\"second\":true}}\n");
+        let mut cursor = BufReader::with_capacity(1, Cursor::new(wire.as_bytes()));
+        let first: SourceJson = read_frame(&mut cursor).unwrap();
+        // SourceJson's existing typed decoder excludes only outer whitespace.
+        assert!(
+            first.as_str() == document.trim(),
+            "Original native string/number source tokens changed"
+        );
+        let second: SourceJson = read_frame(&mut cursor).unwrap();
+        assert_eq!(second.as_str(), "{\"second\":true}");
+    }
+    #[test]
+    fn malformed_partial_mismatched_trailing_and_non_utf8_messages_refuse() {
+        for bytes in [
+            b"{".as_slice(),
+            b"{}",
+            b"{\"x\":\"unfinished",
+            b"{\"x\":[}]}\n",
+            b"{}{}\n",
+            b"{}x\n",
+            b"\n",
+            b"[]\n",
+            b"{\"x\":}\n",
+            b"{\"x\":\"\\q\"}\n",
+            b"{\"s\":\"\xff\"}\n",
+        ] {
+            assert!(
+                raw(bytes, 1).is_err(),
+                "Malformed private frame must refuse"
+            );
+        }
+    }
+    #[test]
+    fn whole_frame_cap_counts_structural_newlines_before_retained_allocation() {
+        let mut bytes = vec![b' '; MAX_BYTES + 1];
+        bytes[0] = b'{';
+        for at in (1024..bytes.len()).step_by(1024) {
+            bytes[at] = b'\n';
+        }
+        let Err(error) = raw(&bytes, 4096) else {
+            panic!("Oversized cumulative native frame accepted")
+        };
+        assert!(
+            error
+                .envelope
+                .error
+                .message
+                .contains("exceeded the private wire bound")
+        );
+        let mut exact = vec![b' '; MAX_BYTES];
+        exact[MAX_BYTES - 3] = b'{';
+        exact[MAX_BYTES - 2] = b'}';
+        exact[MAX_BYTES - 1] = b'\n';
+        assert_eq!(raw(&exact, 4096).unwrap().as_str(), "{}");
+    }
+    #[test]
+    fn fixed_typed_store_response_ids_and_closed_schema_still_apply_after_multiline_framing() {
+        let incoming:Incoming=read_frame(&mut Cursor::new(b"{\n\"operation\":\"store_response\",\n\"id\":7,\"response\":{\"operation\":\"read\",\"record\":null}}\n")).unwrap();
+        assert_eq!(incoming.operation, "store_response");
+        assert_eq!(incoming.id, 7);
+        assert!(matches!(incoming.response, Response::Read { record: None }));
+        for bytes in [b"{\"operation\":\"store_response\",\"id\":7,\"response\":{\"operation\":\"sql\"}}\n".as_slice(),b"{\"operation\":\"store_response\",\"id\":7,\"id\":7,\"response\":{\"operation\":\"read\",\"record\":null}}\n"]{
+            assert!(read_frame::<Incoming,_>(&mut Cursor::new(bytes)).is_err());
+        }
     }
 }
