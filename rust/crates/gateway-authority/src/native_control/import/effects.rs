@@ -1,0 +1,314 @@
+//! The import uses the original operation/generation rows, not a second effect ledger.
+use super::super::rows::{GenerationEffect, OperationRow, Phase};
+use super::*;
+use crate::store::Transaction;
+use gateway_auth::crypto::sha256_hex;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeImportBinding {
+    pub action_ref: String,
+    pub operation_id: String,
+    pub claim_ref: String,
+    pub native_owner_id: String,
+    pub account_id_hash: String,
+    pub source_native_generation: String,
+    pub owner_revision: String,
+    pub source_revision: String,
+    pub normalized_revision: String,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeImportMode {
+    ImportOnce,
+    ReconcileOnly,
+}
+pub struct NativeImportClaim {
+    binding: NativeImportBinding,
+    row: ImportActionRow,
+    permit: Option<String>,
+    mode: NativeImportMode,
+    publication_revision: Option<String>,
+}
+impl NativeImportClaim {
+    pub fn binding(&self) -> &NativeImportBinding {
+        &self.binding
+    }
+    pub fn mode(&self) -> NativeImportMode {
+        self.mode
+    }
+    pub fn publication_revision(&self) -> Option<&str> {
+        self.publication_revision.as_deref()
+    }
+}
+/// Consumed by the fixed native importer, never deserialized from caller data.
+/// ```compile_fail
+/// use gateway_authority::native_control::import::NativeImportStart;
+/// let forged: NativeImportStart<'_> = serde_json::from_str("{}").unwrap();
+/// ```
+pub struct NativeImportStart<'a> {
+    proof: &'a AuthenticatedNativeImport,
+    binding: NativeImportBinding,
+}
+impl NativeImportStart<'_> {
+    pub fn binding(&self) -> &NativeImportBinding {
+        &self.binding
+    }
+    pub fn require_body(&self, body: &[u8], now: i64) -> Result<(), GatewayError> {
+        self.proof.require_body(body, now)
+    }
+}
+pub(super) fn generation_key(
+    row: &ImportActionRow,
+) -> Result<gateway_core::state::RecordKey, GatewayError> {
+    Ok(rows::key(
+        "generation",
+        &super::super::facts::digest(&(
+            "uos-native-renewal-generation-v1",
+            &row.facts.native_owner_id,
+            &row.facts.account_id_hash,
+            &row.facts.source_native_generation,
+        ))?,
+    ))
+}
+fn binding(row: &ImportActionRow, claim_ref: String) -> NativeImportBinding {
+    NativeImportBinding {
+        action_ref: row.metadata.action_ref.clone(),
+        operation_id: row.metadata.operation_id.clone(),
+        claim_ref,
+        native_owner_id: row.facts.native_owner_id.clone(),
+        account_id_hash: row.facts.account_id_hash.clone(),
+        source_native_generation: row.facts.source_native_generation.clone(),
+        owner_revision: row.facts.owner_revision.clone(),
+        source_revision: row.facts.source_revision.clone(),
+        normalized_revision: row.facts.normalized_revision.clone(),
+    }
+}
+impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
+    NativeRenewalAuthority<'_, S, I, C>
+{
+    pub(super) async fn current_import_row(
+        &self,
+        tx: &mut Transaction<'_, S, I>,
+        row: &ImportActionRow,
+    ) -> Result<(), GatewayError> {
+        tx.now = self.time(row.created_at_ms)?;
+        if row.v != 2
+            || row.kind != NativeImportKind::CodexAuth
+            || row.kind != row.target.kind()
+            || row.deadline_ms != crate::add(row.created_at_ms, OWNER_RENEWAL_MAX_MS)?
+        {
+            return Err(unavailable());
+        }
+        let current = sources::read(self, tx, &row.actor, &row.target).await?;
+        if current != row.facts {
+            return Err(unavailable());
+        }
+        tx.now = self.time(tx.now)?;
+        actor::validate_current_time(&row.actor, tx.now)?;
+        if tx.now >= row.deadline_ms {
+            return Err(unavailable());
+        }
+        Ok(())
+    }
+    async fn import_operation(
+        &self,
+        tx: &mut Transaction<'_, S, I>,
+        claim: &NativeImportClaim,
+    ) -> Result<(ImportActionRow, OperationRow), GatewayError> {
+        let row: ImportActionRow = tx
+            .read_source_control(&rows::key("action", &claim.binding.action_ref))
+            .await?
+            .ok_or_else(unavailable)?;
+        let op: OperationRow = tx
+            .read(&rows::key("operation", &claim.binding.operation_id))
+            .await?
+            .ok_or_else(unavailable)?;
+        if row.v != 2
+            || row.metadata != claim.row.metadata
+            || row.facts != claim.row.facts
+            || row.actor != claim.row.actor
+            || row.context != claim.row.context
+            || row.target != claim.row.target
+            || row.created_at_ms != claim.row.created_at_ms
+            || row.deadline_ms != claim.row.deadline_ms
+            || op.v != 1
+            || op.operation_id != claim.binding.operation_id
+            || op.action_ref != claim.binding.action_ref
+            || op.claim_ref != claim.binding.claim_ref
+        {
+            return Err(unavailable());
+        }
+        Ok((row, op))
+    }
+    pub async fn claim_import(
+        &self,
+        proof: &AuthenticatedNativeImport,
+    ) -> Result<NativeImportClaim, GatewayError> {
+        self.recheck_import(proof).await?;
+        let row = &proof.row;
+        let request_digest = super::super::facts::digest(&(
+            "uos-native-import-effect-v2",
+            &row.metadata,
+            &row.target,
+            &row.facts,
+            &row.context,
+            row.created_at_ms,
+            row.deadline_ms,
+        ))?;
+        for _ in 0..5 {
+            let mut tx = self.authority.transaction(self.time(0)?)?;
+            let current: ImportActionRow = tx
+                .read_source_control(&rows::key("action", &row.metadata.action_ref))
+                .await?
+                .ok_or_else(unavailable)?;
+            if serde_json::to_vec(&current).map_err(|_| unavailable())?
+                != serde_json::to_vec(row).map_err(|_| unavailable())?
+            {
+                return Err(unavailable());
+            }
+            self.current_import_row(&mut tx, row).await?;
+            let key = rows::key("operation", &row.metadata.operation_id);
+            let prior: Option<OperationRow> = tx.read(&key).await?;
+            let generation_key = generation_key(row)?;
+            let generation: Option<GenerationEffect> = tx.read(&generation_key).await?;
+            if generation.as_ref().is_some_and(|g| g.v != 1) {
+                return Err(unavailable());
+            }
+            let (op, permit, mode) = if let Some(op) = prior {
+                if op.v != 1
+                    || op.action_ref != row.metadata.action_ref
+                    || op.operation_id != row.metadata.operation_id
+                    || op.request_digest != request_digest
+                    || generation.is_none()
+                {
+                    return Err(unavailable());
+                }
+                (op, None, NativeImportMode::ReconcileOnly)
+            } else {
+                let permit = self.authority.tokens.next_token()?;
+                crate::text(&permit)?;
+                let fresh = generation.is_none();
+                let op = OperationRow {
+                    v: 1,
+                    action_ref: row.metadata.action_ref.clone(),
+                    operation_id: row.metadata.operation_id.clone(),
+                    request_digest: request_digest.clone(),
+                    claim_ref: self.authority.tokens.next_token()?,
+                    start_digest: sha256_hex(permit.as_bytes()),
+                    phase: if fresh {
+                        Phase::Claimed
+                    } else {
+                        Phase::Unknown
+                    },
+                    publication_revision: None,
+                    native_source_generation: None,
+                    access_generation: None,
+                    terminal: None,
+                };
+                tx.put(&key, &op, None)?;
+                if fresh {
+                    tx.put(
+                        &generation_key,
+                        &GenerationEffect {
+                            v: 1,
+                            operation_id: op.operation_id.clone(),
+                            claim_ref: op.claim_ref.clone(),
+                            publication_revision: None,
+                            terminal: None,
+                        },
+                        None,
+                    )?;
+                }
+                (
+                    op,
+                    fresh.then_some(permit),
+                    if fresh {
+                        NativeImportMode::ImportOnce
+                    } else {
+                        NativeImportMode::ReconcileOnly
+                    },
+                )
+            };
+            self.current_import_row(&mut tx, row).await?;
+            if tx.commit().await? {
+                return Ok(NativeImportClaim {
+                    binding: binding(row, op.claim_ref),
+                    row: row.clone(),
+                    permit,
+                    mode,
+                    publication_revision: op.publication_revision,
+                });
+            }
+        }
+        Err(unavailable())
+    }
+    pub async fn start_import<'a>(
+        &self,
+        claim: &mut NativeImportClaim,
+        proof: &'a AuthenticatedNativeImport,
+    ) -> Result<Option<NativeImportStart<'a>>, GatewayError> {
+        let fresh = claim.mode == NativeImportMode::ImportOnce;
+        claim.mode = NativeImportMode::ReconcileOnly;
+        let permit = claim.permit.take();
+        proof.body.require_owner(self.identity, self.time(0)?)?;
+        if proof.metadata() != &claim.row.metadata {
+            return Err(unavailable());
+        }
+        for _ in 0..5 {
+            let mut tx = self.authority.transaction(self.time(0)?)?;
+            let (row, mut op) = self.import_operation(&mut tx, claim).await?;
+            self.current_import_row(&mut tx, &row).await?;
+            let generation: GenerationEffect = tx
+                .read(&generation_key(&row)?)
+                .await?
+                .ok_or_else(unavailable)?;
+            if !fresh
+                || op.phase != Phase::Claimed
+                || generation.v != 1
+                || generation.operation_id != op.operation_id
+                || generation.claim_ref != op.claim_ref
+                || permit
+                    .as_ref()
+                    .is_none_or(|p| sha256_hex(p.as_bytes()) != op.start_digest)
+            {
+                return Ok(None);
+            }
+            op.phase = Phase::Started;
+            tx.put(&rows::key("operation", &op.operation_id), &op, None)?;
+            self.current_import_row(&mut tx, &row).await?;
+            if tx.commit().await? {
+                return Ok(Some(NativeImportStart {
+                    proof,
+                    binding: claim.binding.clone(),
+                }));
+            }
+        }
+        Err(unavailable())
+    }
+    pub async fn recheck_import_claim(
+        &self,
+        claim: &NativeImportClaim,
+    ) -> Result<(), GatewayError> {
+        let mut tx = self.authority.transaction(self.time(0)?)?;
+        let (row, _) = self.import_operation(&mut tx, claim).await?;
+        self.current_import_row(&mut tx, &row).await?;
+        if !tx.commit().await? {
+            return Err(unavailable());
+        }
+        Ok(())
+    }
+    pub async fn unknown_import(&self, claim: &NativeImportClaim) -> Result<(), GatewayError> {
+        for _ in 0..5 {
+            let mut tx = self.authority.transaction(self.authority.fresh_time(0)?)?;
+            let (_, mut op) = self.import_operation(&mut tx, claim).await?;
+            if op.phase == Phase::Published {
+                return Ok(());
+            }
+            op.phase = Phase::Unknown;
+            tx.put(&rows::key("operation", &op.operation_id), &op, None)?;
+            if tx.commit().await? {
+                return Ok(());
+            }
+        }
+        Err(unavailable())
+    }
+}
