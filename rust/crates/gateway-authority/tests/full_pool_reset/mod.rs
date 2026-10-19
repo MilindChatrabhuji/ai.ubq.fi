@@ -61,7 +61,7 @@ fn setup(
     let second = admitted(&authority);
     run(authority.record_quota_block(&second, block(), NOW)).unwrap();
     let RouteSelection::QuotaBlocked { proof, .. } =
-        run(authority.select_account("gpt-test", CodexQuotaClass::Standard, NOW)).unwrap()
+        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap()
     else {
         panic!("actual exhausted cohort required")
     };

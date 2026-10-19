@@ -2,7 +2,6 @@
 use crate::{reasoning::advertised_effort, util::*};
 use gateway_core::{js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MetadataHint {
     pub context_window_tokens: Option<i64>,
@@ -13,27 +12,29 @@ pub struct MetadataHint {
     pub default_reasoning_effort: Option<JsString16>,
 }
 impl MetadataHint {
-    pub fn codex(record: &Value) -> Self {
+    pub fn codex(record: &SourceJson) -> Self {
+        use crate::model_control as c;
         Self {
-            context_window_tokens: positive_integer(record.get("context_window")),
-            max_context_window_tokens: positive_integer(record.get("max_context_window")),
-            auto_compact_token_limit_tokens: positive_integer(
-                record.get("auto_compact_token_limit"),
+            context_window_tokens: c::positive(c::get(record, "context_window").as_ref()),
+            max_context_window_tokens: c::positive(c::get(record, "max_context_window").as_ref()),
+            auto_compact_token_limit_tokens: c::positive(
+                c::get(record, "auto_compact_token_limit").as_ref(),
             ),
-            effective_context_window_percent: positive_integer(
-                record.get("effective_context_window_percent"),
+            effective_context_window_percent: c::positive(
+                c::get(record, "effective_context_window_percent").as_ref(),
             ),
-            supported_reasoning_levels: record
-                .get("supported_reasoning_levels")
-                .and_then(Value::as_array)
-                .cloned(),
-            default_reasoning_effort: record.get("default_reasoning_level").and_then(|v| {
-                if v.is_null() {
-                    Some("none".into())
-                } else {
-                    normalized_string(Some(v))
-                }
-            }),
+            supported_reasoning_levels: c::get(record, "supported_reasoning_levels")
+                .as_ref()
+                .and_then(c::array),
+            default_reasoning_effort: c::get(record, "default_reasoning_level").as_ref().and_then(
+                |v| {
+                    if v.as_str() == "null" {
+                        Some("none".into())
+                    } else {
+                        c::normalized(Some(v))
+                    }
+                },
+            ),
         }
     }
     pub fn subscription() -> Self {
@@ -47,22 +48,31 @@ impl MetadataHint {
         Self {
             context_window_tokens: Some(window),
             max_context_window_tokens: Some(window),
-            supported_reasoning_levels: Some(levels.iter().map(|s| json!(s)).collect()),
+            supported_reasoning_levels: Some(
+                levels.iter().map(crate::model_control::json).collect(),
+            ),
             default_reasoning_effort: Some(default.into()),
             ..Self::default()
         }
     }
-    pub fn from_openrouter(record: &Value) -> Self {
+    pub fn from_openrouter(record: &SourceJson) -> Self {
+        use crate::model_control as c;
+        let reasoning = c::get(record, "reasoning");
         Self {
-            context_window_tokens: positive_integer(record.get("context_window_tokens")),
-            max_context_window_tokens: positive_integer(record.get("max_context_window_tokens")),
-            supported_reasoning_levels: record
-                .pointer("/reasoning/supported_efforts")
-                .and_then(Value::as_array)
-                .cloned(),
-            default_reasoning_effort: normalized_string(
-                record.pointer("/reasoning/default_effort"),
+            context_window_tokens: c::positive(c::get(record, "context_window_tokens").as_ref()),
+            max_context_window_tokens: c::positive(
+                c::get(record, "max_context_window_tokens").as_ref(),
             ),
+            supported_reasoning_levels: reasoning
+                .as_ref()
+                .and_then(|r| c::get(r, "supported_efforts"))
+                .as_ref()
+                .and_then(c::array),
+            default_reasoning_effort: reasoning
+                .as_ref()
+                .and_then(|r| c::get(r, "default_effort"))
+                .as_ref()
+                .and_then(|v| c::normalized(Some(v))),
             ..Self::default()
         }
     }
@@ -150,11 +160,11 @@ pub fn resolve_metadata(sources: &MetadataSources) -> ResolvedMetadata {
         let mut list = Vec::new();
         if let Some(raw) = &hint.supported_reasoning_levels {
             for effort in raw.iter().filter_map(advertised_effort) {
-                push_unique(&mut list, effort);
+                crate::model_control::push_unique(&mut list, effort);
             }
         }
         if let Some(effort) = &hint.default_reasoning_effort {
-            push_unique(&mut list, effort.clone());
+            crate::model_control::push_unique(&mut list, effort.clone());
         }
         if !list.is_empty() {
             levels = Some(list);
@@ -196,11 +206,15 @@ pub fn resolve_metadata(sources: &MetadataSources) -> ResolvedMetadata {
         reasoning_source: reasoning_source.into(),
     }
 }
-pub fn ascending_external_levels(levels: &[String]) -> Vec<String> {
+pub fn ascending_external_levels(levels: &[JsString16]) -> Vec<JsString16> {
     let order = [
         "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
     ];
-    let rank = |effort: &String| order.iter().position(|s| *s == effort.as_str());
+    let rank = |effort: &JsString16| {
+        order
+            .iter()
+            .position(|s| crate::model_control::matches(effort, s))
+    };
     let mut standard: Vec<_> = levels
         .iter()
         .filter(|e| rank(e).is_some())

@@ -31,17 +31,22 @@ pub fn inspect_api_usage(
             || v["policy_version"] != p[5]
             || v["window_start_ms"] != p[6]
         {
-            a.errors.push(format!(
-                "API key usage V3 window is malformed: {}",
-                reference(p)
-            ));
+            a.errors.push(
+                format!("API key usage V3 window is malformed: {}", reference(p))
+                    .as_str()
+                    .into(),
+            );
             continue;
         }
         if !known.contains(p[4].as_str().unwrap_or("")) {
-            a.errors.push(format!(
-                "API key usage V3 window is orphaned: {}",
-                p[4].as_str().unwrap_or("")
-            ));
+            a.errors.push(
+                format!(
+                    "API key usage V3 window is orphaned: {}",
+                    p[4].as_str().unwrap_or("")
+                )
+                .as_str()
+                .into(),
+            );
         }
         windows.insert(reference(&p[4..]), v);
     }
@@ -61,18 +66,21 @@ pub fn inspect_api_usage(
             || v["key_id"] != p[4]
             || v["request_id"] != p[7]
         {
-            a.errors.push(format!(
-                "API key usage V3 request is malformed: {}",
-                reference(p)
-            ));
+            a.errors.push(
+                format!("API key usage V3 request is malformed: {}", reference(p))
+                    .as_str()
+                    .into(),
+            );
             continue;
         }
         let id = p[4].as_str().unwrap_or("");
         let request = p[7].as_str().unwrap_or("");
         if !known.contains(id) {
-            a.errors.push(format!(
-                "API key usage V3 request is orphaned: {id}/{request}"
-            ));
+            a.errors.push(
+                format!("API key usage V3 request is orphaned: {id}/{request}")
+                    .as_str()
+                    .into(),
+            );
         }
         let r = reference(&p[4..7]);
         requests.insert(r.clone());
@@ -82,15 +90,20 @@ pub fn inspect_api_usage(
     }
     for (r, w) in &windows {
         if integer(w, "reserved_requests") != Some(*reserved.get(r).unwrap_or(&0)) {
-            a.errors.push(format!(
-                "API key usage V3 reserved aggregate is inconsistent: {r}"
-            ));
+            a.errors.push(
+                format!("API key usage V3 reserved aggregate is inconsistent: {r}")
+                    .as_str()
+                    .into(),
+            );
         }
     }
     for r in requests {
         if !windows.contains_key(&r) {
-            a.errors
-                .push(format!("API key usage V3 request has no window: {r}"));
+            a.errors.push(
+                format!("API key usage V3 request has no window: {r}")
+                    .as_str()
+                    .into(),
+            );
         }
     }
     Ok(a)
@@ -113,18 +126,20 @@ pub fn inspect_kernel(rows: &[ObservedRow]) -> Result<Audit, GatewayError> {
                 let p = &row.parts;
                 let value = row.value()?;
                 let Some((_, owner, repo)) = kernel::identity(p, kind) else {
-                    a.errors.push(format!(
-                        "kernel quota V2 {kind} is malformed: {}",
-                        reference(p)
-                    ));
+                    a.errors.push(
+                        format!("kernel quota V2 {kind} is malformed: {}", reference(p))
+                            .as_str()
+                            .into(),
+                    );
                     continue;
                 };
                 if kind == "policy" {
                     if !valid_kernel_policy(value, scope, &owner, repo.as_deref()) {
-                        a.errors.push(format!(
-                            "kernel quota V2 policy is malformed: {}",
-                            reference(p)
-                        ));
+                        a.errors.push(
+                            format!("kernel quota V2 policy is malformed: {}", reference(p))
+                                .as_str()
+                                .into(),
+                        );
                     }
                     continue;
                 }
@@ -136,10 +151,11 @@ pub fn inspect_kernel(rows: &[ObservedRow]) -> Result<Audit, GatewayError> {
                     let Some(window) =
                         kernel::normalize_window(value, scope, &owner, repo.as_deref())
                     else {
-                        a.errors.push(format!(
-                            "kernel quota V2 window is malformed: {}",
-                            reference(p)
-                        ));
+                        a.errors.push(
+                            format!("kernel quota V2 window is malformed: {}", reference(p))
+                                .as_str()
+                                .into(),
+                        );
                         continue;
                     };
                     reference_parts.push(window["created_at_ms"].clone());
@@ -162,10 +178,11 @@ pub fn inspect_kernel(rows: &[ObservedRow]) -> Result<Audit, GatewayError> {
                         v["window_created_at_ms"] != p[offset] || v["request_id"] != p[offset + 1]
                     })
                 {
-                    a.errors.push(format!(
-                        "kernel quota V2 reservation is malformed: {}",
-                        reference(p)
-                    ));
+                    a.errors.push(
+                        format!("kernel quota V2 reservation is malformed: {}", reference(p))
+                            .as_str()
+                            .into(),
+                    );
                     continue;
                 }
                 let reservation = reservation.unwrap_or(Value::Null);
@@ -173,9 +190,11 @@ pub fn inspect_kernel(rows: &[ObservedRow]) -> Result<Audit, GatewayError> {
                 let r = reference(&reference_parts);
                 let reset = reservation["window_reset_at_ms"].clone();
                 if resets.get(&r).is_some_and(|known| *known != reset) {
-                    a.errors.push(format!(
-                        "kernel quota V2 reservation window identity is inconsistent: {r}"
-                    ));
+                    a.errors.push(
+                        format!("kernel quota V2 reservation window identity is inconsistent: {r}")
+                            .as_str()
+                            .into(),
+                    );
                 } else {
                     resets.insert(r.clone(), reset);
                 }
@@ -190,23 +209,29 @@ pub fn inspect_kernel(rows: &[ObservedRow]) -> Result<Audit, GatewayError> {
             .get(r)
             .is_some_and(|reset| *reset != window["usage_reset_at_ms"])
         {
-            a.errors.push(format!(
-                "kernel quota V2 reservation window reset is inconsistent: {r}"
-            ));
+            a.errors.push(
+                format!("kernel quota V2 reservation window reset is inconsistent: {r}")
+                    .as_str()
+                    .into(),
+            );
         }
         if *has_aggregate
             && integer(window, "reserved_requests") != Some(*reserved.get(r).unwrap_or(&0))
         {
-            a.errors.push(format!(
-                "kernel quota V2 reserved aggregate is inconsistent: {r}"
-            ));
+            a.errors.push(
+                format!("kernel quota V2 reserved aggregate is inconsistent: {r}")
+                    .as_str()
+                    .into(),
+            );
         }
     }
     for r in reserved.keys() {
         if !windows.contains_key(r) {
-            a.errors.push(format!(
-                "kernel quota V2 active reservation has no window: {r}"
-            ));
+            a.errors.push(
+                format!("kernel quota V2 active reservation has no window: {r}")
+                    .as_str()
+                    .into(),
+            );
         }
     }
     Ok(a)

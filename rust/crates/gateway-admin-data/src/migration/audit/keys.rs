@@ -105,17 +105,20 @@ pub fn inspect_key_pairs(
         let p = &row.parts;
         let value = decode_source_control_record(&row.record)?;
         if p.len() != 4 || !hash(p.get(3)) {
-            audit.errors.push(format!(
-                "api key hash entry has an invalid key: {}",
-                reference(p)
-            ));
+            audit.errors.push(
+                format!("api key hash entry has an invalid key: {}", reference(p))
+                    .as_str()
+                    .into(),
+            );
             continue;
         }
         let hash = p[3].as_str().unwrap_or("");
         if !valid_source_key_policy(&value, false) {
-            audit.errors.push(format!(
-                "api key hash policy has invalid core fields: {hash}"
-            ));
+            audit.errors.push(
+                format!("api key hash policy has invalid core fields: {hash}")
+                    .as_str()
+                    .into(),
+            );
             continue;
         }
         hashes.insert(hash.to_owned(), value.clone());
@@ -128,24 +131,31 @@ pub fn inspect_key_pairs(
         let p = &row.parts;
         let v = decode_source_control_record(&row.record)?;
         if p.len() != 4 || !api_id(p.get(3)) {
-            audit.errors.push(format!(
-                "api key id entry has an invalid key: {}",
-                reference(p)
-            ));
+            audit.errors.push(
+                format!("api key id entry has an invalid key: {}", reference(p))
+                    .as_str()
+                    .into(),
+            );
             continue;
         }
         let id = p[3].as_str().unwrap_or("");
         if !valid_source_key_policy(&v, true) {
-            audit
-                .errors
-                .push(format!("api key has invalid v2 policy: {id}"));
+            audit.errors.push(
+                format!("api key has invalid v2 policy: {id}")
+                    .as_str()
+                    .into(),
+            );
             continue;
         }
         if source::text(&v, "id").as_deref() != Some(id) {
-            audit.errors.push(format!(
-                "api key id key suffix does not match record id: key={id} record={}",
-                source::text(&v, "id").unwrap_or_default()
-            ));
+            audit.errors.push(
+                format!(
+                    "api key id key suffix does not match record id: key={id} record={}",
+                    source::text(&v, "id").unwrap_or_default()
+                )
+                .as_str()
+                .into(),
+            );
             continue;
         }
         let hash = source::text(&v, "hash").unwrap_or_default();
@@ -166,9 +176,11 @@ pub fn inspect_key_pairs(
             "paid_fallback_reservation_request_id",
         ];
         if paired.is_none_or(|h| fields.iter().any(|f| !source::same(&v, h, f))) {
-            audit.errors.push(format!(
-                "api key hash policy is missing or inconsistent: {id}"
-            ));
+            audit.errors.push(
+                format!("api key hash policy is missing or inconsistent: {id}")
+                    .as_str()
+                    .into(),
+            );
             continue;
         }
         *refs.entry(hash.to_owned()).or_default() += 1;
@@ -181,12 +193,16 @@ pub fn inspect_key_pairs(
     }
     for hash in hashes.keys() {
         match refs.get(hash).copied().unwrap_or(0) {
-            0 => audit
-                .errors
-                .push(format!("api key hash policy is orphaned: {hash}")),
-            n if n > 1 => audit.errors.push(format!(
-                "api key hash policy has multiple id records: {hash}"
-            )),
+            0 => audit.errors.push(
+                format!("api key hash policy is orphaned: {hash}")
+                    .as_str()
+                    .into(),
+            ),
+            n if n > 1 => audit.errors.push(
+                format!("api key hash policy has multiple id records: {hash}")
+                    .as_str()
+                    .into(),
+            ),
             _ => {}
         }
     }
@@ -195,7 +211,9 @@ pub fn inspect_key_pairs(
     if ids != hash_count {
         audit.errors.insert(
             0,
-            format!("api key id/hash count mismatch: ids={ids} hashes={hash_count}"),
+            format!("api key id/hash count mismatch: ids={ids} hashes={hash_count}")
+                .as_str()
+                .into(),
         );
     }
     for row in rows.iter().filter(|r| {

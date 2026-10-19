@@ -36,6 +36,41 @@ pub(crate) async fn source_rows<S: QueryStore>(
             if private_source_key(&parts) || starts(&parts, &["uos_ai", "native_live"]) {
                 continue;
             }
+            // Only these existing identity source controls have named source
+            // readers in this unit. Preserve their complete physical record;
+            // never turn a non-scalar model/effort into logical null.
+            if identity_source_control(&parts) {
+                gateway_core::source_control::decode_source_control_record(&entry.record)?;
+                rows.push(ObservedRow {
+                    key: entry.key,
+                    parts,
+                    record: entry.record,
+                });
+                continue;
+            }
+            if starts(&parts, &["uos_ai", "paid_fallback", "v3", "request"]) {
+                // Validation already retained malformed profile rows as source
+                // data, rather than live paid authority. Keep that report-only
+                // behavior, but never make its model/effort a Value transcript.
+                let document = match crate::paid_controls::inverse(&entry.key, &entry.record, None)
+                {
+                    Ok(value) => value.to_source_json()?,
+                    Err(_) => {
+                        gateway_core::source_control::decode_source_control_record(&entry.record)?
+                    }
+                };
+                let record = gateway_core::source_control::encode_source_control_record(
+                    &entry.record.revision,
+                    &document,
+                    entry.record.expires_at_ms,
+                )?;
+                rows.push(ObservedRow {
+                    key: entry.key,
+                    parts,
+                    record,
+                });
+                continue;
+            }
             let value = if entry.record.value_encoding
                 == gateway_core::value::ValueEncoding::SourceGraphV1
             {
@@ -45,8 +80,9 @@ pub(crate) async fn source_rows<S: QueryStore>(
                     .try_identity_free_tree()?
                     .unwrap_or(PortableValue::Null)
             } else {
-                crate::inverse::inverse_value(
+                crate::inverse::inverse_value_for_key(
                     crate::inverse::transform_for_new(&parts),
+                    &entry.key,
                     &entry.record,
                     None,
                 )
@@ -146,9 +182,30 @@ pub(crate) async fn validate<S: QueryStore>(
     };
     let mut settings = BTreeMap::new();
     for (name, key) in SETTINGS {
-        settings.insert(*name, get(json!(key))?.is_some_and(|v| !v.is_null()));
+        let parts = json!(key).as_array().unwrap().clone();
+        let present = if identity_source_control(&parts) {
+            rows.iter()
+                .find(|row| row.parts == parts)
+                .map(|row| gateway_core::source_control::decode_source_control_record(&row.record))
+                .transpose()?
+                .is_some_and(|value| value.as_str() != "null")
+        } else {
+            get(json!(key))?.is_some_and(|value| !value.is_null())
+        };
+        settings.insert(*name, present);
     }
-    let config = get(json!(["uos_ai", "runtime_config", "v2"]))?
+    let config = rows
+        .iter()
+        .find(|row| {
+            row.parts
+                == json!(["uos_ai", "runtime_config", "v2"])
+                    .as_array()
+                    .unwrap()
+                    .as_slice()
+        })
+        .map(|row| gateway_core::source_control::decode_source_control_record(&row.record))
+        .transpose()?
+        .as_ref()
         .and_then(gateway_schema::runtime_config::normalize_runtime_config);
     settings.insert("runtime_config_v2", config.is_some());
     if config.is_none() {
@@ -156,10 +213,32 @@ pub(crate) async fn validate<S: QueryStore>(
             .errors
             .push("runtime config v2 is missing or invalid".into());
     }
-    Ok(AuthResponse::json(
+    #[derive(serde::Serialize)]
+    struct Report<'a> {
+        counts: &'a BTreeMap<&'static str, usize>,
+        errors: &'a [gateway_core::js_string::JsString16],
+        settings_present: &'a BTreeMap<&'static str, bool>,
+    }
+    Ok(AuthResponse::source_json(
         200,
-        json!({"counts":counts,"settings_present":settings,"errors":audited.errors}),
+        SourceJson::from_serializable(&Report {
+            counts: &counts,
+            errors: &audited.errors,
+            settings_present: &settings,
+        })?,
     ))
+}
+
+fn identity_source_control(parts: &[Value]) -> bool {
+    crate::source_metadata::named_key(parts)
+        || (parts.len() == 2
+            && (starts(parts, &["ubq_ai", "codex_models"])
+                || (parts[0] == "default"
+                    && matches!(parts[1].as_str(), Some("model" | "reasoning_effort")))))
+        || (parts.len() == 3 && starts(parts, &["uos_ai", "runtime_config", "v2"]))
+        || (parts.len() == 4
+            && starts(parts, &["ubq_ai", "api_keys"])
+            && matches!(parts[2].as_str(), Some("id" | "hash")))
 }
 
 const COUNTS: &[(&str, &[&str])] = &[

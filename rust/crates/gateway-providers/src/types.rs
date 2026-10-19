@@ -1,5 +1,5 @@
 use gateway_core::{
-    js_string::JsString16, provider::UpstreamProvider, model::ModelId, source_json::SourceJson,
+    js_string::JsString16, model::ModelId, provider::UpstreamProvider, source_json::SourceJson,
     source_serialization,
 };
 use serde::{Deserialize, Serialize};

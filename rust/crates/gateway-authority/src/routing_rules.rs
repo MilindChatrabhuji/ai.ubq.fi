@@ -5,7 +5,7 @@ use crate::{
     next_generation,
     routing::{CapacityObservation, QuotaBlock, RoutingSlot, RoutingState, class_name},
 };
-use gateway_core::{GatewayError, provider::CodexQuotaClass};
+use gateway_core::{GatewayError, model::ModelId, provider::CodexQuotaClass};
 use std::collections::BTreeMap;
 
 impl RoutingSlot {
@@ -264,7 +264,7 @@ pub fn apply_capacity_observation(
     state: &RoutingState,
     row: &CapacityObservation,
     now: i64,
-    model: Option<&str>,
+    model: Option<&ModelId>,
     updated_at_ms: i64,
 ) -> Result<Option<RoutingState>, GatewayError> {
     if row.snapshot_at_ms > now {

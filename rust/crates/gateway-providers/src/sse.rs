@@ -285,8 +285,12 @@ impl StreamDecoder {
                 }
                 ResponseDecode::Chat => {
                     validate_chat_chunk(&value)?;
-                    let mut body=crate::source::generated(&value);
-                    crate::source::set(&mut body,"model",crate::source::quoted(self.plan.model.as_js_string()));
+                    let mut body = crate::source::generated(&value);
+                    crate::source::set(
+                        &mut body,
+                        "model",
+                        crate::source::quoted(self.plan.model.as_js_string()),
+                    );
                     events.push(ProviderEvent::chat_source(body));
                 }
                 ResponseDecode::AnthropicToResponses => {

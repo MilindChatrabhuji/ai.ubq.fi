@@ -4,8 +4,9 @@ use crate::store::Transaction;
 use crate::{TokenSource, invalid, keys, unavailable};
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
 use gateway_core::{GatewayError, model::ModelId, source_json::SourceJson, state::AuthorityStore};
+use gateway_core::{js_string::JsString16, source_serialization as source};
 use gateway_schema::selection::AccountModelsStore;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub(crate) struct SourceModels {
@@ -50,9 +51,11 @@ pub(crate) async fn load<S: AuthorityStore, I: TokenSource>(
         ids.insert(normalized.account_id_hash.0.clone(), raw.account_id.clone());
     }
     let raw = tx
-        .read::<Value>(&keys::models())
+        .read_source_control::<SourceJson>(&keys::models())
         .await?
-        .unwrap_or_else(|| json!({"accounts":{},"unsupported":{}}));
+        .unwrap_or_else(|| {
+            SourceJson::parse("{\"accounts\":{},\"unsupported\":{}}").expect("fixed source record")
+        });
     let source = AccountModelsStore::parse(&raw).unwrap_or_default();
     let mut models = ModelAvailability::default();
     for (hash, id) in &ids {
@@ -66,9 +69,21 @@ pub(crate) async fn load<S: AuthorityStore, I: TokenSource>(
             );
         }
         if let Some(unsupported) = source.unsupported.get(id) {
-            models.unsupported.insert(hash.clone(),unsupported.iter().map(|(model,at)|(model.clone(),UnsupportedModel{
-                observed_at_ms:*at,detail:format!("The '{model}' model is not supported when using Codex with a ChatGPT account."),
-            })).collect());
+            models.unsupported.insert(
+                hash.clone(),
+                unsupported
+                    .iter()
+                    .map(|(model, at)| {
+                        (
+                            model.clone(),
+                            UnsupportedModel {
+                                observed_at_ms: *at,
+                                detail: unsupported_detail(model),
+                            },
+                        )
+                    })
+                    .collect(),
+            );
         }
     }
     Ok(SourceModels { models, raw, ids })
@@ -79,27 +94,57 @@ pub(crate) fn learn(
     id: &str,
     model: &ModelId,
     now: i64,
+    collator: &dyn gateway_schema::aliases::SourceStringCollator,
 ) -> Result<SourceJson, GatewayError> {
     let parsed = AccountModelsStore::parse(raw)
         .unwrap_or_default()
-        .record_unsupported(id, model, now);
+        .record_unsupported(id, model, now, collator)?;
     let mut next = raw.clone();
-    let object = next
-        .as_object_mut()
-        .ok_or_else(|| invalid("Cannot update a malformed source account-model record."))?;
-    let unsupported = object
-        .entry("unsupported")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or_else(|| invalid("Source unsupported-model map is malformed."))?;
+    if source::entries(&next).is_none() {
+        return Err(invalid(
+            "Cannot update a malformed source account-model record.",
+        ));
+    }
+    let mut unsupported = source::member(raw, "unsupported")
+        .unwrap_or_else(|| SourceJson::parse("{}").expect("fixed empty source object"));
+    if source::entries(&unsupported).is_none() {
+        return Err(invalid("Source unsupported-model map is malformed."));
+    }
     let entries = parsed
         .unsupported
         .get(id)
         .ok_or_else(|| invalid("Source unsupported-model observation is missing."))?;
-    unsupported.insert(
-        id.to_owned(),
-        serde_json::to_value(entries)
-            .map_err(|_| invalid("Source unsupported-model observation cannot be encoded."))?,
-    );
+    let row = source::object_keys(
+        entries
+            .iter()
+            .map(|(model, at)| {
+                Ok((
+                    model.as_js_string().clone(),
+                    SourceJson::from_serializable(at)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, GatewayError>>()?,
+    )?;
+    set_member(&mut unsupported, id, row)?;
+    set_member(&mut next, "unsupported", unsupported)?;
     Ok(next)
+}
+fn set_member(value: &mut SourceJson, key: &str, next: SourceJson) -> Result<(), GatewayError> {
+    let key = JsString16::from_utf8(key);
+    let mut entries =
+        source::entries(value).ok_or_else(|| invalid("Source model record is malformed."))?;
+    if let Some((_, old)) = entries.iter_mut().find(|(name, _)| name == &key) {
+        *old = next;
+    } else {
+        entries.push((key, next));
+    }
+    *value = source::object_keys(entries)?;
+    Ok(())
+}
+pub(crate) fn unsupported_detail(model: &ModelId) -> JsString16 {
+    let mut units = "The '".encode_utf16().collect::<Vec<_>>();
+    units.extend_from_slice(model.as_js_string().as_units());
+    units
+        .extend("' model is not supported when using Codex with a ChatGPT account.".encode_utf16());
+    JsString16::from_units(units)
 }

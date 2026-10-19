@@ -21,6 +21,10 @@ impl Default for ModelReasoning {
         }
     }
 }
+/// Callers own the normalization phase; construction/equality of ModelId never invokes trim.
+pub fn js_trim_source(value: &JsString16) -> JsString16 {
+    crate::source_request::trim(value)
+}
 pub fn advertised_effort(value: &SourceJson) -> Option<JsString16> {
     let raw = if control::is_object(value) {
         control::get(value, "effort")?
@@ -57,10 +61,10 @@ impl ModelReasoning {
                     control::normalized(Some(v))
                 }
             });
-        if let Some(default) = &default_level {
-            if !levels.contains(default) {
-                levels.push(default.clone());
-            }
+        if let Some(default) = &default_level
+            && !levels.contains(default)
+        {
+            levels.push(default.clone());
         }
         let mut wire_efforts = Vec::<(JsString16, SourceJson)>::new();
         if let Some(wires) = record

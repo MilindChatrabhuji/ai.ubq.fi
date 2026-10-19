@@ -74,11 +74,32 @@ fn remove(value: &mut Value, fields: &[&str]) {
         }
     }
 }
+pub(crate) fn inverse_value_for_key(
+    transform: Transform,
+    key: &RecordKey,
+    record: &StoredRecord,
+    source: Option<&SourceEntry>,
+) -> Result<PortableValue, GatewayError> {
+    if transform == Transform::PaidRequest {
+        return crate::paid_controls::inverse(key, record, source);
+    }
+    if starts(
+        &parts(key)?,
+        &["uos_ai", "paid_fallback", "v3", "usage_rollup"],
+    ) {
+        crate::rollup_source::validate(key, record)?;
+    }
+    inverse_value(transform, record, source)
+}
+
 pub(crate) fn inverse_value(
     transform: Transform,
     record: &StoredRecord,
     source: Option<&SourceEntry>,
 ) -> Result<PortableValue, GatewayError> {
+    if transform == Transform::PaidRequest {
+        return Err(invalid("Paid inverse requires its actual source key"));
+    }
     if transform == Transform::Identity {
         return record.portable_value();
     }
@@ -118,23 +139,7 @@ pub(crate) fn inverse_value(
             remove(&mut out, &["terminal_at_ms"]);
         }
         Transform::PaidRequest => {
-            let reservation = current
-                .get("reservation")
-                .ok_or_else(|| invalid("Paid reservation missing in inverse"))?;
-            for field in [
-                "key_id",
-                "window_reset_at_ms",
-                "created_at_ms",
-                "reserved_microcredits",
-                "provider",
-            ] {
-                out[field] = reservation[field].clone();
-            }
-            out["request_id"] = reservation["attempt_id"].clone();
-            if reservation["request_id"] != reservation["attempt_id"] {
-                out["original_request_id"] = reservation["request_id"].clone();
-            }
-            remove(&mut out, &["reservation", "transport_started"]);
+            return Err(invalid("Paid inverse requires its actual source key"));
         }
         Transform::PaidPending => remove(&mut out, &["key_id", "attempt_id"]),
         Transform::PaidGate => remove(&mut out, &["pending"]),
@@ -496,12 +501,12 @@ pub(crate) async fn export_rows<S: QueryStore>(
 async fn export_internal<S: QueryStore>(
     store: &S,
     now_ms: i64,
-) -> Result<(PrivateCapture, Vec<CustodyRecord>), GatewayError> {
+) -> Result<(PrivateCapture, Vec<CustodyRecord>), MigrationError> {
     let (manifest, rows, controls) = export_rows(store, now_ms).await?;
     if manifest.native_revision.is_some() {
-        return Err(unavailable(
+        return Err(MigrationError::from(unavailable(
             "A native graph capture requires explicit native latest-state export",
-        ));
+        )));
     }
     let mut entries = Vec::new();
     for row in rows {
@@ -527,8 +532,9 @@ async fn export_internal<S: QueryStore>(
             m.transform != Transform::Identity
                 && digest(&row.record).is_ok_and(|d| d == m.baseline_digest)
         }) {
-            source.value = to_profile(&inverse_value(
+            source.value = to_profile(&inverse_value_for_key(
                 transform,
+                &row.key,
                 &row.record,
                 row.mapping.as_ref().map(|m| &m.source),
             )?)?;
@@ -553,13 +559,13 @@ async fn export_internal<S: QueryStore>(
 pub async fn export_latest<S: QueryStore>(
     store: &S,
     now_ms: i64,
-) -> Result<PrivateCapture, GatewayError> {
+) -> Result<PrivateCapture, MigrationError> {
     let (source, controls) = export_internal(store, now_ms).await?;
     if !controls.is_empty() {
-        return Err(GatewayError::unavailable(
+        return Err(MigrationError::from(GatewayError::unavailable(
             "Rust-only control/replay custody requires export_rollback_bundle; source-only export would omit it",
             "migration_control_custody_required",
-        ));
+        )));
     }
     Ok(source)
 }
@@ -590,7 +596,7 @@ pub async fn export_rollback_bundle<S: QueryStore>(
     store: &S,
     now_ms: i64,
     artifacts: ArtifactContext,
-) -> Result<PrivateRollbackBundle, GatewayError> {
+) -> Result<PrivateRollbackBundle, MigrationError> {
     validate_artifacts(&artifacts)?;
     let (source, rust_controls) = export_internal(store, now_ms).await?;
     Ok(PrivateRollbackBundle {

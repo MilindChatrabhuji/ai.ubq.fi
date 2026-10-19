@@ -348,3 +348,46 @@ pub fn admin_error_record_source(row: &StoredRecord) -> Result<SourceJson, Gatew
     field("delivery_outcome")?.deserialize::<gateway_core::lifecycle::DeliveryOutcome>()?;
     Ok(document)
 }
+
+/// Exact source isPaidFallbackUsageRollup predicate over real UTF16 strings.
+/// Data validation only; model/provider membership and accounting authority are external.
+pub fn valid_usage_rollup_source(document: &SourceJson) -> bool {
+    let field = |name| gateway_core::source_serialization::member(document, name);
+    let number = |name| field(name).and_then(|value| value.deserialize::<f64>().ok());
+    number("v") == Some(1.0)
+        && ["model", "provider"].iter().all(|name| {
+            field(name)
+                .and_then(|value| value.deserialize::<JsString16>().ok())
+                .is_some_and(|value| !value.as_units().is_empty())
+        })
+        && [
+            "bucket_start_at_ms",
+            "request_count",
+            "input_tokens",
+            "cached_input_tokens",
+            "output_tokens",
+            "first_request_at_ms",
+            "last_request_at_ms",
+            "updated_at_ms",
+        ]
+        .iter()
+        .all(|name| {
+            number(name).is_some_and(|value| {
+                value.is_finite()
+                    && value.fract() == 0.0
+                    && value >= 0.0
+                    && value <= gateway_core::identity::MAX_SAFE_INTEGER as f64
+            })
+        })
+        && ["quota_sum", "spend_microcredits"]
+            .iter()
+            .all(|name| number(name).is_some_and(|value| value.is_finite() && value >= 0.0))
+}
+/// Named rollup family reader; no mutation, expiry renewal or permission is inferred.
+pub fn usage_rollup_record_source(row: &StoredRecord) -> Result<SourceJson, GatewayError> {
+    let document = decode_source_control_record(row)?;
+    if !valid_usage_rollup_source(&document) {
+        return Err(store::error("Invalid source usage rollup"));
+    }
+    Ok(document)
+}

@@ -1,6 +1,41 @@
 //! Latest Flash aliases resolve only from injected cached catalog observations.
+use gateway_core::{GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use std::cmp::Ordering;
+/// Constructor-owned synchronous source locale ordering; no model or authority normalization.
+pub trait SourceStringCollator: Send + Sync {
+    fn compare(&self, left: &JsString16, right: &JsString16) -> Result<Ordering, GatewayError>;
+}
+impl<T: SourceStringCollator + ?Sized> SourceStringCollator for std::sync::Arc<T> {
+    fn compare(&self, left: &JsString16, right: &JsString16) -> Result<Ordering, GatewayError> {
+        (**self).compare(left, right)
+    }
+}
+/// Stable fallible merge sort. Comparator failure escapes before any result is published.
+pub(crate) fn sort_source<T, F>(mut values: Vec<T>, compare: &F) -> Result<Vec<T>, GatewayError>
+where
+    F: Fn(&T, &T) -> Result<Ordering, GatewayError>,
+{
+    if values.len() < 2 {
+        return Ok(values);
+    }
+    let right = values.split_off(values.len() / 2);
+    let left = sort_source(values, compare)?;
+    let right = sort_source(right, compare)?;
+    let mut out = Vec::with_capacity(left.len() + right.len());
+    let mut left = left.into_iter().peekable();
+    let mut right = right.into_iter().peekable();
+    while let (Some(a), Some(b)) = (left.peek(), right.peek()) {
+        if compare(a, b)? != Ordering::Greater {
+            out.push(left.next().expect("left present"));
+        } else {
+            out.push(right.next().expect("right present"));
+        }
+    }
+    out.extend(left);
+    out.extend(right);
+    Ok(out)
+}
 pub const SYNTHETIC_MODEL: &str = "ubiquity/deepseek-flash";
 pub const LEGACY_SYNTHETIC_MODEL: &str = "ubiquity/deepseek-v4.1-flash";
 pub const FLASH_ORDER: &[&str] = &["lithos", "deepseek", "openrouter", "surplus", "openlux"];
@@ -15,33 +50,36 @@ pub const LITHOS_IDS: &[&str] = &[
     "moonshotai/Kimi-K3-ultra-chat",
 ];
 pub const DEEPSEEK_IDS: &[&str] = &["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro"];
-pub fn direct_deepseek_model(model: &str) -> Option<&'static str> {
-    match model
-        .trim_matches(crate::util::js_whitespace)
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "deepseek-flash" | "deepseek-v4-flash" => Some("deepseek-flash"),
-        "deepseek-v4-pro" => Some("deepseek-v4-pro"),
-        _ => None,
+fn lower_units(model: &ModelId) -> Vec<u16> {
+    let units = crate::source_request::trim(model.as_js_string());
+    gateway_core::js_string_case::lowercase_source(&units)
+        .as_units()
+        .to_vec()
+}
+pub fn direct_deepseek_model(model: &ModelId) -> Option<ModelId> {
+    let lower = lower_units(model);
+    let same = |s: &str| lower.iter().copied().eq(s.encode_utf16());
+    if same("deepseek-flash") || same("deepseek-v4-flash") {
+        Some("deepseek-flash".into())
+    } else if same("deepseek-v4-pro") {
+        Some("deepseek-v4-pro".into())
+    } else {
+        None
     }
 }
-pub fn is_synthetic(model: &str) -> bool {
-    matches!(
-        model
-            .trim_matches(crate::util::js_whitespace)
-            .to_ascii_lowercase()
-            .as_str(),
-        SYNTHETIC_MODEL | LEGACY_SYNTHETIC_MODEL
-    )
+pub fn is_synthetic(model: &ModelId) -> bool {
+    let lower = lower_units(model);
+    [SYNTHETIC_MODEL, LEGACY_SYNTHETIC_MODEL]
+        .iter()
+        .any(|literal| lower.iter().copied().eq(literal.encode_utf16()))
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FlashAliases {
-    pub lithos: String,
-    pub deepseek: String,
-    pub openrouter: String,
-    pub surplus: String,
-    pub openlux: String,
+    pub lithos: ModelId,
+    pub deepseek: ModelId,
+    pub openrouter: ModelId,
+    pub surplus: ModelId,
+    pub openlux: ModelId,
 }
 impl Default for FlashAliases {
     fn default() -> Self {
@@ -149,35 +187,107 @@ fn latest_alias_id(id: &str) -> bool {
                 })
     })
 }
-fn simple_unversioned_alias(id: &str) -> bool {
-    id.strip_prefix('~')
-        .and_then(|s| s.split_once('/'))
-        .is_some_and(|(owner, slug)| {
-            !owner.is_empty()
-                && owner
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'_')
-                && slug.eq_ignore_ascii_case("deepseek-flash-latest")
-        })
-}
-fn provider_alias(models: &[Value], year: u32) -> Option<String> {
-    let ids: Vec<_> = models
-        .iter()
-        .filter_map(|v| v.get("id").and_then(Value::as_str))
-        .map(crate::util::js_trim)
-        .collect();
-    let mut latest: Vec<_> = ids
-        .iter()
-        .filter(|id| latest_alias_id(id))
-        .copied()
-        .collect();
-    latest.sort_by_key(|id| (!simple_unversioned_alias(id), *id));
-    if let Some(id) = latest.first() {
-        return Some((*id).to_owned());
+fn latest_source(id: &ModelId) -> bool {
+    let lower = lower_units(id);
+    if lower.first() != Some(&126) {
+        return false;
     }
-    let mut newest: Option<(&str, FlashCandidate)> = None;
+    let pattern = "deepseek".encode_utf16().collect::<Vec<_>>();
+    for index in 0..lower.len() {
+        if !lower[index..].starts_with(&pattern)
+            || (index > 0 && !matches!(lower[index - 1], 47 | 45))
+        {
+            continue;
+        }
+        let suffix = &lower[index..];
+        if !suffix.iter().all(|u| *u < 128) {
+            continue;
+        }
+        let suffix = suffix
+            .iter()
+            .map(|u| char::from(*u as u8))
+            .collect::<String>();
+        if latest_alias_id(&format!("~/{suffix}")) {
+            return true;
+        }
+    }
+    false
+}
+fn simple_source(id: &ModelId) -> bool {
+    let units = id.as_js_string().as_units();
+    if units.first() != Some(&126) {
+        return false;
+    }
+    let Some(slash) = units.iter().position(|u| *u == 47) else {
+        return false;
+    };
+    if slash == 1
+        || !units[1..slash].iter().all(|u| {
+            u8::try_from(*u)
+                .ok()
+                .is_some_and(|u| u.is_ascii_alphanumeric() || u == b'_')
+        })
+    {
+        return false;
+    }
+    units[slash + 1..]
+        .iter()
+        .copied()
+        .map(|u| if (65..=90).contains(&u) { u + 32 } else { u })
+        .eq("deepseek-flash-latest".encode_utf16())
+}
+fn source_candidate(id: &ModelId, year: u32) -> Option<FlashCandidate> {
+    let lower = lower_units(id);
+    for word in lower.split(|u| matches!(*u, 45 | 58)) {
+        if [
+            "fast", "ultra", "chat", "vision", "exp", "web", "e2ee", "free", "batch",
+        ]
+        .iter()
+        .any(|s| word.iter().copied().eq(s.encode_utf16()))
+        {
+            return None;
+        }
+    }
+    let start = lower.iter().rposition(|u| *u == 47).map_or(0, |i| i + 1);
+    let suffix = &lower[start..];
+    if !suffix.iter().all(|u| *u < 128) {
+        return None;
+    }
+    let suffix = suffix
+        .iter()
+        .map(|u| char::from(*u as u8))
+        .collect::<String>();
+    candidate(&suffix, year)
+}
+fn provider_alias(
+    models: &[SourceJson],
+    year: u32,
+    collator: &dyn SourceStringCollator,
+) -> Result<Option<ModelId>, GatewayError> {
+    let ids = models
+        .iter()
+        .filter_map(|row| {
+            crate::model_control::get(row, "id")
+                .as_ref()
+                .and_then(crate::model_control::string)
+        })
+        .map(|id| ModelId::from_source(crate::source_request::trim(&id)))
+        .collect::<Vec<_>>();
+    let latest = ids.iter().filter(|id| latest_source(id)).cloned().collect();
+    let latest = sort_source(latest, &|left: &ModelId, right: &ModelId| {
+        let priority = (!simple_source(left)).cmp(&(!simple_source(right)));
+        if priority == Ordering::Equal {
+            collator.compare(left.as_js_string(), right.as_js_string())
+        } else {
+            Ok(priority)
+        }
+    })?;
+    if let Some(id) = latest.into_iter().next() {
+        return Ok(Some(id));
+    }
+    let mut newest: Option<(&ModelId, FlashCandidate)> = None;
     for id in &ids {
-        if let Some(candidate) = candidate(id, year)
+        if let Some(candidate) = source_candidate(id, year)
             && newest
                 .as_ref()
                 .is_none_or(|(_, n)| compare_candidates(&candidate, n) > 0.0)
@@ -185,36 +295,39 @@ fn provider_alias(models: &[Value], year: u32) -> Option<String> {
             newest = Some((id, candidate));
         }
     }
-    let (id, newest) = newest?;
+    let Some((id, newest)) = newest else {
+        return Ok(None);
+    };
     let mut base = None;
     for entry in &ids {
-        if candidate(entry, year).is_some_and(|c| c.version == newest.version && c.date == 0) {
-            base = Some((*entry).to_owned());
+        if source_candidate(entry, year).is_some_and(|c| c.version == newest.version && c.date == 0)
+        {
+            base = Some(entry.clone());
         }
     }
-    base.or_else(|| Some(id.to_owned()))
+    Ok(base.or_else(|| Some(id.clone())))
 }
 pub fn resolve_flash_aliases(
-    lithos: Option<&[Value]>,
-    openrouter: Option<&[Value]>,
-    surplus: Option<&[Value]>,
-    openlux: Option<&[Value]>,
+    lithos: Option<&[SourceJson]>,
+    openrouter: Option<&[SourceJson]>,
+    surplus: Option<&[SourceJson]>,
+    openlux: Option<&[SourceJson]>,
     utc_year: u32,
-) -> FlashAliases {
+    collator: &dyn SourceStringCollator,
+) -> Result<FlashAliases, GatewayError> {
     let fallback = FlashAliases::default();
-    FlashAliases {
-        lithos: lithos
-            .and_then(|m| provider_alias(m, utc_year))
-            .unwrap_or(fallback.lithos),
+    let choose =
+        |models: Option<&[SourceJson]>, fallback: ModelId| -> Result<ModelId, GatewayError> {
+            Ok(match models {
+                Some(models) => provider_alias(models, utc_year, collator)?.unwrap_or(fallback),
+                None => fallback,
+            })
+        };
+    Ok(FlashAliases {
+        lithos: choose(lithos, fallback.lithos)?,
         deepseek: fallback.deepseek,
-        openrouter: openrouter
-            .and_then(|m| provider_alias(m, utc_year))
-            .unwrap_or(fallback.openrouter),
-        surplus: surplus
-            .and_then(|m| provider_alias(m, utc_year))
-            .unwrap_or(fallback.surplus),
-        openlux: openlux
-            .and_then(|m| provider_alias(m, utc_year))
-            .unwrap_or(fallback.openlux),
-    }
+        openrouter: choose(openrouter, fallback.openrouter)?,
+        surplus: choose(surplus, fallback.surplus)?,
+        openlux: choose(openlux, fallback.openlux)?,
+    })
 }

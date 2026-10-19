@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 gateway-core = { path = "../gateway-core" }
+gateway-observability.workspace = true
 gateway-claude-runtime = { path = "../gateway-claude-runtime" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-admin = { path = "../gateway-admin" }

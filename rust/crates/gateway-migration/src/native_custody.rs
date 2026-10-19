@@ -83,7 +83,7 @@ fn codex_key(raw: &[u8]) -> Result<bool, GatewayError> {
 pub async fn sanitize_native_capture<H: NativeCustody>(
     source: &NativeCapture,
     host: &H,
-) -> Result<NativeCapture, GatewayError> {
+) -> Result<NativeCapture, MigrationError> {
     let mut candidate = source.clone();
     for entry in &mut candidate.entries {
         if !codex_key(&entry.raw_key)? {
@@ -108,7 +108,7 @@ pub async fn sanitize_native_capture<H: NativeCustody>(
                         || o.native_refreshed_at != local.credentials.native_refreshed_at
                 })
             {
-                return Err(custody_error());
+                return Err(MigrationError::from(custody_error()));
             }
             let projection = ManagedAccessProjection::from_native(local)?;
             account.refresh_token = gateway_auth::crypto::Secret::new(String::new());
@@ -143,7 +143,7 @@ pub async fn export_native_with_custody<S: QueryStore, H: NativeCustody>(
     store: &S,
     now_ms: i64,
     host: &H,
-) -> Result<LocalNativeCapture, GatewayError> {
+) -> Result<LocalNativeCapture, MigrationError> {
     let source = crate::export_native_latest(store, now_ms).await?;
     reconstruct_native(store, source, host).await
 }
@@ -152,7 +152,7 @@ async fn reconstruct_native<S: QueryStore, H: NativeCustody>(
     store: &S,
     mut source: NativeCapture,
     host: &H,
-) -> Result<LocalNativeCapture, GatewayError> {
+) -> Result<LocalNativeCapture, MigrationError> {
     for entry in &mut source.entries {
         if !codex_key(&entry.raw_key)? {
             continue;
@@ -179,7 +179,7 @@ async fn reconstruct_native<S: QueryStore, H: NativeCustody>(
                 || projection.access_token() != &account.access_token
                 || local.credentials.native_refreshed_at != owner.native_refreshed_at
             {
-                return Err(custody_error());
+                return Err(MigrationError::from(custody_error()));
             }
             account.refresh_token = local.credentials.refresh_token.clone();
             let owner = account.native_owner.as_mut().ok_or_else(custody_error)?;
@@ -187,7 +187,7 @@ async fn reconstruct_native<S: QueryStore, H: NativeCustody>(
             owner.managed_source = None;
         }
         if store.read(&key).await?.as_ref() != Some(&current) {
-            return Err(custody_error());
+            return Err(MigrationError::from(custody_error()));
         }
         entry.value = pool_value(&pool)?;
     }
@@ -215,7 +215,7 @@ pub async fn export_native_rollback_with_custody<S: QueryStore, H: NativeCustody
     now_ms: i64,
     host: &H,
     artifacts: ArtifactContext,
-) -> Result<LocalNativeRollbackBundle, GatewayError> {
+) -> Result<LocalNativeRollbackBundle, MigrationError> {
     crate::inverse::validate_artifacts(&artifacts)?;
     let (source, controls) = crate::native_inverse::export(store, now_ms).await?;
     Ok(LocalNativeRollbackBundle {

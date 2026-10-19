@@ -50,7 +50,7 @@ fn literal_source_units_reach_direct_provider_wire_and_input_is_immutable() {
             provider,
             ClientSurface::Responses,
             &original,
-            model,
+            &model.into(),
             &options(),
         )
         .unwrap();
@@ -103,7 +103,7 @@ fn actual_stringify_boundary_uses_shared_duplicate_integer_key_and_number_semant
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap();
@@ -136,7 +136,7 @@ fn buffered_and_actual_sse_writer_created_progress_terminal_echo_the_same_source
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap();
@@ -184,7 +184,7 @@ fn utf16_tool_prefix_collision_namespace_and_map_wire_are_source_strings() {
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap();
@@ -219,7 +219,7 @@ fn direct_native_and_ordinary_branches_keep_the_source_phase_boundary() {
         UpstreamProvider::Openrouter,
         ClientSurface::Responses,
         &raw,
-        "openai/test",
+        &"openai/test".into(),
         &options,
     )
     .unwrap();
@@ -230,7 +230,7 @@ fn direct_native_and_ordinary_branches_keep_the_source_phase_boundary() {
         UpstreamProvider::ChatgptCodex,
         ClientSurface::Responses,
         &raw,
-        "gpt-fixture",
+        &"gpt-fixture".into(),
         &options,
     )
     .unwrap_err();
@@ -262,7 +262,7 @@ fn source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units() {
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap_err();
@@ -284,7 +284,7 @@ fn source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units() {
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap_err();
@@ -320,7 +320,7 @@ fn codex_replay_and_direct_chat_do_not_lose_source_text() {
         UpstreamProvider::ChatgptCodex,
         ClientSurface::Responses,
         &raw,
-        "gpt-fixture",
+        &"gpt-fixture".into(),
         &options(),
     )
     .unwrap();
@@ -337,7 +337,7 @@ fn codex_replay_and_direct_chat_do_not_lose_source_text() {
         UpstreamProvider::Deepseek,
         ClientSurface::Chat,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap();
@@ -379,7 +379,7 @@ fn paid_and_native_claude_source_wire_and_request_echo_keep_text_and_schema_unit
             provider,
             ClientSurface::Responses,
             &raw,
-            "claude-opus-5-5",
+            &"claude-opus-5-5".into(),
             &options(),
         )
         .unwrap();
@@ -404,7 +404,7 @@ fn source_original_tool_identity_survives_buffered_and_streamed_generated_items(
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap()
@@ -456,7 +456,7 @@ fn selected_provider_phase_errors_and_open_effort_do_not_scalarize_source_contro
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap();
@@ -471,7 +471,7 @@ fn selected_provider_phase_errors_and_open_effort_do_not_scalarize_source_contro
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap_err();
@@ -486,7 +486,7 @@ fn selected_provider_phase_errors_and_open_effort_do_not_scalarize_source_contro
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap_err();
@@ -499,7 +499,7 @@ fn selected_provider_phase_errors_and_open_effort_do_not_scalarize_source_contro
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap_err();
@@ -518,7 +518,7 @@ fn reasoning_refusal_and_agent_message_envelopes_preserve_literal_units() {
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap();
@@ -547,7 +547,7 @@ fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_bounda
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap();
@@ -570,7 +570,7 @@ fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_bounda
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &disabled,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap_err();
@@ -616,7 +616,7 @@ fn custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mi
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap()
@@ -631,4 +631,119 @@ fn custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mi
         .unwrap();
     assert_eq!(delta.field("delta").unwrap(), parse(r#""raw\udc00""#));
     assert!(delta.encode_sse().contains("\\udc00"));
+}
+
+#[test]
+fn source_model_echoes_in_buffered_and_sse_composition_are_ordinary_json_strings() {
+    use gateway_core::model::ModelId;
+    for model in [
+        JsString16::from_units(vec![0xd800]),
+        JsString16::from_units(vec![0xdc00]),
+        JsString16::from_utf8(r"\ud800"),
+        JsString16::from_utf8("m\ncontrol"),
+    ] {
+        let raw = json::object(vec![
+            ("model", model.to_source_json().unwrap()),
+            ("input", parse(r#""x""#)),
+        ])
+        .unwrap();
+        let selected = ModelId::from_source(model.clone());
+        let prepared = prepare_source_request(
+            UpstreamProvider::Surplus,
+            ClientSurface::Responses,
+            &raw,
+            &selected,
+            &options(),
+        )
+        .unwrap();
+        assert_eq!(text(&get(&prepared.body, "model")), model);
+        // Select the existing scalar Chat upstream codec to exercise its synthesized
+        // request-derived envelope; this is not a new router/provider selection.
+        let mut plan = prepared.decode.clone();
+        plan.decode = gateway_providers::ResponseDecode::ChatToResponses(
+            gateway_providers::ChatProfile::Deepseek,
+        );
+        let buffered = decode_response(&plan, 200, &Default::default(), reply()).unwrap();
+        assert_eq!(text(&get(&buffered.body, "model")), model);
+        let mut writer = gateway_providers::writer::ResponseWriter::new(prepared.decode);
+        let mut events = writer.text("answer", false);
+        events.extend(writer.finish());
+        for event in events
+            .iter()
+            .filter(|event| event.field("response").is_some())
+        {
+            assert_eq!(
+                text(&get(&event.field("response").unwrap(), "model")),
+                model
+            );
+            let encoded = event.encode_sse();
+            let data = encoded
+                .lines()
+                .find_map(|line| line.strip_prefix("data: "))
+                .unwrap();
+            assert_eq!(text(&path(&parse(data), &["response", "model"])), model);
+        }
+    }
+}
+#[test]
+fn opaque_model_refusal_body_does_not_replace_or_scalarize_request_units() {
+    use gateway_core::model::ModelId;
+    let raw = parse(r#"{"model":"\ud800","input":"x"}"#);
+    let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));
+    let error = prepare_source_request(
+        UpstreamProvider::Deepseek,
+        ClientSurface::Responses,
+        &raw,
+        &model,
+        &options(),
+    )
+    .unwrap_err();
+    assert_eq!(error.status, 404);
+    let message = text(&path(error.body(), &["error", "message"]));
+    assert_eq!(
+        message.as_units(),
+        "The model '"
+            .encode_utf16()
+            .chain([0xd800])
+            .chain("' does not exist or is not available.".encode_utf16())
+            .collect::<Vec<_>>()
+    );
+    assert!(error.body().as_str().contains(r"\ud800"));
+}
+
+#[test]
+fn paid_catalog_lookup_compares_source_model_units_and_retains_billing_fragments() {
+    use gateway_core::{model::ModelId, provider::PaidProvider};
+    use gateway_providers::policy::{PaidRoutingInput, resolve_paid_route};
+    let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));
+    let row = parse(
+        r#"{"id":"\ud800","supported_endpoint_types":["openai-response"],"input_price_per_token":0.1,"output_price_per_token":0.2,"cache_read_price_per_token":"source\udc00"}"#,
+    );
+    let mut input = PaidRoutingInput {
+        model,
+        endpoint_type: "openai-response".into(),
+        request_uses_tools: false,
+        codex_model_known: false,
+        codex_enabled: true,
+        surplus_enabled: true,
+        openlux_enabled: true,
+        surplus_configured: true,
+        openlux_configured: true,
+        surplus_catalog: Some(vec![row.clone()]),
+        openlux_catalog: Some(vec![]),
+        allowed_paid_providers: None,
+        synthetic_hop: None,
+        ubiquity_enabled: true,
+    };
+    let plan = resolve_paid_route(&input);
+    assert_eq!(plan.providers, vec![PaidProvider::Surplus]);
+    assert_eq!(
+        get(
+            plan.surplus_billing.as_ref().unwrap(),
+            "cache_read_price_per_token"
+        ),
+        get(&row, "cache_read_price_per_token")
+    );
+    input.model = r"\ud800".into();
+    assert!(resolve_paid_route(&input).providers.is_empty());
 }

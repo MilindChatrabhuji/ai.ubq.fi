@@ -2,14 +2,16 @@
 mod keys;
 mod paid;
 mod source_fields;
+mod source_model;
+pub use source_model::inspect_model_snapshot;
 mod usage;
 pub use keys::{AuditedKeyPair, inspect_key_pairs, valid_key_policy, valid_source_key_policy};
-pub use paid::inspect_paid;
+pub use paid::{inspect_paid, valid_source_paid_request};
 pub use usage::{inspect_api_usage, inspect_kernel};
 
 use super::{ObservedRow, starts};
 use crate::{integer, number, text};
-use gateway_core::GatewayError;
+use gateway_core::{GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -17,7 +19,7 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Audit {
     pub counts: BTreeMap<String, usize>,
-    pub errors: Vec<String>,
+    pub errors: Vec<JsString16>,
 }
 impl Audit {
     pub fn count(&mut self, name: &str) {
@@ -26,6 +28,19 @@ impl Audit {
     pub fn merge(&mut self, other: Self) {
         self.counts.extend(other.counts);
         self.errors.extend(other.errors);
+    }
+    pub fn source_json(&self) -> Result<SourceJson, GatewayError> {
+        SourceJson::from_serializable(self)
+    }
+    pub fn error_message(&self, prefix: &str) -> JsString16 {
+        let mut units = prefix.encode_utf16().collect::<Vec<_>>();
+        for (index, error) in self.errors.iter().enumerate() {
+            if index != 0 {
+                units.extend("; ".encode_utf16());
+            }
+            units.extend_from_slice(error.as_units());
+        }
+        JsString16::from_units(units)
     }
 }
 pub fn api_id(value: Option<&Value>) -> bool {
@@ -158,53 +173,22 @@ pub fn inspect_reset_usage(rows: &[ObservedRow]) -> Result<Audit, GatewayError> 
             && p[3] == "v1"
             && p[4].as_str().is_some_and(|s| !s.is_empty());
         if !valid {
-            audit.errors.push(format!(
-                "codex reset usage key is malformed: {}",
-                reference(p)
-            ));
+            audit.errors.push(
+                format!("codex reset usage key is malformed: {}", reference(p))
+                    .as_str()
+                    .into(),
+            );
             continue;
         }
         if !row.value()?.get("enabled").is_some_and(Value::is_boolean) {
-            audit.errors.push(format!(
-                "codex reset usage record is malformed: {}",
-                reference(p)
-            ));
+            audit.errors.push(
+                format!("codex reset usage record is malformed: {}", reference(p))
+                    .as_str()
+                    .into(),
+            );
         }
     }
     Ok(audit)
-}
-pub fn inspect_model_snapshot(rows: &[ObservedRow]) -> Result<Vec<String>, GatewayError> {
-    let get = |parts: &[Value]| {
-        rows.iter()
-            .find(|r| r.parts == parts)
-            .map(ObservedRow::value)
-            .transpose()
-    };
-    let default = get(&[json!("default"), json!("model")])?
-        .filter(|v| !v.is_null() && **v != false && **v != 0 && **v != "");
-    let snapshot = get(&[json!("ubq_ai"), json!("codex_models")])?;
-    let mut errors = vec![];
-    if let Some(default) = default
-        && let Some(snapshot) = snapshot.filter(|v| !v.is_null())
-    {
-        let models = snapshot["models"].as_array();
-        if models.is_none_or(Vec::is_empty) {
-            errors.push(format!(
-                "codex model snapshot is empty or malformed; cannot validate default model: {}",
-                crate::profile::js_string(default)
-            ));
-        } else if !models.into_iter().flatten().any(|model| {
-            ["slug", "id", "model", "name"]
-                .iter()
-                .any(|field| model.get(field) == Some(default))
-        }) {
-            errors.push(format!(
-                "default model is not present in codex model snapshot: {}",
-                crate::profile::js_string(default)
-            ));
-        }
-    }
-    Ok(errors)
 }
 pub fn inspect_source_rows(
     rows: &[ObservedRow],
@@ -240,9 +224,11 @@ pub fn inspect_source_rows(
     audit.counts.insert("kernel_repo_limits".into(), repo);
     audit.counts.insert("kernel_org_limits".into(), org);
     if repo > 0 || org > 0 {
-        audit.errors.push(format!(
-            "legacy combined kernel quota records remain: repo={repo} org={org}"
-        ));
+        audit.errors.push(
+            format!("legacy combined kernel quota records remain: repo={repo} org={org}")
+                .as_str()
+                .into(),
+        );
     }
     for pair in pairs {
         let record = &pair.id;
@@ -251,9 +237,11 @@ pub fn inspect_source_rows(
         if !source_fields::equals(record, "usage_quota_version", &json!(3))
             || !source_fields::equals(hash, "usage_quota_version", &json!(3))
         {
-            audit
-                .errors
-                .push(format!("api key quota ledger version is not V3: {id}"));
+            audit.errors.push(
+                format!("api key quota ledger version is not V3: {id}")
+                    .as_str()
+                    .into(),
+            );
             continue;
         }
         if !source_fields::equals(record, "usage_limit_requests", &json!(-1)) {
@@ -302,9 +290,11 @@ pub fn inspect_source_rows(
                         && integer(v, "window_reset_at_ms") == Some(reset)
                 });
             if !valid {
-                audit
-                    .errors
-                    .push(format!("bounded V3 aggregate is missing or invalid: {id}"));
+                audit.errors.push(
+                    format!("bounded V3 aggregate is missing or invalid: {id}")
+                        .as_str()
+                        .into(),
+                );
             }
             let bp = vec![
                 json!("uos_ai"),
@@ -327,9 +317,13 @@ pub fn inspect_source_rows(
                         && integer(v, "window_start_ms") == Some(start)
                 });
             if !valid {
-                audit.errors.push(format!(
-                    "bounded counter migration baseline is missing, stale, or invalid: {id}"
-                ));
+                audit.errors.push(
+                    format!(
+                        "bounded counter migration baseline is missing, stale, or invalid: {id}"
+                    )
+                    .as_str()
+                    .into(),
+                );
             }
         }
         if let Some(request) = source_fields::member(record, "paid_fallback_reservation_request_id")
@@ -354,9 +348,11 @@ pub fn inspect_source_rows(
                         })
             })
         {
-            audit.errors.push(format!(
-                "paid fallback reservation has no pending ledger record: {id}"
-            ));
+            audit.errors.push(
+                format!("paid fallback reservation has no pending ledger record: {id}")
+                    .as_str()
+                    .into(),
+            );
         }
     }
     Ok(audit)

@@ -274,6 +274,9 @@ impl WorkspaceContinuation {
 /// paths, JSON-RPC methods, uploaded proofs or refresh credentials.
 pub trait RoutingHost {
     type ClaudeHead;
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>;
     fn cancelled(&self) -> bool;
     fn cancellation_error(&self) -> GatewayError;
     fn wait(&self, milliseconds: i64) -> impl Future<Output = WaitOutcome>;
