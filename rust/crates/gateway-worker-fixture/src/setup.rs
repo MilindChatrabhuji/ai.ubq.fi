@@ -17,7 +17,7 @@ use gateway_core::{
     identity::PoolVersionstamp,
     provider::PaidProvider,
     state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
+        AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
         StoredRecord,
     },
 };
@@ -116,13 +116,8 @@ async fn initialized(
     {
         return Err(invalid());
     }
-    for check in config.source_checks {
-        let row = store.read(&RecordKey(check.key)).await?;
-        if row.map(|row| row.revision) != check.expected_revision {
-            return Err(invalid());
-        }
-    }
     // Never republish configuration or recreate a removed pool during a request.
+    // Product routes, not setup, own current source-check and runtime fencing.
     Ok(true)
 }
 

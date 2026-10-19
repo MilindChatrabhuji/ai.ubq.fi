@@ -147,6 +147,20 @@ pub(crate) struct RoutingView {
 pub(crate) async fn read_view<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
 ) -> Result<RoutingView, GatewayError> {
+    read_view_for(tx, true).await
+}
+
+/// Source slot-pinned callers hydrate the same state without consulting the global election.
+pub(crate) async fn read_pinned_view<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+) -> Result<RoutingView, GatewayError> {
+    read_view_for(tx, false).await
+}
+
+async fn read_view_for<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    read_active: bool,
+) -> Result<RoutingView, GatewayError> {
     let mut pool: SubscriptionPool = tx
         .read(&keys::pool())
         .await?
@@ -161,7 +175,11 @@ pub(crate) async fn read_view<S: AuthorityStore, I: TokenSource>(
             .transpose()?,
         tx.now,
     )?;
-    let active: Option<ActiveSelection> = tx.read(&keys::active()).await?;
+    let active: Option<ActiveSelection> = if read_active {
+        tx.read(&keys::active()).await?
+    } else {
+        None
+    };
     if let Some(active) = &active {
         validate_binding(&active.binding)?;
         if active.v != 1 || active.generation == 0 {
@@ -737,6 +755,17 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     "Codex admission is stale.",
                 ));
             }
+            if let Some(probe) = &admission.probe {
+                let slot = &view.state.slots[admission.binding.slot as usize];
+                if slot.probe_lease.as_ref() != Some(probe)
+                    || probe.expires_at_ms <= self.fresh_time(now)?
+                {
+                    return Err(unavailable(
+                        "codex_routing_unavailable",
+                        "Codex probe lease is stale.",
+                    ));
+                }
+            }
             if tx.commit().await? {
                 return Ok(());
             }
@@ -778,7 +807,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         }
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
-            let mut view = read_view(&mut tx).await?;
+            let mut view = read_pinned_view(&mut tx).await?;
             let slot_index = binding.slot as usize;
             let foreign_probe = view.state.slots.get(slot_index).is_some_and(|slot| {
                 slot.account_id_hash.as_ref() == Some(&binding.account_id_hash)

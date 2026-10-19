@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "unknown_utf16",
+      "raw": "{\"type\":\"\\ud800\"}",
+      "expected": {
+        "status": "parsed",
+        "kind": "other"
+      }
+    },
+    {
+      "name": "unknown_scalar",
+      "raw": "{\"type\":\" future.event \"}",
+      "expected": {
+        "status": "parsed",
+        "kind": "other"
+      }
+    },
+    {
+      "name": "completed",
+      "raw": "{\"type\":\" response.completed \",\"response\":{}}",
+      "expected": {
+        "status": "parsed",
+        "kind": "completed"
+      }
+    },
+    {
+      "name": "failed",
+      "raw": "{\"type\":\"response.failed\",\"response\":{}}",
+      "expected": {
+        "status": "parsed",
+        "kind": "terminal"
+      }
+    },
+    {
+      "name": "blank",
+      "raw": "{\"type\":\" \\u00a0 \"}",
+      "expected": {
+        "status": "error"
+      }
+    },
+    {
+      "name": "missing",
+      "raw": "{}",
+      "expected": {
+        "status": "error"
+      }
+    },
+    {
+      "name": "numeric",
+      "raw": "{\"type\":4}",
+      "expected": {
+        "status": "error"
+      }
+    },
+    {
+      "name": "outer_array",
+      "raw": "[]",
+      "expected": {
+        "status": "error"
+      }
+    }
+  ],
+  "capture_ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/d37decc0-3ee8-41c2-a9d3-079a2b199ab4",
+  "source_sha256": "cd5e5f339e58a4b327b8396f50b76d3fd30fa39b75d3b8c472fb10e4b3f5a922"
+}

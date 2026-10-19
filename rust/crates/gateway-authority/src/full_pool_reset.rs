@@ -11,11 +11,9 @@ use crate::{
     store::Transaction,
 };
 use gateway_core::{
-    GatewayError,
-    identity::RequestContext,
-    state::{AuthorityStore, RecordKey},
+    GatewayError, identity::RequestContext, source_json::SourceJson, state::AuthorityStore,
+    value::ValueEncoding,
 };
-use serde_json::Value;
 pub use types::{
     AutomaticResetPermit, FullPoolEvaluation, FullPoolFence, FullPoolPreparation,
     FullPoolResetPlan, FullPoolShadowDecision, SourceCreditCollation, SourceResetCredit,
@@ -41,20 +39,25 @@ fn reason(error: GatewayError) -> String {
 }
 
 async fn read_audit<S: AuthorityStore, I: TokenSource>(
-    authority: &Authority<S, I>,
     tx: &mut Transaction<'_, S, I>,
-    key: &RecordKey,
+    episode_hash: &str,
 ) -> Result<(bool, Option<String>, Option<FullPoolShadowDecision>), GatewayError> {
-    let raw: Option<Value> = tx.read(key).await?;
-    let revision = tx.revision(key);
-    let row = authority.store().read(key).await?;
-    if row.as_ref().map(|row| &row.revision) != revision.as_ref() {
-        return Err(declined("shadow_decision_unavailable"));
-    }
-    let present = raw.is_some_and(|value| !value.is_null());
+    let key = keys::reset_shadow(episode_hash);
+    let row = tx.read_full_pool_reset_audit(episode_hash).await?;
+    let revision = tx.revision(&key);
+    let present = match row.as_ref() {
+        None => false,
+        Some(row) => match row.value_encoding {
+            ValueEncoding::Json => !row.json_value()?.is_null(),
+            ValueEncoding::ProfileV2 => {
+                SourceJson::from_portable_json(&row.profile_v2_value()?)?.as_str() != "null"
+            }
+            _ => true,
+        },
+    };
     let parsed = if present {
         row.as_ref()
-            .and_then(|row| FullPoolShadowDecision::validate_record(key, row).ok())
+            .and_then(|row| FullPoolShadowDecision::validate_record(&key, row).ok())
     } else {
         None
     };
@@ -94,8 +97,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     });
                 }
             };
-            let key = keys::reset_shadow(&facts.episode_hash);
-            let (present, revision, prior) = read_audit(self, &mut tx, &key).await?;
+            let (present, revision, prior) = read_audit(&mut tx, &facts.episode_hash).await?;
             if let Some(decision) = prior.as_ref() {
                 let matches =
                     decision.episode_hash == facts.episode_hash && decision.fences == facts.fences;
@@ -205,7 +207,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 });
             }
             let key = keys::reset_shadow(&current.episode_hash);
-            let (present, revision, stored) = read_audit(self, &mut tx, &key).await?;
+            let (present, revision, stored) = read_audit(&mut tx, &current.episode_hash).await?;
             let original_live = current.config.mode == ResetMode::Live && plan.prior.is_some();
             if original_live {
                 let Some(audit) = stored else {
@@ -290,6 +292,22 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     }
 }
 
+/// Existing-ledger reconciliation can read these exact source fences without
+/// an inventory, audit insertion, reset claim or new account/day reservation.
+pub(crate) async fn capture_reconciliation_candidates<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    proof: &CohortProof,
+    original: &RequestContext,
+) -> Result<Vec<crate::reset::ResetCandidate>, GatewayError> {
+    Ok(facts::capture_reconciliation(tx, proof, original)
+        .await?
+        .members
+        .into_iter()
+        .filter(|member| member.enabled)
+        .map(|member| member.candidate)
+        .collect())
+}
+
 /// Shared claim/submission/physical-send primitives call this inside their one
 /// existing transaction. No deserialized source row can construct the permit.
 pub(crate) async fn validate_automatic_permit<S: AuthorityStore, I: TokenSource>(
@@ -304,11 +322,13 @@ pub(crate) async fn validate_automatic_permit<S: AuthorityStore, I: TokenSource>
         return Err(declined("routing_fence_stale"));
     }
     let key = keys::reset_shadow(&permit.decision.episode_hash);
-    let raw: Option<Value> = tx.read(&key).await?;
+    let raw = tx
+        .read_full_pool_reset_audit(&permit.decision.episode_hash)
+        .await?;
     if tx.revision(&key).as_deref() != Some(&permit.audit_revision) {
         return Err(declined("shadow_decision_drift"));
     }
-    let audit = FullPoolShadowDecision::parse_value(raw.as_ref().ok_or_else(invalid)?)?;
+    let audit = FullPoolShadowDecision::validate_record(&key, raw.as_ref().ok_or_else(invalid)?)?;
     if audit != permit.decision
         || audit.fences != current.fences
         || audit.selected_credit_id_hash.as_deref()
