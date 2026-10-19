@@ -11,14 +11,14 @@ export const MATRIX_KEYS = Object.freeze({
   surplus: "fixture-matrix-surplus",
   openlux_discovery: "fixture-matrix-openlux-discovery",
   openlux_spend: "fixture-matrix-openlux-spend",
-  claude: "fixture-matrix-claude-api-key",
+  claude: "sk-ant-api03-fixture-matrix-key",
 });
 
 const destinations = new Map([
   ["chatgpt.com", { provider: "codex", paths: ["/backend-api/codex/responses", "/backend-api/codex/models"] }],
-  ["api.anthropic.com", { provider: "claude", paths: ["/v1/messages", "/v1/models"] }],
+  ["api.anthropic.com", { provider: "claude", paths: ["/v1/messages", "/v1/models", "/v1/organizations/workspaces"] }],
   ["api.surplusintelligence.ai", { provider: "surplus", paths: ["/v1/responses", "/v1/chat/completions", "/v1/models"] }],
-  ["api.openlux.ai", { provider: "openlux", paths: ["/v1/responses", "/v1/messages", "/v1/models"] }],
+  ["api.openlux.ai", { provider: "openlux", paths: ["/v1/responses", "/v1/messages", "/v1/models", "/api/ratio_config", "/api/status", "/api/log/token"] }],
   ["api.lithosai.cloud", { provider: "lithos", paths: ["/v1/chat/completions", "/v1/models"] }],
   ["openrouter.ai", { provider: "openrouter", paths: ["/api/v1/responses", "/api/v1/chat/completions", "/api/v1/models"] }],
   ["api.deepseek.com", { provider: "deepseek", paths: ["/chat/completions"] }],
@@ -27,6 +27,8 @@ const destinations = new Map([
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const markerIn = (body) => JSON.stringify(body.input ?? body.messages ?? "").match(/fixture:matrix:[a-z0-9_-]+:[a-z0-9_-]+/u)?.[0] ?? null;
 const part = (type, data) => new TextEncoder().encode(`${type ? `event: ${type}\n` : ""}data: ${JSON.stringify(data)}\n\n`);
+const billingLogs = new Map();
+const requestId = (provider, marker) => `matrix-${provider}-${marker.split(":").at(-1)}`;
 
 function codexAccount(request) {
   const bearer = request.headers.get("authorization")?.replace(/^Bearer /u, "");
@@ -58,7 +60,27 @@ function models(provider) {
         display_name: slug,
         supported_reasoning_levels: [{ effort: "none" }, { effort: "max" }, { effort: "matrix-provider-tier" }],
         default_reasoning_level: "none",
+        context_window: 8192,
       })),
+    };
+  }
+  if (provider === "claude") {
+    return {
+      data: [
+        {
+          id: MATRIX_MODELS.claude,
+          type: "model",
+          display_name: "Controlled Claude",
+          created_at: "2026-01-01T00:00:00Z",
+          max_input_tokens: 8192,
+          max_tokens: 1024,
+          capabilities: {
+            thinking: { types: { disabled: { supported: true }, adaptive: { supported: true } } },
+            effort: { supported: true, high: { supported: true } },
+          },
+        },
+      ],
+      has_more: false,
     };
   }
   const ids = provider === "openrouter" ? [MATRIX_MODELS.openrouter, "typesafe/jev-fast"] : [MATRIX_MODELS[provider] ?? MATRIX_MODELS.codex];
@@ -85,7 +107,7 @@ function completion(provider, body) {
     created: 1_800_000_000,
     model: body.model,
     choices: [{ index: 0, message: { role: "assistant", content: "matrix answer" }, finish_reason: "stop" }],
-    usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
+    usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10, ...(provider === "surplus" ? { buyer_cost_micro: 5 } : {}) },
   };
 }
 
@@ -105,7 +127,7 @@ function response(provider, body) {
         content: [{ type: "output_text", text: "matrix answer", annotations: [] }],
       },
     ],
-    usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 },
+    usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10, ...(provider === "surplus" ? { buyer_cost_micro: 5 } : {}) },
   };
 }
 
@@ -208,7 +230,41 @@ function streamed(provider, body, wire, marker, context, recordEvent) {
     },
   });
   context.waitUntil(lifetime);
-  return new Response(stream, { headers: { "content-type": "text/event-stream", "x-request-id": `matrix-${provider}` } });
+  return new Response(stream, { headers: { "content-type": "text/event-stream", "x-request-id": requestId(provider, marker) } });
+}
+
+async function metadata(request, provider, url, recordEvent) {
+  if (provider === "claude" && url.pathname === "/v1/organizations/workspaces") {
+    if (!credentialMatches(request, provider, false)) return new Response(null, { status: 401 });
+    await recordEvent({ kind: "matrix_workspaces", provider });
+    return Response.json({ data: [{ id: "wrkspc_fixture_matrix", name: "Default", archived_at: null }] });
+  }
+  if (provider !== "openlux") return null;
+  if (url.pathname === "/api/status") return Response.json({ success: true, data: { setup: true, quota_per_unit: 500000 } });
+  if (url.pathname === "/api/ratio_config") {
+    return Response.json({
+      success: true,
+      data: { model_ratio: { [MATRIX_MODELS.codex]: 1, [MATRIX_MODELS.unavailable]: 1 }, model_price: {}, completion_ratio: {} },
+    });
+  }
+  if (url.pathname !== "/api/log/token") return null;
+  if (url.searchParams.get("key") !== MATRIX_KEYS.openlux_spend) return new Response(null, { status: 401 });
+  await recordEvent({ kind: "matrix_billing_lookup", provider, credential_matched: true, page: url.searchParams.get("page") });
+  return Response.json({ success: true, data: { items: [...billingLogs.values()], total: billingLogs.size } });
+}
+
+function quota() {
+  return Response.json(
+    { error: { type: "usage_limit_reached", code: "usage_limit_reached", resets_at: Math.floor(Date.now() / 1000) + 3600 } },
+    {
+      status: 429,
+      headers: {
+        "x-codex-primary-used-percent": "100",
+        "x-codex-primary-window-minutes": "300",
+        "x-codex-primary-reset-at": String(Math.floor(Date.now() / 1000) + 3600),
+      },
+    }
+  );
 }
 
 /** Fixed destination upstream extension, not a standalone application. */
@@ -217,6 +273,10 @@ export async function handleProviderMatrix(request, _env, context, recordEvent) 
   const destination = destinations.get(url.hostname);
   if (!destination || !destination.paths.includes(url.pathname)) return null;
   const { provider } = destination;
+  if (request.method === "GET") {
+    const handled = await metadata(request, provider, url, recordEvent);
+    if (handled) return handled;
+  }
   if (request.method === "GET" && url.pathname.endsWith("/models")) {
     if (provider === "codex" && codexAccount(request) === null) return null;
     if (!credentialMatches(request, provider, true)) return Response.json({ error: { type: "authentication_error" } }, { status: 401 });
@@ -244,24 +304,34 @@ export async function handleProviderMatrix(request, _env, context, recordEvent) 
     account_label: codexAccount(request)?.endsWith("-a") ? "a" : codexAccount(request)?.endsWith("-b") ? "b" : null,
     originator: request.headers.get("originator"),
     anthropic_version: request.headers.get("anthropic-version"),
+    workspace: request.headers.get("anthropic-workspace-id"),
+    thinking: isObject(body.thinking) ? body.thinking.type : null,
   });
+  if (provider === "claude" && marker.endsWith(":workspace") && !request.headers.has("anthropic-workspace-id")) {
+    return Response.json({ error: { type: "invalid_request_error", message: "Request is not scoped to a workspace" } }, { status: 400 });
+  }
   if (marker.endsWith(":transient")) return Response.json({ error: { type: "server_error", message: "Controlled matrix transient failure" } }, { status: 503 });
   if (marker.endsWith(":unavailable"))
     return Response.json({ detail: `The '${body.model}' model is not supported when using Codex with a ChatGPT account.` }, { status: 400 });
-  if (marker.endsWith(":quota"))
-    return Response.json(
-      { error: { type: "usage_limit_reached", code: "usage_limit_reached", resets_at: Math.floor(Date.now() / 1000) + 3600 } },
-      {
-        status: 429,
-        headers: {
-          "x-codex-primary-used-percent": "100",
-          "x-codex-primary-window-minutes": "300",
-          "x-codex-primary-reset-at": String(Math.floor(Date.now() / 1000) + 3600),
-        },
-      }
-    );
+  const paidFallback = /:(surplus|openlux|unknown)$/u.test(marker);
+  if (provider === "codex" && (paidFallback || (marker.endsWith(":mixed") && codexAccount(request)?.endsWith("-a")))) return quota();
+  if (marker.endsWith(":quota")) return quota();
+  if (provider === "surplus" && /:(openlux|unknown)$/u.test(marker)) {
+    return Response.json({ error: { type: "insufficient_balance", message: "Controlled paid capacity refusal" } }, { status: 402 });
+  }
+  if (provider === "openlux" && !marker.endsWith(":unknown")) {
+    const id = requestId(provider, marker);
+    billingLogs.set(id, {
+      request_id: id,
+      model_name: body.model,
+      quota: 20,
+      prompt_tokens: 7,
+      completion_tokens: 3,
+      created_at: Math.floor(Date.now() / 1000),
+    });
+  }
   if (body.stream === true || provider === "codex") return streamed(provider, body, wire, marker, context, recordEvent);
   return Response.json(wire === "chat" ? completion(provider, body) : wire === "anthropic" ? anthropic(body) : response(provider, body), {
-    headers: { "x-request-id": `matrix-${provider}` },
+    headers: { "x-request-id": requestId(provider, marker) },
   });
 }

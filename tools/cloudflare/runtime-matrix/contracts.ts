@@ -39,6 +39,23 @@ export async function post(context: MatrixContext, path: string, body: unknown, 
   return context.post(path, body, context.clientToken ?? "fixture-access", signal);
 }
 
+export async function createClient(context: MatrixContext, paid = false): Promise<{ token: string; id: string }> {
+  const result = await responseObject(
+    await context.post(
+      "/admin/api-keys",
+      { name: "controlled runtime matrix", paid_fallback_enabled: paid, ...(paid ? { paid_fallback_limit_credits: 100 } : {}) },
+      context.adminToken ?? "fixture-admin"
+    )
+  );
+  assert(typeof result.token === "string" && typeof result.id === "string", "The actual admin route must create the isolated principal");
+  return { token: result.token, id: result.id };
+}
+
+/** Read-only spelling of the source tuple codec's string components. */
+export function stringKey(...parts: string[]): string {
+  return "tuple-v1:" + parts.map((part) => "02" + Buffer.from(part).toString("hex").replaceAll("00", "00ff") + "00").join("");
+}
+
 export function dispatches(events: unknown[], marker: string): Record<string, unknown>[] {
   return events
     .filter((value) => value !== null && typeof value === "object" && !Array.isArray(value))

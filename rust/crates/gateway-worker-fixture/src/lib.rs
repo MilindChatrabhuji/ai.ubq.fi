@@ -83,7 +83,7 @@ pub async fn fetch(
         request,
         env,
         context,
-        Some(receiver),
+        Some(&receiver),
         gateway_worker::NativeBindings::default(),
     )
     .await

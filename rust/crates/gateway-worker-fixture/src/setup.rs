@@ -10,12 +10,14 @@ use gateway_auth::{
 };
 use gateway_authority::{
     keys,
+    paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
     routing::{PoolAccount, SubscriptionPool},
 };
 use gateway_core::{
     identity::PoolVersionstamp,
+    provider::PaidProvider,
     state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
+        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
         StoredRecord,
     },
 };
@@ -42,6 +44,9 @@ pub async fn initialize(
     receiver: &PublicationReceiver,
     scenario: &str,
 ) -> Result<(), GatewayError> {
+    if initialized(store, identity, inputs).await? {
+        return Ok(());
+    }
     if matches!(scenario, "codex" | "paid") {
         seed_pool(store).await?;
     }
@@ -74,12 +79,51 @@ pub async fn initialize(
         now,
     )
     .await?;
-    let command = prepared.command("fixture-matrix-config-publication-v1".into())?;
+    let command = prepared.command("fixture-matrix-config-publication-v1")?;
     let carrier = Carrier { store, receiver };
     NativePublicationSender::configured(identity, &carrier)
         .send(&command, nonce_bytes()?, now)
         .await?;
     Ok(())
+}
+
+async fn initialized(
+    store: &RemoteAuthorityStore,
+    identity: &NativeTransportIdentity,
+    inputs: &ConfiguredPaidInputs,
+) -> Result<bool, GatewayError> {
+    let Some(config) = store.read(&keys::paid_control_config()).await? else {
+        return Ok(false);
+    };
+    let owner = store
+        .read(&keys::paid_control_owner())
+        .await?
+        .ok_or_else(invalid)?;
+    let owner: PaidControlOwner =
+        serde_json::from_value(owner.json_value()?.clone()).map_err(|_| invalid())?;
+    let config: PaidControlConfig =
+        serde_json::from_value(config.json_value()?.clone()).map_err(|_| invalid())?;
+    if owner.v != 1
+        || owner.owner_id != identity.owner_id()
+        || owner.owner_epoch != identity.owner_epoch()
+        || owner.key_fingerprint != identity.key_fingerprint()
+        || config.v != PAID_CONTROL_CONFIG_VERSION
+        || config.owner_id != owner.owner_id
+        || config.owner_epoch != owner.owner_epoch
+        || config.surplus_binding != inputs.binding(PaidProvider::Surplus)
+        || config.openlux_binding != inputs.binding(PaidProvider::Metered)
+        || config.openlux_discovery_binding != inputs.discovery_binding(PaidProvider::Metered)
+    {
+        return Err(invalid());
+    }
+    for check in config.source_checks {
+        let row = store.read(&RecordKey(check.key)).await?;
+        if row.map(|row| row.revision) != check.expected_revision {
+            return Err(invalid());
+        }
+    }
+    // Never republish configuration or recreate a removed pool during a request.
+    Ok(true)
 }
 
 fn nonce_bytes() -> Result<[u8; 32], GatewayError> {
