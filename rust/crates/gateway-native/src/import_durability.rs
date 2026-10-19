@@ -25,6 +25,10 @@ struct ReceiptWire {
 }
 /// Native-only private proof of one actual durable file write and matching reread.
 /// No Debug/Clone/Serialize/Deserialize or public constructor.
+/// ```compile_fail
+/// use gateway_native::existing_account_import::DurableNativeImport;
+/// let forged: DurableNativeImport = serde_json::from_str("{}").unwrap();
+/// ```
 pub struct DurableNativeImport {
     binding: NativeImportBinding,
     receipt: ReceiptWire,
@@ -287,6 +291,17 @@ pub(super) fn issue_fixture(
     if read_fixed(&store.directory, "auth.json", AUTH_LIMIT)? != previous_bytes {
         return Err(unavailable());
     }
+    // Keep the displaced credentials native-private even if a later sync/receipt step is uncertain.
+    let previous_name = format!(".uos-import-{}.previous", binding.action_ref);
+    rustix::fs::linkat(
+        &store.directory,
+        "auth.json",
+        &store.directory,
+        &previous_name,
+        AtFlags::empty(),
+    )
+    .map_err(|_| unavailable())?;
+    fsync(&store.directory).map_err(|_| unavailable())?;
     renameat(&store.directory, &temp_name, &store.directory, "auth.json")
         .map_err(|_| unavailable())?;
     fsync(&store.directory).map_err(|_| unavailable())?;

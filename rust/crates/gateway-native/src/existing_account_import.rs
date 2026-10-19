@@ -1,10 +1,14 @@
 //! Native-private import custody. Independent native writer exclusion is not yet available.
 //! The production mutation boundary fails closed; a recovered durability receipt is not publication.
 use gateway_auth::crypto::sha256_hex;
-use gateway_authority::native_control::import::{
-    AuthenticatedNativeImport, NativeImportBinding, NativeImportClaim,
+use gateway_authority::{
+    TokenSource,
+    native_control::{
+        NativeRenewalAuthority, NativeRenewalCancellation,
+        import::{AuthenticatedNativeImport, NativeImportBinding, NativeImportClaim},
+    },
 };
-use gateway_core::GatewayError;
+use gateway_core::{GatewayError, state::AuthorityStore};
 use std::{fs::File, path::Path};
 #[path = "import_durability.rs"]
 mod durability;
@@ -54,12 +58,12 @@ impl ExistingAccountImportStore {
     }
     /// Read-only restart reconciliation. It never writes, refreshes, starts, or marks Published.
     /// A caller-created NativeGeneration or receipt JSON cannot enter this API as proof.
-    pub fn reconcile(
+    pub async fn reconcile<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>(
         &self,
+        authority: &NativeRenewalAuthority<'_, S, I, C>,
         claim: &NativeImportClaim,
         proof: &AuthenticatedNativeImport,
         original_body: &[u8],
-        now_ms: i64,
     ) -> Result<DurableNativeImport, GatewayError> {
         self.require_binding(claim.binding())?;
         if proof.metadata().action_ref != claim.binding().action_ref
@@ -67,8 +71,15 @@ impl ExistingAccountImportStore {
         {
             return Err(unavailable());
         }
-        proof.require_body(original_body, now_ms)?;
-        durability::reconcile(self, claim.binding(), &sha256_hex(original_body))
+        authority.recheck_import(proof).await?;
+        authority.recheck_import_claim(claim).await?;
+        proof.require_body(original_body, authority.now_ms()?)?;
+        let receipt = durability::reconcile(self, claim.binding(), &sha256_hex(original_body))?;
+        authority.recheck_import_claim(claim).await?;
+        authority.recheck_import(proof).await?;
+        proof.require_body(original_body, authority.now_ms()?)?;
+        durability::recheck(self, &receipt)?;
+        Ok(receipt)
     }
     #[cfg(test)]
     pub(super) fn issue_fixture(
@@ -82,8 +93,26 @@ impl ExistingAccountImportStore {
         durability::issue_fixture(self, start, proof, original_body, context, now_ms)
     }
     /// A recovered proof still requires an exact current native reread before publication.
-    pub fn recheck_receipt(&self, receipt: &DurableNativeImport) -> Result<(), GatewayError> {
+    pub async fn recheck_receipt<
+        S: AuthorityStore,
+        I: TokenSource,
+        C: NativeRenewalCancellation,
+    >(
+        &self,
+        authority: &NativeRenewalAuthority<'_, S, I, C>,
+        claim: &NativeImportClaim,
+        proof: &AuthenticatedNativeImport,
+        original_body: &[u8],
+        receipt: &DurableNativeImport,
+    ) -> Result<(), GatewayError> {
         self.require_binding(receipt.binding())?;
+        let current = self
+            .reconcile(authority, claim, proof, original_body)
+            .await?;
+        if current.binding() != receipt.binding() || current.receipt_ref() != receipt.receipt_ref()
+        {
+            return Err(unavailable());
+        }
         durability::recheck(self, receipt)
     }
 }

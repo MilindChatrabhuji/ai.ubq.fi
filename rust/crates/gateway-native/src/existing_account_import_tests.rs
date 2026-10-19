@@ -1,8 +1,6 @@
 //! Synthetic-only private receipt issuer. It does not establish real native writer exclusion.
 use super::*;
-#[path = "existing_account_import.rs"]
-mod custody_store;
-use custody_store::{DurableNativeImport, ExistingAccountImportStore};
+use crate::existing_account_import::{DurableNativeImport, ExistingAccountImportStore};
 use gateway_authority::native_control::import::{NativeImportClaim, NativeImportMode};
 use std::{
     fs,
@@ -151,7 +149,10 @@ fn durable_native_receipt_reopens_original_context_without_refresh_or_published(
         assert_eq!(response.status, 202);
         let claim = issuer.claim.lock().unwrap().take().unwrap();
         let receipt = issuer.receipt.lock().unwrap().take().unwrap();
-        native.recheck_receipt(&receipt).unwrap();
+        native
+            .recheck_receipt(&control, &claim, &proof, &raw, &receipt)
+            .await
+            .unwrap();
         assert_eq!(receipt.account_id_hash(), f.account);
         assert_eq!(
             receipt.native_generation(),
@@ -165,14 +166,31 @@ fn durable_native_receipt_reopens_original_context_without_refresh_or_published(
         drop(issuer);
         drop(native);
         let reopened = ExistingAccountImportStore::configured(&f.owner, f.account.clone()).unwrap();
-        let recovered = reopened.reconcile(&claim, &proof, &raw, now_ms()).unwrap();
+        let recovered = reopened
+            .reconcile(&control, &claim, &proof, &raw)
+            .await
+            .unwrap();
         assert_eq!(recovered.receipt_ref(), reference);
-        reopened.recheck_receipt(&recovered).unwrap();
+        reopened
+            .recheck_receipt(&control, &claim, &proof, &raw, &recovered)
+            .await
+            .unwrap();
         let stored: serde_json::Value =
             serde_json::from_slice(&fs::read(home.0.join("auth.json")).unwrap()).unwrap();
         assert_eq!(stored["OPENAI_API_KEY"], old["OPENAI_API_KEY"]);
         assert_eq!(stored["other"], old["other"]);
         assert_eq!(stored["tokens"], next["tokens"]);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(
+                &fs::read(home.0.join(format!(
+                    ".uos-import-{}.previous",
+                    proof.metadata().action_ref
+                )))
+                .unwrap()
+            )
+            .unwrap(),
+            old
+        );
         assert_eq!(fs::read(other.0.join("auth.json")).unwrap(), other_before);
         let captured = f.store.captured();
         for secret in [
@@ -204,6 +222,9 @@ fn native_receipt_wrong_owner_source_account_body_and_replaced_files_refuse() {
             "symlink",
             "generation",
             "home",
+            "actor",
+            "source_cf",
+            "cancel",
         ] {
             let home = Home::fresh();
             let old = document("old");
@@ -247,7 +268,12 @@ fn native_receipt_wrong_owner_source_account_body_and_replaced_files_refuse() {
                         f.account.clone(),
                     )
                     .unwrap();
-                    assert!(foreign.reconcile(&claim, &proof, &body, now_ms()).is_err());
+                    assert!(
+                        foreign
+                            .reconcile(&control, &claim, &proof, &body)
+                            .await
+                            .is_err()
+                    );
                     continue;
                 }
                 "receipt" => {
@@ -271,6 +297,27 @@ fn native_receipt_wrong_owner_source_account_body_and_replaced_files_refuse() {
                     std::os::unix::fs::symlink(original, home.0.join("auth.json")).unwrap();
                 }
                 "generation" => home.write_auth(&document("advanced-without-retry")),
+                "actor" => {
+                    f.store
+                        .rows
+                        .lock()
+                        .unwrap()
+                        .get_mut(&passkeys::key("users", "user-fixture").0)
+                        .unwrap()
+                        .revision = "user-replaced".into();
+                }
+                "source_cf" => {
+                    f.store
+                        .rows
+                        .lock()
+                        .unwrap()
+                        .get_mut(&codex_source_pool_key().0)
+                        .unwrap()
+                        .revision = "source-replaced".into();
+                }
+                "cancel" => {
+                    f.cancel.0.store(true, Ordering::SeqCst);
+                }
                 _ => {
                     let path = home.0.with_extension("retained");
                     fs::rename(&home.0, &path).unwrap();
@@ -280,11 +327,20 @@ fn native_receipt_wrong_owner_source_account_body_and_replaced_files_refuse() {
                 }
             }
             assert!(
-                native.reconcile(&claim, &proof, &body, now_ms()).is_err(),
+                native
+                    .reconcile(&control, &claim, &proof, &body)
+                    .await
+                    .is_err(),
                 "{changed}"
             );
             if changed != "body" {
-                assert!(native.recheck_receipt(&receipt).is_err(), "{changed}");
+                assert!(
+                    native
+                        .recheck_receipt(&control, &claim, &proof, &raw, &receipt)
+                        .await
+                        .is_err(),
+                    "{changed}"
+                );
             }
             if let Some(path) = moved {
                 fs::remove_dir_all(path).unwrap();
@@ -315,4 +371,70 @@ fn production_mutation_is_unavailable_without_real_native_writer_exclusion() {
     );
     assert_eq!(fs::read(home.0.join("auth.json")).unwrap(), before);
     assert_eq!(fs::read_dir(&home.0).unwrap().count(), 1);
+}
+
+#[test]
+fn wrong_uploaded_account_owner_and_physical_source_write_nothing() {
+    run(async {
+        for changed in ["account", "owner", "source"] {
+            let home = Home::fresh();
+            let old = document("old");
+            home.write_auth(&old);
+            let f = fixture(&home, &old);
+            let authority = f.authority();
+            let control = NativeRenewalAuthority::configured(
+                &authority,
+                &f.identity,
+                &f.owner,
+                &f.config,
+                &f.cancel,
+            );
+            let foreign = RegisteredRenewalOwner::configured(
+                "foreign-owner".into(),
+                home.0.to_str().unwrap().into(),
+            )
+            .unwrap();
+            let native = ExistingAccountImportStore::configured(
+                if changed == "owner" {
+                    &foreign
+                } else {
+                    &f.owner
+                },
+                f.account.clone(),
+            )
+            .unwrap();
+            let mut uploaded = document("new");
+            if changed == "account" {
+                uploaded["tokens"]["account_id"] = json!("foreign-account");
+            }
+            let raw = serde_json::to_vec(&uploaded).unwrap();
+            let (proof, headers) = proof_for(&f, &authority, &raw).await;
+            if changed == "source" {
+                home.write_auth(&document("independent-native-advance"));
+            }
+            let before = fs::read(home.0.join("auth.json")).unwrap();
+            let original = original(&headers, &|| false);
+            let issuer = Issuer {
+                control: &control,
+                native: &native,
+                claim: Mutex::new(None),
+                receipt: Mutex::new(None),
+            };
+            assert!(
+                dispatch_import(&issuer, &control, &proof, proof.metadata(), &raw, &original)
+                    .await
+                    .is_err(),
+                "{changed}"
+            );
+            assert_eq!(
+                fs::read(home.0.join("auth.json")).unwrap(),
+                before,
+                "{changed}"
+            );
+            assert_eq!(fs::read_dir(&home.0).unwrap().count(), 1, "{changed}");
+            assert!(issuer.receipt.lock().unwrap().is_none());
+            let rows = f.store.rows.lock().unwrap();
+            assert!(rows.values().all(|row| row.value["phase"] != "published"));
+        }
+    });
 }

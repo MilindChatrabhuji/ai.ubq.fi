@@ -7,6 +7,8 @@ pub mod control_publication;
 pub mod credentials;
 pub mod daemon_config;
 #[cfg(unix)]
+pub mod existing_account_import;
+#[cfg(unix)]
 pub mod http_server;
 #[cfg(unix)]
 mod import_ingress;

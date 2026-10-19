@@ -2,6 +2,19 @@
 use super::*;
 use crate::native_control::import::{AuthenticatedNativeImport, NativeImportMode};
 use std::sync::atomic::AtomicBool;
+#[derive(Default)]
+struct EffectTokens(AtomicUsize);
+impl TokenSource for EffectTokens {
+    fn next_token(&self) -> Result<String, GatewayError> {
+        Ok(format!(
+            "import-effect-fixture-token-{}",
+            self.0.fetch_add(1, Ordering::SeqCst)
+        ))
+    }
+}
+fn effect_authority(store: &Store) -> Authority<Store, EffectTokens> {
+    Authority::with_clock(store.clone(), EffectTokens::default(), store.clone())
+}
 struct Cancellation(AtomicBool);
 impl NativeRenewalCancellation for Cancellation {
     fn cancelled(&self) -> bool {
@@ -9,7 +22,7 @@ impl NativeRenewalCancellation for Cancellation {
     }
 }
 async fn proof<C: NativeRenewalCancellation>(
-    control: &NativeRenewalAuthority<'_, Store, Tokens, C>,
+    control: &NativeRenewalAuthority<'_, Store, EffectTokens, C>,
     store: &Store,
     id: &NativeTransportIdentity,
     cfg: &AuthConfig,
@@ -57,7 +70,7 @@ fn original_import_v2_single_start_replay_unknown_and_no_forged_terminal() {
         let store = Store::default();
         let id = identity();
         let hash = seed(&store, &id);
-        let authority = authority(&store);
+        let authority = effect_authority(&store);
         let cfg = config();
         let registered = registered();
         let cancellation = Cancellation(AtomicBool::new(false));
@@ -153,6 +166,12 @@ fn original_import_v2_single_start_replay_unknown_and_no_forged_terminal() {
             )
             .is_err()
         );
+        drop(rows);
+        store.rows.lock().unwrap().insert(
+            crate::native_control::rows::key("operation", &proof.metadata().operation_id).0,
+            forged,
+        );
+        assert!(control.claim_import(&proof).await.is_err());
     });
 }
 #[test]
@@ -169,7 +188,7 @@ fn cancellation_before_effect_and_current_actor_source_races_never_start() {
             let store = Store::default();
             let id = identity();
             let hash = seed(&store, &id);
-            let authority = authority(&store);
+            let authority = effect_authority(&store);
             let cfg = config();
             let registered = registered();
             let cancellation = Cancellation(AtomicBool::new(false));
@@ -239,7 +258,7 @@ fn legacy_import_v1_custody_is_lossless_but_cannot_acquire_effects() {
         let store = Store::default();
         let id = identity();
         let hash = seed(&store, &id);
-        let authority = authority(&store);
+        let authority = effect_authority(&store);
         let cfg = config();
         let registered = registered();
         let control =
