@@ -10,9 +10,13 @@ import {
   type NativeAttempt,
 } from "./native-authority-contracts.ts";
 import { apiKeyHashKey } from "../api-keys.ts";
+import { hasStrictPaidFallbackPolicy } from "./native-paid-policy.ts";
 import { apiKeyPolicyFromHashRecord } from "./native-api-key-policy.ts";
 
 const TABLES: readonly NativeTable[] = [
+  "retained_history_grant",
+  "runtime_grant",
+  "runtime_request",
   "key_control_grant",
   "principal_resolution",
   "api_key_id",
@@ -145,13 +149,13 @@ export class NativeAuthoritySql {
         "CREATE INDEX IF NOT EXISTS uos_native_attempt_billing ON uos_native_attempt_lifetime(scope_key,json_extract(row_json,'$.billingRequestId'))"
       );
       const found = _storage.sql.exec("SELECT * FROM uos_native_authority_meta WHERE id=1").toArray();
-      if (found.length === 0) _storage.sql.exec("INSERT INTO uos_native_authority_meta VALUES(1,1,?,?,0,0)", namespace, epoch);
+      if (found.length === 0) _storage.sql.exec("INSERT INTO uos_native_authority_meta VALUES(1,3,?,?,0,0)", namespace, epoch);
       this.assertEpoch();
     });
   }
   assertEpoch(): void {
     const row = this._storage.sql.exec("SELECT * FROM uos_native_authority_meta WHERE id=1").toArray().at(0);
-    if (row?.schema_version !== 1 || row.namespace !== this.namespace || row.epoch !== this.epoch || !Number.isSafeInteger(row.sequence))
+    if (row?.schema_version !== 3 || row.namespace !== this.namespace || row.epoch !== this.epoch || !Number.isSafeInteger(row.sequence))
       throw new NativeAuthorityError("authority_schema_or_epoch_mismatch", 503);
   }
   transaction<T>(callback: () => T): T {
@@ -277,12 +281,27 @@ export class NativeAuthoritySql {
     if (!cap || cap.revoked || cap.epoch !== this.epoch) throw new NativeAuthorityError("capability_revoked_or_wrong_epoch", 403);
     return cap;
   }
-  currentKeyPolicy(tokenHash: string, keyId: string, now: number) {
+  principalReference(id: string, keyId: string, now: number): NativeRows["principal_resolution"] | null {
+    const rows = this._storage.sql
+      .exec(
+        "SELECT key_json FROM uos_native_principal_resolution WHERE scope_key=? AND json_extract(row_json,'$.id')=? AND (expires_at_ms IS NULL OR expires_at_ms>?) LIMIT 2",
+        keyId,
+        id,
+        now
+      )
+      .toArray();
+    if (rows.length > 1) throw new NativeAuthorityError("principal_reference_identity_conflict", 503);
+    const encoded = rows.at(0)?.key_json;
+    if (encoded === undefined) return null;
+    if (typeof encoded !== "string") throw new NativeAuthorityError("principal_reference_malformed", 503);
+    return this.read("principal_resolution", parseKey(encoded), now).value;
+  }
+  currentKeyPolicy(tokenHash: string | null, keyId: string | null, now: number) {
+    if (tokenHash === null || keyId === null) return null;
     const source = this.read("api_policy", apiKeyHashKey(tokenHash), now);
     if (source.value?.api.key_id !== keyId) return null;
-    if (!source.value.rawSource) return { ...source, value: source.value };
     const raw = this.read("api_key_hash", apiKeyHashKey(tokenHash), now).value;
-    if (raw?.id !== keyId || raw.revoked_at_ms !== null) return null;
+    if (raw?.id !== keyId || raw.revoked_at_ms !== null || !hasStrictPaidFallbackPolicy(raw)) return null;
     const api = apiKeyPolicyFromHashRecord(tokenHash, raw, now);
     if (!api) return null;
     // API admission rolls this source anchor at its own request time. Paid admission

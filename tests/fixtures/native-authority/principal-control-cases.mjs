@@ -85,6 +85,20 @@ export async function runPrincipalControlCases({ owner, remote, restart, nativeB
       raw: (command, profile = "resolver", options = {}) => send("principal", profile, command, { ...options, raw: true }),
       infer: (method, args = {}, operationId = randomUUID(), principal = "control", options = {}) =>
         send("inference", principal, { epoch, method, args, operationId }, options),
+      retained: (method, args, operationId = randomUUID(), profile = "history-foreign") => send("retained", profile, { epoch, method, args, operationId }),
+      sourcePhase: (operation, principal = "control", options = {}) => send("source-phase", principal, operation, options),
+      admit: (args, operationId = randomUUID(), principal = "control", options = {}) =>
+        send(
+          "source-phase",
+          principal,
+          {
+            fixturePhase: "admit-api",
+            request: { requestId: args.requestId, route: args.route, path: args.path ?? args.route },
+            metadata: { model: args.model, stream: args.stream, reasoning: args.reasoning ?? null },
+            operationId,
+          },
+          options
+        ),
       action: (action, value) => owner(id, "action", { action, value }),
       evidence: () => owner(id, "evidence"),
     };
@@ -113,7 +127,7 @@ export async function runPrincipalControlCases({ owner, remote, restart, nativeB
     assert.fail("expected injected fault");
   };
   const reserve = async (c, id, principal = "control", operationId = randomUUID()) => {
-    const r = await c.infer("reserveApiUsage", { requestId: id, route: "/v1/responses", model: "fixture", stream: false }, operationId, principal);
+    const r = await c.admit({ requestId: id, route: "/v1/responses", model: "fixture", stream: false }, operationId, principal);
     isKind(r, "reserved");
     return required(r.handle);
   };
@@ -378,16 +392,22 @@ export async function runPrincipalControlCases({ owner, remote, restart, nativeB
     await finish(c);
   }
   {
-    const c = await fresh("P11"),
-      { handle, attemptHandle } = await paid(c, "inflight", "control", "paid-admission"),
-      prefetch = await paid(c, "prefetch");
+    const c = await fresh("P11");
+    const opened = await c.sourcePhase({ fixturePhase: "open-api", request: { requestId: "inflight", route: "/v1/responses", path: "/v1/responses" } });
+    isKind(opened, "reserved");
+    const handle = required(opened.handle);
     isKind(await c.infer("reserveKernelUsage", { handle }), "reserved");
+    await c.sourcePhase({ fixturePhase: "metadata", handle, metadata: { model: "fixture", stream: false, reasoning: null } });
+    const admittedPaid = await c.infer("reservePaidAttempt", { handle, hopId: "paid" }, "paid-admission");
+    isKind(admittedPaid, "reserved");
+    const attemptHandle = required(admittedPaid.attemptHandle),
+      prefetch = await paid(c, "prefetch", "foreign");
     await c.infer("markApiDispatch", { handle, provider: "metered" });
     await c.infer("recordTransportStarted", { handle, provider: "metered", attemptHandle }, "transport");
     await c.infer("recordPaidAttemptLifecycle", { attemptHandle, patch: { provider_request_id: "paid-response" } });
     await c.call("revokeKey");
     assert.equal((await c.call("resolvePrincipal", {}, "resolve", "resolver")).status, 401);
-    isKind(await c.infer("reserveApiUsage", { requestId: "fresh", route: "/v1/responses", model: "fixture", stream: false }), "unauthorized");
+    isKind(await c.admit({ requestId: "fresh", route: "/v1/responses", model: "fixture", stream: false }), "unauthorized");
     assert.equal((await c.infer("reservePaidAttempt", { handle, hopId: "paid" })).detail, "invalid_policy");
     await deny(c.infer("reservePaidAttempt", { handle, hopId: "paid" }, "paid-admission"), "api_policy_revoked");
     await deny(c.infer("recordTransportStarted", { handle, provider: "metered", attemptHandle }, "transport"), "api_policy_revoked");
@@ -405,55 +425,60 @@ export async function runPrincipalControlCases({ owner, remote, restart, nativeB
       }),
       "settled"
     );
-    isKind(await c.infer("releasePaidBeforeFetch", { attemptHandle: prefetch.attemptHandle }), "released");
-    isKind(await c.infer("releaseApiUndispatched", { handle: prefetch.handle, reason: "revoked-before-fetch" }), "released");
+    isKind(await c.infer("releasePaidBeforeFetch", { attemptHandle: prefetch.attemptHandle }, randomUUID(), "foreign"), "released");
+    isKind(await c.infer("releaseApiUndispatched", { handle: prefetch.handle, reason: "revoked-before-fetch" }, randomUUID(), "foreign"), "released");
     await finish(c);
   }
   {
     const c = await fresh("P12"),
-      first = await paid(c, "foreign-pending", "foreign"),
-      second = await paid(c, "foreign-unresolved", "foreign");
+      [first, second] = await c.action("p12-restore-retained");
+    const before = await c.evidence();
+    assert.deepEqual([...new Set(before.rows.request_lifetime.map((entry) => entry.value.principalId))].sort(), ["foreign", "p"]);
+    assert.deepEqual([...new Set(before.rows.attempt_lifetime.map((entry) => entry.value.principalId))].sort(), ["foreign", "p"]);
+    assert.equal(count(before, "runtime_request"), 0);
+    assert.equal(count(before, "capability"), 0);
+    await deny(c.infer("releasePaidBeforeFetch", { attemptHandle: second.attemptHandle }, randomUUID(), "foreign"), "attempt_ownership_mismatch");
     await c.action("clock", NOW + DAY + 1);
-    isKind(await c.infer("deferPaidReconciliation", { attemptHandle: second.attemptHandle }, randomUUID(), "foreign"), "write");
+    isKind(await c.retained("deferPaidReconciliation", { attemptHandle: second.attemptHandle }), "write");
     await c.call("revokeKey");
     const blocked = await c.call("deleteKey");
     assert.equal(blocked.code, "paid_fallback_billing_outstanding");
     assert(blocked.message.includes("pending=1, unresolved=1, markers=2"));
     const guard = (await c.evidence()).rows.paid_deletion_guard[0];
     assert.equal(guard.expiresAtMs, null);
-    isKind(await c.infer("releasePaidBeforeFetch", { attemptHandle: first.attemptHandle }, randomUUID(), "foreign"), "released");
+    isKind(await c.retained("releasePaidBeforeFetch", { attemptHandle: first.attemptHandle }, randomUUID(), "history-p"), "released");
     const unresolved = await c.evidence();
-    isKind(await c.infer("releasePaidBeforeFetch", { attemptHandle: second.attemptHandle }, randomUUID(), "foreign"), "unchanged");
+    isKind(await c.retained("releasePaidBeforeFetch", { attemptHandle: second.attemptHandle }), "unchanged");
     const retained = await c.evidence();
     for (const family of ["paid_request", "paid_window", "paid_pending"]) assert.deepEqual(retained.rows[family], unresolved.rows[family]);
     const stillBlocked = await c.call("deleteKey");
     assert.equal(stillBlocked.code, "paid_fallback_billing_outstanding");
     assert(stillBlocked.message.includes("pending=0, unresolved=1, markers=1"));
     const providerRequestId = "foreign-deferred-bill";
-    await c.infer(
+    await c.retained(
       "recordPaidAttemptLifecycle",
       { attemptHandle: second.attemptHandle, patch: { provider_request_id: providerRequestId, terminal_state: "completed" } },
       randomUUID(),
-      "foreign"
+      "history-foreign"
     );
-    const claim = await c.infer("claimPaidReconciliation", { limit: 100 }, randomUUID(), "foreign");
+    const claim = await c.retained("claimPaidReconciliation", { limit: 100 });
     isKind(claim, "claimed");
     assert.equal(claim.detail.length, 1);
     assert.equal(claim.detail[0].attemptHandle, second.attemptHandle);
-    const settled = await c.infer(
+    const settled = await c.retained(
       "recordVerifiedPaidBilling",
       {
         attemptHandle: claim.detail[0].attemptHandle,
         log: { request_id: providerRequestId, quota: 7, prompt_tokens: 3, completion_tokens: 2, model: "fixture", created_at: NOW / 1000 },
       },
       randomUUID(),
-      "foreign"
+      "history-foreign"
     );
     isKind(settled, "settled");
     assert.equal(settled.detail.billing_state, "settled");
     assert.equal(settled.detail.terminal_state, "completed");
     assert.equal(settled.detail.spend_microcredits, 7);
-    isKind(await c.infer("finishPaidReconciliation", { lease: claim.lease }, randomUUID(), "foreign"), "finished");
+    isKind(await c.retained("finishPaidReconciliation", { lease: claim.lease }), "finished");
     const reconciled = await c.evidence();
     assert.equal(count(reconciled, "paid_pending"), 0);
     assert.equal(count(reconciled, "paid_lease"), 0);
@@ -473,7 +498,7 @@ export async function runPrincipalControlCases({ owner, remote, restart, nativeB
     assert(e.cleanupObservations.every((o) => o.idAbsent && o.hashAbsent && o.projectionAbsent && o.apiRows === 2 && o.deleteAudits === 1));
     isKind(await c.call("deleteKey", {}, "delete"), "historical_ack");
     assert.equal((await c.call("deleteKey", {}, "fresh-delete")).status, 404);
-    await finish(c, { unresolved, retained, reconciled });
+    await finish(c, { before, unresolved, retained, reconciled });
   }
   {
     const c = await fresh("P13"),
@@ -543,12 +568,12 @@ export async function runPrincipalControlCases({ owner, remote, restart, nativeB
   {
     const c = await fresh("P17"),
       args = { requestId: "before-revocation", route: "/v1/responses", model: "fixture", stream: false };
-    isKind(await c.infer("reserveApiUsage", args, "admission"), "reserved");
+    isKind(await c.admit(args, "admission"), "reserved");
     await c.action("raw", "revoke");
-    isKind(await c.infer("reserveApiUsage", { ...args, requestId: "after-revocation" }), "unauthorized");
-    await deny(c.infer("reserveApiUsage", args, "admission"), "api_policy_revoked");
+    isKind(await c.admit({ ...args, requestId: "after-revocation" }), "unauthorized");
+    await deny(c.admit(args, "admission"), "api_policy_revoked");
     await c.action("raw", "remove-h");
-    isKind(await c.infer("reserveApiUsage", { ...args, requestId: "after-removal" }), "unauthorized");
+    isKind(await c.admit({ ...args, requestId: "after-removal" }), "unauthorized");
     const e = await c.evidence();
     assert.equal(row(e, "api_policy").revoked, false);
     assert.equal(count(e, "request_lifetime"), 1);
@@ -630,7 +655,11 @@ export async function runPrincipalControlCases({ owner, remote, restart, nativeB
     await c.call("revokeKey");
     await c.call("unrevokeKey");
     assert.equal((await c.call("resolvePrincipal", {}, "incomplete", "resolver")).status, 503);
-    isKind(await c.infer("reserveApiUsage", { requestId: "migration", route: "/v1/responses", model: "fixture", stream: false }), "unauthorized");
+    const migrationRefusal = await deny(c.admit({ requestId: "migration", route: "/v1/responses", model: "fixture", stream: false }), "server_error");
+    assert.equal(migrationRefusal.status, 503);
+    const migrationAfter = await c.evidence();
+    for (const table of ["capability", "request_lifetime", "api_request", "kernel_reservation", "attempt_lifetime", "paid_request"])
+      assert.equal(count(migrationAfter, table), 0);
     assert.equal(count(await c.evidence(), "api_key_audit"), 2);
     await finish(c);
   }
@@ -779,8 +808,8 @@ export async function runPrincipalControlCases({ owner, remote, restart, nativeB
       }
     const authorization = await c.evidence();
     for (const principal of ["control", "foreign"])
-      assert.equal(authorization.rows.capability.find((item) => item.value.id === principal).value.roles.includes("quota_admin"), false);
-    assert.deepEqual(authorization.rows.capability.find((item) => item.value.id === "p28-retention-admin").value.roles, ["quota_admin"]);
+      assert.equal(authorization.rows.runtime_grant.find((item) => item.value.id === principal).value.roles.includes("quota_admin"), false);
+    assert.deepEqual(authorization.rows.runtime_grant.find((item) => item.value.id === "p28-retention-admin").value.roles, ["quota_admin"]);
     isKind(await c.action("p28-begin-paid-key-deletion"), "deleted");
     const before = await c.evidence();
     for (const family of ["api_key_id", "api_key_hash", "paid_rollup", "paid_deletion_guard"]) {
