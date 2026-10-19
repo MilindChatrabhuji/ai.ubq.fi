@@ -34,7 +34,7 @@ fn actual_source_terminal_writer_cases_match_shared_usage_and_bounded_atomic_sto
                 .to_record_key();
             store.rows.borrow_mut().insert(
                 key.0,
-                StoredRecord::json("initial".into(), existing.clone(), None),
+                StoredRecord::json("initial", existing.clone(), None),
             );
         }
         let runtime = ObservabilityRuntime::new(store.clone(), host);
