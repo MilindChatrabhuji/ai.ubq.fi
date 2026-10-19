@@ -381,8 +381,7 @@ mod tests {
         collections::BTreeMap,
         future::Future,
         pin::pin,
-        sync::Arc,
-        task::{Context, Poll, Wake, Waker},
+        task::{Context, Poll, Waker},
     };
     const NOW: i64 = 1_800_000_000_000;
     fn now() -> i64 {
@@ -423,12 +422,7 @@ mod tests {
         }
     }
     fn run<F: Future>(future: F) -> F::Output {
-        struct Noop;
-        impl Wake for Noop {
-            fn wake(self: Arc<Self>) {}
-        }
-        let waker = Waker::from(Arc::new(Noop));
-        let mut context = Context::from_waker(&waker);
+        let mut context = Context::from_waker(Waker::noop());
         let mut future = pin!(future);
         match future.as_mut().poll(&mut context) {
             Poll::Ready(value) => value,
