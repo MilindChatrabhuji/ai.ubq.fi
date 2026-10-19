@@ -221,21 +221,7 @@ impl<
         Ok(())
     }
     pub async fn renew(&self) -> RoutingResult<()> {
-        let (_, row) = journal::load(&self.store, self.id()).await?;
-        settlement::ensure_active(&row)?;
-        if let Some(kernel) = &row.kernel {
-            self.authority().renew_kernel(kernel, self.now()?).await?;
-        }
-        let expiry = self
-            .now()?
-            .checked_add(gateway_authority::REQUEST_LEASE_MS)
-            .ok_or_else(|| journal::unavailable("Lease overflow."))?;
-        self.change(|j| {
-            settlement::ensure_active(j)?;
-            j.lease_expires_at_ms = expiry;
-            Ok(())
-        })
-        .await?;
+        self.currentness().renew_kernel().await?;
         Ok(())
     }
     pub async fn observe_terminal(
@@ -431,15 +417,7 @@ impl<
                     .await?;
                     decision = RefusalDecision::Continue;
                 } else {
-                    return Err(GatewayError::new(
-                        404,
-                        format!(
-                            "The model '{}' is not available for these subscriptions.",
-                            record.model
-                        ),
-                        Some("model_not_found"),
-                    )
-                    .into());
+                    return Err(classify::model_unavailable_error(&record.model).into());
                 }
             }
         } else if record.paid.is_some() && failure.origin == FailureOrigin::Provider {

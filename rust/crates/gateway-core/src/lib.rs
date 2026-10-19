@@ -7,6 +7,7 @@ pub mod identity;
 pub mod js_string;
 pub mod js_string_case;
 pub mod lifecycle;
+pub mod local_completion;
 pub mod local_work;
 pub mod model;
 pub mod provider;

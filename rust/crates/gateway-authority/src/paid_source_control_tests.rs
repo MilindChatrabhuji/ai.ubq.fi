@@ -116,7 +116,10 @@ fn actual_settlement_preserves_first_label_for_three_source_physical_key_collisi
     assert_eq!(window["pending_count"], 0);
     let rows: Vec<_> = [key("a"), key("q"), key("A"), first_key]
         .into_iter()
-        .map(|key| (key.clone(), store.row(&key)))
+        .map(|key| {
+            let record = store.row(&key);
+            serde_json::json!({"key":key.0,"record":record})
+        })
         .collect();
     println!(
         "M19_SOURCE_WRITER_FIXTURES {}",
