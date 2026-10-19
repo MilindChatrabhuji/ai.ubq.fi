@@ -91,6 +91,9 @@ struct Io {
     steal_cycle_on_first: Option<(gateway_core::state::RecordKey, i64)>,
     quota_on_first: bool,
     fail_recovery_probe: bool,
+    refresh_error_after_rotation: Option<bool>,
+    shrink_on_refresh: bool,
+    rotate_after_publication: bool,
 }
 impl Io {
     fn new(store: &MemoryStore) -> Self {
@@ -105,6 +108,9 @@ impl Io {
             steal_cycle_on_first: None,
             quota_on_first: false,
             fail_recovery_probe: false,
+            refresh_error_after_rotation: None,
+            shrink_on_refresh: false,
+            rotate_after_publication: false,
         }
     }
 }
@@ -224,26 +230,50 @@ impl ExperimentIo for Io {
             completed: true,
         })
     }
-    async fn refresh(&self, permit: RefreshPermit) -> Result<(), GatewayError> {
+    async fn refresh(&self, permit: RefreshPermit) -> Result<PoolVersionstamp, GatewayError> {
         assert_eq!(permit.context().slot, 1);
         assert_eq!(permit.context().prefix.len(), 5);
         assert_eq!(permit.binding().slot, 0);
         let count = self.refreshes.get() + 1;
         self.refreshes.set(count);
         if self.unchanged {
-            return Ok(());
+            if self.refresh_error_after_rotation.is_some() {
+                return Err(gateway_authority::cache_experiment::model::failed(
+                    "Controlled refresh outcome is unknown with an unchanged pool.",
+                ));
+            }
+            return Ok(PoolVersionstamp(
+                self.store.row(&codex_source_pool_key()).unwrap().revision,
+            ));
         }
         let mut source =
             parse_codex_source_pool(&self.store.row(&codex_source_pool_key()).unwrap().value)
                 .unwrap()
                 .unwrap();
         source.accounts[0].access_token = Secret::new(format!("fixture-refreshed-{count}"));
+        if self.shrink_on_refresh || self.refresh_error_after_rotation == Some(true) {
+            source.accounts.pop();
+        }
         seed_source(
             &self.store,
             &source.private_source_value(),
             &format!("pool-refresh-{count}"),
         );
-        Ok(())
+        if self.refresh_error_after_rotation.is_some() {
+            return Err(gateway_authority::cache_experiment::model::failed(
+                "Controlled refresh failed after the source pool changed.",
+            ));
+        }
+        if self.rotate_after_publication {
+            source.accounts[0].access_token =
+                Secret::new("fixture-foreign-post-publication".into());
+            seed_source(
+                &self.store,
+                &source.private_source_value(),
+                "pool-foreign-after-publication",
+            );
+        }
+        Ok(PoolVersionstamp(format!("pool-refresh-{count}")))
     }
 }
 #[test]
@@ -333,6 +363,59 @@ fn unchanged_forced_refresh_stops_after_five_rows_and_never_dispatches_the_discr
     let result = run(authority.run_cache_experiment(prepared, &io, now)).unwrap();
     assert_eq!(result["status"], "inconclusive");
     assert_eq!(result["inconclusive_reason"], "refresh_unchanged");
+    assert_eq!(io.calls.borrow().len(), 5);
+    assert_eq!(io.refreshes.get(), 1);
+}
+#[test]
+fn refresh_failure_after_a_valid_pool_revision_change_is_inconclusive_without_a_sixth_dispatch() {
+    for shrink in [false, true] {
+        let (store, authority, now) = setup();
+        let mut io = Io::new(&store);
+        io.refresh_error_after_rotation = Some(shrink);
+        let prepared = run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap();
+        let result = run(authority.run_cache_experiment(prepared, &io, now)).unwrap();
+        assert_eq!(result["status"], "inconclusive");
+        assert_eq!(result["inconclusive_reason"], "auth_pool_drift");
+        assert_eq!(io.calls.borrow().len(), 5);
+        assert_eq!(io.refreshes.get(), 1);
+    }
+}
+#[test]
+fn a_valid_one_account_pool_after_refresh_is_drift_without_a_sixth_dispatch() {
+    let (store, authority, now) = setup();
+    let mut io = Io::new(&store);
+    io.shrink_on_refresh = true;
+    let prepared = run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap();
+    let result = run(authority.run_cache_experiment(prepared, &io, now)).unwrap();
+    assert_eq!(result["status"], "inconclusive");
+    assert_eq!(result["inconclusive_reason"], "auth_pool_drift");
+    assert_eq!(io.calls.borrow().len(), 5);
+    assert_eq!(io.refreshes.get(), 1);
+}
+#[test]
+fn unknown_refresh_with_unchanged_source_stays_failed_without_a_sixth_dispatch() {
+    let (store, authority, now) = setup();
+    let mut io = Io::new(&store);
+    io.unchanged = true;
+    io.refresh_error_after_rotation = Some(false);
+    let prepared = run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap();
+    let error = run(authority.run_cache_experiment(prepared, &io, now)).unwrap_err();
+    assert_eq!(
+        error.envelope.error.code.as_deref(),
+        Some("prompt_cache_scope_experiment_failed")
+    );
+    assert_eq!(io.calls.borrow().len(), 5);
+    assert_eq!(io.refreshes.get(), 1);
+}
+#[test]
+fn same_account_rotation_after_verified_publication_is_drift_before_the_sixth_sample() {
+    let (store, authority, now) = setup();
+    let mut io = Io::new(&store);
+    io.rotate_after_publication = true;
+    let prepared = run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap();
+    let result = run(authority.run_cache_experiment(prepared, &io, now)).unwrap();
+    assert_eq!(result["status"], "inconclusive");
+    assert_eq!(result["inconclusive_reason"], "auth_pool_drift");
     assert_eq!(io.calls.borrow().len(), 5);
     assert_eq!(io.refreshes.get(), 1);
 }
