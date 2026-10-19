@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use gateway_core::GatewayError;
 use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
@@ -28,7 +29,7 @@ pub struct Authority<S, I> {
     pub(crate) store: S,
     pub(crate) tokens: I,
     clock: Option<Box<dyn AuthorityClock>>,
-    source_string_collator: Option<Box<dyn SourceStringCollator>>,
+    source_string_collator: Option<Arc<dyn SourceStringCollator>>,
 }
 
 struct MissingSourceStringCollator;
@@ -66,11 +67,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     }
 
     /// Trusted source-runtime comparison capability, never a request/token field.
-    pub fn with_source_string_collator(
-        mut self,
-        collator: impl SourceStringCollator + 'static,
-    ) -> Self {
-        self.source_string_collator = Some(Box::new(collator));
+    pub fn with_source_string_collator(mut self, collator: Arc<dyn SourceStringCollator>) -> Self {
+        self.source_string_collator = Some(collator);
         self
     }
 
