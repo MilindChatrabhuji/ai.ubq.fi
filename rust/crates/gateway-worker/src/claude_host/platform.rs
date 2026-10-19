@@ -122,8 +122,12 @@ impl AuthHost for Host {
     }
 }
 impl ClaudePoolHost for Host {
-    fn compare_principals(&self, left: &str, right: &str) -> Result<Ordering, GatewayError> {
-        crate::admin_host::compare_labels(left, right)
+    fn compare_principals(
+        &self,
+        left: &gateway_core::js_string::JsString16,
+        right: &gateway_core::js_string::JsString16,
+    ) -> Result<Ordering, GatewayError> {
+        crate::source_collator::shared().compare(left, right)
     }
     fn parse_retry_after_date(&self, raw: &str) -> Option<i64> {
         let value = worker::js_sys::Date::parse(raw);

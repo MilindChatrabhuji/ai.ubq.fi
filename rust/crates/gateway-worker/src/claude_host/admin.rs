@@ -165,9 +165,10 @@ async fn submit<H: ObservabilityHost>(
                 Some("credential_missing"),
             )
         })?;
-    let mut candidate = claude::parse_credential(
-        &json!({"secret":secret.expose(),"label":input.label,"updated_at_ms":platform.now_ms()}),
-        "kv",
+    let mut candidate = claude::submitted_credential(
+        std::sync::Arc::clone(secret),
+        input.label.clone(),
+        platform.now_ms(),
     )
     .ok_or_else(|| gateway_auth::invalid("credential is invalid"))?;
     let workspace_id = match &input.workspace_id {

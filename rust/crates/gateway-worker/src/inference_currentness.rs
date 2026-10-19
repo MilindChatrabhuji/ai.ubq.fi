@@ -51,16 +51,13 @@ impl State {
             self.stop();
             return Ok(());
         }
-        let expiry = lease
-            .kernel_expires_at_ms()
-            .map_or(lease.request_expires_at_ms(), |kernel| {
-                kernel.min(lease.request_expires_at_ms())
-            });
-        // Construct first: a failed renewal/arming must leave the old confirmed timer intact.
-        let timer = self
-            .cancellation
-            .set_timeout_ms(timer_delay(expiry, now_ms()?)?)?;
-        *self.expiry.borrow_mut() = Some(timer);
+        // Coordination/API expiry never becomes a client timeout. Only the
+        // actual confirmed kernel reservation owns this source abort deadline.
+        // Construct first: a failed renewal/arming retains the prior timer.
+        let timer = kernel_timer_delay(lease.kernel_expires_at_ms(), now_ms)?
+            .map(|delay| self.cancellation.set_timeout_ms(delay))
+            .transpose()?;
+        *self.expiry.borrow_mut() = timer;
         Ok(())
     }
 }
@@ -97,10 +94,14 @@ impl CurrentnessGuard {
                     Ok(delay) => {
                         worker::Delay::from(std::time::Duration::from_millis(delay as u64))
                     }
-                    Err(_) => {
-                        state.cancellation.abort();
-                        state.stop();
-                        break;
+                    Err(error) => {
+                        worker::console_error!(
+                            "Coordination renewal clock remains unconfirmed: {}",
+                            error.envelope.error.message
+                        );
+                        worker::Delay::from(std::time::Duration::from_millis(
+                            KERNEL_RENEWAL_INTERVAL_MS as u64,
+                        ))
                     }
                 };
                 if matches!(
@@ -131,10 +132,12 @@ impl CurrentnessGuard {
                 }
                 next = match now_ms().and_then(|now| next_tick(next, now)) {
                     Ok(next) => next,
-                    Err(_) => {
-                        state.cancellation.abort();
-                        state.stop();
-                        break;
+                    Err(error) => {
+                        worker::console_error!(
+                            "Coordination renewal tick remains unconfirmed: {}",
+                            error.envelope.error.message
+                        );
+                        next.saturating_add(KERNEL_RENEWAL_INTERVAL_MS)
                     }
                 };
             }
@@ -149,6 +152,12 @@ impl Drop for CurrentnessGuard {
     fn drop(&mut self) {
         self.stop();
     }
+}
+fn kernel_timer_delay(
+    expiry: Option<i64>,
+    now: impl FnOnce() -> Result<i64, GatewayError>,
+) -> Result<Option<i32>, GatewayError> {
+    expiry.map(|expiry| timer_delay(expiry, now()?)).transpose()
 }
 fn timer_delay(expiry: i64, now: i64) -> Result<i32, GatewayError> {
     i32::try_from(expiry.saturating_sub(now).max(1)).map_err(|_| unavailable())
@@ -171,6 +180,17 @@ fn unavailable() -> GatewayError {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn no_kernel_never_uses_coordination_expiry_or_reads_an_abort_clock() {
+        assert_eq!(
+            super::kernel_timer_delay(None, || panic!("no kernel clock")).unwrap(),
+            None
+        );
+        assert_eq!(
+            super::kernel_timer_delay(Some(60_000), || Ok(59_000)).unwrap(),
+            Some(1_000)
+        );
+    }
     #[test]
     fn timer_uses_confirmed_absolute_expiry_not_acknowledgement_time() {
         assert_eq!(super::timer_delay(60_000, 59_000).unwrap(), 1_000);
