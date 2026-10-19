@@ -551,7 +551,8 @@ fn captured_uint8_catalog_is_usable_after_sqlite_restart_and_inverts_exactly() {
     let loaded = run(load_catalog(&store, "0.163.0", "auth-fixture", 2300))
         .unwrap()
         .unwrap();
-    assert_eq!(loaded.parsed["models"][0]["slug"], "gpt-fixture");
+    let parsed: Value = loaded.parsed.deserialize().expect("scalar catalog fixture");
+    assert_eq!(parsed["models"][0]["slug"], "gpt-fixture");
     assert!(loaded.source_body.is_some());
     assert!(
         run(load_catalog(
@@ -631,7 +632,7 @@ fn admin_input(body: Value) -> gateway_admin::AdminInput {
     gateway_admin::AdminInput {
         parameter: None,
         query: Default::default(),
-        body,
+        body: gateway_core::source_json::SourceJson::from_serializable(&body).unwrap(),
         actor: gateway_auth::AuthPrincipal {
             token: None,
             method: gateway_auth::AuthMethod::AdminAllowlist,
