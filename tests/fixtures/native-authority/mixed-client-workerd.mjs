@@ -151,6 +151,10 @@ let runtime = new Miniflare(options()),
   children = 0;
 const activeChildren = new Set();
 const report = {
+  protocol: "native-gateway-runtime-v3",
+  privateRuntimeRevision: null,
+  storageSchemaVersion: null,
+  v3Assertions: [],
   versions,
   mode,
   fixtureHashes,
@@ -187,11 +191,33 @@ const rpc = async (principal, method, args, operationId = randomUUID()) => {
   if (reply.error) throw new Error(reply.error.code);
   return reply.result;
 };
+const sourcePhase = async (principal, operation) => {
+  const response = await dispatch("/source-phase/" + principal, operation);
+  assert.equal(response.status, 200);
+  const reply = await response.json();
+  if (reply.error) throw new Error(reply.error.code);
+  return reply.result;
+};
+const requestPhase = (args, operationId = randomUUID(), phase = "admit-api") => ({
+  fixturePhase: phase,
+  request: { requestId: args.requestId, route: args.route, path: args.path ?? args.route },
+  metadata: { model: args.model, stream: args.stream, reasoning: args.reasoning ?? null },
+  operationId,
+});
 const reserve = async (principal, id) => {
-  const reply = await rpc(principal, "reserveApiUsage", { requestId: id, route: "/v1/responses", model: "fixture", stream: false });
+  const reply = await sourcePhase(
+    principal,
+    requestPhase(
+      { requestId: id, route: "/v1/responses", model: "fixture", stream: false },
+      randomUUID(),
+      ["a", "b"].includes(principal) ? "admit-api" : "open-api"
+    )
+  );
   assert(reply.handle, JSON.stringify(reply));
   return reply.handle;
 };
+const metadata = (principal, handle, model = "fixture") =>
+  sourcePhase(principal, { fixturePhase: "metadata", handle, metadata: { model, stream: false, reasoning: null } });
 const inspect = async () => {
   const response = await dispatch("/__fixture/inspect", {}, true);
   assert.equal(response.status, 200);
@@ -264,7 +290,9 @@ async function runReviewCases({ setup, control, evidence, callFor, restart, deni
     return callFor(id);
   };
   const reserveReview = async (call, id, model = "fixture") => {
-    const reply = await call("reserveApiUsage", { requestId: id, route: "/v1/responses", model, stream: false });
+    const reply = await call.sourcePhase(
+      requestPhase({ requestId: id, route: "/v1/responses", model, stream: false }, randomUUID(), call.kernel ? "open-api" : "admit-api")
+    );
     assert.equal(reply.kind, "reserved");
     assert(reply.handle);
     return reply.handle;
@@ -564,10 +592,10 @@ async function runReviewCases({ setup, control, evidence, callFor, restart, deni
   {
     const id = "R2-shared-pagination",
       call = await fresh(id);
-    const foreign = await call("reserveApiUsage", { requestId: "00-foreign", route: "/v1/responses", model: "fixture", stream: false }, undefined, "b");
+    const foreign = await call.sourcePhase(requestPhase({ requestId: "00-foreign", route: "/v1/responses", model: "fixture", stream: false }), "b");
     const foreignPaid = await call("reservePaidAttempt", { handle: foreign.handle, hopId: "openlux-hop" }, undefined, "b");
     assert.equal(foreignPaid.kind, "reserved");
-    const own = await call("reserveApiUsage", { requestId: "zz-own", route: "/v1/responses", model: "fixture", stream: false }, undefined, "a");
+    const own = await call.sourcePhase(requestPhase({ requestId: "zz-own", route: "/v1/responses", model: "fixture", stream: false }), "a");
     const ownPaid = await call("reservePaidAttempt", { handle: own.handle, hopId: "openlux-hop" }, undefined, "a");
     assert.equal(ownPaid.kind, "reserved");
     const owned = [];
@@ -647,14 +675,32 @@ async function runReviewCases({ setup, control, evidence, callFor, restart, deni
 }
 
 try {
+  const beforeRetired = await inspect();
+  assert.equal(beforeRetired.runtimeSchemaVersion, 3);
+  assert.deepEqual(beforeRetired.runtimeBindingRevisions, [3]);
+  report.storageSchemaVersion = beforeRetired.runtimeSchemaVersion;
+  report.privateRuntimeRevision = beforeRetired.runtimeBindingRevisions[0];
+  report.v3Assertions.push("actual SQLite meta and private binding grants report revision3");
+  const retired = await raw("a", {
+    epoch,
+    operationId: "v3-retired-admission",
+    method: "reserveApiUsage",
+    args: { requestId: "old-v2", route: "/v1/responses", model: "fixture", stream: false },
+  });
+  assert.equal(retired.error.code, "invalid_authority_arguments");
+  assert.deepEqual(await inspect(), beforeRetired);
+  report.v3Assertions.push("retired v2 admission DTO refuses with unchanged actual SQLite projection");
   const results = await Promise.all(
     Array.from({ length: 20 }, (_, i) =>
-      rpc(i % 2 ? "a" : "b", "reserveApiUsage", {
-        requestId: "api-contention-" + i,
-        route: "/v1/responses",
-        model: i % 2 ? "fixture" : "different-model",
-        stream: false,
-      })
+      sourcePhase(
+        i % 2 ? "a" : "b",
+        requestPhase({
+          requestId: "api-contention-" + i,
+          route: "/v1/responses",
+          model: i % 2 ? "fixture" : "different-model",
+          stream: false,
+        })
+      )
     )
   );
   assert.equal(results.filter((item) => item.kind === "reserved").length, 2);
@@ -670,6 +716,7 @@ try {
   report.assertions.push("20 kernel contenders share limit2;18 refusals retain explicit native API release histories");
   const ledger = await reserve("ledger", "ledger-completed");
   await rpc("ledger", "reserveKernelUsage", { handle: ledger });
+  await metadata("ledger", ledger);
   const selected = await rpc("ledger", "selectCodexAccount", { handle: ledger });
   assert.equal(selected.detail.accountIdHash, "a".repeat(64));
   const paid = await rpc("ledger", "reservePaidAttempt", { handle: ledger, hopId: "openlux-hop" }, "durable-paid-intent");
@@ -700,6 +747,7 @@ try {
   assert.equal((await rpc("ledger", "recordVerifiedPaidBilling", { attemptHandle: paid.attemptHandle, log })).kind, "cleanup");
   const pending = await reserve("ledger", "unresolved-hop");
   await rpc("ledger", "reserveKernelUsage", { handle: pending });
+  await metadata("ledger", pending);
   await rpc("ledger", "selectCodexAccount", { handle: pending });
   const pendingPaid = await rpc("ledger", "reservePaidAttempt", { handle: pending, hopId: "surplus-hop" });
   await rpc("ledger", "markApiDispatch", { handle: pending, provider: "surplus" });
@@ -710,6 +758,7 @@ try {
   for (let i = 0; i < 400; i++) {
     const handle = await reserve("growth", "retained-" + i);
     assert.equal((await rpc("growth", "reserveKernelUsage", { handle })).kind, "reserved");
+    await metadata("growth", handle);
     await rpc("growth", "selectCodexAccount", { handle });
     assert.equal((await rpc("growth", "reservePaidAttempt", { handle, hopId: "openlux-hop" })).kind, "reserved");
     if (i % 100 === 99) console.log(JSON.stringify({ retainedRequests: i + 1 }));
@@ -743,14 +792,19 @@ try {
   assert.equal(invalid.error.code, "invalid_authority_operation");
   if (mode === "mixed") {
     const held = (
-      await bunCall("mixed-a", [{ method: "reserveApiUsage", args: { requestId: "mixed-held-bun", route: "/v1/responses", model: "fixture", stream: false } }])
+      await bunCall("mixed-a", [
+        requestPhase({ requestId: "mixed-held-bun", route: "/v1/responses", model: "fixture", stream: false }, randomUUID(), "open-api"),
+      ])
     )[0];
     assert.equal(held.kind, "reserved");
     const mixed = await Promise.all(
       Array.from({ length: 19 }, async (_, i) => {
         const principal = i % 2 ? "mixed-a" : "mixed-b";
         const args = { requestId: "mixed-contender-" + i, route: "/v1/responses", model: i % 2 ? "fixture" : "different-model", stream: false };
-        const reply = i % 2 ? (await bunCall(principal, [{ method: "reserveApiUsage", args }]))[0] : await rpc(principal, "reserveApiUsage", args);
+        const reply =
+          i % 2
+            ? (await bunCall(principal, [requestPhase(args, randomUUID(), "open-api")]))[0]
+            : await sourcePhase(principal, requestPhase(args, randomUUID(), "open-api"));
         return { principal, reply };
       })
     );
@@ -768,6 +822,8 @@ try {
     await rpc("workflow", "setKernelQuota", { scope: "org", usageLimitRequests: -1, options: { expiresAtMs: -1 } });
     report.assertions.push("20 actual mixed Bun HTTP/Worker contenders share APIlimit2 and concurrent kernel limit2 across principals and keys");
     const original = await reserve("growth", "bun-shared");
+    assert.equal((await rpc("growth", "reserveKernelUsage", { handle: original })).kind, "reserved");
+    await metadata("growth", original);
     const [bunResult, workerResult] = await Promise.all([
       bunCall("growth", [{ method: "selectCodexAccount", args: { handle: original } }]),
       rpc("ledger", "selectCodexAccount", { handle: pending }),
@@ -832,6 +888,19 @@ try {
         if (reply.error) throw Object.assign(new Error(reply.error.code), { fixtureRefusal: true, code: reply.error.code });
         return reply.result;
       };
+      call.sourcePhase = async (operation, principal = "ledger") => {
+        if (sequence++ % 2 === 0) {
+          clients.bun++;
+          return (await bunCall(principal, [operation], id))[0];
+        }
+        clients.worker++;
+        const response = await dispatch("/review/" + id + "/source-phase/" + principal, operation);
+        assert.equal(response.status, 200);
+        const reply = await response.json();
+        if (reply.error) throw Object.assign(new Error(reply.error.code), { fixtureRefusal: true, code: reply.error.code });
+        return reply.result;
+      };
+      call.kernel = id === "F12";
       call.clients = clients;
       reviewCalls.set(id, clients);
       return call;
@@ -883,8 +952,17 @@ try {
     },
     remote: async ({ id, surface, profile, command, client, raw }) => {
       if (client === "bun")
-        return (await bunCall(profile, [command], null, { controlCase: id, ...(surface === "principal" ? { surface: "principal" } : {}), raw }))[0];
-      const path = surface === "principal" ? (raw ? "control-raw" : "control-client") : "client";
+        return (await bunCall(profile, [command], null, { controlCase: id, ...(["principal", "retained"].includes(surface) ? { surface } : {}), raw }))[0];
+      const path =
+        surface === "principal"
+          ? raw
+            ? "control-raw"
+            : "control-client"
+          : surface === "source-phase"
+            ? "source-phase"
+            : surface === "retained"
+              ? "retained-client"
+              : "client";
       const response = await dispatch("/control/" + id + "/" + path + "/" + profile, command);
       assert.equal(response.status, 200);
       const reply = await response.json();
