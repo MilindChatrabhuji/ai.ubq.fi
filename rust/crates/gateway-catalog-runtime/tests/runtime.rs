@@ -1,5 +1,11 @@
-#[path = "../../gateway-schema/tests/support/source_catalog.rs"]
-mod source_catalog;
+mod source_catalog {
+    include!("../../gateway-schema/tests/support/source_catalog.rs");
+    pub fn loader_fixture() -> Collator {
+        Collator(
+            serde_json::from_str(include_str!("fixtures/catalog-loader-sort-v1.json")).unwrap(),
+        )
+    }
+}
 use gateway_catalog_runtime::{
     state::{self, source_key},
     *,
@@ -765,7 +771,12 @@ fn anonymous_surplus_is_public_data_without_an_inference_configuration() {
     ));
     let publication = host.published.borrow().clone();
     let public = run(runtime.load_public_state(&store, &publication, store.now.get())).unwrap();
-    assert_eq!(public.input.rows("surplus")[0]["id"], "public-model");
+    assert_eq!(
+        public.input.rows("surplus")[0]
+            .deserialize::<Value>()
+            .unwrap()["id"],
+        "public-model"
+    );
     assert!(!public.input.configured("surplus"));
     let ordinary = run(runtime.load_state(&store, &publication, store.now.get())).unwrap();
     assert!(ordinary.input.rows("surplus").is_empty());
@@ -1256,7 +1267,13 @@ fn later_official_deepseek_public_metadata_overwrites_paid_enrichment_only_for_i
     ]})));
     run(runtime.refresh_provider(&store, &host, CatalogProvider::Openrouter, true)).unwrap();
     let state = run(runtime.load_state(&store, &host.published.borrow(), store.now.get())).unwrap();
-    let catalog = gateway_schema::catalog::build_catalog_snapshot(&state.input);
+    let catalog = gateway_schema::catalog::build_catalog_snapshot(
+        &state.input,
+        &source_catalog::loader_fixture(),
+    )
+    .unwrap()
+    .deserialize::<Value>()
+    .unwrap();
     let rows = catalog["models"].as_array().unwrap();
     let official = rows
         .iter()
@@ -1457,6 +1474,6 @@ fn versioned_union_and_persisted_account_evidence_keep_source_model_and_effort_u
     )));
     println!(
         "M42_VERSIONED_EVIDENCE_WRITER_FIXTURE={}",
-        serde_json::to_string(&(state::account_models_key(), evidence)).unwrap()
+        serde_json::to_string(&(state::account_models_key().0, evidence)).unwrap()
     );
 }
