@@ -3,12 +3,13 @@ use crate::{
     capabilities::{Context, RuntimeCapabilities},
     store,
 };
-use gateway_admin::{AdminInput, AdminOperation};
+use gateway_admin::{AdminInput, AdminOperation, source_input as source_body};
 use gateway_auth::{
     AuthHost, AuthResponse, conflict, invalid,
     store::{check, commit, put},
 };
 use gateway_core::{GatewayError, query::QueryStore};
+use gateway_core::{js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -68,8 +69,10 @@ fn selection(value: Option<&Value>) -> Option<Value> {
 }
 
 impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
-    fn sorted_principals(&self, value: &Value) -> Result<Vec<String>, GatewayError> {
-        crate::claude_access::parse_ids(value, &|a, b| self.capabilities.compare_admin_labels(a, b))
+    fn sorted_principals(&self, value: &SourceJson) -> Result<Vec<JsString16>, GatewayError> {
+        crate::claude_access::parse_source_ids(value, &|a, b| {
+            self.capabilities.compare_admin_labels(a, b)
+        })
     }
     pub(crate) async fn debug(
         &self,
@@ -241,20 +244,28 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
     ) -> Result<AuthResponse, GatewayError> {
         let key = store::key(json!(["uos_ai", "claude_code_access", "v1"]));
         let policy = if operation == AdminOperation::ClaudeAccessSet {
-            let ids =
-                self.sorted_principals(input.body.get("allowed_key_ids").unwrap_or(&Value::Null))?;
-            let policy =
-                json!({"v":1,"source":"kv","allowed_key_ids":ids,"updated_at_ms":input.now_ms});
+            let ids = self.sorted_principals(
+                &source_body::member(&input.body, "allowed_key_ids")
+                    .unwrap_or_else(|| source_body::json(&())),
+            )?;
+            let policy = crate::claude_access::ClaudeAccessPolicy {
+                v: 1,
+                source: crate::claude_access::PolicySource::Kv,
+                allowed_key_ids: ids,
+                updated_at_ms: input.now_ms,
+            };
             let row = self.store.read(&key).await?;
             if !commit(
                 self.store,
                 vec![check(&key, row.as_ref())],
-                vec![put(
-                    key.clone(),
-                    &policy,
-                    None,
-                    &store::revision(self.host)?,
-                )?],
+                vec![gateway_core::state::RecordMutation::Put {
+                    key: key.clone(),
+                    record: crate::claude_access::encode_policy_record(
+                        &store::revision(self.host)?,
+                        &policy,
+                        None,
+                    )?,
+                }],
             )
             .await?
             {
@@ -262,18 +273,28 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             }
             policy
         } else {
-            let snapshot = crate::claude_access::load_policy(
+            crate::claude_access::load_policy(
                 self.store,
                 self.host,
                 &self.config.claude_allowed_key_ids,
                 &|a, b| self.capabilities.compare_admin_labels(a, b),
             )
-            .await?;
-            json!(snapshot.policy)
+            .await?
+            .policy
         };
-        Ok(AuthResponse::json(
+        Ok(AuthResponse::source_json(
             200,
-            json!({"data":{"source":policy["source"],"allowed_key_ids":policy["allowed_key_ids"],"updated_at_ms":policy["updated_at_ms"]}}),
+            source_body::object(vec![(
+                "data",
+                source_body::object(vec![
+                    ("source", source_body::json(&policy.source)),
+                    (
+                        "allowed_key_ids",
+                        source_body::json(&policy.allowed_key_ids),
+                    ),
+                    ("updated_at_ms", source_body::json(&policy.updated_at_ms)),
+                ]),
+            )]),
         ))
     }
 }
