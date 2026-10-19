@@ -19,6 +19,7 @@ use gateway_providers::policy::{LithosWindows, WaitBudget};
 use std::cell::RefCell;
 
 pub struct RoutingSession<S, I, C, H> {
+    pub(crate) admission: crate::currentness::OriginalRoutingAdmission,
     pub(crate) store: S,
     pub(crate) tokens: I,
     pub(crate) clock: C,
@@ -183,7 +184,15 @@ impl<
             return Err(error.into());
         }
         let conversation_id = tokens.next_token()?;
+        let admission = crate::currentness::OriginalRoutingAdmission::capture(
+            row.v,
+            row.input_digest,
+            row.api,
+            row.kernel,
+            None,
+        );
         Ok(Self {
+            admission,
             store,
             tokens,
             clock,
@@ -256,6 +265,7 @@ impl<
         debug_assert_eq!(parts.input.metadata.context, input.context);
         let streamed = input.streamed();
         Ok(Self {
+            admission: parts.admission,
             store: parts.store,
             tokens: parts.tokens,
             clock: parts.clock,

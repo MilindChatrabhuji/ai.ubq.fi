@@ -48,6 +48,29 @@ pub(crate) async fn source_rows<S: QueryStore>(
                 });
                 continue;
             }
+            if starts(&parts, &["uos_ai", "paid_fallback", "v3", "request"]) {
+                // Validation already retained malformed profile rows as source
+                // data, rather than live paid authority. Keep that report-only
+                // behavior, but never make its model/effort a Value transcript.
+                let document = match crate::paid_controls::inverse(&entry.key, &entry.record, None)
+                {
+                    Ok(value) => value.to_source_json()?,
+                    Err(_) => {
+                        gateway_core::source_control::decode_source_control_record(&entry.record)?
+                    }
+                };
+                let record = gateway_core::source_control::encode_source_control_record(
+                    &entry.record.revision,
+                    &document,
+                    entry.record.expires_at_ms,
+                )?;
+                rows.push(ObservedRow {
+                    key: entry.key,
+                    parts,
+                    record,
+                });
+                continue;
+            }
             let value = if entry.record.value_encoding
                 == gateway_core::value::ValueEncoding::SourceGraphV1
             {
@@ -57,8 +80,9 @@ pub(crate) async fn source_rows<S: QueryStore>(
                     .try_identity_free_tree()?
                     .unwrap_or(PortableValue::Null)
             } else {
-                crate::inverse::inverse_value(
+                crate::inverse::inverse_value_for_key(
                     crate::inverse::transform_for_new(&parts),
+                    &entry.key,
                     &entry.record,
                     None,
                 )
@@ -170,7 +194,18 @@ pub(crate) async fn validate<S: QueryStore>(
         };
         settings.insert(*name, present);
     }
-    let config = get(json!(["uos_ai", "runtime_config", "v2"]))?
+    let config = rows
+        .iter()
+        .find(|row| {
+            row.parts
+                == json!(["uos_ai", "runtime_config", "v2"])
+                    .as_array()
+                    .unwrap()
+                    .as_slice()
+        })
+        .map(|row| gateway_core::source_control::decode_source_control_record(&row.record))
+        .transpose()?
+        .as_ref()
         .and_then(gateway_schema::runtime_config::normalize_runtime_config);
     settings.insert("runtime_config_v2", config.is_some());
     if config.is_none() {
@@ -199,6 +234,7 @@ fn identity_source_control(parts: &[Value]) -> bool {
         && (starts(parts, &["ubq_ai", "codex_models"])
             || (parts[0] == "default"
                 && matches!(parts[1].as_str(), Some("model" | "reasoning_effort")))))
+        || (parts.len() == 3 && starts(parts, &["uos_ai", "runtime_config", "v2"]))
         || (parts.len() == 4
             && starts(parts, &["ubq_ai", "api_keys"])
             && matches!(parts[2].as_str(), Some("id" | "hash")))

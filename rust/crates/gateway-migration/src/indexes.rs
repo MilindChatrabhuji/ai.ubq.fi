@@ -159,7 +159,8 @@ pub(crate) fn bind(
                 }
             }
             Transform::PaidRequest => {
-                let attempt: PaidAttempt = decode(row.record.json_value()?)?;
+                let attempt =
+                    gateway_authority::paid::decode_paid_attempt_record(&row.key, &row.record)?;
                 if crate::projection::outstanding(&attempt) {
                     let window = keys::paid_window(
                         &attempt.reservation.key_id.0,
@@ -189,10 +190,12 @@ pub(crate) fn bind(
             }
             Transform::PaidPending => {
                 let marker: PendingPaid = decode(row.record.json_value()?)?;
+                let attempt_key = keys::paid_attempt(&marker.key_id.0, &marker.attempt_id.0);
                 let attempt = snapshot
-                    .get(&keys::paid_attempt(&marker.key_id.0, &marker.attempt_id.0).0)
+                    .get(&attempt_key.0)
                     .ok_or_else(|| invalid("Pending paid marker has missing or expired request"))?;
-                let attempt: PaidAttempt = decode(attempt.json_value()?)?;
+                let attempt =
+                    gateway_authority::paid::decode_paid_attempt_record(&attempt_key, attempt)?;
                 if !matches!(
                     attempt.billing_state,
                     BillingState::Pending | BillingState::Unresolved

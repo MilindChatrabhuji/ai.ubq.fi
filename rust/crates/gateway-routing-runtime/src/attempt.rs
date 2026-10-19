@@ -353,6 +353,7 @@ impl<
                 }
                 return Err(error.into());
             }
+            self.admission.capture_attempt(attempt);
             return Ok(Some(PreparedAttempt {
                 id,
                 request,

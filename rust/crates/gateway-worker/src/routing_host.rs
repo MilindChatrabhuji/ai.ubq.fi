@@ -44,6 +44,11 @@ fn provider_name(provider: UpstreamProvider) -> Option<&'static str> {
 
 impl RoutingHost for Host {
     type ClaudeHead = crate::claude_host::Head;
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        crate::source_collator::shared()
+    }
     fn cancelled(&self) -> bool {
         self.platform.cancellation.signal().aborted()
     }

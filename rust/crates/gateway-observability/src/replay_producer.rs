@@ -16,7 +16,10 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
 use gateway_auth::crypto::sha256_hex;
-use gateway_core::{GatewayError, query::QueryStore, source_json::SourceJson, state::RecordKey};
+use gateway_core::{
+    GatewayError, js_string::JsString16, query::QueryStore, source_json::SourceJson,
+    state::RecordKey,
+};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use zeroize::Zeroizing;
@@ -56,7 +59,7 @@ pub struct ClientFailureObservation {
     pub framing_valid: bool,
     pub provider_route: String,
     pub error_code: Option<String>,
-    pub error_param: Option<String>,
+    pub error_param: Option<JsString16>,
     pub terminal_body_base64: Option<String>,
     pub terminal_body_truncated: bool,
 }
@@ -153,6 +156,20 @@ fn bounded(s: Option<&str>, param: bool) -> Option<String> {
             })
     })
     .map(str::to_owned)
+}
+// The stored Sentinel param policy remains the exact existing ASCII whitelist.
+// Raw input may contain arbitrary UTF16; rejected units stay only in body evidence.
+fn bounded_param(value: Option<&JsString16>) -> Option<JsString16> {
+    value
+        .filter(|value| {
+            !value.as_units().is_empty()
+                && value.as_units().len() <= 128
+                && value.as_units().iter().all(|unit| {
+                    u8::try_from(*unit)
+                        .is_ok_and(|byte| byte.is_ascii_alphanumeric() || b"_.:-[]".contains(&byte))
+                })
+        })
+        .cloned()
 }
 fn generic(value: Option<&str>) -> bool {
     value.is_none_or(|v| matches!(v, "server_error" | "error" | "internal_error" | "api_error"))
@@ -372,7 +389,7 @@ struct Downstream<'a> {
     terminal_type: &'a Option<String>,
     failure_kind: &'a Option<String>,
     error_code: &'a Option<String>,
-    error_param: &'a Option<String>,
+    error_param: &'a Option<JsString16>,
     body_base64: &'a Option<String>,
     body_truncated: bool,
 }
@@ -481,7 +498,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             ));
         }
         client.error_code = bounded(client.error_code.as_deref(), false);
-        client.error_param = bounded(client.error_param.as_deref(), true);
+        client.error_param = bounded_param(client.error_param.as_ref());
         let at = store::now(self.host.as_ref())?;
         let index = if should_signal(&observation, &client) {
             self.record_incident_index(&IncidentObservation {

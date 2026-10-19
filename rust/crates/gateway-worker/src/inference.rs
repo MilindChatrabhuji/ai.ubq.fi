@@ -332,12 +332,6 @@ pub async fn run(
             route: route.to_owned(),
             started_at_ms: now_ms()?,
         };
-        let surplus_models = catalog
-            .input
-            .providers
-            .get("surplus")
-            .map(|provider| provider.models.clone())
-            .unwrap_or_default();
         let metadata = gateway_routing_runtime::local_work::LocalRequestMetadata {
             context: original.clone(),
             principal: principal.clone(),
@@ -403,17 +397,17 @@ pub async fn run(
             .entries()
             .collect::<gateway_providers::Headers>();
         capture.correlate(correlation(provider, &headers));
+        let pricing = crate::inference_source::pricing_metadata(
+            session.surplus_billing(),
+            prepared.url.ends_with("/messages"),
+        )?;
         let lifecycle = Rc::new(Lifecycle {
             session,
             attempt,
             provider_request_id: correlation(provider, &headers).map(str::to_owned),
             status,
             store: store.clone(),
-            pricing: crate::inference_source::pricing_metadata(
-                &surplus_models,
-                &prepared.decode.upstream_model,
-                prepared.url.ends_with("/messages"),
-            )?,
+            pricing,
         });
         let event_stream = headers.iter().any(|(name, value)| {
             name.eq_ignore_ascii_case("content-type") && value.contains("text/event-stream")

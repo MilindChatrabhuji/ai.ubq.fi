@@ -40,6 +40,7 @@ mod publication;
 mod response;
 mod routing_host;
 mod runtime;
+mod source_collator;
 pub mod storage;
 pub mod transport;
 

@@ -58,7 +58,7 @@ struct ClientWire {
     valid: bool,
     terminal: Option<String>,
     error_code: Option<String>,
-    error_param: Option<String>,
+    error_param: Option<JsString16>,
     body: Vec<u8>,
     body_bytes: usize,
 }
@@ -395,7 +395,13 @@ impl Capture {
         };
         let mut client = ClientFailureObservation::from_internal(&internal);
         client.error_code = error.envelope.error.code.clone();
-        client.error_param = error.envelope.error.param.clone().flatten();
+        client.error_param = error
+            .envelope
+            .error
+            .param
+            .as_ref()
+            .and_then(|value| value.as_ref())
+            .map(|value| JsString16::from_utf8(value));
         if let Err(error) = self.store(internal, client).await {
             worker::console_error!(
                 "Failure capture remains unavailable: {}",
@@ -566,7 +572,8 @@ impl ClientWire {
             .or_else(|| field(&value, "response").and_then(|response| field(&response, "error")));
         if let Some(error) = error {
             self.error_code = field(&error, "code").and_then(|v| v.deserialize::<String>().ok());
-            self.error_param = field(&error, "param").and_then(|v| v.deserialize::<String>().ok());
+            self.error_param =
+                field(&error, "param").and_then(|v| v.deserialize::<JsString16>().ok());
         }
     }
 }
@@ -714,7 +721,28 @@ mod tests {
         assert!(client.valid);
         assert_eq!(client.terminal.as_deref(), Some("response.failed"));
         assert_eq!(client.error_code.as_deref(), Some("actual_failure"));
-        assert_eq!(client.error_param.as_deref(), Some("input"));
+        assert_eq!(client.error_param, Some(JsString16::from_utf8("input")));
+    }
+
+    #[test]
+    fn actual_client_error_param_retains_lone_units_before_policy_filter() {
+        let mut client = wire();
+        let mut parser = SseParser::new(MAX_RESPONSES_EVENT_BYTES);
+        for frame in parser
+            .push(
+                br#"data: {"type":"response.failed","response":{"error":{"param":"i\ud800"}}}
+
+"#,
+            )
+            .unwrap()
+        {
+            client.frame(frame);
+        }
+        assert!(client.valid);
+        assert_eq!(
+            client.error_param,
+            Some(JsString16::from_units(vec![105, 0xd800]))
+        );
     }
 
     #[test]

@@ -63,10 +63,27 @@ impl Drop for PendingGuard {
 #[derive(Clone, Default)]
 pub struct CatalogRuntime {
     memo: Rc<RefCell<Memo>>,
+    source_string_collator:
+        Option<std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>>,
 }
 impl CatalogRuntime {
     pub fn new() -> Self {
         Self::default()
+    }
+    pub fn with_source_string_collator(
+        mut self,
+        collator: std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>,
+    ) -> Self {
+        self.source_string_collator = Some(collator);
+        self
+    }
+    pub(crate) fn source_string_collator<H: CatalogHost>(
+        &self,
+        host: &H,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        self.source_string_collator
+            .clone()
+            .unwrap_or_else(|| host.source_string_collator())
     }
     fn snapshots(
         &self,
