@@ -103,6 +103,7 @@ fn codex_replay(output: &Value) -> Value {
                 account_id: Some("synthetic-account".into()),
                 ..Default::default()
             },
+            conversation_id: Some("fixture-conversation".into()),
             ..Default::default()
         },
     )
