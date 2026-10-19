@@ -310,7 +310,7 @@ fn production_mutation_is_unavailable_without_real_native_writer_exclusion() {
     let error = native.require_mutation_owner().unwrap_err();
     assert_eq!(error.status, 503);
     assert_eq!(
-        error.code.as_deref(),
+        error.envelope.error.code.as_deref(),
         Some("native_import_owner_exclusion_unavailable")
     );
     assert_eq!(fs::read(home.0.join("auth.json")).unwrap(), before);
