@@ -140,16 +140,8 @@ pub(super) fn normalize_response_content(
                 param,
                 "content",
             )?;
-            let url = value
-                .get("image_url")
-                .and_then(Value::as_text)
-                .unwrap_or("")
-                .trim_matches(crate::util::js_whitespace);
-            let id = value
-                .get("file_id")
-                .and_then(Value::as_text)
-                .unwrap_or("")
-                .trim_matches(crate::util::js_whitespace);
+            let url = normalized_string(value.get("image_url")).unwrap_or_default();
+            let id = normalized_string(value.get("file_id")).unwrap_or_default();
             if url.is_empty() == id.is_empty() {
                 return Err(invalid(
                     format!("{param} must include exactly one of image_url or file_id"),

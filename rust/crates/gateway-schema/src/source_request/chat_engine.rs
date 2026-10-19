@@ -1,6 +1,5 @@
 //! Chat-side half of the one source content normalization policy.
 use super::content_engine::{check_fields, image_detail, role, string_field, with_breakpoint};
-use super::controls::normalize_breakpoint;
 use super::{
     SourceRequestError as GatewayError,
     value::{Text, Value, json, normalized_string},
