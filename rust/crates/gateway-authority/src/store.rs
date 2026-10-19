@@ -149,6 +149,13 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             .map(|row| row.revision.clone())
     }
 
+    pub fn expiry(&self, key: &RecordKey) -> Option<i64> {
+        self.reads
+            .get(&key.0)
+            .and_then(Option::as_ref)
+            .and_then(|row| row.expires_at_ms)
+    }
+
     pub fn expect(&self, key: &RecordKey, revision: &Option<String>) -> bool {
         self.reads.contains_key(&key.0) && &self.revision(key) == revision
     }

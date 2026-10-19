@@ -45,6 +45,24 @@ pub fn model_quota_class(model: &str) -> CodexQuotaClass {
     }
 }
 
+/// Non-inference account identity. The source model remains optional UTF16 and is never replaced.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LiveAccountSelection {
+    pub binding: AccountBinding,
+    pub active_generation: u64,
+    pub quota_class: CodexQuotaClass,
+    pub probe_required: bool,
+    pub model: Option<gateway_core::js_string::JsString16>,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum LiveRouteSelection {
+    Eligible(LiveAccountSelection),
+    QuotaBlocked { retry_at_ms: Option<i64> },
+    CredentialsInvalid,
+    ModelUnavailable { detail: Option<String> },
+    RoutingUnavailable,
+}
+
 pub fn class_name(class: CodexQuotaClass) -> &'static str {
     match class {
         CodexQuotaClass::Spark => "spark",
@@ -443,6 +461,122 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         now: i64,
     ) -> Result<RouteSelection, GatewayError> {
         text(model)?;
+        self.select_account_source(model, class, now).await
+    }
+
+    /// Live preserves the source optional model and never mints an inference/quota/paid proof.
+    pub async fn select_live_account(
+        &self,
+        model: Option<&gateway_core::js_string::JsString16>,
+        now: i64,
+    ) -> Result<LiveRouteSelection, GatewayError> {
+        let scalar = model.and_then(|v| v.try_utf8().ok());
+        // Source lexical comparisons treat absent/empty text alike. The original UTF16 option
+        // remains in the result/provider session; this value never enters a provider request.
+        let lexical = scalar.as_deref().unwrap_or("");
+        let class = if model.is_none_or(|m| m.as_units().is_empty()) {
+            CodexQuotaClass::Unknown
+        } else {
+            scalar
+                .as_deref()
+                .map(model_quota_class)
+                .unwrap_or(CodexQuotaClass::Standard)
+        };
+        Ok(
+            match self.select_account_source(lexical, class, now).await? {
+                RouteSelection::Eligible(a) => LiveRouteSelection::Eligible(LiveAccountSelection {
+                    binding: a.binding,
+                    active_generation: a.active_generation,
+                    quota_class: class,
+                    probe_required: a.probe_required,
+                    model: model.cloned(),
+                }),
+                RouteSelection::QuotaBlocked { retry_at_ms, .. } => {
+                    LiveRouteSelection::QuotaBlocked { retry_at_ms }
+                }
+                RouteSelection::CredentialsInvalid { .. } => LiveRouteSelection::CredentialsInvalid,
+                RouteSelection::ModelUnavailable { detail, .. } => {
+                    LiveRouteSelection::ModelUnavailable { detail }
+                }
+                RouteSelection::RoutingUnavailable => LiveRouteSelection::RoutingUnavailable,
+            },
+        )
+    }
+
+    pub async fn ensure_live_account_current(
+        &self,
+        selection: &LiveAccountSelection,
+        now: i64,
+    ) -> Result<(), GatewayError> {
+        validate_binding(&selection.binding)?;
+        for _ in 0..3 {
+            let mut tx = self.transaction(now)?;
+            let view = read_view(&mut tx).await?;
+            let slot = usize::try_from(selection.binding.slot)
+                .map_err(|_| invalid("Invalid live slot."))?;
+            if !view.current_binding(&selection.binding)
+                || view.active.as_ref().is_none_or(|active| {
+                    active.binding != selection.binding
+                        || active.generation != selection.active_generation
+                })
+                || view.state.slots[slot].invalid_credential_version.as_ref()
+                    == Some(&selection.binding.credential_version)
+            {
+                return Err(unavailable(
+                    "codex_routing_unavailable",
+                    "Live selection changed.",
+                ));
+            }
+            if tx.commit().await? {
+                return Ok(());
+            }
+        }
+        Err(unavailable(
+            "codex_routing_unavailable",
+            "Live selection changed concurrently.",
+        ))
+    }
+
+    pub async fn mark_live_credential_invalid(
+        &self,
+        selection: &LiveAccountSelection,
+        now: i64,
+    ) -> Result<bool, GatewayError> {
+        for _ in 0..3 {
+            let mut tx = self.transaction(now)?;
+            let mut view = read_view(&mut tx).await?;
+            if !view.current_binding(&selection.binding) {
+                return Ok(false);
+            }
+            let slot = &mut view.state.slots[selection.binding.slot as usize];
+            slot.invalid_credential_version = Some(selection.binding.credential_version.clone());
+            slot.upstream_timeout_blocked_until_ms = None;
+            slot.quota_signal_observed_at_ms = Some(now);
+            slot.retained_reset_at_ms = slot
+                .quota_blocks
+                .values()
+                .filter_map(|block| block.reset_at_ms)
+                .max()
+                .or(slot.retained_reset_at_ms);
+            slot.clear_quota_blocks();
+            slot.probe_lease = None;
+            tx.put(&keys::routing(), &view.state, None)?;
+            if tx.commit().await? {
+                return Ok(true);
+            }
+        }
+        Err(unavailable(
+            "codex_routing_unavailable",
+            "Live credential changed concurrently.",
+        ))
+    }
+
+    async fn select_account_source(
+        &self,
+        model: &str,
+        class: CodexQuotaClass,
+        now: i64,
+    ) -> Result<RouteSelection, GatewayError> {
         self.reconcile_capacity_for_model(model, now).await?;
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
