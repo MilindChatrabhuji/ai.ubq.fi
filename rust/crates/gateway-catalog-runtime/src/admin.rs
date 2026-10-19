@@ -156,7 +156,7 @@ impl CatalogRuntime {
                 checks:vec![state::check(catalog_store::codex_snapshot_key(),current.as_ref().map(|r|&r.record)),state::check(catalog_store::runtime_config_key(),runtime.as_ref().map(|r|&r.record))],
                 mutations:vec![RecordMutation::Put{key:catalog_store::codex_snapshot_key(),record:encode_source_control_record(&revision,&json_source(&next),None).map_err(lift)?},RecordMutation::Put{key:catalog_store::runtime_config_key(),record:encode_source_control_record(&revision,&next_runtime,None).map_err(lift)?}],
             }).await.map_err(lift)?==CommitOutcome::Committed{
-                return Ok(AdminCatalogResponse::json(json_source(&json!({"ok":true,"stored":true,"count":snapshot.models.len(),"source":snapshot.source,"updated_at_ms":snapshot.updated_at_ms,"client_version":snapshot.client_version})),false));
+                return Ok(AdminCatalogResponse::json(object(vec![("ok",json_source(&true)),("stored",json_source(&true)),("count",json_source(&snapshot.models.len())),("source",json_source(&snapshot.source)),("updated_at_ms",json_source(&snapshot.updated_at_ms)),("client_version",json_source(&snapshot.client_version))]),false));
             }
         }
         Err(lift(persist_error("Deno KV is not available; cannot persist Codex models")))
