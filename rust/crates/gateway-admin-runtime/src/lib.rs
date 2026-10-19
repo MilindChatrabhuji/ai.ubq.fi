@@ -13,7 +13,9 @@ mod state;
 mod store;
 
 use capabilities::*;
-use gateway_admin::{AdminHost, AdminInput, AdminOperation, PaidKeyFields};
+use gateway_admin::{
+    AdminHost, AdminInput, AdminOperation, PaidKeyFields, source_input as source_body,
+};
 use gateway_auth::{AuthHost, AuthResponse, invalid};
 use gateway_core::{GatewayError, query::QueryStore, state::RevisionCheck};
 use serde_json::{Value, json};
@@ -115,21 +117,22 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     .await
             }
             CodexResetConsume => {
-                let body = input
-                    .body
-                    .as_object()
+                let fields = gateway_core::source_serialization::entries(&input.body)
                     .ok_or_else(|| invalid("Only account_id_hash is accepted."))?;
-                let account_id_hash = body
-                    .get("account_id_hash")
-                    .and_then(Value::as_str)
+                let hash = source_body::member(&input.body, "account_id_hash")
+                    .as_ref()
+                    .and_then(source_body::text)
                     .filter(|hash| {
-                        hash.len() == 64
+                        hash.as_units().len() == 64
                             && hash
-                                .bytes()
-                                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                                .as_units()
+                                .iter()
+                                .all(|unit| (48..=57).contains(unit) || (97..=102).contains(unit))
                     })
-                    .filter(|_| body.len() == 1)
+                    .filter(|_| fields.len() == 1)
                     .ok_or_else(|| invalid("Only account_id_hash is accepted."))?;
+                let account_id_hash = String::from_utf16(hash.as_units())
+                    .expect("closed lowercase ASCII account hash");
                 self.capabilities
                     .codex(
                         CodexRequest::ConsumeReset {
@@ -145,12 +148,14 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 } else {
                     "allow"
                 };
-                if input
-                    .body
-                    .get("account_id_hash")
-                    .and_then(Value::as_str)
+                if source_body::member(&input.body, "account_id_hash")
+                    .as_ref()
+                    .and_then(source_body::text)
                     .is_none()
-                    || input.body.get(name).and_then(Value::as_bool).is_none()
+                    || source_body::member(&input.body, name)
+                        .as_ref()
+                        .and_then(source_body::boolean)
+                        .is_none()
                 {
                     return Err(invalid(&format!(
                         "account_id_hash and boolean {name} are required"
@@ -196,7 +201,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     .await
             }
             CacheExperimentSet => {
-                let body = input.body.as_str().ok_or_else(|| {
+                let body: String = input.body.deserialize().map_err(|_| {
                     GatewayError::unavailable(
                         "Scope experiment requires its original raw body",
                         "admin_raw_body_unavailable",
@@ -426,8 +431,18 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     )
                 } else {
                     (
-                        parse::text(input.body.get("source")).unwrap_or_default(),
-                        parse::text(input.body.get("id")).unwrap_or_default(),
+                        source_body::member(&input.body, "source")
+                            .as_ref()
+                            .and_then(source_body::text)
+                            .map(|value| source_body::trim(&value))
+                            .and_then(|value| value.try_utf8().ok())
+                            .unwrap_or_default(),
+                        source_body::member(&input.body, "id")
+                            .as_ref()
+                            .and_then(source_body::text)
+                            .map(|value| source_body::trim(&value))
+                            .and_then(|value| value.try_utf8().ok())
+                            .unwrap_or_default(),
                     )
                 };
                 if source_id.is_empty()
@@ -495,7 +510,10 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
     ) -> Result<(), GatewayError> {
         self.abort_deletion(key_id, prepared_checks).await
     }
-    async fn paid_key_policy(&self, body: &Value) -> Result<PaidKeyFields, GatewayError> {
+    async fn paid_key_policy(
+        &self,
+        body: &gateway_core::source_json::SourceJson,
+    ) -> Result<PaidKeyFields, GatewayError> {
         self.paid_policy(body).await
     }
 }
