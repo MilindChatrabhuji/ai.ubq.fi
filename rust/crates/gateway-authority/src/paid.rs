@@ -594,16 +594,17 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 keys::paid_window(&reservation.key_id.0, reservation.window_reset_at_ms);
             let window: Option<PaidWindow> = tx.read(&window_key).await?;
             let bucket = reservation.created_at_ms / 3_600_000 * 3_600_000;
+            let model = gateway_schema::util::js_trim(&row.model);
             let rollup_key = keys::paid_rollup(
                 bucket,
-                &row.model,
+                model,
                 provider_label(reservation.provider),
                 rollup_shard(&reservation.attempt_id.0),
             );
             let mut rollup: PaidRollup = tx.read(&rollup_key).await?.unwrap_or(PaidRollup {
                 v: 1,
                 bucket_start_at_ms: bucket,
-                model: row.model.clone(),
+                model: model.to_owned(),
                 provider: reservation.provider,
                 request_count: 0,
                 provider_quota: 0.0,
@@ -617,13 +618,10 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             });
             if rollup.v != 1
                 || rollup.bucket_start_at_ms != bucket
-                || rollup.model != row.model
+                || rollup.model != model
                 || rollup.provider != reservation.provider
-                || row.usage_rollup_at_ms.is_some()
             {
-                return Err(invalid(
-                    "Paid rollup identity is invalid or already folded.",
-                ));
+                return Err(invalid("Paid rollup identity is invalid."));
             }
             rollup.request_count = add(rollup.request_count, 1)?;
             rollup.input_tokens = add(rollup.input_tokens, usage.input_tokens)?;
