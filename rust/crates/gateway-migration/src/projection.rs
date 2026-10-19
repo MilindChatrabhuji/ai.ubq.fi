@@ -185,6 +185,17 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
         gateway_authority::routing::parse_routing_state(&v)?;
     } else if starts(p, &["uos_ai", "codex_capacity_routing"]) {
         gateway_authority::routing::parse_capacity_store(&v)?;
+    } else if starts(p, &["uos_ai", "codex_manual_reset"]) {
+        let intent = gateway_authority::manual_reset::parse_manual_intent(&v)?;
+        if p.len() != 4
+            || p[2] != "v1"
+            || p[3] != intent.account_id_hash
+            || row.record.expires_at_ms.is_some()
+        {
+            return Err(invalid(
+                "Manual reset intent identity or permanent retention is invalid",
+            ));
+        }
     } else if quota_family(p) {
         gateway_claude_runtime::quota::parse_record(&row.record, 0)?;
     } else if starts(p, &["uos_ai", "claude_code_accounts"]) {
@@ -234,6 +245,7 @@ pub fn known_source_family(p: &[Value]) -> bool {
         "codex_instructions",
         "codex_instructions_chunk",
         "codex_live_calls",
+        "codex_manual_reset",
         "codex_models_whitelist",
         "codex_overage_usage",
         "codex_reset_redemption",

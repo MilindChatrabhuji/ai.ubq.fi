@@ -1,5 +1,4 @@
 use gateway_core::GatewayError;
-use gateway_observability::host_types::ProviderInventory;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -71,7 +70,7 @@ const PRESENTATION: &[(&str, &str, &str, &str, &str)] = &[
 
 pub(super) fn project(
     catalog: &Value,
-    inventory: &ProviderInventory,
+    subscriptions: Vec<Value>,
     secrets: &BTreeMap<String, String>,
 ) -> Result<Value, GatewayError> {
     let models = catalog["models"].as_array().ok_or_else(|| {
@@ -93,7 +92,11 @@ pub(super) fn project(
             .count();
         let gated = match *id {
             "openrouter" => Some(secrets.contains_key(*id)),
-            "ubiquity" => Some(inventory.ubiquity_configured),
+            "ubiquity" => Some(
+                ["deepseek", "openrouter", "lithos", "surplus", "openlux"]
+                    .iter()
+                    .any(|id| secrets.contains_key(*id)),
+            ),
             _ => None,
         };
         let status = gated
@@ -118,11 +121,71 @@ pub(super) fn project(
         };
         let mut row = json!({"id":id,"label":label,"tier":tier,"tier_label":tier_label,"detail":detail,"endpoints":endpoints,"health_key":health,"model_count":count,"status":status,"configured":configured});
         if *id == "codex" {
-            row["subscriptions"] = json!(inventory.codex.accounts.iter().map(|account| json!({"id":format!("codex:{}",gateway_auth::crypto::sha256_hex(account.account_id.as_bytes())),"label":gateway_observability::capacity_shapes::codex_label(account.slot,None),"slot":account.slot})).collect::<Vec<_>>());
+            row["subscriptions"] = json!(subscriptions);
         }
         providers.push(row);
     }
     Ok(
         json!({"providers":providers,"tiers":[{"id":"subscription","label":"Subscription"},{"id":"paid","label":"Paid fallback"},{"id":"direct","label":"Direct"},{"id":"gateway","label":"Gateway"}]}),
     )
+}
+
+pub(super) async fn subscriptions(store: &crate::authority::RemoteAuthorityStore) -> Vec<Value> {
+    let Ok(at) = crate::storage::now_ms() else {
+        return Vec::new();
+    };
+    let Ok(Some(pool)) =
+        gateway_auth::provider_credentials::read_codex_source_pool(store, at).await
+    else {
+        return Vec::new();
+    };
+    pool.pool.accounts.iter().enumerate().map(|(index, account)| {
+        let email = account_email(account.access_token.expose());
+        let slot = (index + 1) as u8;
+        json!({"id":format!("codex:{}",gateway_auth::crypto::sha256_hex(account.account_id.as_bytes())),"label":gateway_observability::capacity_shapes::codex_label(slot,email.as_deref()),"slot":slot})
+    }).collect()
+}
+
+fn account_email(token: &str) -> Option<String> {
+    let encoded = token.split('.').nth(1)?.replace('-', "+").replace('_', "/");
+    let bytes = gateway_auth::provider_credentials::decode_source_base64(&encoded)?;
+    let payload: Value = serde_json::from_str(&String::from_utf8_lossy(&bytes)).ok()?;
+    let normalize = |value: &Value| {
+        let text = gateway_schema::util::js_trim(value.as_str()?);
+        (!text.is_empty()
+            && text.encode_utf16().count() <= 320
+            && text.contains('@')
+            && !text.chars().any(|ch| ch < '\u{20}' || ch == '\u{7f}'))
+        .then(|| text.to_owned())
+    };
+    normalize(&payload["https://api.openai.com/profile"]["email"])
+        .or_else(|| normalize(&payload["email"]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn picker_keeps_roster_and_unknown_sources_without_claiming_gateway_capacity() {
+        let result = project(
+            &json!({"models":[{"providers":[{"id":"codex"}]}],"sources":{}}),
+            vec![],
+            &BTreeMap::from([("cerebras".into(), "fixture".into())]),
+        )
+        .unwrap();
+        let providers = result["providers"].as_array().unwrap();
+        assert_eq!(providers.len(), gateway_schema::selection::PROVIDERS.len());
+        assert_eq!(providers[0]["model_count"], 1);
+        assert_eq!(providers[0]["configured"], false);
+        assert_eq!(providers.last().unwrap()["configured"], false);
+    }
+    #[test]
+    fn picker_recovers_source_email_without_returning_token_material() {
+        assert_eq!(
+            account_email("header.eyJlbWFpbCI6ImZhbGxiYWNrQGV4YW1wbGUuY29tIn0.signature")
+                .as_deref(),
+            Some("fallback@example.com")
+        );
+        assert_eq!(account_email("invalid"), None);
+    }
 }

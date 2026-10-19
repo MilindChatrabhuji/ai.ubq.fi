@@ -4,7 +4,10 @@ use std::{
     collections::VecDeque,
     io::{Read, Write},
 };
-use tungstenite::{Error, Message, WebSocket, protocol::WebSocketConfig};
+use tungstenite::{
+    Error, Message, WebSocket,
+    protocol::{Role, WebSocketConfig},
+};
 
 pub(super) fn websocket_config() -> WebSocketConfig {
     WebSocketConfig::default()
@@ -39,20 +42,26 @@ impl PreopenQueue {
 /// All accepted data remains charged until BOTH the WebSocket and its actual
 /// underlying TLS/socket flush complete. Only one frame enters those buffers
 /// at a time. A blocked TLS write therefore cannot hide another queue from the
-/// native bound; subsequent frames stay in this owned, counted queue.
+/// native bound; subsequent frames stay in this owned, counted queue. Like
+/// ws8.18.3, the pre-send guard adds only the incoming UTF8 payload; accepted
+/// frames then charge their actual plaintext framing, not TLS ciphertext.
 pub(super) struct PendingSocket<S> {
     pub socket: WebSocket<S>,
-    queue: VecDeque<String>,
+    queue: VecDeque<(String, usize)>,
     pending: usize,
     in_flight: Option<usize>,
+    control_pending: usize,
+    masked: bool,
 }
 impl<S: Read + Write> PendingSocket<S> {
-    pub fn new(socket: WebSocket<S>) -> Self {
+    pub fn new(socket: WebSocket<S>, role: Role) -> Self {
         Self {
             socket,
             queue: VecDeque::new(),
             pending: 0,
             in_flight: None,
+            control_pending: 0,
+            masked: matches!(role, Role::Client),
         }
     }
     pub fn enqueue(&mut self, text: String) -> Result<(), GatewayError> {
@@ -61,27 +70,53 @@ impl<S: Read + Write> PendingSocket<S> {
         {
             return Err(failure("realtime sideband is not writable"));
         }
-        self.pending += text.len();
-        self.queue.push_back(text);
+        let size = text.len();
+        let charge = size + self.header_size(size);
+        self.pending += charge;
+        self.queue.push_back((text, charge));
         Ok(())
+    }
+    fn header_size(&self, size: usize) -> usize {
+        let extended = if size >= 65_536 {
+            8
+        } else if size > 125 {
+            2
+        } else {
+            0
+        };
+        2 + extended + if self.masked { 4 } else { 0 }
+    }
+    pub fn send(&mut self, text: String) -> Result<(), GatewayError> {
+        self.enqueue(text)?;
+        self.pump()
+    }
+    pub fn read(&mut self) -> Result<Message, Error> {
+        let message = self.socket.read()?;
+        if let Message::Ping(payload) = &message {
+            // Tungstenite owns one replaceable pending Pong. Include its actual
+            // outgoing framing in the same counter until a successful flush.
+            self.pending -= self.control_pending;
+            self.control_pending = payload.len() + self.header_size(payload.len());
+            self.pending += self.control_pending;
+        }
+        Ok(message)
     }
     pub fn pump(&mut self) -> Result<(), GatewayError> {
         loop {
-            if let Some(bytes) = self.in_flight {
+            if self.in_flight.is_some() || self.control_pending != 0 {
                 match self.socket.flush() {
                     Ok(()) => {
-                        self.pending -= bytes;
-                        self.in_flight = None;
+                        self.pending -= self.in_flight.take().unwrap_or(0) + self.control_pending;
+                        self.control_pending = 0;
                     }
                     Err(error) if blocked(&error) => return Ok(()),
                     Err(_) => return Err(failure("realtime upstream send failed")),
                 }
             }
-            let Some(text) = self.queue.pop_front() else {
+            let Some((text, charge)) = self.queue.pop_front() else {
                 return Ok(());
             };
-            let size = text.len();
-            self.in_flight = Some(size);
+            self.in_flight = Some(charge);
             match self.socket.write(Message::Text(text.into())) {
                 Ok(()) => {}
                 Err(error) if blocked(&error) => return Ok(()),
@@ -98,7 +133,6 @@ pub(super) fn blocked(error: &Error) -> bool {
 mod tests {
     use super::*;
     use std::io;
-    use tungstenite::protocol::Role;
     #[derive(Default)]
     struct Blocked;
     impl Read for Blocked {
@@ -131,16 +165,17 @@ mod tests {
         assert!(queue.push("x".into()).is_err());
     }
     #[test]
-    fn blocked_actual_writer_keeps_inflight_charged_and_never_accepts_over_eight_mib() {
+    fn blocked_writer_matches_pinned_ws_framed_plaintext_and_before_send_threshold() {
         let socket = WebSocket::from_raw_socket(Blocked, Role::Client, Some(websocket_config()));
-        let mut peer = PendingSocket::new(socket);
+        let mut peer = PendingSocket::new(socket, Role::Client);
         peer.enqueue("a".repeat(MAX_PAYLOAD_BYTES)).unwrap();
         peer.pump().unwrap();
-        assert_eq!(peer.pending, MAX_PAYLOAD_BYTES);
-        assert_eq!(peer.in_flight, Some(MAX_PAYLOAD_BYTES));
-        peer.enqueue("b".repeat(MAX_PAYLOAD_BYTES)).unwrap();
+        assert_eq!(peer.pending, MAX_PAYLOAD_BYTES + 14);
+        assert_eq!(peer.in_flight, Some(MAX_PAYLOAD_BYTES + 14));
+        assert!(peer.enqueue("b".repeat(MAX_PAYLOAD_BYTES)).is_err());
+        peer.enqueue("b".repeat(MAX_PAYLOAD_BYTES - 14)).unwrap();
         peer.pump().unwrap();
-        assert_eq!(peer.pending, MAX_BUFFERED_BYTES);
+        assert_eq!(peer.pending, MAX_BUFFERED_BYTES + 14);
         assert!(peer.enqueue("x".into()).is_err());
     }
     #[test]
@@ -152,22 +187,88 @@ mod tests {
             .set_send_buffer_size(1024)
             .unwrap();
         stream.set_nonblocking(true).unwrap();
-        let mut peer = PendingSocket::new(WebSocket::from_raw_socket(
-            stream,
+        let mut peer = PendingSocket::new(
+            WebSocket::from_raw_socket(stream, Role::Client, Some(websocket_config())),
             Role::Client,
-            Some(websocket_config()),
-        ));
+        );
         let mut refused = false;
-        for _ in 0..64 {
+        for index in 0..64 {
             if peer.enqueue("x".repeat(MAX_PAYLOAD_BYTES)).is_err() {
                 refused = true;
                 break;
             }
             peer.pump().unwrap();
-            assert!(peer.pending <= MAX_BUFFERED_BYTES);
+            if index == 0 {
+                assert_eq!(peer.pending, MAX_PAYLOAD_BYTES + 14);
+            }
+            assert!(peer.pending <= MAX_BUFFERED_BYTES + 14);
         }
         assert!(refused);
         assert!(peer.in_flight.is_some());
-        assert!(peer.pending <= MAX_BUFFERED_BYTES);
+        assert!(peer.pending <= MAX_BUFFERED_BYTES + 14);
+    }
+
+    #[test]
+    fn actual_tls_non_draining_writer_retains_framed_plaintext_until_flush() {
+        let (server_config, client_config) = super::super::tests::configs();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release, paused) = std::sync::mpsc::sync_channel(1);
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut connection = rustls::ServerConnection::new(server_config).unwrap();
+            while connection.is_handshaking() {
+                connection.complete_io(&mut socket).unwrap();
+            }
+            paused
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            let mut tls = rustls::StreamOwned::new(connection, socket);
+            let mut total = 0;
+            let mut bytes = [0; 65_536];
+            while total < MAX_PAYLOAD_BYTES + 14 {
+                let count = tls.read(&mut bytes).unwrap();
+                assert!(count > 0);
+                total += count;
+            }
+            total
+        });
+        let mut socket = std::net::TcpStream::connect(address).unwrap();
+        socket2::SockRef::from(&socket)
+            .set_send_buffer_size(1024)
+            .unwrap();
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut connection = rustls::ClientConnection::new(
+            client_config,
+            rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap(),
+        )
+        .unwrap();
+        while connection.is_handshaking() {
+            connection.complete_io(&mut socket).unwrap();
+        }
+        socket.set_nonblocking(true).unwrap();
+        let tls = rustls::StreamOwned::new(connection, socket);
+        let mut peer = PendingSocket::new(
+            WebSocket::from_raw_socket(tls, Role::Client, Some(websocket_config())),
+            Role::Client,
+        );
+        peer.send("x".repeat(MAX_PAYLOAD_BYTES)).unwrap();
+        assert_eq!(peer.pending, MAX_PAYLOAD_BYTES + 14);
+        assert_eq!(peer.in_flight, Some(MAX_PAYLOAD_BYTES + 14));
+        assert!(peer.send("x".repeat(MAX_PAYLOAD_BYTES)).is_err());
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while peer.pending != 0 {
+            assert!(std::time::Instant::now() < deadline);
+            peer.pump().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(server.join().unwrap(), MAX_PAYLOAD_BYTES + 14);
+        assert_eq!(peer.in_flight, None);
     }
 }

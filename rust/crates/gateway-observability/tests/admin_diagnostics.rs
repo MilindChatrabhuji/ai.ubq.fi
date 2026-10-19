@@ -119,7 +119,16 @@ fn retention_diagnostics_use_current_store_after_runtime_rebind_and_restart() {
     let runtime = ObservabilityRuntime::new(first.clone(), host.clone());
     let original = run(runtime.error_retention_diagnostics());
     assert_eq!(original["state"], "ok");
-    assert_eq!(original["accounting_complete"], true);
+    // One source maintenance pass may intentionally leave the owner index incomplete.
+    assert_eq!(original["accounting_complete"], false);
+    let mut ready = false;
+    for _ in 0..20 {
+        if run(runtime.error_retention_diagnostics())["accounting_complete"] == true {
+            ready = true;
+            break;
+        }
+    }
+    assert!(ready, "source bounded bootstrap must eventually finish");
     let unavailable = Memory::default();
     unavailable.unavailable.set(true);
     let rebound =
@@ -133,4 +142,32 @@ fn retention_diagnostics_use_current_store_after_runtime_rebind_and_restart() {
     assert_eq!(after["state"], "ok");
     assert_eq!(after["accounting_complete"], true);
     assert_eq!(after["budget_bytes"], 1_073_741_824.0);
+}
+
+#[test]
+fn observational_codex_runtime_never_redeems_a_manual_reset() {
+    let store = Memory::default();
+    let host = Host::default();
+    host.at.set(1000);
+    let runtime = ObservabilityRuntime::new(store.clone(), host);
+    let error = run(runtime.codex(
+        gateway_admin_runtime::capabilities::CodexRequest::ConsumeReset {
+            account_id_hash: "a".repeat(64),
+        },
+        gateway_observability::Context {
+            request_id: "read-only-diagnostics".into(),
+            now_ms: 1000,
+        },
+    ))
+    .unwrap_err();
+    assert_eq!(error.status, 503);
+    assert!(
+        error
+            .envelope
+            .error
+            .message
+            .contains("native_manual_reset_owner")
+    );
+    assert_eq!(store.reads.get(), 0);
+    assert_eq!(store.commits.get(), 0);
 }

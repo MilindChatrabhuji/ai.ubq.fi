@@ -156,6 +156,84 @@ fn shadow_episode(candidate: &ResetCandidate) -> String {
 }
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    /// Finite pre-inventory projection; the fixed host rechecks again before every effect.
+    pub async fn reset_candidates(
+        &self,
+        proof: &crate::routing::CohortProof,
+    ) -> Result<Vec<ResetCandidate>, GatewayError> {
+        for _ in 0..3 {
+            let now = self.fresh_time(0)?;
+            let mut tx = self.transaction(now)?;
+            if !proof.exhausted || !validate_cohort(&mut tx, proof, true).await? {
+                return Err(unavailable(
+                    "routing_fence_stale",
+                    "Current full quota cohort is required.",
+                ));
+            }
+            let config: ResetConfig = tx.read(&keys::reset_config()).await?.unwrap_or_default();
+            if !config.enabled
+                || config.mode == ResetMode::Disabled
+                || config.max_per_account_per_day <= 0
+                || config.max_per_account_per_window != 1
+            {
+                return Ok(Vec::new());
+            }
+            let view = read_view(&mut tx).await?;
+            let mut candidates = Vec::new();
+            for binding in &proof.bindings {
+                let Some(slot) = view.state.slots.get(binding.slot as usize) else {
+                    continue;
+                };
+                let Some(block) = slot.quota_block_for(proof.quota_class) else {
+                    continue;
+                };
+                if block.blocked_until_ms <= now
+                    || block.reset_at_ms != Some(block.blocked_until_ms)
+                    || !block.reset_is_stable
+                    || block.reset_ambiguous
+                    || slot.reset_identity_ambiguous
+                {
+                    continue;
+                }
+                let candidate = ResetCandidate {
+                    binding: binding.clone(),
+                    quota_reset_at_ms: block.blocked_until_ms,
+                    request_started_at_ms: now,
+                    proof: proof.clone(),
+                };
+                let index = binding.slot as usize;
+                let setting: Option<serde_json::Value> = tx
+                    .read(&keys::reset_usage(
+                        &view.pool.accounts[index].admin_account_hash.0,
+                    ))
+                    .await?;
+                if setting.as_ref().is_some_and(|v| {
+                    v.get("enabled").and_then(serde_json::Value::as_bool) != Some(true)
+                }) {
+                    continue;
+                }
+                reset_fences(&mut tx, &candidate).await?;
+                candidates.push(candidate);
+            }
+            if self.fresh_time(now)?
+                >= candidates
+                    .iter()
+                    .map(|c| c.quota_reset_at_ms)
+                    .min()
+                    .unwrap_or(i64::MAX)
+            {
+                continue;
+            }
+            if tx.commit().await? {
+                return Ok(candidates);
+            }
+        }
+        Err(unavailable(
+            "routing_fence_stale",
+            "Reset inventory cohort changed concurrently.",
+        ))
+    }
+
     /// Persist the complete observed shadow selection before a later live request may consume.
     pub async fn record_reset_shadow(
         &self,

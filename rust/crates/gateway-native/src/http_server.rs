@@ -1,6 +1,7 @@
 //! Fixed authenticated HTTP companion. No generic URL, command, file or
 //! configuration ingress. Supervisor data remains readonly and source sampled.
 use crate::{
+    live_bridge::{NativeLiveHandler, NativeLiveUpgradeRequest},
     nonce_sqlite::SqliteNonceStore,
     owner_control::{NativeControlContext, NativeOwnerRenewalHandler},
     supervisor::{FOLLOW_MAX_DURATION_MS, FOLLOW_POLL_MS, follow_update},
@@ -17,6 +18,7 @@ use gateway_auth::{
         NATIVE_CONTROL_MAX_BYTES, NATIVE_RENEWAL_MAX_MS, NativeControlDisposition,
         NativeControlEnvelope, NativeControlReason, NativeControlResponse,
     },
+    native_live::{NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_PATH, NativeLiveAuthenticator},
     native_replay::StoreNonceAuthority,
 };
 use serde_json::{Value, json};
@@ -36,6 +38,7 @@ pub struct NativeHttpService {
     nonces: SqliteNonceStore,
     data: SupervisorData,
     renewal: Option<Arc<dyn NativeOwnerRenewalHandler>>,
+    live_sideband: Option<Arc<dyn NativeLiveHandler>>,
 }
 impl NativeHttpService {
     pub fn configured(
@@ -48,10 +51,15 @@ impl NativeHttpService {
             nonces,
             data,
             renewal: None,
+            live_sideband: None,
         }
     }
     pub fn with_owner_renewal(mut self, handler: impl NativeOwnerRenewalHandler + 'static) -> Self {
         self.renewal = Some(Arc::new(handler));
+        self
+    }
+    pub fn with_live_sideband(mut self, handler: impl NativeLiveHandler + 'static) -> Self {
+        self.live_sideband = Some(Arc::new(handler));
         self
     }
     pub fn serve(self, listener: TcpListener) -> Result<(), GatewayError> {
@@ -95,11 +103,13 @@ impl NativeHttpService {
             .set_write_timeout(Some(Duration::from_secs(5)))
             .map_err(|_| unavailable())?;
         let request = read_request(stream)?;
-        if request.method != "POST"
-            || !matches!(
-                request.path.as_str(),
-                NATIVE_RPC_PATH | NATIVE_FOLLOW_PATH | NATIVE_CONTROL_PATH
-            )
+        let live_upgrade = request.method == "GET" && request.path == NATIVE_LIVE_PATH;
+        if !live_upgrade
+            && (request.method != "POST"
+                || !matches!(
+                    request.path.as_str(),
+                    NATIVE_RPC_PATH | NATIVE_FOLLOW_PATH | NATIVE_CONTROL_PATH
+                ))
         {
             return Err(GatewayError::new(
                 404,
@@ -126,6 +136,29 @@ impl NativeHttpService {
             mac: one(NATIVE_MAC_HEADER)?,
         };
         let authority = StoreNonceAuthority::new(&self.nonces);
+        if live_upgrade {
+            validate_live_upgrade(&request)?;
+            let action_ref = one(NATIVE_LIVE_ACTION_HEADER)?.to_owned();
+            let proof = futures_executor::block_on(
+                NativeLiveAuthenticator::new(&self.identity, &authority).authenticate_upgrade(
+                    headers,
+                    &action_ref,
+                    now_ms()?,
+                ),
+            )?;
+            let handler = self.live_sideband.as_ref().ok_or_else(unavailable)?;
+            return handler
+                .handle(
+                    stream,
+                    NativeLiveUpgradeRequest {
+                        action_ref,
+                        headers: request.headers,
+                        buffered: request.buffered,
+                    },
+                    proof,
+                )
+                .map(|_transport_outcome| ());
+        }
         let proof = futures_executor::block_on(
             NativeAuthenticator::new(&self.identity, &authority).authenticate(
                 &request.path,
@@ -355,6 +388,31 @@ struct HttpRequest {
     path: String,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
+    buffered: Vec<u8>,
+}
+fn validate_live_upgrade(request: &HttpRequest) -> Result<(), GatewayError> {
+    let one = |name: &str| -> Result<&str, GatewayError> {
+        let values = request
+            .headers
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case(name))
+            .collect::<Vec<_>>();
+        if values.len() != 1 || values[0].1.is_empty() {
+            return Err(invalid());
+        }
+        Ok(&values[0].1)
+    };
+    if !one("upgrade")?.eq_ignore_ascii_case("websocket")
+        || !one("connection")?
+            .split(',')
+            .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+    {
+        return Err(invalid());
+    }
+    one("host")?;
+    one("sec-websocket-key")?;
+    one("sec-websocket-version")?;
+    Ok(())
 }
 fn read_more(
     stream: &mut TcpStream,
@@ -425,6 +483,21 @@ fn read_request(stream: &mut TcpStream) -> Result<HttpRequest, GatewayError> {
         .collect();
     if lengths.len() > 1 || encodings.len() > 1 || !lengths.is_empty() && !encodings.is_empty() {
         return Err(invalid());
+    }
+    if method == "GET" {
+        if parsed.version != Some(1)
+            || !encodings.is_empty()
+            || lengths.first().is_some_and(|header| header.1 != "0")
+        {
+            return Err(invalid());
+        }
+        return Ok(HttpRequest {
+            method,
+            path,
+            headers,
+            body: Vec::new(),
+            buffered: bytes[header_end..].to_vec(),
+        });
     }
     let max_body = if path == NATIVE_CONTROL_PATH {
         NATIVE_CONTROL_MAX_BYTES
@@ -497,6 +570,7 @@ fn read_request(stream: &mut TcpStream) -> Result<HttpRequest, GatewayError> {
         path,
         headers,
         body,
+        buffered: Vec::new(),
     })
 }
 fn too_large() -> GatewayError {
@@ -566,3 +640,7 @@ fn forbidden() -> GatewayError {
 #[cfg(all(test, target_os = "linux"))]
 #[path = "owner_control_http_tests.rs"]
 mod owner_control_tests;
+
+#[cfg(test)]
+#[path = "live_http_tests.rs"]
+mod live_http_tests;
