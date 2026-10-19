@@ -306,9 +306,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     return Err(invalid("account_id must be a string"));
                 }
                 let account_id = account_value.as_ref().and_then(source_body::text);
-                let cohort_id = source_body::member(&input.body, "account_cohort_id")
-                    .as_ref()
-                    .and_then(source_body::text);
+                let cohort_id = source_body::member(&input.body, "account_cohort_id");
                 // Account lookup and the targeted-cohort check belong to the
                 // actual owner in this source order; no early UUID/scalar gate.
                 self.capabilities

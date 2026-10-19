@@ -89,7 +89,8 @@ pub enum ClaudeRequest {
     },
     ClearQuota {
         account_id: Option<gateway_core::js_string::JsString16>,
-        cohort_id: Option<gateway_core::js_string::JsString16>,
+        /// None is absent only; every present source leaf retains its type/value.
+        cohort_id: Option<SourceJson>,
     },
 }
 
