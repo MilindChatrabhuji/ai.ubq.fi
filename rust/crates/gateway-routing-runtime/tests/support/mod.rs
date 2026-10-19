@@ -331,6 +331,7 @@ pub fn input(id: &str, model: &str, providers: &[&str]) -> RoutingInput {
 #[derive(Clone)]
 pub struct Host {
     pub claude_internal_error: bool,
+    pub claude_effective: Arc<Mutex<Vec<Option<gateway_core::js_string::JsString16>>>>,
     pub store: Store,
     pub cancelled: Arc<AtomicBool>,
     pub cancel_wait_after_ms: Option<i64>,
@@ -349,6 +350,7 @@ impl Host {
     pub fn new(store: &Store) -> Self {
         Self {
             claude_internal_error: false,
+            claude_effective: Arc::new(Mutex::new(Vec::new())),
             store: store.clone(),
             cancelled: Arc::new(AtomicBool::new(false)),
             cancel_wait_after_ms: None,
@@ -475,7 +477,12 @@ impl RoutingHost for Host {
         _principal: &AuthPrincipal,
         _model: &gateway_core::model::ModelId,
         _raw: &gateway_core::source_json::SourceJson,
+        effective_effort: Option<&gateway_core::js_string::JsString16>,
     ) -> Result<ClaudeSelection, GatewayError> {
+        self.claude_effective
+            .lock()
+            .unwrap()
+            .push(effective_effort.cloned());
         if self.claude_internal_error {
             return Ok(ClaudeSelection::InternalServerError);
         }

@@ -27,6 +27,8 @@ pub struct RoutingSession<S, I, C, H> {
     pub(crate) input: RoutingInput,
     pub(crate) plan: RoutePlan,
     pub(crate) lithos: RefCell<LithosWindows>,
+    pub(crate) claude_ordinary:
+        RefCell<Option<(ModelId, gateway_providers::PreparedClaudeOrdinary)>>,
     pub(crate) waits: RefCell<WaitBudget>,
     conversation_id: String,
     pub(crate) elapsed_wait_ms: std::cell::Cell<i64>,
@@ -200,6 +202,7 @@ impl<
             input,
             plan,
             lithos: RefCell::new(LithosWindows::default()),
+            claude_ordinary: RefCell::new(None),
             waits: RefCell::new(WaitBudget {
                 waits: 0,
                 waited_ms: 0,
@@ -273,6 +276,7 @@ impl<
             input,
             plan: parts.plan,
             lithos: RefCell::new(LithosWindows::default()),
+            claude_ordinary: RefCell::new(None),
             waits: RefCell::new(WaitBudget {
                 waits: 0,
                 waited_ms: 0,
@@ -371,6 +375,25 @@ impl<
             .await?;
         Ok(publication)
     }
+    pub(crate) fn claude_ordinary(
+        &self,
+        model: &ModelId,
+    ) -> RoutingResult<gateway_providers::PreparedClaudeOrdinary> {
+        let mut retained = self.claude_ordinary.borrow_mut();
+        if retained.is_none() {
+            let phase = crate::wire::claude_ordinary(&self.input, model, self.now()?)?;
+            *retained = Some((model.clone(), phase));
+        }
+        let (selected_model, phase) = retained.as_ref().expect("ordinary phase was initialized");
+        if selected_model != model || phase.surface() != self.input.surface {
+            return Err(journal::unavailable(
+                "Claude original model or surface association changed.",
+            )
+            .into());
+        }
+        Ok(phase.clone())
+    }
+
     pub(crate) fn prepare(
         &self,
         provider: UpstreamProvider,
@@ -378,6 +401,27 @@ impl<
         publication: &PublishedCredential,
         nonce: &str,
     ) -> RoutingResult<PreparedWireRequest> {
+        if provider == UpstreamProvider::ClaudeCode {
+            let phase = self.claude_ordinary.borrow();
+            let Some((selected_model, phase)) = phase.as_ref() else {
+                return Err(journal::unavailable(
+                    "Claude ordinary phase was not prepared before account selection.",
+                )
+                .into());
+            };
+            if selected_model != model {
+                return Err(
+                    journal::unavailable("Claude original model association changed.").into(),
+                );
+            }
+            return crate::wire::finalize_claude(
+                &self.input,
+                publication,
+                phase,
+                nonce,
+                self.now()?,
+            );
+        }
         crate::wire::prepare(
             &self.input,
             &self.conversation_id,

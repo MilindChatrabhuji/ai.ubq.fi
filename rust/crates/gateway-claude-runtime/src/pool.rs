@@ -166,14 +166,17 @@ impl ClaudePoolSession {
             )
             .ok_or_else(|| crate::invalid("Claude catalog generation changed."))?;
         let mut options = retained.map(|s| s.options.clone()).unwrap_or_default();
-        let effort = gateway_core::source_serialization::member(input.raw, "reasoning")
-            .filter(|reasoning| gateway_core::source_serialization::entries(reasoning).is_some())
-            .and_then(|reasoning| gateway_core::source_serialization::member(&reasoning, "effort"));
+        let effort = input.effective_effort.as_ref();
+        if retained.is_some_and(|selected| selected.effective_effort.as_ref() != effort) {
+            return Err(crate::invalid(
+                "Claude effective reasoning changed within the request.",
+            ));
+        }
         if retained.is_none() {
             options.native_reasoning_efforts = Some(Vec::new());
             options.supports_native_effort = false;
             options.supports_disabled_thinking = false;
-            if let Some(effort) = effort.as_ref() {
+            if let Some(effort) = effort {
                 let catalog = host
                     .catalog(
                         &binding,
@@ -204,11 +207,10 @@ impl ClaudePoolSession {
                         .as_ref()
                         .is_some_and(|a| !a.is_empty());
                 }
-                let effort = gateway_core::source_serialization::string(effort);
-                if !(effort.as_ref().is_some_and(|effort| {
+                if !(effort.is_some_and(|effort| {
                     effort.as_units().iter().copied().eq("none".encode_utf16())
                 }) && options.supports_disabled_thinking
-                    || effort.as_ref().is_some_and(|e| {
+                    || effort.is_some_and(|e| {
                         !e.as_units().iter().copied().eq("none".encode_utf16())
                             && options
                                 .native_reasoning_efforts
@@ -260,9 +262,8 @@ impl ClaudePoolSession {
             key_id: input.key_id.into(),
             model: input.model.clone(),
             raw: input.raw.clone(),
+            effective_effort: input.effective_effort.clone(),
             disabled: effort
-                .as_ref()
-                .and_then(gateway_core::source_serialization::string)
                 .is_some_and(|value| value.as_units().iter().copied().eq("none".encode_utf16())),
             native_checks,
             workspace_continuation: retained.is_some(),
@@ -288,6 +289,7 @@ impl ClaudePoolSession {
             key_id,
             model,
             raw,
+            effective_effort: selected.effective_effort.clone(),
             selection: None,
         };
         let current = self

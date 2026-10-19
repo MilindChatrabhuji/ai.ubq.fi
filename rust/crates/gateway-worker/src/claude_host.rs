@@ -33,6 +33,7 @@ struct RequestState {
     key_id: String,
     model: ModelId,
     raw: SourceJson,
+    effective_effort: Option<gateway_core::js_string::JsString16>,
     session: ClaudePoolSession,
     selected: RefCell<Option<SelectedAccount>>,
 }
@@ -84,7 +85,9 @@ impl Binding {
             .borrow()
             .clone()
             .ok_or_else(|| invalid("The request has no selected Claude account."))?;
-        if &credential_fence(&selected) != fence {
+        if &credential_fence(&selected) != fence
+            || selected.effective_effort() != request.effective_effort.as_ref()
+        {
             return Err(invalid(
                 "Claude credential fence belongs to another attempt.",
             ));
@@ -96,6 +99,7 @@ impl Binding {
         principal: &AuthPrincipal,
         model: &ModelId,
         raw: &SourceJson,
+        effective_effort: Option<&gateway_core::js_string::JsString16>,
     ) -> Result<ClaudeSelection, GatewayError> {
         let AuthMethod::KvApiKey { key_id, .. } = &principal.method else {
             return Ok(ClaudeSelection::NotApplicable);
@@ -133,6 +137,7 @@ impl Binding {
                     || request.key_id != *key_id
                     || &request.model != model
                     || &request.raw != raw
+                    || request.effective_effort.as_ref() != effective_effort
                 {
                     return Err(invalid(
                         "Claude selection inputs changed within the request.",
@@ -153,6 +158,7 @@ impl Binding {
                     key_id: key_id.clone(),
                     model: model.clone(),
                     raw: raw.clone(),
+                    effective_effort: effective_effort.cloned(),
                     session: ClaudePoolSession::new(config),
                     selected: RefCell::default(),
                 });
@@ -163,6 +169,7 @@ impl Binding {
                     || chosen.key_id != *key_id
                     || &chosen.model != model
                     || &chosen.raw != raw
+                    || chosen.effective_effort.as_ref() != effective_effort
                 {
                     return Err(invalid("Concurrent Claude selection inputs changed."));
                 }
@@ -178,6 +185,7 @@ impl Binding {
                     key_id: &request.key_id,
                     model,
                     raw: &request.raw,
+                    effective_effort: request.effective_effort.clone(),
                     selection: selection.as_ref(),
                 },
             )

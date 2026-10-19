@@ -456,3 +456,54 @@ fn invalid_image_request_releases_an_empty_source_plan_without_provider_dispatch
         assert_eq!(window(&store)["committed_requests"], 0);
     });
 }
+
+#[test]
+fn captured_default_survives_account_retry_operator_change_and_original_single_claim() {
+    run(async {
+        let store = Store::new();
+        seed_key(&store);
+        let mut host = Host::new(&store);
+        host.claude = Some(publication(None));
+        host.claude_outcomes
+            .lock()
+            .unwrap()
+            .push_back(ClaudeOutcome::Retry);
+        let input = request("captured-default-retry", false);
+        let original = input.raw.clone();
+        let session = RoutingSession::begin(
+            input,
+            store.clone(),
+            host.clone(),
+            store.clone(),
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let first = session.next_attempt().await.unwrap().unwrap();
+        session.before_dispatch(&first).await.unwrap();
+        session.transport_started(&first).await.unwrap();
+        let observed = session.observe_response(&first, head(429)).await.unwrap();
+        assert!(matches!(
+            session
+                .resolve_response(&first, observed, unknown(), Some(failure(429)))
+                .await
+                .unwrap(),
+            ResponseDecision::Continue
+        ));
+        store.seed(
+            gateway_schema::catalog_store::runtime_config_key(),
+            json!({"default_model":"claude-sonnet-4-6","default_reasoning_effort":"none"}),
+        );
+        let next = session.next_attempt().await.unwrap().unwrap();
+        assert_eq!(next.original_request_id, first.original_request_id);
+        assert_eq!(next.request.body(), first.request.body());
+        assert_eq!(session.original_source(), &original);
+        assert_eq!(
+            host.claude_effective.lock().unwrap().as_slice(),
+            &[Some("medium".into()), Some("medium".into())]
+        );
+        session.before_dispatch(&next).await.unwrap();
+        session.finish(Default::default()).await.unwrap();
+        assert_eq!(window(&store)["committed_requests"], 1);
+    });
+}

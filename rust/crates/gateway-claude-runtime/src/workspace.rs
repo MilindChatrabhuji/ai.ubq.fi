@@ -136,6 +136,7 @@ pub(crate) async fn discover<S: AuthorityStore, H: ClaudePoolHost>(
         key_id: &selected.key_id,
         model: &selected.model,
         raw: &selected.raw,
+        effective_effort: selected.effective_effort.clone(),
         selection: None,
     };
     // Source exception: retain the already encoded non-disabled request; no new
