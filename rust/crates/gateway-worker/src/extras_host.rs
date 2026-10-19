@@ -39,7 +39,7 @@ impl Host {
         platform: PlatformHost,
         admission: Handle,
         images: bool,
-        default_model: Option<String>,
+        default_model: Option<gateway_core::model::ModelId>,
     ) -> Result<Self, GatewayError> {
         let child = if images {
             None
@@ -245,7 +245,7 @@ impl ExtrasHost for Host {
             ..Default::default()
         }))
     }
-    async fn image_base_model(&self) -> Result<Option<String>, GatewayError> {
+    async fn image_base_model(&self) -> Result<Option<gateway_core::model::ModelId>, GatewayError> {
         self.images
             .as_ref()
             .map(crate::image_host::Images::model)
