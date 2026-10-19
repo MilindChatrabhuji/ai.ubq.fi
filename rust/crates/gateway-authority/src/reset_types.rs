@@ -1,6 +1,6 @@
 //! Reset records, immutable identities and pure credit selection.
 use crate::reset::hash;
-use crate::routing::CohortProof;
+use crate::routing::{AdmittedAccount, CohortProof};
 use crate::{nonnegative, text, unavailable};
 use gateway_core::GatewayError;
 use gateway_core::identity::AccountBinding;
@@ -65,6 +65,14 @@ pub struct ResetCandidate {
     pub quota_reset_at_ms: i64,
     pub request_started_at_ms: i64,
     pub proof: CohortProof,
+}
+
+/// Existing-ledger-only preflight; none of these outcomes authorizes credit use.
+#[derive(Debug)]
+pub enum FullPoolResetReconciliation {
+    NoExisting,
+    Blocked { reason: String },
+    Recovered(AdmittedAccount),
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

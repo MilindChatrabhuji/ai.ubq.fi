@@ -156,6 +156,52 @@ pub async fn route(
     } else {
         None
     };
+    if let Some(route) = gateway_live_runtime::live_route(&auth_request.method, &path) {
+        let principal = principal.ok_or_else(gateway_auth::unauthorized)?;
+        let live = crate::live_host::WorkerLiveHost::bind(
+            host.clone(),
+            context.clone(),
+            auth_request,
+            config.clone(),
+            principal.clone(),
+            request_id,
+        )
+        .await?;
+        let runtime = gateway_live_runtime::LiveRuntime::new(
+            Rc::new(store),
+            Rc::new(crate::transport::random::opaque_token),
+        );
+        return match route {
+            gateway_live_runtime::LiveRoute::Create => {
+                let headers = request
+                    .headers()
+                    .entries()
+                    .map(|(name, value)| (name.to_ascii_lowercase(), value))
+                    .collect();
+                let input =
+                    crate::live_http::parse_create(&mut request, &host.cancellation, headers)
+                        .await?;
+                let response = runtime
+                    .create_call(&principal, input, &live, host.cancellation.as_ref())
+                    .await;
+                crate::live_host::into_response(response, context)
+            }
+            gateway_live_runtime::LiveRoute::Sideband(call_id) => {
+                let upgrade = request
+                    .headers()
+                    .get("upgrade")
+                    .map_err(|_| invalid_url())?
+                    .unwrap_or_default();
+                match runtime
+                    .prepare_sideband(&principal, &call_id, &upgrade, &live)
+                    .await
+                {
+                    Ok(prepared) => live.upgrade(prepared).await,
+                    Err(response) => crate::live_host::into_response(response, context),
+                }
+            }
+        };
+    }
     if path == "/v1/models" && request.method() == Method::Get {
         let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
         let url = request.url().map_err(|_| invalid_url())?;

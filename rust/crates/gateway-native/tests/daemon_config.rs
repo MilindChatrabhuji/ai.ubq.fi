@@ -146,6 +146,7 @@ fn v2_refuses_redirectable_origins_ambiguous_owners_and_caller_selected_operatio
     for owners in [
         json!([]),
         json!([owner.clone(), owner.clone()]),
+        json!([owner.clone(),{"owner_id":"another-owner","codex_home":"/tmp/fixture-only/native-home"}]),
         json!([{"owner_id":"fixture-owner","codex_home":"relative-home"}]),
         json!([{"owner_id":"https://caller","codex_home":"/tmp/fixture-home"}]),
     ] {

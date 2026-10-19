@@ -9,6 +9,8 @@ mod inverse;
 mod native_capture;
 mod native_custody;
 mod native_inverse;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+pub mod native_operator;
 pub mod operational;
 mod profile_bindings;
 mod profile_coupling;
@@ -93,6 +95,7 @@ fn private_source_key(p: &[Value]) -> bool {
         || starts(p, &["uos_ai", "authority"])
         || starts(p, &["uos_ai", "auth", "session_revision_index"])
         || starts(p, &["uos_ai", "native_live"])
+        || starts(p, &["uos_ai", "routing_runtime"])
         || starts(
             p,
             &["uos_ai", "codex_live_calls", "v1", "pending_retirement"],
