@@ -32,8 +32,8 @@ fn test_authority(store: &Store) -> Authority<Store, UniqueTokens> {
 fn source(store: &Store, access: &str, revision: &str) -> SubscriptionPool {
     let account = CodexSourceAccount {
         account_id: "source-account".into(),
-        access_token: Secret::new(access),
-        refresh_token: Secret::new("SYNTHETIC_REFRESH"),
+        access_token: Secret::new(access.to_owned()),
+        refresh_token: Secret::new("SYNTHETIC_REFRESH".to_owned()),
         updated_at_ms: 1_000_000.0,
         native_owner: None,
     };
