@@ -417,5 +417,13 @@ export default tsEslint.config(
     // accepted socket; extracting them would widen mutable socket ownership.
     files: ["src/runtime/http-upgrade.ts"],
     rules: { "sonarjs/no-nested-functions": "off" },
+  },
+  {
+    // DIVERGENCE: 17 measured findings on required task-root guards and inert
+    // state-controller unit fixture paths. Actual runs require absent private
+    // task directories and a single OS profile denying writes outside the run;
+    // explicit allowed/denied write probes precede real state acceptance.
+    files: ["tools/cloudflare/state-migration-conformance.ts", "tests/state-migration-controller.test.ts"],
+    rules: { "sonarjs/publicly-writable-directories": "off" },
   }
 );

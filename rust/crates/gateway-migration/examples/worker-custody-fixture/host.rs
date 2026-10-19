@@ -118,6 +118,142 @@ impl Host {
         }
         Ok(Self { bindings, now_ms })
     }
+    /// Fixed TEST vector from native_custody.rs:191-254: rotate only managed-a's
+    /// physical refresh, prove the stale export refusal, then publish its actual projection.
+    pub fn advance_managed_a(
+        self,
+        store: &super::port::Store,
+    ) -> Result<(Self, super::producers::Receipt), gateway_migration::MigrationError> {
+        use gateway_auth::{
+            crypto::Secret,
+            managed_access::ManagedAccessProjection,
+            native_credentials::NativeGeneration,
+            provider_credentials::{ManagedNativeSource, read_codex_source_pool},
+        };
+        use gateway_core::state::{
+            AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
+        };
+        let snapshot = super::support_run(read_codex_source_pool(store, 2300))?
+            .ok_or_else(|| error("Current source pool is missing"))?;
+        if snapshot.pool.accounts.len() != 2
+            || snapshot.pool.accounts[0].account_id != "managed-a"
+            || snapshot.pool.accounts[1].account_id != "managed-b"
+        {
+            return Err(error("Original fixed owner order differs").into());
+        }
+        let sibling = snapshot.pool.accounts[1].clone();
+        let (home, old_fence) = self
+            .bindings
+            .get("managed-a")
+            .ok_or_else(|| error("Fixed managed-a is absent"))?
+            .clone();
+        let sibling_path = self
+            .bindings
+            .get("managed-b")
+            .ok_or_else(|| error("Fixed managed-b is absent"))?
+            .0
+            .join("auth.json");
+        let sibling_bytes = std::fs::read(&sibling_path).map_err(error)?;
+        let path = home.join("auth.json");
+        let original = std::fs::read(&path).map_err(error)?;
+        let mut document: serde_json::Value = serde_json::from_slice(&original).map_err(error)?;
+        document["tokens"]["refresh_token"] =
+            serde_json::json!("synthetic-native-managed-a-2-refresh");
+        document["last_refresh"] = serde_json::json!("2026-10-19T00:00:00.000000002Z");
+        std::fs::write(&path, serde_json::to_vec(&document).map_err(error)?).map_err(error)?;
+        if super::support_run(gateway_migration::export_native_with_custody(
+            store, 2300, &self,
+        ))
+        .is_ok()
+        {
+            return Err(error("Stale native generation was accepted").into());
+        }
+        let transport = UnixOwnerTransport::new(vec![NativeOwnerLocation::configured(
+            old_fence.owner.clone(),
+            home.clone(),
+        )?])?;
+        let credentials = super::support_run(transport.read_credentials(&old_fence.owner))?;
+        let generation = NativeGeneration {
+            fence: OwnerFence {
+                generation_hash: credentials.generation_hash(),
+                authority_revision: "current-pool-publication".into(),
+                ..old_fence
+            },
+            credentials,
+            observed_at_ms: 2300,
+        };
+        let projection = ManagedAccessProjection::from_native(&generation)?;
+        if projection.access_generation()
+            != snapshot.pool.accounts[0].identity().native_generation_hash
+            || projection.native_source_generation()
+                == snapshot.pool.accounts[0]
+                    .native_owner
+                    .as_ref()
+                    .and_then(|o| o.managed_source.as_ref())
+                    .ok_or_else(|| error("Managed source missing"))?
+                    .generation_hash
+        {
+            return Err(error("Original refresh-only generation distinction differs").into());
+        }
+        let mut pool = snapshot.pool;
+        let account = &mut pool.accounts[0];
+        account.access_token = projection.access_token().clone();
+        account.refresh_token = Secret::new(String::new());
+        let owner = account
+            .native_owner
+            .as_mut()
+            .ok_or_else(|| error("Current native owner missing"))?;
+        owner.generation_hash = projection.access_generation().into();
+        owner.native_refreshed_at = projection.native_refreshed_at().map(str::to_owned);
+        owner.managed_source = Some(ManagedNativeSource {
+            v: 2,
+            generation_hash: projection.native_source_generation().into(),
+        });
+        if pool.accounts[1] != sibling {
+            return Err(error("Sibling projection changed").into());
+        }
+        let pool_key = codex_source_pool_key();
+        if super::support_run(store.commit(AtomicTransition {
+            checks: vec![RevisionCheck {
+                key: pool_key.clone(),
+                expected_revision: Some(snapshot.revision),
+            }],
+            mutations: vec![RecordMutation::Put {
+                key: pool_key.clone(),
+                record: StoredRecord::json(
+                    "current-pool-publication",
+                    pool.private_source_value(),
+                    None,
+                ),
+            }],
+        }))? != CommitOutcome::Committed
+        {
+            return Err(error("Current owner publication conflicted").into());
+        }
+        let current = super::support_run(store.read(&pool_key))?
+            .ok_or_else(|| error("Published source is missing"))?;
+        let fixed = self.with_current_pool(&current, 2400)?;
+        super::support_run(gateway_migration::export_native_with_custody(
+            store, 2400, &fixed,
+        ))?;
+        if std::fs::read(sibling_path).map_err(error)? != sibling_bytes {
+            return Err(error("Sibling physical auth changed").into());
+        }
+        Ok((
+            fixed,
+            super::producers::Receipt {
+                operation: "managed_a_advanced",
+                cases: vec![
+                    "stale_owner_generation_refused",
+                    "actual_managed_a_current_projection",
+                    "unchanged_managed_b_physical_and_projection",
+                    "current_owner_inverse_accepted",
+                ],
+                changed_keys: vec![pool_key.0],
+                deleted_keys: vec![],
+            },
+        ))
+    }
     pub fn with_current_pool(
         mut self,
         record: &StoredRecord,
