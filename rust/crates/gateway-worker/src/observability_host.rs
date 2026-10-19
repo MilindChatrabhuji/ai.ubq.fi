@@ -239,6 +239,12 @@ impl ObservabilityHost for RequestHost {
     ) -> Result<gateway_observability::host_types::CacheExperimentTarget, GatewayError> {
         self.prepare_cache_target().await
     }
+    async fn run_fixed_cache_experiment(
+        &self,
+        _baseline: &serde_json::Value,
+    ) -> Result<serde_json::Value, GatewayError> {
+        self.run_cache_experiment().await
+    }
     async fn codex_reset_available_count(
         &self,
         account: &gateway_observability::host_types::CapacityAccountRef,
