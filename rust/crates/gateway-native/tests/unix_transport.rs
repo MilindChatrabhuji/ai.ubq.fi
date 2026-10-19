@@ -176,6 +176,7 @@ enum GuardPolicy {
     Allow,
     RefuseStart,
     RevokeAfterIdentity,
+    AdoptDuringHandshake,
 }
 
 struct FixtureGuard {
@@ -256,7 +257,10 @@ fn renewal_with_guard(
                 let result = match method {
                     "initialize" => json!({"codexHome":server_home}),
                     "account/read" => {
-                        if value["params"]["refreshToken"] == true && persist_generation {
+                        if persist_generation
+                            && (value["params"]["refreshToken"] == true
+                                || policy == GuardPolicy::AdoptDuringHandshake)
+                        {
                             let next =
                                 document("fixture-refresh-b", "2026-10-18T12:00:00.000000002Z");
                             fs::write(
@@ -317,6 +321,15 @@ fn current_authority_replacement_or_replayed_start_prevents_actual_refresh_rpc()
             .code
             .as_deref(),
         Some("native_control_outcome_unknown")
+    );
+}
+
+#[test]
+fn newer_fixed_file_during_identity_handshake_is_adopted_without_refresh_rpc() {
+    let result = renewal_with_guard(true, GuardPolicy::AdoptDuringHandshake).unwrap();
+    assert_eq!(
+        result.credentials.refresh_token.expose(),
+        "fixture-refresh-b"
     );
 }
 
