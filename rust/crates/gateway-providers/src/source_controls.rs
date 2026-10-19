@@ -547,9 +547,9 @@ pub(crate) fn cerebras(body: &mut SourceJson) -> s::Result<()> {
     }
     Ok(())
 }
-pub(crate) fn claude_transport(body: &mut SourceJson, options: &PrepareOptions) {
+pub(crate) fn claude_transport(body: &mut SourceJson, kind: ClaudeCredentialKind) {
     s::remove(body, "prompt_cache_key");
-    if !options.auth.api_key {
+    if kind == ClaudeCredentialKind::Oauth {
         let mut system = vec![s::generated(
             &serde_json::json!({"type":"text","text":crate::finalize::CLAUDE_ATTRIBUTION}),
         )];
