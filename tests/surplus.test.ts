@@ -96,6 +96,7 @@ test("fetchSurplusModels preserves exact IDs and exposes text-capable routes onl
   assert.equal(calls[0].url, "https://api.surplusintelligence.ai/v1/models");
   assert.equal(new Headers(calls[0].init?.headers).get("Accept"), "application/json");
   assert.equal(new Headers(calls[0].init?.headers).has("Authorization"), false);
+  assert.equal(new Headers(calls[0].init?.headers).has("X-SI-Mask-Secrets"), false);
 });
 
 test("fetchSurplusResponses omits unsupported parallel-tool control and returns the request ID", async () => {
@@ -134,6 +135,7 @@ test("fetchSurplusResponses omits unsupported parallel-tool control and returns 
   assert.equal(headers.get("Authorization"), "Bearer inf_test");
   assert.equal(headers.get("Accept"), "text/event-stream");
   assert.equal(headers.get("Content-Type"), "application/json");
+  assert.equal(headers.get("X-SI-Mask-Secrets"), "on");
   assert.equal(result.request_id, "surplus-request-1");
 });
 

@@ -179,7 +179,8 @@ export const streamLithosChatCompletion = (
   downstreamSignal: AbortSignal,
   requestSignal: AbortSignal,
   upstreamModel: string,
-  servedModel: string | (() => string)
+  servedModel: string | (() => string),
+  cancelPending?: (reason?: unknown) => void
 ): Response =>
   withLithosSseKeepalive(
     relayChatCompletionStream(
@@ -189,7 +190,8 @@ export const streamLithosChatCompletion = (
       usageContext,
       downstreamSignal,
       requestSignal,
-      upstreamModel
+      upstreamModel,
+      cancelPending
     )
   );
 
@@ -213,7 +215,8 @@ export const streamLithosResponses = (
   downstreamSignal: AbortSignal,
   requestSignal: AbortSignal,
   upstreamModel: string,
-  servedModel: string | (() => string)
+  servedModel: string | (() => string),
+  cancelPending?: (reason?: unknown) => void
 ): Response =>
   withLithosSseKeepalive(
     relayResponsesStream(lithosStreamAdapterServing(servedModel), {
@@ -229,5 +232,6 @@ export const streamLithosResponses = (
       downstreamSignal,
       requestSignal,
       upstreamModel,
+      cancelPending,
     })
   );

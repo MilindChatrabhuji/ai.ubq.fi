@@ -165,6 +165,32 @@ test("openrouter buffered Responses fails an empty completion closed without mas
   });
 });
 
+test("openrouter buffered Responses preserves failed upstream terminals without answer output", async () => {
+  await withServedCatalogue(async () => {
+    const telemetry = createResponseTelemetryState();
+    const payload = {
+      id: "resp_failed",
+      object: "response",
+      status: "failed",
+      error: { code: "upstream_error", message: "provider failed" },
+      output: [],
+      usage: { input_tokens: 2, output_tokens: 0, total_tokens: 2 },
+    };
+    const response = await handleOpenRouterResponses(
+      new Request("https://ai.ubq.fi/v1/responses", { method: "POST" }),
+      { model: "vendor/beta", input: "hi" },
+      "vendor/beta",
+      streamUsageContext(telemetry),
+      { fetchResponses: () => Promise.resolve(jsonResponse(payload)) }
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), payload);
+    assert.equal(telemetry.completed, false);
+    assert.equal(telemetry.streamTerminalType, "response.failed");
+  });
+});
+
 const dispatchCases = [
   { path: "/v1/chat/completions", body: { messages: [{ role: "user", content: "hi" }] }, handle: handleOpenRouterChatCompletions },
   { path: "/v1/responses", body: { input: "hi" }, handle: handleOpenRouterResponses },
@@ -580,6 +606,81 @@ test("openrouter responses relays native events and records the terminal", async
     assert.match(body, /response.completed/);
     assert.equal(telemetry.streamTerminalType, "response.completed");
     assert.equal(telemetry.outputTokens, 1);
+  });
+});
+
+test("openrouter responses records a failed terminal as upstream provider health error", async () => {
+  await withServedCatalogue(async () => {
+    // Drain optional health writes from the preceding fixture before replacing it.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const kv = new CountingKv();
+    setKvForTest(kv as unknown as Kv);
+    resetProviderHealthThrottleForTest();
+    try {
+      const failedEvent = {
+        type: "response.failed",
+        response: { id: "resp_1", status: "failed" },
+      };
+      const response = await handleOpenRouterResponses(
+        new Request("https://ai.ubq.fi/v1/responses", { method: "POST" }),
+        { model: "vendor/beta", input: "hi", stream: true },
+        "vendor/beta",
+        streamUsageContext(createResponseTelemetryState()),
+        {
+          fetchResponses: () => Promise.resolve(sseResponse([`event: response.failed\ndata: ${JSON.stringify(failedEvent)}\n\n`])),
+        }
+      );
+      assert.equal(response.status, 200);
+      await response.text();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      const health = await getOpenRouterProviderHealth();
+      assert.equal(health.last_event, "upstream_error");
+      assert.equal(health.last_status, 200);
+      assert.equal(health.state, "degraded");
+    } finally {
+      // Health is recorded without delaying the response; do not replace the
+      // fixture while the terminal observation is still draining.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      setKvForTest(null);
+      resetProviderHealthThrottleForTest();
+    }
+  });
+});
+
+test("openrouter responses records a provider-fault incomplete terminal as upstream provider health error", async () => {
+  await withServedCatalogue(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const kv = new CountingKv();
+    setKvForTest(kv as unknown as Kv);
+    resetProviderHealthThrottleForTest();
+    try {
+      const incompleteEvent = {
+        type: "response.incomplete",
+        response: { id: "resp_1", status: "incomplete", incomplete_details: { reason: "provider_overloaded" } },
+      };
+      const response = await handleOpenRouterResponses(
+        new Request("https://ai.ubq.fi/v1/responses", { method: "POST" }),
+        { model: "vendor/beta", input: "hi", stream: true },
+        "vendor/beta",
+        streamUsageContext(createResponseTelemetryState()),
+        {
+          fetchResponses: () => Promise.resolve(sseResponse([`event: response.incomplete\ndata: ${JSON.stringify(incompleteEvent)}\n\n`])),
+        }
+      );
+      assert.equal(response.status, 200);
+      await response.text();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      const health = await getOpenRouterProviderHealth();
+      assert.equal(health.last_event, "upstream_error");
+      assert.equal(health.last_status, 200);
+      assert.equal(health.state, "degraded");
+    } finally {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      setKvForTest(null);
+      resetProviderHealthThrottleForTest();
+    }
   });
 });
 

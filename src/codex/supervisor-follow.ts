@@ -99,15 +99,18 @@ export const followEntryRevision = (entry: SupervisorFollowEntry): string => {
  * content revision changed since the previous poll, including entries at or
  * below the cursor. `revisions` is per SSE connection, so unchanged polls emit
  * nothing and later output or completion reaches the already-rendered item.
+ * Only entries that survive the emission filter and cap are committed, so a
+ * dropped revision remains eligible for a later poll.
  */
 export const selectFollowUpdates = (entries: readonly SupervisorFollowEntry[], startIndex: number, revisions: Map<string, string>): SupervisorFollowEntry[] => {
   const updates: SupervisorFollowEntry[] = [];
   for (const entry of entries) {
     const revision = followEntryRevision(entry);
     if (entry.index > startIndex || revisions.get(entry.key) !== revision) updates.push(entry);
-    revisions.set(entry.key, revision);
   }
-  return updates;
+  const emitted = updates.filter((entry) => entry.kind === "command" || entry.text.length > 0).slice(-FOLLOW_MAX_ENTRIES);
+  for (const entry of emitted) revisions.set(entry.key, followEntryRevision(entry));
+  return emitted;
 };
 
 const followEntryPayload = (entry: SupervisorFollowEntry): JsonRecord => ({
@@ -165,8 +168,7 @@ const readFollowUpdate = async (
         selectableEntries = entries.filter((entry) => entry.text.length > 0);
       }
     }
-    const updates = selectFollowUpdates(selectableEntries, startIndex, revisions);
-    const emitted = updates.filter((entry) => entry.kind === "command" || entry.text.length > 0).slice(-FOLLOW_MAX_ENTRIES);
+    const emitted = selectFollowUpdates(selectableEntries, startIndex, revisions);
     return { entries: emitted, cursor: `${turn.id}:${lastIndex}`, turnId: turn.id, turnStatus: turn.status, enriched };
   } finally {
     await connection.close();

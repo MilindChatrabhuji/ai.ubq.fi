@@ -1,0 +1,504 @@
+{
+  "source_sha": "6d4d4790a7c06514b92938ff677dbfd52764461d",
+  "runtime": "bun@1.4.0",
+  "getter_calls": 0,
+  "source_fixture_sha256": "0de9c4d034b0677fe4b085ec8123a596eb6b940a927cbfb27993b8489a8b2120",
+  "rows": [
+    {
+      "name": "shared-buffer",
+      "source_graph": {
+        "root": {
+          "type": "ref",
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "object",
+            "entries": [
+              [
+                "buffer",
+                {
+                  "type": "ref",
+                  "ref": 1
+                }
+              ],
+              [
+                "a",
+                {
+                  "type": "ref",
+                  "ref": 2
+                }
+              ],
+              [
+                "b",
+                {
+                  "type": "ref",
+                  "ref": 3
+                }
+              ]
+            ]
+          },
+          {
+            "type": "ArrayBuffer",
+            "value": "AAAAAAAAAAAAAAAAAAAAAA=="
+          },
+          {
+            "type": "Uint8Array",
+            "buffer": {
+              "type": "ref",
+              "ref": 1
+            },
+            "offset": 3,
+            "length": 4
+          },
+          {
+            "type": "DataView",
+            "buffer": {
+              "type": "ref",
+              "ref": 1
+            },
+            "offset": 5,
+            "length": 2
+          }
+        ]
+      },
+      "graph": {
+        "root": {
+          "type": "ref",
+          "value": 0
+        },
+        "nodes": [
+          {
+            "type": "object",
+            "entries": [
+              [
+                [98, 117, 102, 102, 101, 114],
+                {
+                  "type": "ref",
+                  "value": 1
+                }
+              ],
+              [
+                [97],
+                {
+                  "type": "ref",
+                  "value": 2
+                }
+              ],
+              [
+                [98],
+                {
+                  "type": "ref",
+                  "value": 3
+                }
+              ]
+            ]
+          },
+          {
+            "type": "array_buffer",
+            "bytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+          },
+          {
+            "type": "view",
+            "kind": "Uint8Array",
+            "buffer_node": 1,
+            "byte_offset": 3,
+            "byte_length": 4
+          },
+          {
+            "type": "view",
+            "kind": "DataView",
+            "buffer_node": 1,
+            "byte_offset": 5,
+            "byte_length": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "shared-object",
+      "source_graph": {
+        "root": {
+          "type": "ref",
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "object",
+            "entries": [
+              [
+                "a",
+                {
+                  "type": "ref",
+                  "ref": 1
+                }
+              ],
+              [
+                "b",
+                {
+                  "type": "ref",
+                  "ref": 1
+                }
+              ]
+            ]
+          },
+          {
+            "type": "object",
+            "entries": [
+              [
+                "value",
+                {
+                  "type": "number",
+                  "value": 7
+                }
+              ]
+            ]
+          }
+        ]
+      },
+      "graph": {
+        "root": {
+          "type": "ref",
+          "value": 0
+        },
+        "nodes": [
+          {
+            "type": "object",
+            "entries": [
+              [
+                [97],
+                {
+                  "type": "ref",
+                  "value": 1
+                }
+              ],
+              [
+                [98],
+                {
+                  "type": "ref",
+                  "value": 1
+                }
+              ]
+            ]
+          },
+          {
+            "type": "object",
+            "entries": [
+              [
+                [118, 97, 108, 117, 101],
+                {
+                  "type": "number_bits",
+                  "value": "401c000000000000"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "object-cycle",
+      "source_graph": {
+        "root": {
+          "type": "ref",
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "object",
+            "entries": [
+              [
+                "self",
+                {
+                  "type": "ref",
+                  "ref": 0
+                }
+              ]
+            ]
+          }
+        ]
+      },
+      "graph": {
+        "root": {
+          "type": "ref",
+          "value": 0
+        },
+        "nodes": [
+          {
+            "type": "object",
+            "entries": [
+              [
+                [115, 101, 108, 102],
+                {
+                  "type": "ref",
+                  "value": 0
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "array-cycle",
+      "source_graph": {
+        "root": {
+          "type": "ref",
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "Array",
+            "length": 1,
+            "entries": [
+              [
+                "0",
+                {
+                  "type": "ref",
+                  "ref": 0
+                }
+              ]
+            ]
+          }
+        ]
+      },
+      "graph": {
+        "root": {
+          "type": "ref",
+          "value": 0
+        },
+        "nodes": [
+          {
+            "type": "array",
+            "length": 1,
+            "entries": [
+              [
+                [48],
+                {
+                  "type": "ref",
+                  "value": 0
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "map-cycle",
+      "source_graph": {
+        "root": {
+          "type": "ref",
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "Map",
+            "entries": [
+              [
+                {
+                  "type": "ref",
+                  "ref": 0
+                },
+                {
+                  "type": "ref",
+                  "ref": 0
+                }
+              ]
+            ]
+          }
+        ]
+      },
+      "graph": {
+        "root": {
+          "type": "ref",
+          "value": 0
+        },
+        "nodes": [
+          {
+            "type": "map",
+            "entries": [
+              [
+                {
+                  "type": "ref",
+                  "value": 0
+                },
+                {
+                  "type": "ref",
+                  "value": 0
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "set-cycle",
+      "source_graph": {
+        "root": {
+          "type": "ref",
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "Set",
+            "items": [
+              {
+                "type": "ref",
+                "ref": 0
+              }
+            ]
+          }
+        ]
+      },
+      "graph": {
+        "root": {
+          "type": "ref",
+          "value": 0
+        },
+        "nodes": [
+          {
+            "type": "set",
+            "items": [
+              {
+                "type": "ref",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "date-regexp-alias",
+      "source_graph": {
+        "root": {
+          "type": "ref",
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "object",
+            "entries": [
+              [
+                "d1",
+                {
+                  "type": "ref",
+                  "ref": 1
+                }
+              ],
+              [
+                "d2",
+                {
+                  "type": "ref",
+                  "ref": 1
+                }
+              ],
+              [
+                "r1",
+                {
+                  "type": "ref",
+                  "ref": 2
+                }
+              ],
+              [
+                "r2",
+                {
+                  "type": "ref",
+                  "ref": 2
+                }
+              ]
+            ]
+          },
+          {
+            "type": "Date",
+            "value": "1"
+          },
+          {
+            "type": "RegExp",
+            "value": "x",
+            "items": [
+              {
+                "type": "string",
+                "value": "u"
+              }
+            ]
+          }
+        ]
+      },
+      "graph": {
+        "root": {
+          "type": "ref",
+          "value": 0
+        },
+        "nodes": [
+          {
+            "type": "object",
+            "entries": [
+              [
+                [100, 49],
+                {
+                  "type": "ref",
+                  "value": 1
+                }
+              ],
+              [
+                [100, 50],
+                {
+                  "type": "ref",
+                  "value": 1
+                }
+              ],
+              [
+                [114, 49],
+                {
+                  "type": "ref",
+                  "value": 2
+                }
+              ],
+              [
+                [114, 50],
+                {
+                  "type": "ref",
+                  "value": 2
+                }
+              ]
+            ]
+          },
+          {
+            "type": "date",
+            "epoch_ms": 1
+          },
+          {
+            "type": "reg_exp",
+            "source": [120],
+            "flags": "u"
+          }
+        ]
+      }
+    }
+  ],
+  "source_refusals": [
+    {
+      "name": "error-cause-undefined",
+      "rejectedAt": "guard",
+      "error": "TypeError: Bun KV cannot preserve Error.cause; persist an explicit error record instead"
+    },
+    {
+      "name": "enumerable-getter",
+      "rejectedAt": "guard",
+      "error": "TypeError: Bun KV requires materialized values rather than accessor properties"
+    },
+    {
+      "name": "function",
+      "rejectedAt": "storage",
+      "error": "DataCloneError: The object can not be cloned."
+    },
+    {
+      "name": "buffer",
+      "rejectedAt": "graph",
+      "error": "TypeError: Unsupported typed array"
+    }
+  ]
+}

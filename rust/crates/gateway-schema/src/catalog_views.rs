@@ -1,0 +1,409 @@
+use crate::{aliases::*, catalog::*, metadata::*, provider_catalog::*, selection::*, util::*};
+use serde_json::{Value, json};
+fn snapshot_models(input: &CatalogInput, full: bool) -> Vec<Value> {
+    let snapshot = if full {
+        input.codex()
+    } else {
+        input.snapshot.as_ref()
+    };
+    snapshot
+        .map(|s| {
+            s.models
+                .iter()
+                .filter_map(|r| model_list_row(r, (s.updated_at_ms / 1000).max(0)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+pub fn ordinary_models(input: &CatalogInput) -> Value {
+    let mut rows = if input.enabled("codex") {
+        snapshot_models(input, false)
+    } else {
+        Vec::new()
+    };
+    append_unique(&mut rows, configured_model_rows(input, "cerebras"), "id");
+    for provider in ["deepseek", "lithos", "ubiquity"] {
+        let configured = configured_model_rows(input, provider);
+        if !configured.is_empty() {
+            rows.retain(|r| !configured.iter().any(|c| c["id"] == r["id"]));
+            rows.extend(configured);
+        }
+    }
+    let claude=input.available_rows("claude_code").iter().map(|r|json!({"id":r["id"],"object":"model","created":r.get("created").cloned().unwrap_or(json!(0)),"owned_by":"anthropic"}));
+    append_unique(&mut rows, claude, "id");
+    for provider in ["openlux", "surplus"] {
+        let records = input
+            .available_rows(provider)
+            .iter()
+            .filter(|r| endpoint_supports(r, "openai") || endpoint_supports(r, "openai-response"))
+            .filter_map(|r| model_list_row(r, 0));
+        append_unique(&mut rows, records, "id");
+    }
+    let mut rows = filter_whitelist(rows, input.whitelist.as_ref(), false);
+    append_unique(&mut rows, openrouter_models(input), "id");
+    json!({"object":"list","data":rows})
+}
+fn discovered_capability(input: &CatalogInput, model: &Value, provider: &str) -> Value {
+    let id = model["id"].as_str().unwrap_or("");
+    let resolved = input.metadata(id, None, None, false);
+    let mut row = json!({"id":id,"object":"uos.model_capabilities","owned_by":model["owned_by"],"display_name":id,"upstream_provider":provider,"supported_endpoints":endpoint_paths(model),"supported_reasoning_levels":resolved.supported_reasoning_levels.clone().unwrap_or_else(||vec!["none".into()])});
+    if let Some(default) = &resolved.default_reasoning_effort {
+        row["default_reasoning_effort"] = json!(default);
+    } else if resolved.supported_reasoning_levels.is_none() {
+        row["default_reasoning_effort"] = json!("none");
+    }
+    row["reasoning_effort_wire_map"] = json!({});
+    apply_resolved_fields(&mut row, &resolved, false, true);
+    row["context_source"] = json!(resolved.context_source);
+    row["reasoning_source"] = json!(resolved.reasoning_source);
+    row
+}
+fn claude_capability(model: &Value) -> Value {
+    let levels = claude_levels(model);
+    let window = positive_integer(model.get("context_window_tokens"));
+    let mut row = json!({"id":model["id"],"object":"uos.model_capabilities","owned_by":"anthropic","display_name":model.get("display_name").unwrap_or(&model["id"]),"upstream_provider":"claude_code","supported_endpoints":["/v1/responses","/v1/chat/completions"],"supported_reasoning_levels":levels});
+    if model.get("supports_disabled_thinking") == Some(&Value::Bool(true)) {
+        row["default_reasoning_effort"] = json!("none");
+    }
+    row["context_window_tokens"] = json!(window);
+    row["context_source"] = json!(if window.is_some() {
+        "provider_discovery"
+    } else {
+        "unknown"
+    });
+    row["reasoning_source"] = json!(if levels.is_empty() {
+        "unknown"
+    } else {
+        "provider_discovery"
+    });
+    row["max_output_tokens"] = model
+        .get("max_output_tokens")
+        .cloned()
+        .unwrap_or(Value::Null);
+    row["upstream_capabilities"] = json!({"image_input":model.get("supports_image_input").cloned().unwrap_or(Value::Null),"pdf_input":model.get("supports_pdf_input").cloned().unwrap_or(Value::Null)});
+    row
+}
+pub fn capabilities(input: &CatalogInput) -> Value {
+    let mut rows = if input.enabled("codex") {
+        input
+            .codex()
+            .map(|s| {
+                s.models
+                    .iter()
+                    .filter_map(|r| normalized_codex_capability(input, r))
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    append_unique(&mut rows, configured_capabilities(input, "cerebras"), "id");
+    append_unique(
+        &mut rows,
+        input
+            .available_rows("claude_code")
+            .iter()
+            .map(claude_capability),
+        "id",
+    );
+    for (provider, label) in [("openlux", "metered"), ("surplus", "surplus")] {
+        append_unique(
+            &mut rows,
+            input
+                .available_rows(provider)
+                .iter()
+                .map(|r| discovered_capability(input, r, label)),
+            "id",
+        );
+    }
+    for provider in ["deepseek", "lithos", "ubiquity"] {
+        let configured = configured_capabilities(input, provider);
+        if !configured.is_empty() {
+            rows.retain(|r| !configured.iter().any(|c| c["id"] == r["id"]));
+            rows.extend(configured);
+        }
+    }
+    let mut rows = filter_whitelist(rows, input.whitelist.as_ref(), false);
+    append_unique(&mut rows, openrouter_capabilities(input), "id");
+    let snapshot = input.codex();
+    json!({"object":"list","data":rows,"upstream_provider":"codex_chatgpt","source":snapshot.map(|s|s.source.as_str()).unwrap_or("stored_codex_models"),"client_version":snapshot.and_then(|s|s.client_version.as_deref()),"updated_at_ms":snapshot.map(|s|s.updated_at_ms)})
+}
+fn public_entry(
+    id: &str,
+    provider: Value,
+    created: Option<i64>,
+    resolved: &ResolvedMetadata,
+) -> Value {
+    let mut row = json!({"id":id,"providers":[provider]});
+    if let Some(created) = created.filter(|n| *n > 0) {
+        row["created"] = json!(created);
+    }
+    apply_resolved_fields(&mut row, resolved, false, false);
+    if let Some(levels) = &resolved.supported_reasoning_levels {
+        row["supported_reasoning_levels"] = json!(levels);
+    }
+    if let Some(default) = &resolved.default_reasoning_effort {
+        row["default_reasoning_effort"] = json!(default);
+    }
+    row["context_source"] = json!(resolved.context_source);
+    row["reasoning_source"] = json!(resolved.reasoning_source);
+    row
+}
+fn add_public(
+    rows: &mut Vec<Value>,
+    id: &str,
+    provider: Value,
+    created: Option<i64>,
+    resolved: &ResolvedMetadata,
+) {
+    if let Some(existing) = rows.iter_mut().find(|r| r["id"].as_str() == Some(id)) {
+        existing["providers"]
+            .as_array_mut()
+            .expect("constructed providers")
+            .push(provider);
+        if existing.get("created").is_none()
+            && let Some(n) = created.filter(|n| *n > 0)
+        {
+            existing["created"] = json!(n);
+        }
+    } else {
+        rows.push(public_entry(id, provider, created, resolved));
+    }
+}
+fn merge_provider_metadata(rows: &mut [Value], id: &str, hint: MetadataHint) {
+    let Some(entry) = rows.iter_mut().find(|row| row["id"].as_str() == Some(id)) else {
+        return;
+    };
+    let resolved = resolve_metadata(&MetadataSources {
+        provider: Some(hint),
+        ..MetadataSources::default()
+    });
+    apply_resolved_fields(entry, &resolved, false, false);
+    if resolved.context_window_tokens.is_some() || resolved.max_context_window_tokens.is_some() {
+        entry["context_source"] = json!(resolved.context_source);
+    }
+    if let Some(levels) = &resolved.supported_reasoning_levels {
+        entry["supported_reasoning_levels"] = json!(levels);
+    }
+    if let Some(default) = &resolved.default_reasoning_effort {
+        entry["default_reasoning_effort"] = json!(default);
+    }
+    if resolved.supported_reasoning_levels.is_some() || resolved.default_reasoning_effort.is_some()
+    {
+        entry["reasoning_source"] = json!(resolved.reasoning_source);
+    }
+}
+pub fn build_catalog_snapshot(input: &CatalogInput) -> Value {
+    let mut rows = Vec::new();
+    let codex = snapshot_models(input, true);
+    for model in &codex {
+        if let Some(id) = model["id"].as_str() {
+            let record = input.codex().and_then(|s| s.find(id));
+            add_public(
+                &mut rows,
+                id,
+                json!({"id":"codex","owned_by":model["owned_by"],"supported_endpoints":["/v1/responses","/v1/chat/completions"]}),
+                positive_integer(model.get("created")),
+                &input.metadata(id, record, None, true),
+            );
+        }
+    }
+    for provider in ["openlux", "surplus", "claude_code"] {
+        for model in input.rows(provider) {
+            if let Some(id) = model.get("id").and_then(Value::as_str) {
+                let claude = provider == "claude_code";
+                let owner = if claude {
+                    json!("anthropic")
+                } else {
+                    model["owned_by"].clone()
+                };
+                let paths = if claude {
+                    vec!["/v1/responses".into(), "/v1/chat/completions".into()]
+                } else {
+                    endpoint_paths(model)
+                };
+                let hint = if claude {
+                    Some(MetadataHint {
+                        context_window_tokens: positive_integer(model.get("context_window_tokens")),
+                        max_context_window_tokens: positive_integer(
+                            model.get("context_window_tokens"),
+                        ),
+                        ..MetadataHint::default()
+                    })
+                } else {
+                    None
+                };
+                let existing = rows.iter().any(|row| row["id"].as_str() == Some(id));
+                add_public(
+                    &mut rows,
+                    id,
+                    json!({"id":provider,"owned_by":owner,"supported_endpoints":paths}),
+                    positive_integer(model.get("created")),
+                    &input.metadata(id, None, hint.clone(), false),
+                );
+                if existing && let Some(hint) = hint {
+                    merge_provider_metadata(&mut rows, id, hint);
+                }
+            }
+        }
+    }
+    for provider in ["deepseek", "cerebras", "lithos"] {
+        if !input.configured(provider) {
+            continue;
+        }
+        for id in provider_ids(provider) {
+            let existing = rows.iter().any(|row| row["id"].as_str() == Some(id));
+            let endpoints = if provider == "cerebras" {
+                vec!["/v1/chat/completions"]
+            } else {
+                vec!["/v1/chat/completions", "/v1/responses"]
+            };
+            add_public(
+                &mut rows,
+                id,
+                json!({"id":provider,"owned_by":provider,"supported_endpoints":endpoints}),
+                None,
+                &input.metadata(id, None, Some(provider_hint(provider, id)), false),
+            );
+            if existing {
+                merge_provider_metadata(&mut rows, id, provider_hint(provider, id));
+            }
+        }
+    }
+    if input.synthetic_configured() {
+        let existing = rows.iter().any(|row| row["id"] == SYNTHETIC_MODEL);
+        let resolved = input.metadata(
+            SYNTHETIC_MODEL,
+            None,
+            Some(provider_hint("ubiquity", SYNTHETIC_MODEL)),
+            false,
+        );
+        add_public(
+            &mut rows,
+            SYNTHETIC_MODEL,
+            json!({"id":"ubiquity","owned_by":"ubiquity","supported_endpoints":["/v1/responses"]}),
+            Some(1_791_244_800),
+            &resolved,
+        );
+        if existing {
+            merge_provider_metadata(
+                &mut rows,
+                SYNTHETIC_MODEL,
+                provider_hint("ubiquity", SYNTHETIC_MODEL),
+            );
+        }
+        for provider in FLASH_ORDER {
+            if input.configured(provider) {
+                add_public(
+                    &mut rows,
+                    SYNTHETIC_MODEL,
+                    json!({"id":provider,"owned_by":"ubiquity","supported_endpoints":["/v1/responses"]}),
+                    None,
+                    &resolved,
+                );
+            }
+        }
+    }
+    if input.configured("openrouter") {
+        for model in input.rows("openrouter") {
+            if let Some(id) = model.get("id").and_then(Value::as_str) {
+                add_public(
+                    &mut rows,
+                    id,
+                    json!({"id":"openrouter","owned_by":id.split('/').next().filter(|s|!s.is_empty()).unwrap_or("openrouter"),"supported_endpoints":["/v1/responses","/v1/chat/completions"]}),
+                    None,
+                    &input.metadata(id, None, None, false),
+                );
+            }
+        }
+        add_public(
+            &mut rows,
+            "typesafe/jev-latest",
+            json!({"id":"openrouter","owned_by":"typesafe","supported_endpoints":["/v1/systemone"]}),
+            None,
+            &input.metadata("typesafe/jev-latest", None, None, false),
+        );
+    }
+    rows.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+    let mut sources = serde_json::Map::new();
+    sources.insert("codex".into(),json!({"status":if input.codex().is_some_and(|s|!s.models.is_empty()){"available"}else{"unavailable"},"count":codex.len(),"updated_at_ms":input.codex().map(|s|s.updated_at_ms)}));
+    for provider in [
+        "claude_code",
+        "openlux",
+        "surplus",
+        "deepseek",
+        "cerebras",
+        "lithos",
+        "openrouter",
+    ] {
+        let snapshot = input.providers.get(provider);
+        let configured = input.configured(provider);
+        let gated = ["deepseek", "cerebras", "lithos", "openrouter"].contains(&provider);
+        let count = if gated {
+            if configured {
+                if provider == "openrouter" {
+                    input.rows(provider).len() + 1
+                } else {
+                    provider_ids(provider).len()
+                }
+            } else {
+                0
+            }
+        } else {
+            input.rows(provider).len()
+        };
+        let available = if gated {
+            configured
+        } else {
+            snapshot.is_some_and(|s| s.available && (provider != "claude_code" || !s.stale))
+        };
+        let mut source = json!({"status":if available{"available"}else{"unavailable"},"count":count,"updated_at_ms":if gated&&provider!="openrouter"{None}else{snapshot.and_then(|p|p.updated_at_ms)}});
+        if gated || provider == "claude_code" {
+            source["configured"] = json!(configured);
+        }
+        if provider == "claude_code" && snapshot.is_some_and(|s| s.stale) {
+            source["stale"] = json!(true);
+        }
+        sources.insert(provider.into(), source);
+    }
+    json!({"models":rows,"sources":sources})
+}
+pub fn public_catalog(input: &CatalogInput) -> Value {
+    let mut snapshot = build_catalog_snapshot(input);
+    let mut rows = Vec::new();
+    for mut row in snapshot["models"].as_array().cloned().unwrap_or_default() {
+        let id = row["id"].as_str().unwrap_or("");
+        if !ModelWhitelist::permits(input.whitelist.as_ref(), id) {
+            continue;
+        }
+        let providers = row["providers"].as_array().cloned().unwrap_or_default();
+        if providers
+            .iter()
+            .any(|p| p["id"].as_str() == Some("ubiquity"))
+            && !input.enabled("ubiquity")
+        {
+            continue;
+        }
+        let selected: Vec<_> = providers
+            .into_iter()
+            .filter(|p| {
+                p["id"]
+                    .as_str()
+                    .is_some_and(|id| !PROVIDERS.contains(&id) || input.enabled(id))
+            })
+            .collect();
+        if selected.is_empty() {
+            continue;
+        }
+        row["providers"] = json!(selected);
+        rows.push(row);
+    }
+    if let Some(sources) = snapshot["sources"].as_object_mut() {
+        for provider in PROVIDERS {
+            if !input.enabled(provider) && sources.contains_key(*provider) {
+                sources.insert((*provider).into(),json!({"status":"unavailable","count":0,"updated_at_ms":null,"configured":false,"disabled":true}));
+            }
+        }
+    }
+    json!({"object":"uos.model_catalog","data":rows,"sources":snapshot["sources"]})
+}

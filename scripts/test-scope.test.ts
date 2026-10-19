@@ -224,6 +224,17 @@ describe("Sentinel complete CI check set", () => {
     }
   });
 
+  test("Rust gate contracts execute through the dependency-scoped quality runner", () => {
+    const paths = "scripts/rust-verify.ts";
+    const selected = scopeCommand(["scripts/test-runner.ts", "quality", "--list"], {}, paths);
+    expect(selected.status).toBe(0);
+    expect(JSON.parse(selected.stdout)).toEqual([{ profile: "quality", files: ["scripts/rust-verify.test.ts"], environment: ["PATH"] }]);
+    const executed = scopeCommand(["scripts/test-runner.ts", "quality"], {}, paths);
+    expect(executed.status).toBe(0);
+    expect(executed.stdout).toContain("==> quality: scripts/rust-verify.test.ts");
+    expect(executed.stdout).toContain("test:quality: 1 files, 0 failures");
+  });
+
   test("real owner CI-policy changes preserve the selector and runner's existing affected-file scope", () => {
     const owner = ciContext("pull_request", "development", "owner");
     const ordinary = ciContext("pull_request", "other", "owner");

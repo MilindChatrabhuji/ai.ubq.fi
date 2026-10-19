@@ -1,0 +1,38 @@
+[package]
+name = "gateway-native"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core = { path = "../gateway-core" }
+gateway-auth = { path = "../gateway-auth" }
+gateway-authority = { path = "../gateway-authority" }
+gateway-publication = { path = "../gateway-publication" }
+serde.workspace = true
+serde_json.workspace = true
+time = { version = "=0.3.44", features = ["parsing", "formatting"] }
+
+[target.'cfg(unix)'.dependencies]
+getrandom = "=0.4.3"
+tungstenite = { version = "=0.28.0", default-features = false, features = ["handshake"] }
+socket2 = "=0.6.5"
+futures-executor = "=0.3.34"
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+httparse = "=1.10.1"
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
+url = "=2.5.8"
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
+
+[[bin]]
+name = "uos-native"
+path = "src/bin/uos-native.rs"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "=0.4.7"
+seccompiler = "=0.5.0"
+libc = "=0.2.191"
+
+[lints]
+workspace = true

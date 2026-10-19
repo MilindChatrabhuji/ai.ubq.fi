@@ -1,0 +1,32 @@
+{
+  "source_sha": "6d4d4790a7c06514b92938ff677dbfd52764461d",
+  "host": "m1.local",
+  "argv": [
+    "/usr/bin/sandbox-exec",
+    "-p",
+    "(version 1) (allow default) (deny network*)",
+    "/usr/bin/env",
+    "-i",
+    "HOME=/Users/nv",
+    "PATH=/usr/bin:/bin",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.data/runtimes/bun/darwin-arm64/1.4.0-539598c775882420b9d8deb7dc14d845f20f7d26f5600c50ab067dde6ac3f3bf/bun",
+    "--no-env-file",
+    "--no-install",
+    "oracle.ts"
+  ],
+  "cwd": "/tmp/ai-rust-wasm-20261018/paid-lookup-oracle",
+  "exit": 0,
+  "stdout": "{\"log_cases\":23,\"query_cases\":3,\"scenario_cases\":9,\"live_requests\":0}\n",
+  "stderr": "",
+  "runtime_sha256": "539598c775882420b9d8deb7dc14d845f20f7d26f5600c50ab067dde6ac3f3bf",
+  "files": {
+    "source.ts": "6872f3d248bd911f3cdc6051090b9fe006108b98215154baebf10e7ec80867c5",
+    "oracle.ts": "70f1bb010721769895fa54d655c751772069d0f6f5fe50f7fb1e99cab81691f8",
+    "metered-source.ts": "b1c7177af670436da270b727e5ae988b4d39b160c7ec446b11dfd06c795667f5",
+    "cases.json": "dafa966c40480f8255a07652841a77c426933193760e8626ddd267a5a5d0d28d",
+    "custody.json": "edce6e917ec129847aac5f4bae0c359fc61ea0e48275b99c5e88f5503e4769b5",
+    "prepare.py": "5a915b0d9e068bfae245f56438ab8491fffa32ba5b0f156b803e6e184d8ca14a",
+    "golden.json": "c1b0ac25a407511f10c41277fb4f19e6e06e810ed49120dc0c69c95d8d2df54a"
+  },
+  "finished_at": "2026-10-18T20:33:44.157634+00:00"
+}

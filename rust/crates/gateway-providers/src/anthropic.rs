@@ -1,0 +1,566 @@
+//! Lossless Claude wire selection. Returning None retains the original Responses request.
+use crate::{tools, types::*};
+use serde_json::{Value, json};
+pub fn is_claude(model: &str) -> bool {
+    model
+        .strip_prefix('~')
+        .unwrap_or(model)
+        .strip_prefix("anthropic/")
+        .unwrap_or(model)
+        .starts_with("claude-")
+}
+fn base_controls(raw: &Value) -> bool {
+    is_claude(raw["model"].as_str().unwrap_or(""))
+        && raw.get("store").is_none_or(|v| v == false)
+        && raw.get("previous_response_id").is_none_or(Value::is_null)
+        && [
+            "context_management",
+            "max_tool_calls",
+            "truncation",
+            "metadata",
+            "service_tier",
+            "safety_identifier",
+            "user",
+        ]
+        .iter()
+        .all(|k| raw.get(k).is_none())
+        && raw.get("include").is_none_or(|v| {
+            v.as_array()
+                .is_some_and(|a| a.iter().all(|v| v == "reasoning.encrypted_content"))
+        })
+}
+fn cache_control(value: &Value) -> Option<Value> {
+    let o = value.as_object()?;
+    if value["type"] != "ephemeral"
+        || o.keys().any(|k| k != "type" && k != "ttl")
+        || value.get("ttl").is_some_and(|v| v != "5m" && v != "1h")
+    {
+        return None;
+    }
+    Some(value.clone())
+}
+fn cache_block(mut block: Value, source: &Value) -> Option<Value> {
+    if let Some(marker) = source.get("prompt_cache_breakpoint") {
+        if marker != &json!({"mode":"explicit"}) {
+            return None;
+        }
+        block["cache_control"] = json!({"type":"ephemeral"});
+    }
+    if let Some(control) = source.get("cache_control") {
+        block["cache_control"] = cache_control(control)?;
+    }
+    Some(block)
+}
+fn native_content(value: &Value) -> Option<Vec<Value>> {
+    if let Some(text) = value.as_str() {
+        return Some(vec![json!({"type":"text","text":text})]);
+    }
+    let mut blocks = vec![];
+    for part in value.as_array()? {
+        let block = match part["type"].as_str()? {
+            "input_text" | "output_text" | "text" => {
+                json!({"type":"text","text":part["text"].as_str()?})
+            }
+            "input_image" => {
+                if part.get("file_id").is_some()
+                    || part
+                        .get("detail")
+                        .is_some_and(|v| !v.is_null() && v != "auto")
+                {
+                    return None;
+                }
+                let url = part["image_url"].as_str()?;
+                let source = if let Some(data) = url.strip_prefix("data:") {
+                    let (kind, data) = data.split_once(";base64,")?;
+                    if !["image/jpeg", "image/png", "image/gif", "image/webp"].contains(&kind) {
+                        return None;
+                    }
+                    json!({"type":"base64","media_type":kind,"data":data})
+                } else if url.starts_with("https://") || url.starts_with("http://") {
+                    json!({"type":"url","url":url})
+                } else {
+                    return None;
+                };
+                json!({"type":"image","source":source})
+            }
+            _ => return None,
+        };
+        blocks.push(cache_block(block, part)?);
+    }
+    Some(blocks)
+}
+fn merge_native(messages: &mut Vec<Value>, role: &str, blocks: Vec<Value>) {
+    if let Some(last) = messages.last_mut().filter(|v| v["role"] == role) {
+        last["content"]
+            .as_array_mut()
+            .expect("native content")
+            .extend(blocks);
+    } else {
+        messages.push(json!({"role":role,"content":blocks}));
+    }
+}
+fn native_messages(
+    raw: &Value,
+    system: &mut Vec<Value>,
+    options: &PrepareOptions,
+) -> Option<Vec<Value>> {
+    if let Some(messages) = &options.restored_native_messages {
+        return Some(messages.clone());
+    }
+    if let Some(text) = raw["input"].as_str() {
+        return Some(vec![
+            json!({"role":"user","content":[{"type":"text","text":text}]}),
+        ]);
+    }
+    let mut messages = vec![];
+    for item in raw["input"].as_array()? {
+        match item["type"].as_str().unwrap_or("message") {
+            "message" => {
+                let role = item["role"].as_str()?;
+                let blocks = native_content(&item["content"])?;
+                if role == "system" || role == "developer" {
+                    if blocks.iter().any(|b| b["type"] != "text") {
+                        return None;
+                    }
+                    system.extend(blocks);
+                } else if role == "user" || role == "assistant" {
+                    merge_native(&mut messages, role, blocks);
+                } else {
+                    return None;
+                }
+            }
+            "function_call" => {
+                if item.get("namespace").is_some_and(|v| !v.is_null()) {
+                    return None;
+                }
+                let name = item["name"].as_str()?;
+                if !valid_native_name(name) {
+                    return None;
+                }
+                let args: Value = serde_json::from_str(item["arguments"].as_str()?).ok()?;
+                if !args.is_object() {
+                    return None;
+                }
+                merge_native(
+                    &mut messages,
+                    "assistant",
+                    vec![
+                        json!({"type":"tool_use","id":item["call_id"].as_str()?,"name":name,"input":args}),
+                    ],
+                );
+            }
+            "function_call_output" => {
+                let mut block = json!({"type":"tool_result","tool_use_id":item["call_id"].as_str()?,"content":native_content(&item["output"])?});
+                if item.get("is_error").is_some() {
+                    block["is_error"] = item["is_error"].clone();
+                }
+                merge_native(&mut messages, "user", vec![block]);
+            }
+            _ => return None,
+        }
+    }
+    if messages.is_empty() {
+        None
+    } else {
+        Some(messages)
+    }
+}
+fn valid_native_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+fn native_tools(raw: &Value) -> Option<Vec<Value>> {
+    let Some(value) = raw.get("tools") else {
+        return Some(vec![]);
+    };
+    let mut tools = vec![];
+    for tool in value.as_array()? {
+        if tool["type"] != "function"
+            || tool.get("namespace").is_some()
+            || !valid_native_name(tool["name"].as_str()?)
+        {
+            return None;
+        }
+        let mut native = json!({"name":tool["name"],"input_schema":tool.get("parameters").cloned().unwrap_or(json!({"type":"object"}))});
+        if let Some(description) = tool.get("description") {
+            native["description"] = description.clone();
+        }
+        tools.push(cache_block(native, tool)?);
+    }
+    Some(tools)
+}
+fn native_reasoning(raw: &Value, options: &PrepareOptions) -> Option<Value> {
+    let Some(reasoning) = raw.get("reasoning").filter(|v| !v.is_null()) else {
+        return Some(json!({}));
+    };
+    let object = reasoning.as_object()?;
+    if object.keys().any(|k| k != "effort" && k != "summary") {
+        return None;
+    }
+    if reasoning
+        .get("summary")
+        .is_some_and(|v| v != "auto" && v != "detailed" && v != "none")
+    {
+        return None;
+    }
+    let Some(effort) = reasoning.get("effort") else {
+        return Some(json!({}));
+    };
+    if effort == "none" {
+        return options
+            .supports_disabled_thinking
+            .then(|| json!({"thinking":{"type":"disabled"}}));
+    }
+    if !options.supports_native_effort {
+        return None;
+    }
+    let effort = effort.as_str()?;
+    let effort = if effort == "ultra" && options.native_reasoning_efforts.is_none() {
+        "max"
+    } else {
+        effort
+    };
+    let allowed = options.native_reasoning_efforts.clone().unwrap_or_else(|| {
+        vec![
+            "low".into(),
+            "medium".into(),
+            "high".into(),
+            "xhigh".into(),
+            "max".into(),
+        ]
+    });
+    allowed
+        .iter()
+        .any(|s| s == effort)
+        .then(|| json!({"thinking":{"type":"adaptive"},"output_config":{"effort":effort}}))
+}
+fn native_choice(raw: &Value) -> Option<Value> {
+    let mut choice = match raw.get("tool_choice") {
+        None => json!({}),
+        Some(Value::String(s)) if s == "auto" || s == "none" => json!({"type":s}),
+        Some(Value::String(s)) if s == "required" => json!({"type":"any"}),
+        Some(v)
+            if v["type"] == "function"
+                && v.get("namespace").is_none()
+                && valid_native_name(v["name"].as_str()?) =>
+        {
+            json!({"type":"tool","name":v["name"]})
+        }
+        _ => return None,
+    };
+    if let Some(parallel) = raw.get("parallel_tool_calls") {
+        let parallel = parallel.as_bool()?;
+        if choice.get("type").is_none() {
+            choice["type"] = json!("auto");
+        }
+        choice["disable_parallel_tool_use"] = json!(!parallel);
+    }
+    Some(choice)
+}
+fn cache_policy_ok(raw: &Value) -> bool {
+    raw.get("prompt_cache_retention")
+        .is_none_or(|v| v == "in_memory")
+        && raw.get("prompt_cache_options").is_none_or(|v| {
+            v.as_object().is_some_and(|o| {
+                o.keys().all(|k| k == "mode")
+                    && v.get("mode")
+                        .is_none_or(|v| v == "implicit" || v == "explicit")
+            })
+        })
+        && raw
+            .get("cache_control")
+            .is_none_or(|v| cache_control(v).is_some())
+}
+fn count_cache(value: &Value) -> usize {
+    match value {
+        Value::Array(a) => a.iter().map(count_cache).sum(),
+        Value::Object(o) => {
+            usize::from(o.contains_key("cache_control"))
+                + o.iter()
+                    .filter(|(k, _)| k.as_str() != "parameters" && k.as_str() != "input_schema")
+                    .map(|(_, v)| count_cache(v))
+                    .sum::<usize>()
+        }
+        _ => 0,
+    }
+}
+pub fn try_native_messages(raw: &Value, options: &PrepareOptions) -> Option<Value> {
+    if !base_controls(raw) || !cache_policy_ok(raw) {
+        return None;
+    }
+    if let Some(text) = raw.get("text") {
+        let o = text.as_object()?;
+        if o.keys().any(|k| k != "format")
+            || text
+                .get("format")
+                .is_some_and(|f| f != &json!({"type":"text"}))
+        {
+            return None;
+        }
+    }
+    let max = raw
+        .get("max_output_tokens")
+        .and_then(Value::as_u64)
+        .or(options.catalog_max_output_tokens)
+        .or_else(|| (raw["model"] == "claude-opus-5-5").then_some(128_000))?;
+    if max == 0 || max > 9_007_199_254_740_991 {
+        return None;
+    }
+    let mut system = if raw.get("instructions").is_none_or(Value::is_null) {
+        vec![]
+    } else {
+        native_content(&raw["instructions"])?
+    };
+    if system.iter().any(|b| b["type"] != "text") {
+        return None;
+    }
+    let messages = native_messages(raw, &mut system, options)?;
+    let tools = native_tools(raw)?;
+    let choice = native_choice(raw)?;
+    let reasoning = native_reasoning(raw, options)?;
+    let mut body = json!({"model":raw["model"],"max_tokens":max,"messages":messages,"stream":raw["stream"]==true});
+    if !system.is_empty() {
+        body["system"] = json!(system)
+    }
+    if !tools.is_empty() {
+        body["tools"] = json!(tools)
+    }
+    if choice.as_object().is_some_and(|o| !o.is_empty()) {
+        body["tool_choice"] = choice
+    }
+    for (key, value) in reasoning.as_object()? {
+        body[key] = value.clone();
+    }
+    for key in ["temperature", "top_p", "prompt_cache_key"] {
+        if let Some(value) = raw.get(key) {
+            body[key] = value.clone();
+        }
+    }
+    let count = count_cache(&body);
+    if count > 4 {
+        return None;
+    }
+    if count == 0 && raw["prompt_cache_options"]["mode"] != "explicit" {
+        let control = raw
+            .get("cache_control")
+            .cloned()
+            .unwrap_or_else(|| json!({"type":"ephemeral"}));
+        let last = body["messages"]
+            .as_array_mut()
+            .and_then(|messages| messages.last_mut())
+            .and_then(|m| m["content"].as_array_mut())
+            .and_then(|c| c.last_mut());
+        if let Some(last) = last {
+            last["cache_control"] = control;
+        } else {
+            let last = body["system"].as_array_mut().and_then(|v| v.last_mut())?;
+            last["cache_control"] = control;
+        }
+    }
+    Some(body)
+}
+fn chat_content(value: &Value) -> Option<Value> {
+    if let Some(text) = value.as_str() {
+        return Some(json!([{"type":"text","text":text}]));
+    }
+    let mut parts = vec![];
+    for part in value.as_array()? {
+        let block = match part["type"].as_str()? {
+            "input_text" | "output_text" | "text" => {
+                json!({"type":"text","text":part["text"].as_str()?})
+            }
+            "input_image" => {
+                if part.get("file_id").is_some() {
+                    return None;
+                }
+                let mut image =
+                    json!({"type":"image_url","image_url":{"url":part["image_url"].as_str()?}});
+                if let Some(detail) = part.get("detail") {
+                    image["image_url"]["detail"] = detail.clone();
+                }
+                image
+            }
+            _ => return None,
+        };
+        parts.push(cache_block(block, part)?);
+    }
+    Some(json!(parts))
+}
+pub fn try_claude_chat(
+    raw: &Value,
+    options: &PrepareOptions,
+) -> Option<crate::chat::ChatProjection> {
+    if !base_controls(raw) || !cache_policy_ok(raw) {
+        return None;
+    }
+    if let Some(tools) = raw.get("tools") {
+        for tool in tools.as_array()? {
+            if !valid_claude_chat_tool(tool) {
+                return None;
+            }
+        }
+    }
+    let (tools, names) = tools::flatten_tools(raw.get("tools"), 64).ok()?;
+    let mut messages = vec![];
+    if let Some(instructions) = raw.get("instructions").filter(|v| !v.is_null()) {
+        messages.push(json!({"role":"system","content":chat_content(instructions)?}));
+    }
+    if let Some(restored) = &options.restored_native_messages {
+        messages.extend(restored.clone());
+    } else if let Some(input) = raw["input"].as_str() {
+        messages.push(json!({"role":"user","content":[{"type":"text","text":input}]}));
+    } else {
+        for item in raw["input"].as_array()? {
+            match item["type"].as_str().unwrap_or("message") {
+                "message" => {
+                    let role = item["role"].as_str()?;
+                    messages.push(json!({"role":if role=="developer"{"system"}else{role},"content":chat_content(&item["content"])?}));
+                }
+                "function_call" | "custom_tool_call" => {
+                    let name = item["name"].as_str()?;
+                    let namespace = item["namespace"].as_str();
+                    let projected = names
+                        .iter()
+                        .find(|(_, v)| v.name == name && v.namespace.as_deref() == namespace)
+                        .map(|(name, _)| name.as_str())
+                        .unwrap_or(name);
+                    let args = if item["type"] == "custom_tool_call" {
+                        json!({"input":item["input"].as_str()?}).to_string()
+                    } else {
+                        item["arguments"].as_str()?.to_owned()
+                    };
+                    let call = json!({"id":item["call_id"].as_str()?,"type":"function","function":{"name":projected,"arguments":args}});
+                    if let Some(previous) = messages
+                        .last_mut()
+                        .filter(|m| m["role"] == "assistant" && m["tool_calls"].is_array())
+                    {
+                        previous["tool_calls"].as_array_mut()?.push(call);
+                    } else {
+                        messages
+                            .push(json!({"role":"assistant","content":null,"tool_calls":[call]}));
+                    }
+                }
+                "function_call_output" | "custom_tool_call_output" => {
+                    messages.push(json!({"role":"tool","tool_call_id":item["call_id"].as_str()?,"content":chat_content(&item["output"])?}));
+                }
+                _ => return None,
+            }
+        }
+    }
+    let mut body = json!({"model":raw["model"],"messages":messages,"stream":raw["stream"]==true});
+    if body["stream"] == true {
+        body["stream_options"] = json!({"include_usage":true});
+    }
+    if !tools.is_empty() {
+        body["tools"] = json!(tools);
+    }
+    if let Some(max) = raw
+        .get("max_output_tokens")
+        .and_then(Value::as_u64)
+        .or(options.catalog_max_output_tokens)
+    {
+        if max == 0 {
+            return None;
+        }
+        body["max_tokens"] = json!(max);
+    }
+    if let Some(reasoning) = raw.get("reasoning").filter(|v| !v.is_null()) {
+        if reasoning
+            .as_object()?
+            .keys()
+            .any(|k| k != "effort" && k != "summary")
+        {
+            return None;
+        }
+        if reasoning
+            .get("summary")
+            .is_some_and(|s| s != "none" && s != "auto" && s != "detailed")
+        {
+            return None;
+        }
+        if let Some(effort) = reasoning.get("effort") {
+            let effort = effort.as_str()?;
+            if effort.trim().is_empty() {
+                return None;
+            }
+            body["reasoning_effort"] = json!(effort);
+        }
+    }
+    if let Some(choice) = tools::project_tool_choice(raw.get("tool_choice"), &names).ok()? {
+        body["tool_choice"] = choice;
+    }
+    if let Some(format) = raw["text"].get("format") {
+        match format["type"].as_str()? {
+            "text" => (),
+            "json_object" => body["response_format"] = json!({"type":"json_object"}),
+            "json_schema" => {
+                let mut schema = format.clone();
+                schema.as_object_mut()?.remove("type");
+                body["response_format"] = json!({"type":"json_schema","json_schema":schema});
+            }
+            _ => return None,
+        }
+    }
+    for key in [
+        "parallel_tool_calls",
+        "temperature",
+        "top_p",
+        "prompt_cache_key",
+    ] {
+        if let Some(value) = raw.get(key) {
+            body[key] = value.clone();
+        }
+    }
+    let count = count_cache(&body);
+    if count > 4 {
+        return None;
+    }
+    if count == 0 && raw["prompt_cache_options"]["mode"] != "explicit" {
+        let control = raw
+            .get("cache_control")
+            .cloned()
+            .unwrap_or_else(|| json!({"type":"ephemeral"}));
+        let last = body["messages"]
+            .as_array_mut()
+            .and_then(|m| m.last_mut())
+            .and_then(|m| m["content"].as_array_mut())
+            .and_then(|c| c.last_mut());
+        if let Some(last) = last {
+            last["cache_control"] = control
+        } else {
+            let last = body["tools"].as_array_mut().and_then(|t| t.last_mut())?;
+            last["function"]["cache_control"] = control;
+        }
+    }
+    Some(crate::chat::ChatProjection {
+        body,
+        tool_names: names,
+        elisions: vec![],
+        warnings: vec![],
+    })
+}
+
+fn valid_claude_chat_tool(tool: &Value) -> bool {
+    let valid = tool["name"].as_str().is_some_and(valid_native_name);
+    match tool["type"].as_str() {
+        Some("function") => valid,
+        Some("custom") => {
+            valid
+                && tool
+                    .get("format")
+                    .is_none_or(|v| v == &json!({"type":"text"}))
+        }
+        Some("namespace") => {
+            valid
+                && tool["tools"].as_array().is_some_and(|a| {
+                    a.iter().all(|v| {
+                        v["type"] == "function" && v["name"].as_str().is_some_and(valid_native_name)
+                    })
+                })
+        }
+        _ => false,
+    }
+}

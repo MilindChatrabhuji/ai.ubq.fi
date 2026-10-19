@@ -6,6 +6,59 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## TypeScript-only VPS releases reuse verified payloads - 2026-10-19
+
+The VPS deploy CLI reuses the selected immutable release's `node_modules` and `.native/kv` payload when the root lockfile
+and native input manifest match exactly. A mismatch falls back to the existing fresh install/build path. This avoids
+recompiling the unchanged native KV addon for routing and client-only changes.
+
+Reason: repeated Cargo builds delayed small TypeScript releases and kept the service on stale behavior longer than
+necessary. Reuse is bound to the selected release's verified provenance and the current tracked native inputs.
+
+Reversal risk: reusing across a changed lockfile or native input would violate the immutable release identity, so either
+mismatch must continue to rebuild and verify from source.
+
+## Client Retry-After is bounded independently of quota deadlines - 2026-10-19
+
+Gateway routing errors retain their durable quota or reset deadline, but the client-facing `Retry-After` hint is capped
+at 60 seconds. A weekly Codex quota block previously emitted the full remaining duration, such as 561,000 seconds, and
+clients slept for days instead of retrying or entering an available failover.
+
+Reason: routing availability can change through paid failover, reset recovery, or operator action long before the
+upstream subscription window resets. The upstream deadline is still enforced internally and is not shortened.
+
+Reversal risk: removing the cap restores multi-day client sleeps on ordinary weekly exhaustion. Emitting no header
+would instead invite tight retry loops.
+
+## Shadow banked-reset decisions do not suppress enabled overage - 2026-10-19
+
+In banked-reset shadow mode, `shadow_selected` and `already_would_spend_once` prove that no reset credit was
+redeemed: shadow persists a decision but never consumes it. Both outcomes now qualify for the existing single bounded
+overage probe when the account's `Allow overage spending` setting is on. The per-account allow setting remains a hard
+gate; `live_armed`, a completed live redemption, and fence or configuration failures still never fall back.
+
+A durable reset record stuck at local `claimed` without a provider submission likewise returns
+`unsubmitted_transaction`. Reconciliation cannot advance that record and no external reset was consumed, so the same
+bounded overage probe may proceed. In-progress, live-armed, submitted, unknown, and ambiguous states remain ineligible.
+
+Enabled overage is a serving path, not a single-flight reset recovery probe. It does not claim the reset probe lease, so
+concurrent client requests may use the account directly; each request still performs at most one bounded upstream
+attempt.
+
+Reason: an exhausted account with overage enabled remained stuck behind an existing shadow decision and fell through to
+paid routing, even though shadow mode could not spend the reset it observed.
+
+Reversal risk: removing these reasons restores that dead-end. Adding live-arming or completed-redemption reasons would
+risk spending both a banked reset and overage for one episode.
+
+## Explicit manual banked reset verifies and promotes one account - 2026-10-18
+
+An authenticated admin may use one banked reset for a selected Codex account through `POST /admin/providers/codex/banked-resets/consume`. This explicit manual action works independently of the Automatic resets switch and automatic shadow arming; global `enabled=false` and `mode=disabled` still make zero provider calls. Manual and automatic redemptions share the existing one-per-account-per-UTC-day submission budget, account/window idempotency, exact credential and quota fences, and unknown-consumption refusal. An uncertain consume is never replayed.
+
+After a documented verified consume outcome, the manual action synchronously reads that account's current usage. One atomic transaction stores the fresh account-bound observation, reconciles only quota classes proven recovered, records completed manual promotion and selects that same account with reason `manual_reset`. This explicit operator transition may supersede a healthy active account; ordinary serial routing, provider selection, authentication and model eligibility remain unchanged. Pending propagation or a failed promotion never claims success, and a repeated completed action cannot restore an old priority. The manual intent contains opaque account/credential hashes and quota metadata, never tokens. KV export/import retains the intent together with its authoritative reset-window and account-day ledgers; importing only the intent would lose the consumption and daily-budget proof.
+
+Reason: a manual reset outside the gateway could leave exhausted routing state until a later capacity sample. The button owns verification and promotion directly, without waiting for chart sampling or issuing inference. Acceptance uses isolated upstream fixtures; agents remain forbidden from directly redeeming live credits.
+
 ## Allow overage spending false refuses all overage - 2026-10-18
 
 The per-account `Allow overage spending` setting is a hard gate. With the setting off, the gateway may redeem a banked reset, but it must never dispatch an overage probe, including after the reset preflight returns `no_eligible_credit`, empty or ineligible inventory, `inventory_unavailable`, or `account_day_limit_reached`. That case returns the ordinary `codex_quota_blocked` response. With the setting on, the existing resets-first flow and one bounded overage fallback remain unchanged.
@@ -2172,3 +2225,41 @@ The owner requested the complete gateway in Rust/WASM on Cloudflare. The first m
 Keep operator provider IDs separate from transport/accounting IDs, preserve distinct administrative/routing account hashes and native-owner credential generations, and retain one original request identity across distinct paid hops. Semantic completion, API-key dispatch quota, kernel settlement, paid reconciliation and actual delivery remain independent; Workers EOF supplies no native delivery receipt and never invents success or a refund. The latest disabled-overage hard gate is unchanged. Hot coordination and retained history share atomic authority without forcing indefinite ledgers into an evicting snapshot.
 
 The foundation refuses every unfinished route with an explicit non-success response; health is only release liveness with validated full-source identity. Full authentication, routing, durable state, native boundaries, protocol/admin parity, migration, CI and live deployment acceptance remain required for the original goal. This scoped Rust decision does not change the existing Bun runtime, locks, production service, credentials, databases, DNS or Sentinel ownership.
+
+## Rust portable keys and queries share one source-compatible tuple codec - 2026-10-18
+
+Before any Rust persistence or deployment, retire provisional JSON-array key identity. Every read, write, query and future migration uses the core `tuple-v1:<lowercase hex>` codec and its exact binary sort bytes. Preserve current source bytes/string/bigint/number/boolean distinctions, signed zeros, infinities, positive NaN and the proven negative-NaN refusal. No per-module JSON comparator, dual-codec fallback or live migration is authorized. A shared typed builder and raw validator prevent different modules from naming or ordering the same source key differently.
+
+The additive query interface preserves pinned source selectors: prefix alone or prefix with one strict descendant start/end bound, and ranges with both bounds. Exact-prefix rows are excluded, start is inclusive and end exclusive; empty prefix is the whole-keyspace form. Pages filter absolute expiry before their limit and use opaque version/selector/direction-bound continuations. Changed limits are allowed on resume; malformed and cross-query tokens fail closed. This shared contract adds no new gateway scheduler or provider behavior, and source/runtime/deployment acceptance remains separate.
+
+## Rust native carrier is finite, authenticated and unactivated - 2026-10-18
+
+The agreed native boundary is an HTTP Rust companion reached only through a constructor-injected trusted `NativeCarrier`/Fetcher capability. The portable version-1 request enum permits supervisor sessions, output and brief operations; it accepts source/thread identifiers and an opaque cursor, never a caller URL, command, token or filesystem path. Fixed `POST /v1/native/rpc` returns a bounded typed response. A supervisor output reply carries only `SupervisorFollow { source_id, thread_id, cursor }`; the native companion validates the configured source and sampled session before minting it and again when `POST /v1/native/follow` opens the actual cancellation-aware SSE stream. A descriptor or JSON/EOF success does not establish stream acceptance.
+
+Requests authenticate with a dedicated constructor-supplied transport identity using HMAC-SHA256 over the exact version/method/path/key-id/time/nonce/body-digest frame defined in `gateway-auth/src/native.rs`. The header names are `x-uos-native-version`, `x-uos-native-key-id`, `x-uos-native-time-ms`, `x-uos-native-nonce` and `x-uos-native-mac`. Nonces contain 32 random bytes; real clock skew is bounded to 30 seconds. The companion consumes a nonce only after valid authentication, caps live nonces at 4096 and refuses capacity rather than evicting a still-valid replay fence. RPC and follow request bodies cap at 1 MiB. Expiry cleanup is request-owned; this adds no scheduler.
+
+The isolated real-runtime fixture uses a dedicated ephemeral transport identity and task-owned immutable source/owner registry, with real OS filesystem/network/process confinement. Provider, admin and synchronized account credentials are not reused for this channel. Access publication remains a separate fixed-owner/account/workspace, monotonic generation/native-refresh contract; a supervisor read capability cannot become arbitrary JSON-RPC or credential mutation. No live binding, secret, default endpoint, host listener, data adoption or production activation is authorized by this decision. The exact candidate carrier route, host placement and dedicated credential residence require a concrete reversible deployment patch and the controller's final activation reconciliation; source and fixture implementation proceed independently.
+
+## Native source graphs preserve identity separately from ordinary profile export - 2026-10-18
+
+The explicit `source-graph-v1` record encoding preserves native-source shared object and backing-buffer identity, sparse arrays, and source-supported Object/Array/Map/Set cycles. Its closed data-only graph keeps Buffer brand, validates reference kinds and view coordinates, and refuses unknown executable/accessor/class nodes and Error.cause. Json/ProfileV1/ProfileV2 remain separate unchanged contracts; ordinary profile export still refuses cycles and is not complete native capture. Identity-free tree projection is explicit and refuses to duplicate shared references. Migration, native-counter transport, source graph JSON/inverse adapters, runtime schema binding and live adoption retain their existing owners and acceptance gates.
+
+## Rust WebAuthn retains the pinned source certificate-path policy - 2026-10-18
+
+The Rust port preserves SimpleWebAuthn server 13.2.2 certificate-path early termination after a provided self-signed issuer verifies, including an issuer that differs from the appended configured anchor. An accepted path therefore does not establish configured-anchor membership. Source-derived fixtures retain the positive unconfigured-root SafetyNet case and the negative issuer-omitted case in `rust/crates/gateway-auth/tests/fixtures/webauthn-source-golden.json`; the maintained verifier compatibility notes record the pinned source and its extension. A stricter terminal-anchor policy is a separately scoped owner decision, not an implicit change in this port.
+
+Certificate revocation-list URLs remain untrusted HTTP(S) inputs after path acceptance. Fetch them with ordinary unauthenticated transport and its default redirects, without provider/admin credentials, privileged headers or the native carrier. The pinned source imposes no application timeout or byte cap on that fetch; preserve actual platform and caller constraints without inventing a numeric source bound. Trusted registration time is injected internally from `AuthHost::now_ms`, and neither these compatibility rules nor passing verifier fixtures authorize a new ceremony origin, RP ID, relay audience or live credential enrollment.
+
+## Surplus inference enables provider secret masking - 2026-10-18
+
+Enable [Surplus Secret Masking](https://www.surplusintelligence.ai/docs/guides/secret-masking) for every Surplus inference POST with exactly one `X-SI-Mask-Secrets: on` header from the shared authenticated-header builder. This covers native Responses and native Claude Chat, streamed and buffered. The provider handles masking and restoration while the gateway retains its existing request and response contracts.
+
+Reason: the owner requested the announced feature. Surplus can globally pause masking and forward requests without protection or a receipt, so this opt-in does not guarantee that every request is masked. The gateway does not require or parse a masking receipt.
+
+Reversal risk: removing the header returns request-level enablement to the provider's defaults.
+
+## Deployment-guard fixtures retain complete bounded coverage - 2026-10-18
+
+CI run `39168411070` passed 33 of the 45 deployment/recovery cases and began the next controlled launcher before the existing ten-minute per-file cap stopped it. The complete `tests/vps-deploy-guards.test.ts` file receives a bounded twenty-minute default; every other file keeps ten minutes, individual Bun test deadlines stay five minutes, and an explicit `--file-timeout-ms` remains capped at ten minutes and overrides the default. No case, assertion, fixture isolation or process-group settlement rule is removed.
+
+Knip treats `cloudflare.config.ts`, `wrangler.config.ts` and `tools/cloudflare/generate-types.ts` as actual external-tool entry points. The configured CLI consumes the two default config exports; `cf` and `wrangler` remain pinned dependencies. Prettier excludes vendored Rust bytes and continues to own the supported first-party formats.

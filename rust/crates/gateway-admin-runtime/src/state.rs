@@ -1,0 +1,279 @@
+use crate::{
+    AdminRuntime,
+    capabilities::{Context, RuntimeCapabilities},
+    store,
+};
+use gateway_admin::{AdminInput, AdminOperation};
+use gateway_auth::{
+    AuthHost, AuthResponse, conflict, invalid,
+    store::{check, commit, put},
+};
+use gateway_core::{GatewayError, query::QueryStore};
+use serde_json::{Value, json};
+use std::collections::BTreeSet;
+
+pub const PROVIDER_IDS: [&str; 9] = [
+    "codex",
+    "claude_code",
+    "surplus",
+    "openlux",
+    "deepseek",
+    "cerebras",
+    "lithos",
+    "openrouter",
+    "ubiquity",
+];
+fn subscription(id: &str) -> bool {
+    id.strip_prefix("codex:").is_some_and(|s| {
+        s.len() == 64
+            && s.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
+fn provider_id(id: &str) -> bool {
+    PROVIDER_IDS.contains(&id) || subscription(id)
+}
+fn normalize_ids(ids: &[String]) -> Vec<String> {
+    let set: BTreeSet<_> = ids
+        .iter()
+        .map(|s| s.trim_matches(gateway_schema::util::js_whitespace))
+        .collect();
+    let mut result: Vec<String> = PROVIDER_IDS
+        .into_iter()
+        .filter(|s| set.contains(s))
+        .map(str::to_owned)
+        .collect();
+    if !set.contains("codex") {
+        result.extend(
+            set.into_iter()
+                .filter(|s| subscription(s))
+                .map(str::to_owned),
+        );
+    }
+    result
+}
+fn selection(value: Option<&Value>) -> Option<Value> {
+    let value = value?;
+    let ids: Vec<String> = value
+        .get("provider_ids")?
+        .as_array()?
+        .iter()
+        .map(|s| s.as_str().map(str::to_owned))
+        .collect::<Option<_>>()?;
+    let time = value
+        .get("updated_at_ms")?
+        .as_i64()
+        .filter(|n| *n > 0 && *n <= gateway_core::identity::MAX_SAFE_INTEGER)?;
+    Some(json!({"provider_ids":normalize_ids(&ids),"updated_at_ms":time}))
+}
+
+impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
+    fn sorted_principals(&self, value: &Value) -> Result<Vec<String>, GatewayError> {
+        crate::claude_access::parse_ids(value, &|a, b| self.capabilities.compare_admin_labels(a, b))
+    }
+    pub(crate) async fn debug(
+        &self,
+        operation: AdminOperation,
+        input: &AdminInput,
+    ) -> Result<AuthResponse, GatewayError> {
+        let key = store::key(json!(["uos_ai", "debug_routing", "v1"]));
+        let normal =
+            || json!({"scenario":"normal","expires_at_ms":null,"updated_at_ms":input.now_ms});
+        const SCENARIOS: [&str; 7] = [
+            "normal",
+            "metered_first",
+            "removed_provider_first",
+            "codex_401",
+            "codex_403",
+            "codex_429",
+            "codex_503",
+        ];
+        if operation == AdminOperation::DebugGet {
+            // Source deliberately falls back to normal for invalid/expired/unreadable debug state.
+            let value = store::read(self.store, &key, input.now_ms)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|v| {
+                    let scenario = v
+                        .get("scenario")?
+                        .as_str()?
+                        .trim_matches(gateway_schema::util::js_whitespace);
+                    let updated = v.get("updated_at_ms")?.as_i64().filter(|n| *n > 0)?;
+                    if !SCENARIOS.contains(&scenario) {
+                        return None;
+                    }
+                    let expiry = v
+                        .get("expires_at_ms")
+                        .and_then(Value::as_i64)
+                        .filter(|n| *n > 0);
+                    if expiry.is_some_and(|n| n <= input.now_ms) {
+                        return None;
+                    }
+                    Some(
+                        json!({"scenario":scenario,"expires_at_ms":expiry,"updated_at_ms":updated}),
+                    )
+                })
+                .unwrap_or_else(normal);
+            return Ok(AuthResponse::json(200, json!({"routing":value})));
+        }
+        let (scenario, duration) = if operation == AdminOperation::DebugDelete {
+            ("normal", 0)
+        } else {
+            let scenario = input
+                .body
+                .get("scenario")
+                .and_then(Value::as_str)
+                .map(gateway_schema::util::js_trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| invalid("scenario is required"))?;
+            let duration = match input.body.get("duration_ms") {
+                None => 900000,
+                Some(value) => {
+                    let n = gateway_admin_data::profile::js_number(value);
+                    if !n.is_finite() || n.fract() != 0.0 || !(0.0..=3600000.0).contains(&n) {
+                        return Err(invalid("duration_ms must be between 0 and 3600000"));
+                    }
+                    n as i64
+                }
+            };
+            (scenario, duration)
+        };
+        if !SCENARIOS.contains(&scenario) {
+            return Err(invalid("Unknown debug routing scenario"));
+        }
+        let value = json!({"scenario":scenario,"expires_at_ms":if scenario=="normal"||duration==0 {None}else{Some(input.now_ms+duration)},"updated_at_ms":input.now_ms});
+        let row = self.store.read(&key).await?;
+        if !commit(
+            self.store,
+            vec![check(&key, row.as_ref())],
+            vec![put(
+                key,
+                &value,
+                Some(input.now_ms + 3900000),
+                &store::revision(self.host)?,
+            )?],
+        )
+        .await?
+        {
+            return Err(conflict("Debug routing changed concurrently; retry"));
+        }
+        Ok(AuthResponse::json(200, json!({"routing":value})))
+    }
+    pub(crate) async fn selection(
+        &self,
+        operation: AdminOperation,
+        input: &AdminInput,
+    ) -> Result<AuthResponse, GatewayError> {
+        let key = store::key(json!(["uos_ai", "provider_selection", "v1"]));
+        if operation == AdminOperation::ProviderSelectionGet {
+            let selected = selection(store::read(self.store, &key, input.now_ms).await?.as_ref())
+                .unwrap_or_else(|| json!({"provider_ids":[],"updated_at_ms":0}));
+            let mut data = self
+                .capabilities
+                .provider_picker(Context {
+                    request_id: input.request_id.clone(),
+                    now_ms: input.now_ms,
+                })
+                .await?;
+            if !data.is_object()
+                || !data.get("providers").is_some_and(Value::is_array)
+                || !data.get("tiers").is_some_and(Value::is_array)
+            {
+                return Err(store::corrupt("Provider picker metadata is invalid"));
+            }
+            data["filter_active"] = json!(
+                selected["provider_ids"]
+                    .as_array()
+                    .is_some_and(|v| !v.is_empty())
+            );
+            data["selection"] = selected;
+            return Ok(AuthResponse::json(200, json!({"data":data})));
+        }
+        let raw = input
+            .body
+            .get("provider_ids")
+            .and_then(Value::as_array)
+            .ok_or_else(|| invalid("provider_ids must be an array"))?;
+        let ids: Vec<String> = raw
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(|s| {
+                        s.trim_matches(gateway_schema::util::js_whitespace)
+                            .to_owned()
+                    })
+                    .ok_or_else(|| invalid("provider_ids must contain only strings"))
+            })
+            .collect::<Result<_, _>>()?;
+        let unknown: Vec<_> = ids
+            .iter()
+            .filter(|id| !provider_id(id))
+            .map(String::as_str)
+            .collect();
+        if !unknown.is_empty() {
+            return Err(invalid(&format!(
+                "unknown provider ids: {}",
+                unknown.join(", ")
+            )));
+        }
+        let ids = normalize_ids(&ids);
+        let selected = json!({"provider_ids":ids,"updated_at_ms":input.now_ms});
+        let row = self.store.read(&key).await?;
+        if !commit(
+            self.store,
+            vec![check(&key, row.as_ref())],
+            vec![put(key, &selected, None, &store::revision(self.host)?)?],
+        )
+        .await?
+        {
+            return Err(conflict("Provider selection changed concurrently; retry"));
+        }
+        Ok(AuthResponse::json(
+            200,
+            json!({"stored":true,"provider_ids":ids,"updated_at_ms":input.now_ms}),
+        ))
+    }
+    pub(crate) async fn claude_access(
+        &self,
+        operation: AdminOperation,
+        input: &AdminInput,
+    ) -> Result<AuthResponse, GatewayError> {
+        let key = store::key(json!(["uos_ai", "claude_code_access", "v1"]));
+        let policy = if operation == AdminOperation::ClaudeAccessSet {
+            let ids =
+                self.sorted_principals(input.body.get("allowed_key_ids").unwrap_or(&Value::Null))?;
+            let policy =
+                json!({"v":1,"source":"kv","allowed_key_ids":ids,"updated_at_ms":input.now_ms});
+            let row = self.store.read(&key).await?;
+            if !commit(
+                self.store,
+                vec![check(&key, row.as_ref())],
+                vec![put(
+                    key.clone(),
+                    &policy,
+                    None,
+                    &store::revision(self.host)?,
+                )?],
+            )
+            .await?
+            {
+                return Err(conflict("Claude principal policy changed concurrently"));
+            }
+            policy
+        } else {
+            let snapshot = crate::claude_access::load_policy(
+                self.store,
+                self.host,
+                &self.config.claude_allowed_key_ids,
+                &|a, b| self.capabilities.compare_admin_labels(a, b),
+            )
+            .await?;
+            json!(snapshot.policy)
+        };
+        Ok(AuthResponse::json(
+            200,
+            json!({"data":{"source":policy["source"],"allowed_key_ids":policy["allowed_key_ids"],"updated_at_ms":policy["updated_at_ms"]}}),
+        ))
+    }
+}
