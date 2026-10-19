@@ -421,8 +421,49 @@ export async function runPrincipalControlCases({ owner, remote, restart, nativeB
     assert(blocked.message.includes("pending=1, unresolved=1, markers=2"));
     const guard = (await c.evidence()).rows.paid_deletion_guard[0];
     assert.equal(guard.expiresAtMs, null);
-    for (const item of [first, second])
-      isKind(await c.infer("releasePaidBeforeFetch", { attemptHandle: item.attemptHandle }, randomUUID(), "foreign"), "released");
+    isKind(await c.infer("releasePaidBeforeFetch", { attemptHandle: first.attemptHandle }, randomUUID(), "foreign"), "released");
+    const unresolved = await c.evidence();
+    isKind(await c.infer("releasePaidBeforeFetch", { attemptHandle: second.attemptHandle }, randomUUID(), "foreign"), "unchanged");
+    const retained = await c.evidence();
+    for (const family of ["paid_request", "paid_window", "paid_pending"]) assert.deepEqual(retained.rows[family], unresolved.rows[family]);
+    const stillBlocked = await c.call("deleteKey");
+    assert.equal(stillBlocked.code, "paid_fallback_billing_outstanding");
+    assert(stillBlocked.message.includes("pending=0, unresolved=1, markers=1"));
+    const providerRequestId = "foreign-deferred-bill";
+    await c.infer(
+      "recordPaidAttemptLifecycle",
+      { attemptHandle: second.attemptHandle, patch: { provider_request_id: providerRequestId, terminal_state: "completed" } },
+      randomUUID(),
+      "foreign"
+    );
+    const claim = await c.infer("claimPaidReconciliation", { limit: 100 }, randomUUID(), "foreign");
+    isKind(claim, "claimed");
+    assert.equal(claim.detail.length, 1);
+    assert.equal(claim.detail[0].attemptHandle, second.attemptHandle);
+    const settled = await c.infer(
+      "recordVerifiedPaidBilling",
+      {
+        attemptHandle: claim.detail[0].attemptHandle,
+        log: { request_id: providerRequestId, quota: 7, prompt_tokens: 3, completion_tokens: 2, model: "fixture", created_at: NOW / 1000 },
+      },
+      randomUUID(),
+      "foreign"
+    );
+    isKind(settled, "settled");
+    assert.equal(settled.detail.billing_state, "settled");
+    assert.equal(settled.detail.terminal_state, "completed");
+    assert.equal(settled.detail.spend_microcredits, 7);
+    isKind(await c.infer("finishPaidReconciliation", { lease: claim.lease }, randomUUID(), "foreign"), "finished");
+    const reconciled = await c.evidence();
+    assert.equal(count(reconciled, "paid_pending"), 0);
+    assert.equal(count(reconciled, "paid_lease"), 0);
+    assert(reconciled.rows.paid_request.some((item) => item.value.billing_state === "not_billed" && item.value.terminal_state === "cancelled"));
+    assert(reconciled.rows.paid_request.some((item) => item.value.provider_request_id === providerRequestId && item.value.billing_state === "settled"));
+    assert.equal(row(reconciled, "paid_window").reserved_microcredits, 0);
+    assert.equal(row(reconciled, "paid_window").pending_count, 0);
+    assert.equal(row(reconciled, "paid_window").settled_microcredits, 7);
+    assert.equal(row(reconciled, "paid_rollup").request_count, 1);
+    assert.equal(row(reconciled, "paid_rollup").spend_microcredits, 7);
     isKind(await c.call("deleteKey", {}, "delete"), "applied");
     const e = await c.evidence();
     assert.equal(count(e, "api_request"), 0);
@@ -432,7 +473,7 @@ export async function runPrincipalControlCases({ owner, remote, restart, nativeB
     assert(e.cleanupObservations.every((o) => o.idAbsent && o.hashAbsent && o.projectionAbsent && o.apiRows === 2 && o.deleteAudits === 1));
     isKind(await c.call("deleteKey", {}, "delete"), "historical_ack");
     assert.equal((await c.call("deleteKey", {}, "fresh-delete")).status, 404);
-    await finish(c);
+    await finish(c, { unresolved, retained, reconciled });
   }
   {
     const c = await fresh("P13"),
