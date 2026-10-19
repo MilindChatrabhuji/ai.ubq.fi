@@ -183,9 +183,9 @@ fn prepare_transition(transition: AtomicTransition) -> Result<PreparedTransition
             RecordMutation::Put { key, .. } | RecordMutation::Delete { key } => key,
         };
         validate_key(key)?;
-        if !checks.contains_key(&key.0) || !keys.insert(key.0.clone()) {
+        if !keys.insert(key.0.clone()) {
             return Err(invalid(
-                "Every authority mutation requires one unique checked key.",
+                "An authority transition contains duplicate mutation keys.",
             ));
         }
         match mutation {
