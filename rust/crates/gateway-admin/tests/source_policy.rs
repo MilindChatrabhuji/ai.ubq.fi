@@ -369,7 +369,10 @@ fn paid_model_name_and_ordinary_json_map_keys_roundtrip_named_profile_record() {
         let record = keys::decode_id_record(&key, &row).unwrap();
         assert_eq!(record.name.as_units(), [0xd800]);
         let model = ModelId::from_source(JsString16::from_units(vec![109, 0xd800]));
-        assert_eq!(record.paid_fallback_model_ids, [model.clone()]);
+        assert_eq!(
+            record.paid_fallback_model_ids.as_slice(),
+            std::slice::from_ref(&model)
+        );
         assert_eq!(record.paid_fallback_max_exposure_microcredits[&model], 1000);
         let public = keys::public_record(&record);
         assert_eq!(field_text(&public, "name").as_units(), [0xd800]);
