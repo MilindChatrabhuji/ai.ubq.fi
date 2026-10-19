@@ -141,7 +141,7 @@ pub(super) fn dial(
         drop(access);
         context.check()?;
         let stream = StreamOwned::new(conn, socket);
-        let mut socket = match tungstenite::client_with_config(
+        let mut socket = match tungstenite::client::client_with_config(
             request,
             stream,
             Some(super::queue::websocket_config()),
