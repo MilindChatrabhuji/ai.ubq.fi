@@ -785,14 +785,20 @@ async function inner(): Promise<void> {
       assert.equal(response.status, 200);
       await response.text();
     }
-    const before = (await events()).length;
+    const before = await events();
     assert.equal((await post("/v1/responses", { model: "deepseek-flash", input: "fixture:blocked" }, key.token)).status, 429);
-    assert.equal((await events()).length, before);
+    assert.deepEqual(await events(), before);
     cases.push("real_admin_key_creation_and_exact_dispatch_quota");
     await running.stop();
     running = await start(config, workspace);
     assert.equal((await post("/v1/responses", { model: "deepseek-flash", input: "fixture:still-blocked" }, key.token)).status, 429);
-    assert.equal((await events()).length, before);
+    const restartedEvents = await events();
+    assert.deepEqual(restartedEvents.slice(0, before.length), before);
+    const refreshedCatalogs = restartedEvents.slice(before.length).map((event: unknown) => {
+      assert(isObject(event) && event.kind === "matrix_catalog" && event.credential_matched === true && typeof event.provider === "string");
+      return event.provider;
+    });
+    assert.deepEqual(refreshedCatalogs.toSorted(), ["lithos", "openrouter"], "Restart may refresh only its two fixed catalogs, never inference dispatch.");
     cases.push("actual_sqlite_restart_preserves_key_and_quota");
     await agentMessageCases(url, cases);
     const explicitSignal = await fetch(`${running.origin}/public/v1/responses`, {
