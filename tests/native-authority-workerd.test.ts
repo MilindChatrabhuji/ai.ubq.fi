@@ -21,6 +21,10 @@ const PHASES = [
   "billing settlement",
 ];
 type MixedReport = {
+  protocol: string;
+  privateRuntimeRevision: number;
+  storageSchemaVersion: number;
+  v3Assertions: string[];
   state: string;
   mode: string;
   mixedAcceptance: string;
@@ -88,6 +92,11 @@ test("real mixed Bun HTTP and Worker clients preserve native authority contentio
     const reportBytes = readFileSync(reportPath);
     const report = JSON.parse(reportBytes.toString("utf8")) as MixedReport;
     expect(report.state).toBe("local-native-authority-runtime-pass");
+    expect(report.protocol).toBe("native-gateway-runtime-v3");
+    expect(report.privateRuntimeRevision).toBe(3);
+    expect(report.storageSchemaVersion).toBe(3);
+    expect(report.v3Assertions).toContain("retired v2 admission DTO refuses with unchanged actual SQLite projection");
+    expect(report.v3Assertions).toContain("actual SQLite meta and private binding grants report revision3");
     expect(report.mode).toBe("mixed");
     expect(report.mixedAcceptance).toBe("passed");
     expect(report.versions).toEqual({ node: "v24.21.0", miniflare: "5.20261012.1-beta", workerd: "1.20261012.1", esbuild: "0.28.2" });
@@ -183,6 +192,8 @@ test("real mixed Bun HTTP and Worker clients preserve native authority contentio
       ).toBe(true);
     }
     for (const path of [
+      "src/authority/native-runtime-contracts.ts",
+      "src/authority/native-authority-runtime.ts",
       "src/authority/native-principal-contracts.ts",
       "src/authority/native-authority-principals.ts",
       "src/paid-fallback/index.ts",
