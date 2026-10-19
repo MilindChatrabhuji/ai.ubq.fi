@@ -87,7 +87,7 @@ pub(crate) fn inverse_value_for_key(
         &parts(key)?,
         &["uos_ai", "paid_fallback", "v3", "usage_rollup"],
     ) {
-        gateway_authority::paid::decode_paid_rollup_record(key, record)?;
+        crate::rollup_source::validate(key, record)?;
     }
     inverse_value(transform, record, source)
 }
