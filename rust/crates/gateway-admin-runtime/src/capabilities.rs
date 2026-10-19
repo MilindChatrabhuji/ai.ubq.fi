@@ -1,5 +1,5 @@
 //! Finite native/provider capabilities. No URL, process, path, SQL, or Bun relay interface.
-use gateway_auth::{AuthResponse, crypto::Secret};
+use gateway_auth::AuthResponse;
 use gateway_core::{GatewayError, model::ModelId, source_json::SourceJson};
 use serde_json::Value;
 use std::{collections::BTreeMap, future::Future};
@@ -69,10 +69,10 @@ pub enum ProviderRequest {
 }
 
 pub struct ClaudeSubmission {
-    pub credential: Option<Secret>,
-    pub label: Option<String>,
+    pub credential: Option<std::sync::Arc<crate::claude::ClaudeSourceSecret>>,
+    pub label: Option<gateway_core::js_string::JsString16>,
     /// None means unchanged; Some(None) explicitly removes the workspace pin.
-    pub workspace_id: Option<Option<String>>,
+    pub workspace_id: Option<Option<gateway_core::js_string::JsString16>>,
     pub account_id: Option<String>,
     pub create_new: bool,
     pub activate: bool,
@@ -82,14 +82,14 @@ pub enum ClaudeRequest {
     State,
     SetCredential(ClaudeSubmission),
     DeleteAccount {
-        account_id: Option<String>,
+        account_id: Option<gateway_core::js_string::JsString16>,
     },
     SelectAccount {
-        account_id: String,
+        account_id: gateway_core::js_string::JsString16,
     },
     ClearQuota {
-        account_id: Option<String>,
-        cohort_id: Option<String>,
+        account_id: Option<gateway_core::js_string::JsString16>,
+        cohort_id: Option<gateway_core::js_string::JsString16>,
     },
 }
 
