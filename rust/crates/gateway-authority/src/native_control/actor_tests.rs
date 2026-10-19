@@ -712,3 +712,71 @@ fn transient_source_session_cas_is_not_a_serialized_policy_digest_input() {
         );
     });
 }
+
+#[test]
+fn live_api_actor_does_not_require_or_create_normalized_quota_projection() {
+    run(async {
+        let store = Store::default();
+        let token = api_setup(&store, -1);
+        store
+            .rows
+            .lock()
+            .unwrap()
+            .remove(&keys::api_policy("api-fixture").0);
+        let host = Host::new(&store);
+        let authority = self::authority(&store);
+        let cfg = config();
+        let mut req = request(&token);
+        req.url = "https://ai.ubq.fi/v1/live/calls".into();
+        let actor = authenticate_client_actor(
+            &authority,
+            &host,
+            &cfg,
+            &req,
+            &context("api-key:api-fixture", Some("api-fixture")),
+        )
+        .await
+        .unwrap();
+        assert!(current(&authority, &actor, &cfg).await.is_ok());
+        assert!(
+            !store
+                .rows
+                .lock()
+                .unwrap()
+                .contains_key(&keys::api_policy("api-fixture").0)
+        );
+        assert!(
+            store
+                .rows
+                .lock()
+                .unwrap()
+                .keys()
+                .all(|key| !key.contains("routing_runtime"))
+        );
+    });
+}
+
+#[test]
+fn user_row_absolute_expiry_crossing_readonly_commit_prevents_actor_mint() {
+    run(async {
+        let store = Store::default();
+        let token = session_setup(&store, true, true);
+        let key = passkeys::key("users", "user-fixture");
+        let mut row = store.rows.lock().unwrap().get(&key.0).unwrap().clone();
+        row.expires_at_ms = Some(1_000_100);
+        store.rows.lock().unwrap().insert(key.0, row);
+        store.commit_time.store(1_000_100, Ordering::SeqCst);
+        let host = Host::new(&store);
+        assert!(
+            authenticate_admin_actor(
+                &self::authority(&store),
+                &host,
+                &config(),
+                &request(&token),
+                &context("passkey-user:user-fixture", None)
+            )
+            .await
+            .is_err()
+        );
+    });
+}
