@@ -6,12 +6,16 @@ use gateway_authority::{
 use gateway_core::{
     GatewayError,
     identity::RequestContext,
+    js_string::JsString16,
     lifecycle::TransportObservation,
     model::ModelId,
     provider::UpstreamProvider,
     state::{RecordKey, RevisionCheck},
 };
-use gateway_providers::{AuthMaterial, ClientSurface, Headers, PrepareOptions, PreparedRequest};
+use gateway_providers::{
+    AuthMaterial, ClaudeBodyOptions, ClientSurface, DecodePlan, Headers, PrepareOptions,
+    PreparedClaudeBody, PreparedRequest,
+};
 use gateway_schema::catalog::CatalogInput;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -165,7 +169,7 @@ pub enum CredentialFence {
         cohort_id: String,
         credential_fingerprint: String,
         evidence_generation: String,
-        workspace_id: Option<String>,
+        workspace_id: Option<JsString16>,
         checks: Vec<RevisionCheckWire>,
     },
 }
@@ -185,16 +189,99 @@ impl From<&RevisionCheck> for RevisionCheckWire {
 }
 
 #[derive(Clone)]
-pub struct PublishedCredential {
-    pub material: AuthMaterial,
-    pub fence: CredentialFence,
-    pub options: PrepareOptions,
+pub enum PublishedCredential {
+    Scalar {
+        material: AuthMaterial,
+        fence: CredentialFence,
+        options: Box<PrepareOptions>,
+    },
+    Claude {
+        fence: CredentialFence,
+        body_options: ClaudeBodyOptions,
+    },
+}
+impl PublishedCredential {
+    pub fn fence(&self) -> &CredentialFence {
+        match self {
+            Self::Scalar { fence, .. } | Self::Claude { fence, .. } => fence,
+        }
+    }
+    pub fn into_fence(self) -> CredentialFence {
+        match self {
+            Self::Scalar { fence, .. } | Self::Claude { fence, .. } => fence,
+        }
+    }
 }
 impl std::fmt::Debug for PublishedCredential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PublishedCredential")
-            .field("fence", &self.fence)
-            .finish_non_exhaustive()
+        f.debug_struct(match self {
+            Self::Scalar { .. } => "ScalarCredential",
+            Self::Claude { .. } => "ClaudeCredential",
+        })
+        .field("fence", self.fence())
+        .finish_non_exhaustive()
+    }
+}
+/// Prepared data only; the Claude stage has no headers or credential material.
+#[derive(Clone)]
+pub enum PreparedWireRequest {
+    Ready(PreparedRequest),
+    Claude(PreparedClaudeBody),
+}
+impl PreparedWireRequest {
+    pub fn provider(&self) -> UpstreamProvider {
+        match self {
+            Self::Ready(request) => request.provider,
+            Self::Claude(_) => UpstreamProvider::ClaudeCode,
+        }
+    }
+    pub fn url(&self) -> &str {
+        match self {
+            Self::Ready(request) => &request.url,
+            Self::Claude(body) => body.url(),
+        }
+    }
+    pub fn method(&self) -> &str {
+        match self {
+            Self::Ready(request) => &request.method,
+            Self::Claude(body) => body.method(),
+        }
+    }
+    pub fn body(&self) -> &gateway_core::source_json::SourceJson {
+        match self {
+            Self::Ready(request) => &request.body,
+            Self::Claude(body) => body.body(),
+        }
+    }
+    pub fn decode(&self) -> &DecodePlan {
+        match self {
+            Self::Ready(request) => &request.decode,
+            Self::Claude(body) => body.decode(),
+        }
+    }
+    pub fn stream(&self) -> bool {
+        self.decode().stream
+    }
+    pub fn warnings(&self) -> &[String] {
+        match self {
+            Self::Ready(request) => &request.warnings,
+            Self::Claude(body) => body.warnings(),
+        }
+    }
+}
+impl std::fmt::Debug for PreparedWireRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ready(request) => std::fmt::Debug::fmt(request, f),
+            Self::Claude(body) => f
+                .debug_struct("PreparedClaudeBody")
+                .field("url", &body.url())
+                .field("method", &body.method())
+                .field("kind", &body.kind())
+                .field("body", &"[request body omitted]")
+                .field("decode", &body.decode().decode)
+                .finish_non_exhaustive(),
+        }
     }
 }
 #[derive(Clone, Debug)]
@@ -371,7 +458,7 @@ pub struct AttemptUsage {
 #[derive(Clone, Debug)]
 pub struct PreparedAttempt {
     pub id: String,
-    pub request: PreparedRequest,
+    pub request: PreparedWireRequest,
     pub credential: CredentialFence,
     pub paid: Option<PaidReservation>,
     pub original_request_id: String,
@@ -379,13 +466,13 @@ pub struct PreparedAttempt {
 
 /// A fixed host may retain only a secret wrapper, never serialized diagnostics.
 pub fn direct_credential(provider: UpstreamProvider, secret: &Secret) -> PublishedCredential {
-    PublishedCredential {
+    PublishedCredential::Scalar {
         material: AuthMaterial {
             secret: secret.expose().to_owned(),
             ..Default::default()
         },
         fence: CredentialFence::Direct { provider },
-        options: PrepareOptions::default(),
+        options: Box::new(PrepareOptions::default()),
     }
 }
 

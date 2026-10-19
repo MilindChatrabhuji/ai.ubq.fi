@@ -328,8 +328,12 @@ pub fn validate_journal_row(key: &RecordKey, record: &StoredRecord) -> Result<()
                 ] {
                     text(value)?;
                 }
-                if let Some(value) = workspace_id {
-                    text(value)?;
+                if let Some(value) = workspace_id
+                    && !char::decode_utf16(value.as_units().iter().copied()).any(|unit| {
+                        unit.is_err() || unit.is_ok_and(|character| !character.is_whitespace())
+                    })
+                {
+                    return Err(invalid());
                 }
                 for check in checks {
                     TupleKey::from_record_key(&check.key)?.validate_stored_key()?;

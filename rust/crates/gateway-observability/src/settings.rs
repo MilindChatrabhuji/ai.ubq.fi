@@ -9,7 +9,9 @@ use gateway_auth::{
     crypto::sha256_hex,
     provider_credentials::{codex_source_pool_key, parse_codex_source_pool},
 };
-use gateway_core::{GatewayError, query::QueryStore};
+use gateway_core::{
+    GatewayError, query::QueryStore, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -185,45 +187,53 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     }
     pub async fn reset_settings_response(
         &self,
-        document: Option<&Value>,
+        document: Option<&SourceJson>,
     ) -> Result<AuthResponse, GatewayError> {
         self.capacity_settings_response(document, false).await
     }
     pub async fn overage_settings_response(
         &self,
-        document: Option<&Value>,
+        document: Option<&SourceJson>,
     ) -> Result<AuthResponse, GatewayError> {
         self.capacity_settings_response(document, true).await
     }
     async fn capacity_settings_response(
         &self,
-        document: Option<&Value>,
+        document: Option<&SourceJson>,
         overage: bool,
     ) -> Result<AuthResponse, GatewayError> {
         let at = store::now(self.host.as_ref())?;
         let accounts = self.settings_accounts().await?;
         let field = if overage { "allow" } else { "enabled" };
         if let Some(raw) = document {
-            let hash = raw["account_id_hash"].as_str().ok_or_else(|| {
-                store::invalid(format!("account_id_hash and boolean {field} are required"))
-            })?;
-            let flag = raw[field].as_bool().ok_or_else(|| {
-                store::invalid(format!("account_id_hash and boolean {field} are required"))
-            })?;
-            if !accounts
+            let selector = source::member(raw, "account_id_hash")
+                .as_ref()
+                .and_then(source::string)
+                .ok_or_else(|| {
+                    store::invalid(format!("account_id_hash and boolean {field} are required"))
+                })?;
+            let flag = source::member(raw, field)
+                .and_then(|value| value.deserialize::<bool>().ok())
+                .ok_or_else(|| {
+                    store::invalid(format!("account_id_hash and boolean {field} are required"))
+                })?;
+            // A source string that cannot equal an existing generated ASCII hash
+            // is the same subscription mismatch, never a new scalar-type error.
+            let hash = accounts
                 .iter()
-                .any(|a| sha256_hex(a.account_id.as_bytes()) == hash)
-            {
-                return Err(GatewayError::new(
-                    409,
-                    "Subscription changed. Reload Providers.",
-                    Some("invalid_request_error"),
-                ));
-            }
+                .map(|account| sha256_hex(account.account_id.as_bytes()))
+                .find(|hash| hash.encode_utf16().eq(selector.as_units().iter().copied()))
+                .ok_or_else(|| {
+                    GatewayError::new(
+                        409,
+                        "Subscription changed. Reload Providers.",
+                        Some("invalid_request_error"),
+                    )
+                })?;
             let key = if overage {
-                gateway_authority::keys::overage(hash)
+                gateway_authority::keys::overage(&hash)
             } else {
-                reset_key(hash)
+                reset_key(&hash)
             };
             let mut value = json!({});
             value[field] = json!(flag);

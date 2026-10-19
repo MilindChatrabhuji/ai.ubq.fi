@@ -62,6 +62,61 @@ impl State {
     }
 }
 
+/// Borrow the genuine local owner only while the actual builder future runs.
+pub(crate) async fn run_local<F: std::future::Future>(
+    local: &crate::inference_local::Local,
+    cancellation: Rc<Cancellation>,
+    work: F,
+) -> Result<F::Output, RoutingError> {
+    let lease = local.currentness().checkpoint().await?;
+    let state = Rc::new(State {
+        stopped: Cell::new(false),
+        waker: AtomicWaker::new(),
+        expiry: RefCell::new(None),
+        cancellation,
+    });
+    if let Some(delay) = kernel_timer_delay(lease.kernel_expires_at_ms(), now_ms)? {
+        *state.expiry.borrow_mut() = Some(state.cancellation.set_timeout_ms(delay)?);
+    }
+    let _guard = CurrentnessGuard {
+        state: state.clone(),
+    };
+    let renewal = async {
+        loop {
+            worker::Delay::from(std::time::Duration::from_millis(
+                KERNEL_RENEWAL_INTERVAL_MS as u64,
+            ))
+            .await;
+            if state.stopped.get() {
+                return;
+            }
+            match local.currentness().renew_kernel().await {
+                Ok(observed) => {
+                    let timer = kernel_timer_delay(observed.kernel_expires_at_ms(), now_ms)
+                        .and_then(|delay| {
+                            delay
+                                .map(|delay| state.cancellation.set_timeout_ms(delay))
+                                .transpose()
+                        });
+                    match timer {
+                        Ok(timer) => *state.expiry.borrow_mut() = timer,
+                        Err(_) => {
+                            worker::console_error!("Local confirmed lease timer remains unchanged.")
+                        }
+                    }
+                }
+                Err(_) => worker::console_error!(
+                    "Local original coordination renewal remains unconfirmed."
+                ),
+            }
+        }
+    };
+    match select(Box::pin(work), Box::pin(renewal)).await {
+        Either::Left((result, _)) => Ok(result),
+        Either::Right(_) => Err(unavailable().into()),
+    }
+}
+
 pub(crate) struct CurrentnessGuard {
     state: Rc<State>,
 }

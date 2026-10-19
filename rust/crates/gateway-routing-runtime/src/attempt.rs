@@ -113,7 +113,13 @@ impl<
                             continue;
                         }
                         ClaudeSelection::Eligible(credential) => {
-                            if !matches!(credential.fence, CredentialFence::Claude { .. }) {
+                            if !matches!(
+                                credential.as_ref(),
+                                PublishedCredential::Claude {
+                                    fence: CredentialFence::Claude { .. },
+                                    ..
+                                }
+                            ) {
                                 return Err(journal::unavailable(
                                     "Claude credential binding is invalid.",
                                 )
@@ -297,7 +303,7 @@ impl<
                         .authority()
                         .bind_paid_original_request(&receipt, &self.input.context, self.now()?)
                         .await?;
-                    Self::check_paid_credential(&credential.fence, &receipt)?;
+                    Self::check_paid_credential(credential.fence(), &receipt)?;
                     let reservation=match self.authority().reserve_paid(&input,&authorization,&receipt,self.now()?).await?{PaidAdmission::Reserved(r)=>r,PaidAdmission::Existing(_)=>return Err(journal::unavailable("A retained paid attempt cannot be redispatched without reconciliation.").into())};
                     (upstream, model, credential, Some(reservation))
                 }
@@ -319,7 +325,7 @@ impl<
                 provider,
                 model,
                 cursor: row.cursor,
-                fence: publication.fence.clone(),
+                fence: publication.fence().clone(),
                 paid: paid.clone(),
                 phase: Phase::Prepared,
                 transport_started: false,
@@ -357,7 +363,7 @@ impl<
             return Ok(Some(PreparedAttempt {
                 id,
                 request,
-                credential: publication.fence,
+                credential: publication.into_fence(),
                 paid,
                 original_request_id: self.id().into(),
             }));

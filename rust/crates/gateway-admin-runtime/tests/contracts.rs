@@ -1,7 +1,10 @@
 use gateway_admin::{AdminHost, AdminInput, AdminOperation};
 use gateway_admin_runtime::{AdminRuntime, RuntimeConfig, capabilities::*};
 use gateway_auth::{upstream::*, webauthn::*, *};
-use gateway_core::{GatewayError, query::*, state::*};
+use gateway_core::{
+    GatewayError, js_string::JsString16, model::ModelId, query::*,
+    source_control::encode_source_control_record, source_json::SourceJson, state::*,
+};
 use gateway_schema::{
     catalog_store::*, runtime_config::build_runtime_config, snapshot::ModelSnapshot,
 };
@@ -177,10 +180,18 @@ struct Capabilities;
 impl RuntimeCapabilities for Capabilities {
     fn compare_admin_labels(
         &self,
-        left: &str,
-        right: &str,
+        left: &JsString16,
+        right: &JsString16,
     ) -> Result<std::cmp::Ordering, GatewayError> {
-        Ok(left.cmp(right))
+        // These legacy cases contain only empty/singleton lists. Unequal source
+        // ordering requires the exact locale fixtures in source_controls.rs.
+        if left == right {
+            return Ok(std::cmp::Ordering::Equal);
+        }
+        Err(GatewayError::unavailable(
+            "Uncovered legacy fixture comparison",
+            "fixture_collation_missing",
+        ))
     }
     async fn metered_diagnostics(&self) -> Result<Value, GatewayError> {
         Ok(json!({"state":"unavailable"}))
@@ -194,7 +205,7 @@ impl RuntimeCapabilities for Capabilities {
             log_files: json!({"scope":"host_text_logs","total_bytes":null}),
         })
     }
-    async fn pricing(&self, _: &[String]) -> Result<PricingSnapshot, GatewayError> {
+    async fn pricing(&self, _: &[ModelId]) -> Result<PricingSnapshot, GatewayError> {
         Ok(PricingSnapshot {
             eligible_model_ids: vec!["gpt-source".into()],
             quota_per_credit: 1000,
@@ -207,7 +218,7 @@ fn input(body: Value) -> AdminInput {
     AdminInput {
         parameter: None,
         query: BTreeMap::new(),
-        body,
+        body: SourceJson::from_serializable(&body).unwrap(),
         actor: AuthPrincipal {
             token: None,
             method: AuthMethod::AdminAllowlist,
@@ -220,11 +231,11 @@ fn input(body: Value) -> AdminInput {
 }
 fn snapshot(context: bool) -> ModelSnapshot {
     ModelSnapshot {
-        models: vec![if context {
+        models: vec![SourceJson::from_serializable(&if context {
             json!({"slug":"gpt-source","context_window":10000,"default_reasoning_level":null,"supported_reasoning_levels":[null,"future-tier"]})
         } else {
             json!({"slug":"gpt-source","default_reasoning_level":null,"supported_reasoning_levels":[null,"future-tier"]})
-        }],
+        }).unwrap()],
         source: "chatgpt_codex".into(),
         updated_at_ms: 900000,
         client_version: None,
@@ -238,11 +249,18 @@ fn seed_catalog(store: &Store, context: bool) {
     );
     store.rows.borrow_mut().insert(
         runtime_config_key().0,
-        StoredRecord::json(
+        encode_source_control_record(
             "runtime",
-            build_runtime_config(&snapshot, Some("gpt-source"), Some("medium"), 900000).unwrap(),
+            &build_runtime_config(
+                &snapshot,
+                Some(&ModelId::from_scalar("gpt-source")),
+                Some(&JsString16::from_utf8("medium")),
+                900000,
+            )
+            .unwrap(),
             None,
-        ),
+        )
+        .unwrap(),
     );
 }
 fn runtime<'a>(
@@ -486,15 +504,18 @@ fn paid_policy_uses_full_context_exposure_and_never_compact_fallback() {
     let service = runtime(&store, &host, &config);
     seed_catalog(&store, true);
     let fields = run(service.paid_key_policy(
-        &json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":2.25}),
+        &input(json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":2.25})).body,
     ))
     .unwrap();
     assert_eq!(fields.limit_microcredits, 2250000);
-    assert_eq!(fields.max_exposure_microcredits["gpt-source"], 15000000);
+    assert_eq!(
+        fields.max_exposure_microcredits[&ModelId::from_scalar("gpt-source")],
+        15000000
+    );
     seed_catalog(&store, false);
     assert_eq!(
         run(service.paid_key_policy(
-            &json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":-1})
+            &input(json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":-1})).body
         ))
         .unwrap_err()
         .status,
@@ -509,7 +530,7 @@ fn deletion_refuses_pending_markers_and_returns_actual_guard_fences() {
     let service = runtime(&store, &host, &config);
     store.put(
         json!(["ubq_ai", "api_keys", "id", "key"]),
-        json!({"revoked_at_ms":900000}),
+        json!({"id":"key","name":"deletion fixture","prefix":"u_0000000000","hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","created_at_ms":800000,"expires_at_ms":-1,"revoked_at_ms":900000,"usage_limit_requests":-1,"usage_requests":0,"usage_reset_at_ms":2000000,"window_ms":604800000,"usage_quota_version":3,"paid_fallback_enabled":false,"paid_fallback_limit_microcredits":0,"paid_fallback_spent_microcredits":0,"paid_fallback_reserved_microcredits":0,"paid_fallback_reservation_request_id":null,"paid_fallback_model_ids":[],"paid_fallback_quota_per_credit":0,"paid_fallback_max_exposure_microcredits":{},"paid_fallback_pricing_checked_at_ms":null}),
     );
     store.put(
         json!(["uos_ai", "paid_fallback", "v3", "pending", "key", "attempt"]),
@@ -697,7 +718,9 @@ fn claude_roster_rotation_preserves_identity_and_fences_prior_generations() {
     assert_eq!(first.account_cohort_id, same.account_cohort_id);
     assert_eq!(first.evidence_generation, same.evidence_generation);
     let mut rotated = credential;
-    rotated.secret = gateway_auth::crypto::Secret::new("sk-ant-api-rotated-secret".into());
+    rotated.secret = std::sync::Arc::new(ClaudeSourceSecret::from_source(
+        "sk-ant-api-rotated-secret".into(),
+    ));
     let next = run(update_account(
         &store,
         &host,
@@ -739,9 +762,10 @@ fn claude_tombstone_refuses_legacy_or_environment_resurrection() {
         "kv",
     )
     .unwrap();
-    store.put(
-        json!(["ubq_ai", "claude_code_auth"]),
-        serde_json::to_value(&credential).unwrap(),
+    store.rows.borrow_mut().insert(
+        gateway_auth::store::key(json!(["ubq_ai", "claude_code_auth"])).0,
+        gateway_admin_runtime::claude::encode_credential_record("fixture", &credential, None)
+            .unwrap(),
     );
     let seed = Bootstrap {
         credential: Some(credential),
@@ -887,7 +911,7 @@ fn defaults_work_from_runtime_catalog_without_optional_full_snapshot() {
     assert_eq!(response.body.wire_json()["defaults"]["model"], "gpt-source");
     assert_eq!(
         run(service.paid_key_policy(
-            &json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":1})
+            &input(json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":1})).body
         ))
         .unwrap_err()
         .status,
@@ -903,7 +927,7 @@ fn deletion_cleans_settled_state_then_owned_history_and_retains_ordinary_guard()
     let service = runtime(&store, &host, &config);
     store.put(
         json!(["ubq_ai", "api_keys", "id", "key"]),
-        json!({"revoked_at_ms":900000}),
+        json!({"id":"key","name":"deletion fixture","prefix":"u_0000000000","hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","created_at_ms":800000,"expires_at_ms":-1,"revoked_at_ms":900000,"usage_limit_requests":-1,"usage_requests":0,"usage_reset_at_ms":2000000,"window_ms":604800000,"usage_quota_version":3,"paid_fallback_enabled":false,"paid_fallback_limit_microcredits":0,"paid_fallback_spent_microcredits":0,"paid_fallback_reserved_microcredits":0,"paid_fallback_reservation_request_id":null,"paid_fallback_model_ids":[],"paid_fallback_quota_per_credit":0,"paid_fallback_max_exposure_microcredits":{},"paid_fallback_pricing_checked_at_ms":null}),
     );
     store.put(json!(["uos_ai","paid_fallback","v3","request","key","attempt"]),json!({"v":3,"reservation":{"key_id":"key","request_id":"original","attempt_id":"attempt","provider":"metered","window_reset_at_ms":2000000,"created_at_ms":900000,"reserved_microcredits":20},"policy_version":"v3:week","model":"gpt-source","route":"responses","path":"/v1/responses","stream":true,"reasoning":null,"quota_per_credit":1000,"provider_request_id":"provider-request","dispatch_state":"dispatched","terminal_state":"completed","billing_state":"settled","provider_quota":1.0,"input_tokens":10,"cached_input_tokens":null,"output_tokens":1,"spend_microcredits":10,"transport_started":true,"reconciliation_attempts":0,"last_reconciliation_at_ms":null,"dispatched_at_ms":900000,"terminal_at_ms":900100,"settled_at_ms":900200,"updated_at_ms":900200,"usage_rollup_at_ms":900200}));
     store.put(json!(["uos_ai","paid_fallback","v3","window","key",2000000]),json!({"v":3,"key_id":"key","policy_version":"v3:week","window_reset_at_ms":2000000,"limit_microcredits":100,"settled_microcredits":10,"reserved_microcredits":0,"pending_count":0,"updated_at_ms":900200}));
@@ -1045,7 +1069,7 @@ fn local_development_deletion_releases_only_owner_marker_and_completes_after_abs
     let id = "local-development";
     store.put(
         json!(["ubq_ai", "api_keys", "id", id]),
-        json!({"revoked_at_ms":900000}),
+        json!({"id":id,"name":"deletion fixture","prefix":"u_0000000000","hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","created_at_ms":800000,"expires_at_ms":-1,"revoked_at_ms":900000,"usage_limit_requests":-1,"usage_requests":0,"usage_reset_at_ms":2000000,"window_ms":604800000,"usage_quota_version":3,"paid_fallback_enabled":false,"paid_fallback_limit_microcredits":0,"paid_fallback_spent_microcredits":0,"paid_fallback_reserved_microcredits":0,"paid_fallback_reservation_request_id":null,"paid_fallback_model_ids":[],"paid_fallback_quota_per_credit":0,"paid_fallback_max_exposure_microcredits":{},"paid_fallback_pricing_checked_at_ms":null}),
     );
     store.put(
         json!(["uos_ai", "paid_fallback", "v3", "pending", id, "attempt"]),
@@ -1365,7 +1389,10 @@ fn shared_claude_access_loader_returns_exact_fence_and_does_not_reseed_explicit_
     ))
     .unwrap();
     assert_eq!(loaded.policy.source, PolicySource::Env);
-    assert_eq!(loaded.policy.allowed_key_ids, vec!["trusted-seed"]);
+    assert_eq!(
+        loaded.policy.allowed_key_ids,
+        vec![JsString16::from_utf8("trusted-seed")]
+    );
     let actual = run(store.read(&policy_key())).unwrap().unwrap();
     assert_eq!(loaded.check.expected_revision, Some(actual.revision));
     store.put(
@@ -1410,7 +1437,13 @@ fn shared_claude_access_parser_preserves_stable_locale_ties_and_missing_host_ref
         Ok(std::cmp::Ordering::Equal)
     })
     .unwrap();
-    assert_eq!(ids, vec!["é", "e\u{0301}"]);
+    assert_eq!(
+        ids,
+        vec![
+            JsString16::from_utf8("é"),
+            JsString16::from_utf8("e\u{0301}")
+        ]
+    );
     assert!(
         parse_policy(
             &json!({"v":1,"source":"kv","allowed_key_ids":[],"updated_at_ms":9007199254740992_i64}),

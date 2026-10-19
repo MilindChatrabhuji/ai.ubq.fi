@@ -2,6 +2,7 @@ mod support;
 use gateway_auth::crypto::sha256_hex;
 use gateway_core::{
     GatewayError,
+    source_json::SourceJson,
     state::{RecordKey, StoredRecord},
     tuple_key::TupleKey,
 };
@@ -129,17 +130,19 @@ fn reset_settings_reject_an_old_account_without_a_write_and_show_unknown_diagnos
     };
     let runtime = ObservabilityRuntime::new(memory.clone(), host);
     assert_eq!(
-        run(runtime
-            .reset_settings_response(Some(&json!({"account_id_hash":"retired","enabled":true}))))
+        run(runtime.reset_settings_response(Some(
+            &SourceJson::from_serializable(&json!({"account_id_hash":"retired","enabled":true}))
+                .unwrap()
+        )))
         .unwrap_err()
         .status,
         409
     );
     assert_eq!(memory.commits.get(), 0);
     let hash = sha256_hex(b"fixture-account");
-    let response = run(
-        runtime.reset_settings_response(Some(&json!({"account_id_hash":hash,"enabled":false})))
-    )
+    let response = run(runtime.reset_settings_response(Some(
+        &SourceJson::from_serializable(&json!({"account_id_hash":hash,"enabled":false})).unwrap(),
+    )))
     .unwrap();
     assert_eq!(response.body.as_json().unwrap()["enabled"], false);
     let response = run(runtime.reset_settings_response(None)).unwrap();
@@ -160,8 +163,13 @@ fn raw_capacity_body_limit_cannot_be_replaced_by_a_small_reserialization() {
     let mut raw = serde_json::to_vec(&document).unwrap();
     raw.resize(4 * 1024 * 1024 + 1, b' ');
     let runtime = ObservabilityRuntime::new(memory.clone(), AdminHost { base: clock, raw });
-    let response =
-        run(runtime.provider(ProviderRequest::Observations { document }, context())).unwrap_err();
+    let response = run(runtime.provider(
+        ProviderRequest::Observations {
+            document: SourceJson::from_serializable(&document).unwrap(),
+        },
+        context(),
+    ))
+    .unwrap_err();
     assert_eq!(response.status, 413);
     assert_eq!(memory.commits.get(), 0);
 }
@@ -191,7 +199,8 @@ fn request_body_binding_rejects_a_different_document() {
     assert_eq!(
         run(runtime.provider(
             ProviderRequest::Observations {
-                document: json!({"host":"two","history":[]})
+                document: SourceJson::from_serializable(&json!({"host":"two","history":[]}))
+                    .unwrap()
             },
             context()
         ))

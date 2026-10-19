@@ -36,6 +36,9 @@ impl ObservabilityHost for ProjectionHost {
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError> {
         self.base.random_bytes(length)
     }
+    async fn wait_ms(&self, ms: u32) -> Result<(), GatewayError> {
+        self.base.wait_ms(ms).await
+    }
     async fn metered_balance_fingerprint(&self) -> Result<Option<String>, GatewayError> {
         Ok(Some("projection-fixture".into()))
     }
