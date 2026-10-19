@@ -82,7 +82,7 @@ fn seed(store: &Store, id: &NativeTransportIdentity) -> String {
             }],
         },
     );
-    let account = CodexSourceAccount {
+    let mut account = CodexSourceAccount {
         account_id: "synthetic-account".into(),
         access_token: Secret::new("SYNTHETIC_ACCESS".into()),
         refresh_token: Secret::new(String::new()),
@@ -91,11 +91,16 @@ fn seed(store: &Store, id: &NativeTransportIdentity) -> String {
             codex_home: "/tmp/native-import-synthetic-owner".into(),
             generation_hash: sha256_hex(b"native-generation"),
             native_refreshed_at: None,
-            external_user_id: Some("synthetic-external".into()),
-            managed_source: None,
+            external_user_id: None,
+            managed_source: Some(gateway_auth::provider_credentials::ManagedNativeSource {
+                v: gateway_auth::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
+                generation_hash: sha256_hex(b"physical-native-generation"),
+            }),
         }),
     };
     let identity = account.identity();
+    let owner = account.native_owner.as_mut().unwrap();
+    owner.generation_hash = identity.native_generation_hash.clone();
     let hash = identity.routing_account_hash.0.clone();
     store.seed(
         codex_source_pool_key(),
