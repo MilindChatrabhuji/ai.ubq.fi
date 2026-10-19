@@ -12,7 +12,7 @@ use gateway_core::{
 };
 use serde_json::Value;
 
-fn hash(value: &str) -> Result<(), GatewayError> {
+pub(super) fn hash(value: &str) -> Result<(), GatewayError> {
     if value.len() != 64
         || !value
             .bytes()
@@ -146,7 +146,7 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
     }
     Ok(())
 }
-fn actor_shape(raw: &Value) -> Result<(), GatewayError> {
+pub(super) fn actor_shape(raw: &Value) -> Result<(), GatewayError> {
     let Some(fields) = raw.as_object() else {
         return Err(fail());
     };
@@ -210,6 +210,9 @@ pub fn validate_native_control_custody(
     match kind.as_str() {
         "action" => {
             let value = decode_source_control_record(record)?;
+            if source::member(&value, "kind").is_some() {
+                return super::import::validate_custody(&value, id);
+            }
             let row: ActionRow = value.deserialize().map_err(|_| fail())?;
             if row.v != 2 || row.action_ref != *id || row.fence.principal != row.actor.principal() {
                 return Err(fail());

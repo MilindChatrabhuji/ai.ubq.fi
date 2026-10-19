@@ -17,6 +17,8 @@ pub enum NativeCapability {
     ConfigurationPublish,
     AccessPublish,
     OwnerRenewal,
+    CodexAuthImport,
+    NativeProfileImport,
     LiveSideband,
 }
 
@@ -318,8 +320,8 @@ impl AuthenticatedNativeOwner {
 }
 
 pub struct NativeAuthenticator<'a, R> {
-    identity: &'a NativeTransportIdentity,
-    replay: &'a R,
+    pub(crate) identity: &'a NativeTransportIdentity,
+    pub(crate) replay: &'a R,
 }
 impl<'a, R: NativeNonceAuthority> NativeAuthenticator<'a, R> {
     pub fn new(identity: &'a NativeTransportIdentity, replay: &'a R) -> Self {

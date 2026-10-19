@@ -7,8 +7,10 @@ use gateway_core::{GatewayError, model::ModelId};
 use serde::{Deserialize, Serialize};
 
 pub mod actor;
+mod context_codec;
 mod custody;
 mod facts;
+pub mod import;
 mod live_renewal;
 mod managed;
 mod owners;
@@ -23,7 +25,7 @@ pub use receiver::{NativeRenewalAuthority, RegisteredRenewalOwner};
 pub const OWNER_RENEWAL_MAX_MS: i64 = 45_000;
 pub const NATIVE_RENEWAL_FENCE_VERSION: u8 = 2;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NativeRenewalContext {
     Inference {
@@ -35,7 +37,6 @@ pub enum NativeRenewalContext {
     LiveCreate {
         binding: gateway_core::identity::AccountBinding,
         active_generation: u64,
-        #[serde(deserialize_with = "required_model_units")]
         model_utf16: Option<Vec<u16>>,
     },
     LiveMapped {
@@ -45,11 +46,6 @@ pub enum NativeRenewalContext {
     CacheExperiment {
         context: Box<crate::cache_experiment::RefreshContext>,
     },
-}
-fn required_model_units<'de, D: serde::Deserializer<'de>>(
-    d: D,
-) -> Result<Option<Vec<u16>>, D::Error> {
-    Option::<Vec<u16>>::deserialize(d)
 }
 fn fence_v2<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u8, D::Error> {
     let v = u8::deserialize(d)?;
