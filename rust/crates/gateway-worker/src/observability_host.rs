@@ -3,7 +3,12 @@ use gateway_core::GatewayError;
 use gateway_core::identity::RequestId;
 use gateway_observability::{ObservabilityHost, host_types::BuildIdentity};
 use gateway_observability::{ObservabilityRuntime, ObservabilityState, replay_crypto::ReplayBody};
-use std::rc::Rc;
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
+#[path = "observability_admin.rs"]
+mod admin;
 #[path = "observability_diagnostics.rs"]
 mod diagnostics;
 #[path = "observability_inventory.rs"]
@@ -82,6 +87,9 @@ pub struct RequestHost {
     platform: crate::host::PlatformHost,
     request_id: String,
     original_body: ReplayBody,
+    admin_actor: Option<Rc<gateway_authority::native_control::actor::NativeRenewalActor>>,
+    prepared_cache_target: RefCell<Option<gateway_authority::cache_experiment::PreparedTarget>>,
+    cache_target_prepared: Cell<bool>,
 }
 pub fn bind(
     request_id: &RequestId,
@@ -90,11 +98,45 @@ pub fn bind(
     platform: &crate::host::PlatformHost,
     _context: Rc<worker::Context>,
 ) -> Runtime {
+    bind_request(request_id, original_body, store, platform, None)
+}
+/// Bind only the original authenticated actor; a normalized administrative Context cannot mint it.
+pub fn bind_admin(
+    request_id: &RequestId,
+    original_body: &[u8],
+    store: crate::authority::RemoteAuthorityStore,
+    platform: &crate::host::PlatformHost,
+    _context: Rc<worker::Context>,
+    actor: Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
+) -> Result<Runtime, GatewayError> {
+    if actor.scope() != gateway_authority::native_control::actor::NativeActorScope::Admin
+        || actor.context().request_id != *request_id
+    {
+        return Err(admin::auth_required());
+    }
+    Ok(bind_request(
+        request_id,
+        original_body,
+        store,
+        platform,
+        Some(actor),
+    ))
+}
+fn bind_request(
+    request_id: &RequestId,
+    original_body: &[u8],
+    store: crate::authority::RemoteAuthorityStore,
+    platform: &crate::host::PlatformHost,
+    admin_actor: Option<Rc<gateway_authority::native_control::actor::NativeRenewalActor>>,
+) -> Runtime {
     let host = RequestHost {
         store: store.clone(),
         platform: platform.clone(),
         request_id: request_id.0.clone(),
         original_body: ReplayBody::from_vec(original_body.to_vec()),
+        admin_actor,
+        prepared_cache_target: RefCell::new(None),
+        cache_target_prepared: Cell::new(false),
     };
     ObservabilityRuntime::with_state(store, host, shared_state())
 }
@@ -183,6 +225,20 @@ impl ObservabilityHost for Host {
 }
 
 impl ObservabilityHost for RequestHost {
+    async fn backfill_paid_usage(
+        &self,
+        limit: u32,
+    ) -> Result<gateway_observability::host_types::PaidBackfillReceipt, GatewayError> {
+        self.paid_backfill(limit).await
+    }
+    async fn recheck_codex_slot(&self, slot: u8) -> Result<bool, GatewayError> {
+        self.recheck_slot(slot).await
+    }
+    async fn cache_experiment_target(
+        &self,
+    ) -> Result<gateway_observability::host_types::CacheExperimentTarget, GatewayError> {
+        self.prepare_cache_target().await
+    }
     async fn codex_reset_available_count(
         &self,
         account: &gateway_observability::host_types::CapacityAccountRef,
