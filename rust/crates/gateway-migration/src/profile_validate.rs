@@ -230,10 +230,11 @@ pub(crate) async fn validate<S: QueryStore>(
 }
 
 fn identity_source_control(parts: &[Value]) -> bool {
-    (parts.len() == 2
-        && (starts(parts, &["ubq_ai", "codex_models"])
-            || (parts[0] == "default"
-                && matches!(parts[1].as_str(), Some("model" | "reasoning_effort")))))
+    crate::source_metadata::named_key(parts)
+        || (parts.len() == 2
+            && (starts(parts, &["ubq_ai", "codex_models"])
+                || (parts[0] == "default"
+                    && matches!(parts[1].as_str(), Some("model" | "reasoning_effort")))))
         || (parts.len() == 3 && starts(parts, &["uos_ai", "runtime_config", "v2"]))
         || (parts.len() == 4
             && starts(parts, &["ubq_ai", "api_keys"])
