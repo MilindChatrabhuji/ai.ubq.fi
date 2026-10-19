@@ -433,8 +433,16 @@ fn history_and_rollup_readers_preserve_default_future_skip_and_corruption_refusa
     let original = snapshot(&memory);
     let before = memory.commits.get();
     assert!(rows(&run(runtime.claude_capacity_history(AT - 1))).is_empty());
+    let previous_hour = run(runtime.claude_capacity_rollups(0, AT - 1));
+    assert_eq!(text(&previous_hour, "scan"), JsString16::from_utf8("ok"));
+    assert!(rows(&previous_hour).is_empty());
+    let (_, future_runtime) = setup(AT);
+    let mut future = event(1);
+    future.sampled_at_ms += 1;
+    assert!(run(future_runtime.record_claude_capacity_observation(&future)).unwrap());
+    assert!(rows(&run(future_runtime.claude_capacity_history(AT))).is_empty());
     assert_eq!(
-        text(&run(runtime.claude_capacity_rollups(0, AT - 1)), "scan"),
+        text(&run(future_runtime.claude_capacity_rollups(0, AT)), "scan"),
         JsString16::from_utf8("unavailable")
     );
     assert_eq!(memory.commits.get(), before);
