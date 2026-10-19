@@ -1,4 +1,5 @@
 use crate::{store::*, types::*};
+use gateway_core::source_json::SourceJson;
 use gateway_core::{GatewayError, lifecycle::SemanticTerminal, query::QueryStore};
 use gateway_providers::extras;
 use gateway_schema::selection::ProviderSelection;
@@ -35,12 +36,12 @@ pub(crate) async fn systemone<S: QueryStore, H: ExtrasHost>(
         )));
     }
     // Validation precedes provider control/credential checks in the source handler.
-    let preliminary = extras::prepare_systemone(
+    let preliminary = extras::prepare_source_systemone(
         &request.body,
         &gateway_providers::types::PrepareOptions::default(),
     );
     if let Err(e) = preliminary {
-        return Ok(ExtrasResponse::error(e));
+        return Ok(ExtrasResponse::source_error(e));
     }
     let row = store
         .read(&key(json!(["uos_ai", "provider_selection", "v1"])))
@@ -61,7 +62,10 @@ pub(crate) async fn systemone<S: QueryStore, H: ExtrasHost>(
             Some("openrouter_api_key_missing"),
         )));
     };
-    let prepared = extras::prepare_systemone(&request.body, &options)?;
+    let prepared = match extras::prepare_source_systemone(&request.body, &options) {
+        Ok(prepared) => prepared,
+        Err(error) => return Ok(ExtrasResponse::source_error(error)),
+    };
     let result = host
         .dispatch(ExtrasDispatch::SystemOne(PreparedCall {
             prepared,
@@ -116,7 +120,7 @@ pub(crate) async fn systemone<S: QueryStore, H: ExtrasHost>(
                 });
                 return Ok(r);
             }
-            let payload = serde_json::from_slice::<Value>(&result.body).ok();
+            let payload = SourceJson::parse_bytes(&result.body).ok();
             let decoded = payload
                 .as_ref()
                 .ok_or_else(|| {
@@ -126,7 +130,7 @@ pub(crate) async fn systemone<S: QueryStore, H: ExtrasHost>(
                         Some("openrouter_upstream_invalid_response"),
                     )
                 })
-                .and_then(extras::decode_systemone);
+                .and_then(extras::decode_source_systemone);
             match decoded {
                 Err(e) => {
                     let mut r = ExtrasResponse::error(e);
@@ -134,8 +138,10 @@ pub(crate) async fn systemone<S: QueryStore, H: ExtrasHost>(
                     Ok(r)
                 }
                 Ok(payload) => {
-                    let usage = extras::systemone_usage(&payload["usage"]);
-                    let mut r = ExtrasResponse::json(200, payload);
+                    let usage = gateway_core::source_serialization::member(&payload, "usage")
+                        .as_ref()
+                        .and_then(extras::source_systemone_usage);
+                    let mut r = ExtrasResponse::source_json(200, payload);
                     r.semantic_terminal = Some(SemanticTerminal::Completed);
                     r.usage = usage;
                     r.health.push(observed(200));
