@@ -6,6 +6,19 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Shadow banked-reset decisions do not suppress enabled overage - 2026-10-19
+
+In banked-reset shadow mode, `shadow_selected` and `already_would_spend_once` prove that no reset credit was
+redeemed: shadow persists a decision but never consumes it. Both outcomes now qualify for the existing single bounded
+overage probe when the account's `Allow overage spending` setting is on. The per-account allow setting remains a hard
+gate; `live_armed`, a completed live redemption, and fence or configuration failures still never fall back.
+
+Reason: an exhausted account with overage enabled remained stuck behind an existing shadow decision and fell through to
+paid routing, even though shadow mode could not spend the reset it observed.
+
+Reversal risk: removing these reasons restores that dead-end. Adding live-arming or completed-redemption reasons would
+risk spending both a banked reset and overage for one episode.
+
 ## Explicit manual banked reset verifies and promotes one account - 2026-10-18
 
 An authenticated admin may use one banked reset for a selected Codex account through `POST /admin/providers/codex/banked-resets/consume`. This explicit manual action works independently of the Automatic resets switch and automatic shadow arming; global `enabled=false` and `mode=disabled` still make zero provider calls. Manual and automatic redemptions share the existing one-per-account-per-UTC-day submission budget, account/window idempotency, exact credential and quota fences, and unknown-consumption refusal. An uncertain consume is never replayed.

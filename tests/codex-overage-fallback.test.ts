@@ -26,16 +26,18 @@ import { sha256Hex } from "../src/utils.ts";
 import type { Kv } from "#kv";
 
 type UpstreamCall = Readonly<{ kind: "inference" | "inventory" | "consume"; accountId: string }>;
+type BlockedRun = Readonly<{ responses: Response[]; calls: readonly UpstreamCall[]; logs: readonly string[] }>;
 
 /**
  * Drive the real blocked-cohort path against a mocked upstream. The inventory
  * response decides whether a banked reset is redeemable for this episode.
  */
-const runBlockedRequest = async (
-  requestId: string,
+const runBlockedSequence = async (
+  requestIds: readonly string[],
   inventoryResponse: () => Response,
-  allowOverage = false
-): Promise<{ response: Response; calls: readonly UpstreamCall[]; logs: readonly string[] }> => {
+  options: Readonly<{ allowOverage?: boolean | readonly boolean[]; mode?: "live" | "shadow" }> = {}
+): Promise<BlockedRun> => {
+  const { allowOverage = false, mode = "live" } = options;
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalInfo = console.info;
@@ -51,10 +53,6 @@ const runBlockedRequest = async (
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
   resetOverageUsageCacheForTest();
-  if (allowOverage) {
-    await writeOverageUsage(kv as unknown as Kv, await sha256Hex("account-one"), true);
-    await loadOverageUsageSettings(kv.auth, true);
-  }
   await seedStableBankedResetBlock("account-one");
   globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
@@ -75,8 +73,23 @@ const runBlockedRequest = async (
   });
   console.info = (...args: unknown[]) => logs.push(args.map(String).join(" "));
   try {
-    const response = await fetchCodexResponses({ input: requestId }, bankedResetRequestOptions(requestId));
-    return { response, calls, logs };
+    const responses: Response[] = [];
+    for (const [index, requestId] of requestIds.entries()) {
+      const requestAllowsOverage = typeof allowOverage === "boolean" ? allowOverage : (allowOverage[index] ?? false);
+      await writeOverageUsage(kv as unknown as Kv, await sha256Hex("account-one"), requestAllowsOverage);
+      await loadOverageUsageSettings(kv.auth, true);
+      const base = bankedResetRequestOptions(requestId);
+      const requestOptions = {
+        ...base,
+        bankedReset: {
+          ...base.bankedReset,
+          config: { ...base.bankedReset.config, mode },
+        },
+      };
+      const response = await fetchCodexResponses({ input: requestId }, requestOptions);
+      responses.push(response);
+    }
+    return { responses, calls, logs };
   } finally {
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
@@ -87,6 +100,17 @@ const runBlockedRequest = async (
     (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
     (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl = originalCodexBaseUrl;
   }
+};
+
+const runBlockedRequest = async (
+  requestId: string,
+  inventoryResponse: () => Response,
+  allowOverage = false
+): Promise<Readonly<{ response: Response; calls: readonly UpstreamCall[]; logs: readonly string[] }>> => {
+  const { responses, calls, logs } = await runBlockedSequence([requestId], inventoryResponse, { allowOverage });
+  const response = responses.at(0);
+  assert.ok(response);
+  return { response, calls, logs };
 };
 
 test("the default off setting refuses overage even when no reset is redeemable", async () => {
@@ -128,6 +152,88 @@ test("an explicitly allowed blocked cohort still falls back to exactly one bound
   assert.ok(
     logs.some((line) => line.includes("codex_overage_served") && line.includes('"reason":"no_eligible_credit"')),
     "the fallback records the redemption-unavailable reason"
+  );
+});
+
+test("a selected shadow reset allows the enabled bounded overage probe", async () => {
+  const inventory = () =>
+    Response.json({
+      available_count: 1,
+      credits: [{ id: "credit-account-one", status: "available", reset_type: "codex_rate_limits", expires_at: null }],
+    });
+  const { responses, calls, logs } = await runBlockedSequence(["overage-shadow-first"], inventory, {
+    allowOverage: true,
+    mode: "shadow",
+  });
+
+  assert.deepEqual(
+    responses.map((response) => response.status),
+    [200]
+  );
+  assert.deepEqual(
+    calls.filter((call) => call.kind === "inference").map((call) => call.accountId),
+    ["account-one"]
+  );
+  assert.deepEqual(
+    calls.filter((call) => call.kind === "consume"),
+    []
+  );
+  assert.ok(logs.some((line) => line.includes("codex_overage_served") && line.includes('"reason":"shadow_selected"')));
+});
+
+test("a duplicate shadow decision allows the enabled bounded overage probe", async () => {
+  const { responses, calls, logs } = await runBlockedSequence(
+    ["overage-shadow-seed", "overage-shadow-duplicate"],
+    () =>
+      Response.json({
+        available_count: 1,
+        credits: [{ id: "credit-account-one", status: "available", reset_type: "codex_rate_limits", expires_at: null }],
+      }),
+    { allowOverage: [false, true], mode: "shadow" }
+  );
+
+  assert.deepEqual(
+    responses.map((response) => response.status),
+    [429, 200]
+  );
+  assert.deepEqual(
+    calls.filter((call) => call.kind === "inference").map((call) => call.accountId),
+    ["account-one"]
+  );
+  assert.deepEqual(
+    calls.filter((call) => call.kind === "consume"),
+    []
+  );
+  assert.ok(
+    logs.some((line) => line.includes("codex_overage_served") && line.includes('"reason":"already_would_spend_once"')),
+    logs.join("\n")
+  );
+});
+
+test("shadow-only reset outcomes still refuse overage when the account setting is off", async () => {
+  const { responses, calls, logs } = await runBlockedSequence(
+    ["overage-shadow-disabled"],
+    () =>
+      Response.json({
+        available_count: 1,
+        credits: [{ id: "credit-account-one", status: "available", reset_type: "codex_rate_limits", expires_at: null }],
+      }),
+    { allowOverage: false, mode: "shadow" }
+  );
+
+  assert.equal(responses.at(0)?.status, 429);
+  assert.deepEqual(
+    calls.filter((call) => call.kind === "inference"),
+    []
+  );
+  assert.deepEqual(
+    calls.filter((call) => call.kind === "consume"),
+    []
+  );
+  assert.ok(logs.some((line) => line.includes("codex_banked_reset_preflight") && line.includes('"reason":"shadow_selected"')));
+  assert.equal(
+    logs.some((line) => line.includes("codex_overage_served")),
+    false
   );
 });
 

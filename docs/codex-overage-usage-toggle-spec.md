@@ -25,6 +25,8 @@ no banked reset can be redeemed.
   redemption was unavailable.
 - `allow = true`: the operator has explicitly permitted overage spending; an exhausted account may probe/serve
   immediately as previous behavior did, while banked resets still redeem when their gates pass.
+- Shadow-mode reset outcomes (`shadow_selected` and `already_would_spend_once`) count as no redemption because shadow
+  never consumes a credit, so an explicitly allowed account may use the bounded overage probe.
 - Never spend overage while a redeemable banked reset existed for the same request. Every fallback records the exact
   redemption-unavailable reason (`no_eligible_credit`, `inventory_unavailable`, `account_day_limit_reached`,
   `live_arming_pending`, `routing_fence_stale`, ...).

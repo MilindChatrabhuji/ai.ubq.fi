@@ -122,6 +122,11 @@ const OVERAGE_FALLBACK_REASONS: ReadonlySet<string> = new Set([
   "inventory_response_invalid_or_expired",
   "inventory_unavailable",
   "account_day_limit_reached",
+  // Shadow mode observes a would-spend decision but never consumes its credit.
+  // It therefore proves the reset is unavailable for this episode and may use
+  // the same single bounded overage probe as any other no-redemption outcome.
+  "shadow_selected",
+  "already_would_spend_once",
 ]);
 
 /**
