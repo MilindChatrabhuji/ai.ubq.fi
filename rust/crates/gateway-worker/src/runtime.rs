@@ -24,11 +24,11 @@ pub async fn route(
     release: &str,
     request_id: RequestId,
     native: crate::native_host::NativeBindings,
-) -> Result<Response, GatewayError> {
+) -> Result<crate::GatewayResponse, GatewayError> {
     now_ms()?;
-    let path = request.path();
+    let path = crate::normalized_path(&request.path()).to_owned();
     if let Some(response) = crate::assets::handle(&request, &env, &path).await? {
-        return Ok(response);
+        return Ok(response.into());
     }
     if path == "/uos/agent-messages" && !matches!(request.method(), Method::Get | Method::Post) {
         return Err(GatewayError::new(
@@ -39,16 +39,12 @@ pub async fn route(
     }
     let store = RemoteAuthorityStore::from_env(&env)?;
     let cancellation = Rc::new(Cancellation::from_request(&request)?);
-    let host = PlatformHost {
-        cancellation,
-        store: store.clone(),
-        env: env.clone(),
-        native,
-    };
     let config = auth_config(&env);
+    let mut auth_url = request.url().map_err(|_| invalid_url())?;
+    auth_url.set_path(&path);
     let mut auth_request = AuthRequest {
         method: request.method().to_string(),
-        url: request.url().map_err(|_| invalid_url())?.to_string(),
+        url: auth_url.to_string(),
         headers: bounded_headers(
             &request,
             HeaderLimits {
@@ -60,6 +56,14 @@ pub async fn route(
         body: Vec::new(),
         native_peer: None,
     };
+    let host = PlatformHost {
+        cancellation,
+        store: store.clone(),
+        env: env.clone(),
+        native,
+        original: auth_request.clone(),
+        request_id: request_id.clone(),
+    };
     let auth = AuthService::new(&store, &host, &config);
     if path.starts_with("/api/auth/") || path == "/uos/auth" {
         if request.method() == Method::Post {
@@ -67,7 +71,7 @@ pub async fn route(
                 body::request_bytes(&mut request, body::PASSKEY_BODY_MAX_BYTES).await?;
         }
         if let Some(response) = auth.handle_auth_route(&auth_request).await? {
-            return auth_response(response);
+            return auth_response(response).map(Into::into);
         }
     }
     if path.starts_with("/admin/") {
@@ -99,7 +103,9 @@ pub async fn route(
             release,
         };
         if let Some(response) = admin.handle_route(&auth_request, &request_id.0).await? {
-            return auth_response_with_native(response, &host, context.clone()).await;
+            return auth_response_with_native(response, &host, context.clone())
+                .await
+                .map(Into::into);
         }
         auth.authenticate_admin(&auth_request).await?;
         return Err(GatewayError::new(
@@ -111,7 +117,8 @@ pub async fn route(
     if path == "/uos/models/catalog" && request.method() == Method::Get {
         return auth_response(
             crate::catalog::public_response(&store, &env, &host, context.clone()).await?,
-        );
+        )
+        .map(Into::into);
     }
     if path == "/health/providers" || path == "/health/upstream" {
         auth.authenticate_admin(&auth_request).await?;
@@ -137,7 +144,8 @@ pub async fn route(
                     },
                 )
                 .await?,
-        );
+        )
+        .map(Into::into);
     }
     let principal = if path.starts_with("/v1/")
         || path == "/uos/models/capabilities"
@@ -156,7 +164,7 @@ pub async fn route(
             .filter(|(key, _)| key == "client_version")
             .map(|(_, value)| value.into_owned())
             .collect::<Vec<_>>();
-        return if versions.is_empty() {
+        return (if versions.is_empty() {
             json_response(catalog::ordinary_models(&state.input))
         } else {
             let version = if versions.len() == 1 {
@@ -169,11 +177,12 @@ pub async fn route(
                     .native_models(&store, &request, version, now_ms()?)
                     .await?,
             )
-        };
+        })
+        .map(Into::into);
     }
     if path == "/uos/models/capabilities" && request.method() == Method::Get {
         let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
-        return json_response(catalog::capabilities(&state.input));
+        return json_response(catalog::capabilities(&state.input)).map(Into::into);
     }
     if path == "/uos/agent-messages" {
         return crate::agent_messages::handle(
@@ -181,7 +190,8 @@ pub async fn route(
             &principal.ok_or_else(gateway_auth::unauthorized)?,
             &store,
         )
-        .await;
+        .await
+        .map(Into::into);
     }
     if let Some(route) = crate::extras::route(&path, request.method())? {
         let principal = principal.ok_or_else(gateway_auth::unauthorized)?;
@@ -205,7 +215,7 @@ pub async fn route(
         )
         .await?;
         decorate_api_policy(&mut response, &principal)?;
-        return Ok(response);
+        return Ok(response.into());
     }
     if ["/v1/responses", "/v1/chat/completions"].contains(&path.as_str()) {
         if request.method() != Method::Post {
@@ -239,7 +249,7 @@ pub async fn route(
         )
         .await?;
         decorate_api_policy(&mut response, &principal)?;
-        return Ok(response);
+        return Ok(response.into());
     }
     if path.starts_with("/v1/") || path.starts_with("/uos/embedding") {
         return Err(GatewayError::unavailable(

@@ -3,7 +3,7 @@ use super::{RequestHost, unavailable};
 use crate::transport::outbound::{Cancellation, Deadline, PinnedDestination, send_http};
 use gateway_admin_runtime::claude;
 use gateway_auth::provider_credentials::{self as codex, CodexSourceAccount};
-use gateway_core::{GatewayError, js_string::JsString16, state::AuthorityStore};
+use gateway_core::{GatewayError, js_string::JsString16};
 use gateway_observability::{HealthEvent, HealthTarget, host_types::*};
 use std::collections::BTreeMap;
 use worker::{Method, Response};

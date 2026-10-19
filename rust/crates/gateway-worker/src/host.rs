@@ -55,10 +55,18 @@ pub struct PlatformHost {
     pub store: crate::authority::RemoteAuthorityStore,
     pub env: Env,
     pub native: crate::native_host::NativeBindings,
+    pub original: gateway_auth::AuthRequest,
+    pub request_id: gateway_core::identity::RequestId,
 }
 
 #[derive(Clone, Copy)]
 pub struct PlatformTokens;
+
+impl gateway_authority::native_control::NativeRenewalCancellation for PlatformHost {
+    fn cancelled(&self) -> bool {
+        self.cancellation.signal().aborted()
+    }
+}
 impl TokenSource for PlatformTokens {
     fn next_token(&self) -> Result<String, GatewayError> {
         random::opaque_token()
