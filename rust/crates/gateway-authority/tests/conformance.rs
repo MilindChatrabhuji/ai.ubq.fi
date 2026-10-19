@@ -1,6 +1,8 @@
 mod capacity_cases;
 mod claude_cases;
+mod full_pool_reset;
 mod paid_control_cases;
+mod reset_spend;
 mod routing_source_cases;
 mod source_model_cases;
 mod support;
