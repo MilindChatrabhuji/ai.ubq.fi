@@ -302,14 +302,16 @@ fn full_pool_claim_rechecks_inventory_deadline_after_awaited_reads() {
 fn full_pool_verified_reset_returns_exact_halfopen_lease_not_recovered_capacity() {
     let (store, authority) = setup();
     let (permit, _) = ready(&authority, NOW);
+    store.clock(NOW + 25_000);
     let claimed = claim(&authority, &permit);
     let submitted = run(authority.prepare_full_pool_reset_submission(&permit, &claimed)).unwrap();
+    store.clock(NOW + 30_001);
     let verified = run(authority.record_reset_outcome(
         &submitted,
         ResetState::Verified,
         Some("documented_reset"),
         None,
-        NOW,
+        NOW + 30_001,
     ))
     .unwrap();
     let account = run(authority.elect_full_pool_reset(&permit, &verified))
