@@ -4,11 +4,48 @@ use gateway_core::state::{AtomicTransition, RecordKey, RecordMutation, RevisionC
 use gateway_providers::ClientSurface;
 use serde_json::{Value, json};
 
-pub fn context(input: &PaidRequest) -> PaidRequestContext {
-    let mut body = json!({"model":input.model,"stream":input.stream});
-    if let Some(effort) = &input.reasoning {
-        body["reasoning"] = json!({"effort":effort});
+pub fn seed_source<T: serde::Serialize + ?Sized>(store: &MemoryStore, key: RecordKey, value: &T) {
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let revision = format!(
+        "source-fixture-{}",
+        SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    );
+    let raw = gateway_core::source_json::SourceJson::from_serializable(value).unwrap();
+    store.seed_record(
+        key,
+        gateway_core::source_control::encode_source_control_record(revision, &raw, None).unwrap(),
+    );
+}
+fn set_body(body: &mut gateway_core::source_json::SourceJson, name: &str, value: Value) {
+    let mut fields = gateway_core::source_serialization::entries(body).unwrap();
+    let name = gateway_core::js_string::JsString16::from_utf8(name);
+    let value = gateway_core::source_json::SourceJson::from_serializable(&value).unwrap();
+    if let Some((_, old)) = fields.iter_mut().find(|(key, _)| key == &name) {
+        *old = value;
+    } else {
+        fields.push((name, value));
     }
+    *body = gateway_core::source_serialization::object_keys(fields).unwrap();
+}
+pub fn context(input: &PaidRequest) -> PaidRequestContext {
+    let mut fields = vec![
+        ("model", input.model.to_source_json().unwrap()),
+        (
+            "stream",
+            gateway_core::source_json::SourceJson::from_serializable(&input.stream).unwrap(),
+        ),
+    ];
+    if let Some(effort) = &input.reasoning {
+        fields.push((
+            "reasoning",
+            gateway_core::source_serialization::object(vec![(
+                "effort",
+                effort.to_source_json().unwrap(),
+            )])
+            .unwrap(),
+        ));
+    }
+    let body = gateway_core::source_serialization::object(fields).unwrap();
     PaidRequestContext {
         original_model: input.model.clone(),
         body,
@@ -27,7 +64,11 @@ fn revision(store: &MemoryStore, key: &RecordKey) -> Option<String> {
 
 pub fn republish(store: &MemoryStore) {
     let row = store.row(&keys::paid_routing()).unwrap();
-    let mut projection: PaidRoutingProjection = serde_json::from_value(row.value).unwrap();
+    let mut projection: PaidRoutingProjection =
+        gateway_core::source_control::decode_source_control_record(&row)
+            .unwrap()
+            .deserialize()
+            .unwrap();
     projection.provenance.owner_revision = revision(store, &keys::paid_control_owner()).unwrap();
     projection.provenance.config_revision = revision(store, &keys::paid_control_config()).unwrap();
     projection.provenance.surplus_observation_revision = revision(
@@ -45,7 +86,7 @@ pub fn republish(store: &MemoryStore) {
             key: key.0,
         })
         .collect();
-    store.seed(keys::paid_routing(), &projection);
+    super::paid_control_cases::seed_source(store, keys::paid_routing(), &projection);
 }
 
 pub fn seed_controls(store: &MemoryStore) {
@@ -73,7 +114,7 @@ pub fn seed_controls(store: &MemoryStore) {
             source_checks: vec![],
         },
     );
-    let models:Vec<_>=["paid-model","gpt-test","gpt-5.6-sol","deepseek-v4.1-flash"].into_iter().map(|id|json!({"id":id,"supported_endpoint_types":["openai-response","openai"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002})).collect();
+    let models:Vec<_>=["paid-model","gpt-test","gpt-5.6-sol","deepseek-v4.1-flash"].into_iter().map(|id|gateway_core::source_json::SourceJson::from_serializable(&json!({"id":id,"supported_endpoint_types":["openai-response","openai"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002})).unwrap()).collect();
     for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
         store.seed(
             keys::paid_control_observation(provider),
@@ -129,7 +170,7 @@ pub fn seed_controls(store: &MemoryStore) {
             source_checks: vec![],
         },
     };
-    store.seed(keys::paid_routing(), &projection);
+    super::paid_control_cases::seed_source(store, keys::paid_routing(), &projection);
     republish(store);
 }
 
@@ -185,8 +226,13 @@ fn every_source_and_control_change_invalidates_existing_and_new_paid_receipts() 
             paid_setup(&store);
             let authority = authority(&store);
             let input = paid_request("stale-control", PaidProvider::Surplus);
-            let receipt =
-                run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+            let receipt = run(super::paid_original::authorize(
+                &authority,
+                &input,
+                &context(&input),
+                NOW,
+            ))
+            .unwrap();
             if existing {
                 run(authority.reserve_paid(
                     &input,
@@ -232,7 +278,13 @@ fn source_change_inside_the_actual_paid_cas_never_writes_exposure() {
         paid_setup(&store);
         let authority = authority(&store);
         let input = paid_request("control-race", PaidProvider::Surplus);
-        let receipt = run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+        let receipt = run(super::paid_original::authorize(
+            &authority,
+            &input,
+            &context(&input),
+            NOW,
+        ))
+        .unwrap();
         if existing {
             run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &receipt, NOW))
                 .unwrap();
@@ -271,7 +323,13 @@ fn source_stale_routes_remain_usable_without_invented_refresh_ttl() {
     raw["stale"] = json!(true);
     store.seed(key, &raw);
     republish(&store);
-    let receipt = run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+    let receipt = run(super::paid_original::authorize(
+        &authority,
+        &input,
+        &context(&input),
+        NOW,
+    ))
+    .unwrap();
     assert_eq!(receipt.owner_id(), "fixture-owner");
     assert_eq!(receipt.owner_epoch(), "fixture-epoch");
     assert_eq!(
@@ -302,11 +360,17 @@ fn missing_openlux_catalog_keeps_configured_known_codex_fallback() {
     );
     let mut projection = store.row(&keys::paid_routing()).unwrap().value;
     projection["codex_enabled"] = json!(false);
-    store.seed(keys::paid_routing(), &projection);
+    super::paid_control_cases::seed_source(&store, keys::paid_routing(), &projection);
     republish(&store);
     let mut input = paid_request("missing-catalog", PaidProvider::Metered);
     input.model = "gpt-test".into();
-    let receipt = run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+    let receipt = run(super::paid_original::authorize(
+        &authority,
+        &input,
+        &context(&input),
+        NOW,
+    ))
+    .unwrap();
     assert!(matches!(
         run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &receipt, NOW))
             .unwrap(),
@@ -331,7 +395,11 @@ fn broad_model_union_does_not_grant_endpoint_tool_or_price_capability() {
     input.route = "chat.completions".into();
     let mut ctx = context(&input);
     assert!(run(authority.authorize_paid_route(&input, &ctx, NOW)).is_ok());
-    ctx.body["tools"] = json!([{"type":"function","name":"fixture"}]);
+    set_body(
+        &mut ctx.body,
+        "tools",
+        json!([{"type":"function","name":"fixture"}]),
+    );
     assert!(run(authority.authorize_paid_route(&input, &ctx, NOW)).is_err());
     observation["models"][0]["input_price_per_token"] = Value::Null;
     store.seed(key, &observation);
@@ -351,14 +419,14 @@ fn synthetic_scope_is_server_owned_and_matches_current_source_alias() {
     );
     let mut projection = store.row(&keys::paid_routing()).unwrap().value;
     projection["codex_enabled"] = json!(false);
-    store.seed(keys::paid_routing(), &projection);
+    super::paid_control_cases::seed_source(&store, keys::paid_routing(), &projection);
     republish(&store);
     let mut input = paid_request("synthetic", PaidProvider::Metered);
     input.model = "deepseek-v4.1-flash".into();
     let mut ctx = context(&input);
     ctx.original_model = gateway_schema::aliases::SYNTHETIC_MODEL.into();
-    ctx.body["model"] = json!(ctx.original_model);
-    ctx.body["synthetic_hop"] = json!("openlux");
+    set_body(&mut ctx.body, "model", json!(ctx.original_model));
+    set_body(&mut ctx.body, "synthetic_hop", json!("openlux"));
     assert!(run(authority.authorize_paid_route(&input, &ctx, NOW)).is_err());
     ctx.synthetic_hop = Some(PaidSyntheticHop::Openlux);
     assert!(run(authority.authorize_paid_route(&input, &ctx, NOW)).is_ok());
@@ -390,7 +458,13 @@ fn receipt_binds_logical_model_not_physical_effort_alias_and_exact_attempt() {
     let mut input = paid_request("logical-alias", PaidProvider::Metered);
     input.model = "gpt-5.6-sol".into();
     input.reasoning = Some("none".into());
-    let receipt = run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+    let receipt = run(super::paid_original::authorize(
+        &authority,
+        &input,
+        &context(&input),
+        NOW,
+    ))
+    .unwrap();
     input.model = "gpt-5.6-sol-low".into();
     assert!(
         run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &receipt, NOW))
@@ -416,7 +490,13 @@ fn source_defined_expiry_crossing_awaited_paid_reads_never_commits() {
     raw["source_valid_until_ms"] = json!(NOW + 100);
     store.seed(key, &raw);
     republish(&store);
-    let receipt = run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+    let receipt = run(super::paid_original::authorize(
+        &authority,
+        &input,
+        &context(&input),
+        NOW,
+    ))
+    .unwrap();
     store.jump_on_read(keys::paid_deletion("key-a"), NOW + 100);
     assert!(
         run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &receipt, NOW))
@@ -452,7 +532,13 @@ fn openlux_discovery_and_spend_bindings_are_distinct_current_facts() {
     paid_setup(&store);
     let authority = authority(&store);
     let input = paid_request("two-openlux-roles", PaidProvider::Metered);
-    let receipt = run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+    let receipt = run(super::paid_original::authorize(
+        &authority,
+        &input,
+        &context(&input),
+        NOW,
+    ))
+    .unwrap();
     assert_eq!(receipt.credential_binding(), "fixture-openlux-binding");
     let observation_key = keys::paid_control_observation(PaidProvider::Metered);
     let mut observation = store.row(&observation_key).unwrap().value;
@@ -496,3 +582,5 @@ fn strict_v2_configuration_requires_explicit_nullable_roles() {
     let input = paid_request("legacy-config-version", PaidProvider::Metered);
     assert!(run(authority.authorize_paid_route(&input, &context(&input), NOW)).is_err());
 }
+
+mod source;

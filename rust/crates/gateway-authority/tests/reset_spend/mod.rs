@@ -1,5 +1,5 @@
 //! Source banked-reset claim/submission and native-codex-mutations probe boundaries.
-mod support;
+use crate::support::*;
 use gateway_authority::{
     full_pool_reset::*,
     keys,
@@ -16,7 +16,6 @@ use gateway_core::{
 };
 use serde_json::json;
 use std::cmp::Ordering;
-use support::*;
 
 struct NoCreditTie;
 impl SourceCreditCollation for NoCreditTie {
@@ -37,7 +36,7 @@ fn config() -> ResetConfig {
 }
 fn proof(authority: &TestAuthority, at: i64) -> CohortProof {
     let RouteSelection::QuotaBlocked { proof, .. } =
-        run(authority.select_account("gpt-test", CodexQuotaClass::Standard, at)).unwrap()
+        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, at)).unwrap()
     else {
         panic!("requires actual exhausted source cohort")
     };
@@ -104,14 +103,14 @@ fn ready(authority: &TestAuthority, at: i64) -> (AutomaticResetPermit, String) {
                 }
             })
             .collect();
-        match run(authority.finish_full_pool_reset(plan, &observations, &NoCreditTie)).unwrap() {
+        match run(authority.finish_full_pool_reset(*plan, &observations, &NoCreditTie)).unwrap() {
             FullPoolEvaluation::Shadow {
                 decision,
                 duplicate: false,
             } => {
                 episode = decision.episode_hash;
             }
-            FullPoolEvaluation::Ready(permit) => return (permit, episode),
+            FullPoolEvaluation::Ready(permit) => return (*permit, episode),
             other => panic!("expected first-arm or current permit, got {other:?}"),
         }
     }
@@ -303,14 +302,16 @@ fn full_pool_claim_rechecks_inventory_deadline_after_awaited_reads() {
 fn full_pool_verified_reset_returns_exact_halfopen_lease_not_recovered_capacity() {
     let (store, authority) = setup();
     let (permit, _) = ready(&authority, NOW);
+    store.clock(NOW + 25_000);
     let claimed = claim(&authority, &permit);
     let submitted = run(authority.prepare_full_pool_reset_submission(&permit, &claimed)).unwrap();
+    store.clock(NOW + 30_001);
     let verified = run(authority.record_reset_outcome(
         &submitted,
         ResetState::Verified,
         Some("documented_reset"),
         None,
-        NOW,
+        NOW + 30_001,
     ))
     .unwrap();
     let account = run(authority.elect_full_pool_reset(&permit, &verified))
@@ -351,7 +352,8 @@ fn expired_probe_claim_preserves_source_generation_and_checks_current_expiry() {
     run(authority.record_quota_block(&account, expired, NOW)).unwrap();
     store.clock(NOW + 2);
     let RouteSelection::Eligible(selected) =
-        run(authority.select_account("gpt-test", CodexQuotaClass::Standard, NOW + 2)).unwrap()
+        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW + 2))
+            .unwrap()
     else {
         panic!("expired source quota circuit must be probe eligible")
     };

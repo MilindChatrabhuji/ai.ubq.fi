@@ -4,6 +4,10 @@ import { createClient, dispatches, object, post, responseObject, selectProviders
 
 async function prepare(context: MatrixContext): Promise<MatrixContext> {
   await selectProviders(context, ["codex", "surplus", "openlux"]);
+  const native = await responseObject(
+    await fetch(context.url("/v1/models?client_version=0.163.0"), { headers: { authorization: `Bearer ${context.clientToken ?? "fixture-access"}` } })
+  );
+  assert(Array.isArray(native.models) && native.models.some((row) => object(row).slug === MATRIX_MODELS.codex));
   const catalog = await responseObject(
     await fetch(context.url("/v1/models"), { headers: { authorization: `Bearer ${context.clientToken ?? "fixture-access"}` } })
   );

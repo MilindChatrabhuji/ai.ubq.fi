@@ -47,10 +47,63 @@ fn request(ndjson: String, dry_run: bool, overwrite: bool) -> MigrationRequest {
     })
 }
 fn body(response: AuthResponse) -> Value {
-    let AuthResponseBody::Json(value) = response.body else {
-        panic!("Expected JSON profile response")
+    // These pre-existing fixtures contain only scalar JSON. New UTF16 response
+    // tests inspect SourceJson directly, never through this compatibility view.
+    match response.body {
+        AuthResponseBody::Json(value) => value,
+        AuthResponseBody::SourceJson(value) => value.deserialize().expect("Scalar profile fixture"),
+    }
+}
+
+#[test]
+fn validate_renders_lone_default_model_errors_without_null_or_escape_text_substitution() {
+    use gateway_core::{
+        js_string::JsString16, source_control::encode_source_control_record,
+        source_json::SourceJson, source_serialization as source,
     };
-    value
+    let directory = Directory::new();
+    let store = SqliteStore::open(&directory.file("source-validation.sqlite3"));
+    let model_key = gateway_auth::store::key(json!(["default", "model"]));
+    let snapshot_key = gateway_auth::store::key(json!(["ubq_ai", "codex_models"]));
+    let model = encode_source_control_record(
+        "model-revision",
+        &SourceJson::parse(r#""\ud800""#).unwrap(),
+        None,
+    )
+    .unwrap();
+    let snapshot = encode_source_control_record(
+        "catalog-revision",
+        &SourceJson::parse(r#"{"models":[{"slug":"other"}]}"#).unwrap(),
+        None,
+    )
+    .unwrap();
+    store.put(model_key.clone(), model.clone());
+    store.put(snapshot_key.clone(), snapshot.clone());
+    let response = run(execute_profile(
+        &store,
+        &Host(Cell::new(0)),
+        MigrationRequest::Validate,
+        context(),
+    ))
+    .unwrap();
+    assert_eq!(response.status, 200);
+    let AuthResponseBody::SourceJson(document) = response.body else {
+        panic!("Source error must use direct JSON bytes")
+    };
+    let errors = source::member(&document, "errors")
+        .unwrap()
+        .array_items()
+        .unwrap();
+    let mut expected = "default model is not present in codex model snapshot: "
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    expected.push(0xd800);
+    assert_eq!(
+        errors[0].deserialize::<JsString16>().unwrap().as_units(),
+        expected
+    );
+    assert_eq!(run(store.read(&model_key)).unwrap(), Some(model));
+    assert_eq!(run(store.read(&snapshot_key)).unwrap(), Some(snapshot));
 }
 fn line(parts: Value, value: Value) -> String {
     let keys = parts

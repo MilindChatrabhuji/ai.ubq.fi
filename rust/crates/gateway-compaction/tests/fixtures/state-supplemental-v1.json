@@ -1,0 +1,1232 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "recipe": {
+        "count": 40,
+        "text": 0,
+        "input": 100
+      },
+      "budget": 7620,
+      "expected": {
+        "kind": "success",
+        "fitted": {
+          "state": {
+            "context": "A coding assistant conversation is being compacted to free context. `history` is the whole conversation so far, oldest first; tool outputs are replaced by a short `result` note and long texts may be abridged. Each question asks whether one tool call, or the full output of that call, still needs to stay in the history verbatim. Whatever is not kept is deleted permanently, but the assistant can always re-run a tool or re-read a file.",
+            "goal": "Goal: preserve current state.\nFinal goal.",
+            "history": [
+              {
+                "i": 0,
+                "role": "user",
+                "text": "Goal: preserve current state."
+              },
+              {
+                "i": 1,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t1",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 0 script script script script script script script script script script script script script script script script script script script script script script script script script script\u2026",
+                    "result": "ok, 450 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 3,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t2",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 1 script script script script script script script script script script script script script script script script script script script script script script script script script script\u2026",
+                    "result": "ok, 450 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 5,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t3",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 2 script script script script script script script script script script script script script script script script script script script script script script script script script script\u2026",
+                    "result": "ok, 450 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 7,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t4",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 3 script script script script script script script script script script script script script script script script script script script script script script script script script script\u2026",
+                    "result": "ok, 450 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 9,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t5",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 4 script script script script script script script script script script script script script script script script script script script script script script script script script script\u2026",
+                    "result": "ok, 450 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 11,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t6",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 5 script script script script script script script script script script script script script script script script script script script script script script script script script script\u2026",
+                    "result": "ok, 450 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 13,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t7",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 6 script script script script script script script script script script script script script script script script script script script script script script script script script script\u2026",
+                    "result": "ok, 450 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 15,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t8",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 7 script script script script script script script script script script script script script script script script script script script script script script script script script script\u2026",
+                    "result": "ok, 450 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 17,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t9",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 8 script script script script script script script script script script script script script script script script script script script script script script script script script script\u2026",
+                    "result": "ok, 450 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 19,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t10",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 9 script script script script script script script script script script script script script script script script script script script script script script script script script script\u2026",
+                    "result": "ok, 450 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 21,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t11",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 10 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 23,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t12",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 11 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 25,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t13",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 12 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 27,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t14",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 13 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 29,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t15",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 14 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 31,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t16",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 15 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 33,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t17",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 16 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 35,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t18",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 17 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 37,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t19",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 18 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 39,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t20",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 19 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 41,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t21",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 20 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 43,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t22",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 21 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 45,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t23",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 22 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 47,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t24",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 23 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 49,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t25",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 24 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 51,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t26",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 25 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 53,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t27",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 26 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 55,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t28",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 27 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 57,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t29",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 28 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 59,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t30",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 29 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 61,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t31",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 30 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 63,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t32",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 31 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 65,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t33",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 32 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 67,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t34",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 33 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 69,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t35",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 34 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 71,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t36",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 35 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 73,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t37",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 36 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 75,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t38",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 37 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 77,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t39",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 38 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 79,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  {
+                    "id": "t40",
+                    "tool": "exec_command",
+                    "input": "{\"cmd\":\"command 39 script script script script script script script script script script script script script script script script script script script script script script script script script scrip\u2026",
+                    "result": "ok, 500 chars (omitted)"
+                  }
+                ]
+              },
+              {
+                "i": 81,
+                "role": "user",
+                "text": "Final goal."
+              }
+            ]
+          },
+          "tokens": 4581,
+          "stage": "inputs<=200"
+        }
+      }
+    },
+    {
+      "recipe": {
+        "count": 80,
+        "text": 0,
+        "input": 30,
+        "notes": true
+      },
+      "budget": 4695,
+      "expected": {
+        "kind": "success",
+        "fitted": {
+          "state": {
+            "context": "A coding assistant conversation is being compacted to free context. `history` is the whole conversation so far, oldest first; tool outputs are replaced by a short `result` note and long texts may be abridged. Each question asks whether one tool call, or the full output of that call, still needs to stay in the history verbatim. Whatever is not kept is deleted permanently, but the assistant can always re-run a tool or re-read a file.",
+            "goal": "Goal: preserve current state.\nOlder plain note 80\nFinal goal.",
+            "history": [
+              {
+                "i": 0,
+                "role": "user",
+                "text": "Goal: preserve current state."
+              },
+              {
+                "i": 1,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t1 exec_command cmd=command 0 script script script script script script scr\u2026 \u2192 ok 450ch"
+                ]
+              },
+              {
+                "i": 3,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t2 exec_command cmd=command 1 script script script script script script scr\u2026 \u2192 ok 450ch"
+                ]
+              },
+              {
+                "i": 5,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t3 exec_command cmd=command 2 script script script script script script scr\u2026 \u2192 ok 450ch"
+                ]
+              },
+              {
+                "i": 7,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t4 exec_command cmd=command 3 script script script script script script scr\u2026 \u2192 ok 450ch"
+                ]
+              },
+              {
+                "i": 9,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t5 exec_command cmd=command 4 script script script script script script scr\u2026 \u2192 ok 450ch"
+                ]
+              },
+              {
+                "i": 11,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t6 exec_command cmd=command 5 script script script script script script scr\u2026 \u2192 ok 450ch"
+                ]
+              },
+              {
+                "i": 13,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t7 exec_command cmd=command 6 script script script script script script scr\u2026 \u2192 ok 450ch"
+                ]
+              },
+              {
+                "i": 15,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t8 exec_command cmd=command 7 script script script script script script scr\u2026 \u2192 ok 450ch"
+                ]
+              },
+              {
+                "i": 17,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t9 exec_command cmd=command 8 script script script script script script scr\u2026 \u2192 ok 450ch"
+                ]
+              },
+              {
+                "i": 19,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t10 exec_command cmd=command 9 script script script script script script scr\u2026 \u2192 ok 450ch"
+                ]
+              },
+              {
+                "i": 21,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t11 exec_command cmd=command 10 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 23,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t12 exec_command cmd=command 11 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 25,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t13 exec_command cmd=command 12 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 27,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t14 exec_command cmd=command 13 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 29,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t15 exec_command cmd=command 14 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 31,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t16 exec_command cmd=command 15 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 33,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t17 exec_command cmd=command 16 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 35,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t18 exec_command cmd=command 17 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 37,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t19 exec_command cmd=command 18 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 39,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t20 exec_command cmd=command 19 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 41,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t21 exec_command cmd=command 20 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 43,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t22 exec_command cmd=command 21 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 45,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t23 exec_command cmd=command 22 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 47,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t24 exec_command cmd=command 23 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 49,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t25 exec_command cmd=command 24 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 51,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t26 exec_command cmd=command 25 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 53,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t27 exec_command cmd=command 26 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 55,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t28 exec_command cmd=command 27 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 57,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t29 exec_command cmd=command 28 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 59,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t30 exec_command cmd=command 29 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 61,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t31 exec_command cmd=command 30 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 63,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t32 exec_command cmd=command 31 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 65,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t33 exec_command cmd=command 32 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 67,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t34 exec_command cmd=command 33 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 69,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t35 exec_command cmd=command 34 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 71,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t36 exec_command cmd=command 35 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 73,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t37 exec_command cmd=command 36 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 75,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t38 exec_command cmd=command 37 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 77,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t39 exec_command cmd=command 38 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 79,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t40 exec_command cmd=command 39 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 81,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t41 exec_command cmd=command 40 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 83,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t42 exec_command cmd=command 41 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 85,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t43 exec_command cmd=command 42 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 87,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t44 exec_command cmd=command 43 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 89,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t45 exec_command cmd=command 44 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 91,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t46 exec_command cmd=command 45 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 93,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t47 exec_command cmd=command 46 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 95,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t48 exec_command cmd=command 47 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 97,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t49 exec_command cmd=command 48 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 99,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t50 exec_command cmd=command 49 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 101,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t51 exec_command cmd=command 50 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 103,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t52 exec_command cmd=command 51 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 105,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t53 exec_command cmd=command 52 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 107,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t54 exec_command cmd=command 53 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 109,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t55 exec_command cmd=command 54 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 111,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t56 exec_command cmd=command 55 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 113,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t57 exec_command cmd=command 56 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 115,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t58 exec_command cmd=command 57 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 117,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t59 exec_command cmd=command 58 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 119,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t60 exec_command cmd=command 59 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 121,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t61 exec_command cmd=command 60 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 123,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t62 exec_command cmd=command 61 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 125,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t63 exec_command cmd=command 62 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 127,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t64 exec_command cmd=command 63 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 129,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t65 exec_command cmd=command 64 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 131,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t66 exec_command cmd=command 65 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 133,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t67 exec_command cmd=command 66 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 135,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t68 exec_command cmd=command 67 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 137,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t69 exec_command cmd=command 68 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 139,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t70 exec_command cmd=command 69 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 141,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t71 exec_command cmd=command 70 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 143,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t72 exec_command cmd=command 71 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 145,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t73 exec_command cmd=command 72 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 147,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t74 exec_command cmd=command 73 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 149,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t75 exec_command cmd=command 74 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 151,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t76 exec_command cmd=command 75 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 153,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t77 exec_command cmd=command 76 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 155,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t78 exec_command cmd=command 77 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 157,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t79 exec_command cmd=command 78 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 160,
+                "role": "assistant",
+                "text": "",
+                "tool_calls": [
+                  "t80 exec_command cmd=command 79 script script script script script script sc\u2026 \u2192 ok 500ch"
+                ]
+              },
+              {
+                "i": 162,
+                "role": "user",
+                "text": "Final goal."
+              }
+            ]
+          },
+          "tokens": 4666,
+          "stage": "old messages left out"
+        }
+      }
+    }
+  ],
+  "source_ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/6001f00d-8158-4330-bf5d-96c7f53b6c95",
+  "source_sha256": {
+    "lib/jev_compaction/state.ts": "a36b5521525bd195e58a1edba4fef2198accc525cc34050a41d07c3b839c9a10"
+  }
+}

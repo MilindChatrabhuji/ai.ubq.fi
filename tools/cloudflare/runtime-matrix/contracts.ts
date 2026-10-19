@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { captureUnexpectedStatus, registerFixtureResponse } from "./failure-capture.ts";
 
 export type MatrixScenario = "direct" | "codex" | "claude" | "paid";
 export type MatrixProvider = "codex" | "claude" | "surplus" | "openlux" | "lithos" | "openrouter" | "deepseek";
@@ -25,6 +26,7 @@ export function object(value: unknown): Record<string, unknown> {
 }
 
 export async function responseObject(response: Response, status = 200): Promise<Record<string, unknown>> {
+  await captureUnexpectedStatus(response, status);
   assert.equal(response.status, status, "Unexpected matrix response status; raw credential-bearing bodies are not logged");
   return object(await response.json());
 }
@@ -36,7 +38,7 @@ export async function selectProviders(context: MatrixContext, providerIds: strin
 }
 
 export async function post(context: MatrixContext, path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
-  return context.post(path, body, context.clientToken ?? "fixture-access", signal);
+  return registerFixtureResponse(await context.post(path, body, context.clientToken ?? "fixture-access", signal), body);
 }
 
 export async function createClient(context: MatrixContext, paid = false): Promise<{ token: string; id: string }> {

@@ -8,14 +8,11 @@ use gateway_core::{
 };
 use gateway_providers::{ClientSurface, ProviderEvent, StreamDecoder, decode_response};
 use gateway_routing_runtime::{
-    AttemptFailure, AttemptUsage, FailureOrigin, PreparedAttempt, RefusalDecision, RoutingInput,
-    RoutingSession, TransportState,
+    AttemptFailure, FailureOrigin, PreparedAttempt, RefusalDecision, RoutingInput, RoutingSession,
+    TransportState,
 };
-use gateway_schema::{
-    content,
-    request::{self},
-};
-use serde_json::{Value, json};
+use gateway_schema::source_request::{SourceRequestDocument, parse_http_body};
+use serde_json::json;
 use worker::{Context, Method, Request, Response, ResponseBody};
 
 use crate::{
@@ -23,16 +20,16 @@ use crate::{
     catalog::CatalogState,
     host::PlatformHost,
     host::{PlatformClock, PlatformTokens},
+    inference_lifecycle::{Lifecycle, Session, Usage, finish_hook},
     routing_host,
     storage::now_ms,
     transport::{
         body,
-        outbound::{DispatchAttempt, PinnedDestination, send_http},
-        stream::{FinishHook, ObservationHandle, ObservedStream},
+        outbound::{DispatchAttempt, PinnedDestination, send_constructed, send_http},
+        stream::{ObservationHandle, ObservedStream},
     },
 };
 
-type Usage = Rc<RefCell<Option<Value>>>;
 const ATTEMPT_DEADLINE_MS: i32 = 1_800_000;
 
 pub struct RequestResources {
@@ -42,6 +39,7 @@ pub struct RequestResources {
 
 async fn dispatch_attempts(
     session: Rc<Session>,
+    routing: routing_host::Host,
     cancellation: Rc<crate::transport::outbound::Cancellation>,
     capture: Rc<crate::inference_capture::Capture>,
 ) -> Result<(Response, PreparedAttempt), gateway_routing_runtime::RoutingError> {
@@ -64,11 +62,10 @@ async fn dispatch_attempts(
                 (attempt, None, None)
             };
         let continuing = continuation.is_some();
-        let target = PinnedDestination::new(&attempt.request.url)?;
+        let target = PinnedDestination::new(attempt.request.url())?;
         let wire = match retained_wire {
             Some(wire) => wire,
-            None => serde_json::to_vec(&attempt.request.body)
-                .map_err(|_| invalid("Request could not be encoded."))?,
+            None => attempt.request.body().as_bytes().to_vec(),
         };
         let gate_session = session.clone();
         let gate_attempt = attempt.clone();
@@ -76,32 +73,52 @@ async fn dispatch_attempts(
         let gate_capture = capture.clone();
         let passive_trace = Rc::new(RefCell::new(None));
         let gate_trace = passive_trace.clone();
-        let result = send_http(
-            &target,
-            Method::Post,
-            &attempt.request.headers,
-            &wire,
-            &cancellation,
-            || async move {
-                if let Some(continuation) = continuation {
-                    gate_session
-                        .before_workspace_dispatch(continuation)
-                        .await
-                        .map_err(|error| *error.error)?;
-                } else {
-                    gate_session
-                        .before_dispatch(&gate_attempt)
-                        .await
-                        .map_err(|error| *error.error)?;
-                }
-                // No await follows this real dispatch gate before the actual fetch.
-                if !gate_cancel.signal().aborted() {
-                    *gate_trace.borrow_mut() = gate_capture.start(gate_attempt.request.provider);
-                }
-                Ok(())
-            },
-        )
-        .await;
+        // Claude actual body exists before any same-binding material/host constructor.
+        let physical = match &attempt.request {
+            gateway_routing_runtime::PreparedWireRequest::Claude(_) => {
+                Some(routing.physical_claude(&attempt)?)
+            }
+            gateway_routing_runtime::PreparedWireRequest::Ready(_) => None,
+        };
+        let before_dispatch = || async move {
+            if let Some(continuation) = continuation {
+                gate_session
+                    .before_workspace_dispatch(continuation)
+                    .await
+                    .map_err(|error| *error.error)?;
+            } else {
+                gate_session
+                    .before_dispatch(&gate_attempt)
+                    .await
+                    .map_err(|error| *error.error)?;
+            }
+            // No await follows this real dispatch gate before the actual fetch.
+            if !gate_cancel.signal().aborted() {
+                *gate_trace.borrow_mut() = gate_capture.start(gate_attempt.request.provider());
+            }
+            Ok(())
+        };
+        let result = match &attempt.request {
+            gateway_routing_runtime::PreparedWireRequest::Ready(request) => {
+                send_http(
+                    &target,
+                    Method::Post,
+                    &request.headers,
+                    &wire,
+                    &cancellation,
+                    before_dispatch,
+                )
+                .await
+            }
+            gateway_routing_runtime::PreparedWireRequest::Claude(_) => {
+                send_constructed(
+                    physical.ok_or_else(crate::inference_local_lifecycle::wrapper_error)?,
+                    &cancellation,
+                    before_dispatch,
+                )
+                .await
+            }
+        };
         let trace = passive_trace.borrow_mut().take();
         let (mut response, observed_at_ms) = match result {
             Ok(response) => {
@@ -185,7 +202,7 @@ async fn dispatch_attempts(
                 gateway_routing_runtime::ResponseHead {
                     status,
                     headers: headers.clone(),
-                    provider_request_id: correlation(attempt.request.provider, &headers)
+                    provider_request_id: correlation(attempt.request.provider(), &headers)
                         .map(str::to_owned),
                     observed_at_ms,
                 },
@@ -202,7 +219,7 @@ async fn dispatch_attempts(
                 .await?;
             return Ok((response, attempt));
         }
-        let (capture, evidence) = if attempt.request.provider == UpstreamProvider::ClaudeCode {
+        let (capture, evidence) = if attempt.request.provider() == UpstreamProvider::ClaudeCode {
             let captured =
                 crate::transport::claude_body::capture(&mut response, &cancellation).await;
             (
@@ -213,7 +230,7 @@ async fn dispatch_attempts(
                 )?,
             )
         } else {
-            let capture = match (attempt.request.provider, status) {
+            let capture = match (attempt.request.provider(), status) {
                 (UpstreamProvider::ChatgptCodex, 400) => {
                     body::refusal_probe(&mut response, &cancellation, 250).await
                 }
@@ -271,50 +288,6 @@ async fn dispatch_attempts(
     }
 }
 
-type Session =
-    RoutingSession<RemoteAuthorityStore, PlatformTokens, PlatformClock, routing_host::Host>;
-
-struct Lifecycle {
-    session: Rc<Session>,
-    attempt: PreparedAttempt,
-    provider_request_id: Option<String>,
-    status: u16,
-}
-
-impl Lifecycle {
-    async fn observe_terminal(
-        &self,
-        observation: gateway_core::lifecycle::TransportObservation,
-        usage: Option<Value>,
-    ) -> Result<(), GatewayError> {
-        self.session
-            .observe_terminal(
-                &self.attempt,
-                observation,
-                AttemptUsage {
-                    usage,
-                    provider_request_id: self.provider_request_id.clone(),
-                    status: Some(self.status),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|error| *error.error)
-    }
-    async fn finish(
-        &self,
-        observation: gateway_core::lifecycle::TransportObservation,
-        usage: Option<Value>,
-    ) -> Result<(), GatewayError> {
-        self.observe_terminal(observation, usage).await?;
-        self.session
-            .finish(observation)
-            .await
-            .map_err(|error| *error.error)?;
-        Ok(())
-    }
-}
-
 pub async fn run(
     mut request: Request,
     resources: RequestResources,
@@ -324,13 +297,11 @@ pub async fn run(
     host: &PlatformHost,
     request_id: RequestId,
 ) -> Result<Response, GatewayError> {
-    let RequestResources { context, permit } = resources;
+    let RequestResources {
+        context,
+        mut permit,
+    } = resources;
     let responses = crate::normalized_path(&request.path()) == "/v1/responses";
-    let surface = if responses {
-        ClientSurface::Responses
-    } else {
-        ClientSurface::Chat
-    };
     let route = if responses {
         "responses"
     } else {
@@ -352,6 +323,16 @@ pub async fn run(
             })
         })
         .unwrap_or_else(|| "0.100.0".into());
+    let local_compaction = responses
+        && crate::host::setting(&host.env, "JEV_COMPACTION_DISABLED").as_deref() != Some("1")
+        && gateway_compaction::is_responses_compaction(
+            request
+                .headers()
+                .get("x-codex-turn-metadata")
+                .ok()
+                .flatten()
+                .as_deref(),
+        );
     let capture = crate::inference_capture::Capture::new(
         request,
         &bytes,
@@ -360,36 +341,12 @@ pub async fn run(
         context.clone(),
     );
     let result = async {
-        let mut raw = request::parse_json_body(&bytes)?;
-        let default = catalog
-            .runtime
-            .as_ref()
-            .and_then(|value| value.get("default_model"))
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .or_else(|| {
-                catalog
-                    .input
-                    .snapshot
-                    .as_ref()
-                    .and_then(|snapshot| snapshot.default_model())
-            });
-        let model = request::resolve_model(raw.get("model"), default.as_deref())?;
-        raw["model"] = json!(model);
-        let client_stream = request::parse_stream(raw.get("stream"))?;
-        if responses {
-            raw["input"] = json!(content::normalize_responses_input(raw.get("input"))?);
-            request::parse_instructions(raw.get("instructions"))?;
-            gateway_schema::reasoning::parse_reasoning(raw.get("reasoning"))?;
-        } else {
-            content::normalize_chat_messages(raw.get("messages").unwrap_or(&Value::Null))?;
-            request::parse_chat_stream_options(raw.get("stream_options"))?;
-            request::parse_max_completion_tokens(raw.get("max_completion_tokens"))?;
-            gateway_schema::reasoning::parse_effort(
-                raw.get("reasoning_effort"),
-                "reasoning_effort",
-            )?;
-        }
+        let document = match parse_http_body(&bytes).and_then(SourceRequestDocument::new) {
+            Ok(document) => document,
+            Err(error) => {
+                return crate::inference_source::error_response(error.into(), &capture).await;
+            }
+        };
         let original = gateway_core::identity::RequestContext {
             request_id,
             principal: gateway_core::identity::PrincipalId(crate::lifecycle::principal_id(
@@ -404,79 +361,132 @@ pub async fn run(
             route: route.to_owned(),
             started_at_ms: now_ms()?,
         };
-        let session = Rc::new(
-            RoutingSession::begin(
-                RoutingInput {
-                    context: original.clone(),
-                    principal: principal.clone(),
-                    raw,
-                    surface,
-                    catalog: catalog.input,
-                    runtime: catalog.runtime,
-                    client_version,
-                    native_session_id: None,
-                    retry_prohibited: false,
-                },
+        let metadata = gateway_routing_runtime::local_work::LocalRequestMetadata {
+            context: original.clone(),
+            principal: principal.clone(),
+            catalog: catalog.input,
+            runtime: catalog.runtime,
+            client_version,
+            native_session_id: None,
+            retry_prohibited: false,
+        };
+        // This clone shares the original Claude Binding owner across local fallback and dispatch.
+        let routing = routing_host::Host::new(
+            store.clone(),
+            host.clone(),
+            context.clone(),
+            original.clone(),
+        );
+        let client_stream = document.stream().unwrap_or(false);
+        let session = if local_compaction {
+            match crate::inference_local::start(
+                metadata,
+                document.clone(),
                 store.clone(),
-                routing_host::Host::new(
-                    store.clone(),
-                    host.clone(),
-                    context.clone(),
-                    original.clone(),
-                ),
+                routing.clone(),
+                context.clone(),
+                capture.clone(),
+                permit.take(),
+            )
+            .await
+            {
+                Ok(started) => {
+                    permit = started.permit;
+                    match started.route {
+                        crate::inference_local::Start::Response(response) => return Ok(response),
+                        crate::inference_local::Start::Ordinary(session) => session,
+                    }
+                }
+                Err(error) => {
+                    return crate::inference_source::error_response(error, &capture).await;
+                }
+            }
+        } else {
+            let input = RoutingInput::from_source_request(
+                metadata,
+                document.for_surface(if responses {
+                    gateway_schema::request::RequestSurface::Responses
+                } else {
+                    gateway_schema::request::RequestSurface::ChatCompletions
+                }),
+            );
+            match RoutingSession::begin(
+                input,
+                store.clone(),
+                routing.clone(),
                 PlatformClock,
                 PlatformTokens,
             )
             .await
-            .map_err(|error| *error.error)?,
-        );
-        let deadline = host.cancellation.set_timeout_ms(ATTEMPT_DEADLINE_MS)?;
-        let (mut upstream, attempt) =
-            match dispatch_attempts(session.clone(), host.cancellation.clone(), capture.clone())
-                .await
             {
-                Ok(dispatched) => dispatched,
+                Ok(session) => Rc::new(session),
                 Err(error) => {
-                    session
-                        .finish(Default::default())
-                        .await
-                        .map_err(|error| *error.error)?;
-                    if let Some(body) = error.source_body {
-                        let mut response = Response::from_bytes(body.as_bytes().to_vec())
-                            .map_err(|_| invalid("The routing refusal could not be rendered."))?
-                            .with_status(error.error.status);
-                        response
-                            .headers_mut()
-                            .set("content-type", "application/json")
-                            .map_err(|_| invalid("Invalid routing refusal header."))?;
-                        response
-                            .headers_mut()
-                            .set("cache-control", "no-store")
-                            .map_err(|_| invalid("Invalid routing refusal header."))?;
-                        capture.immediate(error.error.status, body.as_bytes()).await;
-                        for (name, value) in error.headers {
-                            response
-                                .headers_mut()
-                                .set(&name, &value)
-                                .map_err(|_| invalid("Invalid routing refusal header."))?;
-                        }
-                        return Ok(response);
-                    }
-                    return Err(*error.error);
+                    return crate::inference_source::error_response(error, &capture).await;
                 }
-            };
+            }
+        };
+        let currentness = match crate::inference_currentness::CurrentnessGuard::start(
+            session.clone(),
+            host.cancellation.clone(),
+            context.clone(),
+        )
+        .await
+        {
+            Ok(guard) => guard,
+            Err(error) => {
+                session
+                    .finish(Default::default())
+                    .await
+                    .map_err(|error| *error.error)?;
+                return crate::inference_source::error_response(error, &capture).await;
+            }
+        };
+        capture
+            .begin(
+                &original,
+                session.selected_model(),
+                document.original_source(),
+                client_stream,
+            )
+            .await;
+        let deadline = host.cancellation.set_timeout_ms(ATTEMPT_DEADLINE_MS)?;
+        let (mut upstream, attempt) = match dispatch_attempts(
+            session.clone(),
+            routing,
+            host.cancellation.clone(),
+            capture.clone(),
+        )
+        .await
+        {
+            Ok(dispatched) => dispatched,
+            Err(error) => {
+                session
+                    .finish(Default::default())
+                    .await
+                    .map_err(|error| *error.error)?;
+                return crate::inference_source::error_response(error, &capture).await;
+            }
+        };
         let status = upstream.status_code();
-        let provider = attempt.request.decode.provider;
+        let provider = attempt.request.decode().provider;
         let prepared = attempt.request.clone();
         let headers = upstream
             .headers()
             .entries()
             .collect::<gateway_providers::Headers>();
+        capture.correlate(correlation(provider, &headers));
+        let pricing = crate::inference_source::pricing_metadata(
+            session.surplus_billing(),
+            prepared.url().ends_with("/messages"),
+        )?;
         let lifecycle = Rc::new(Lifecycle {
             session,
+            currentness,
             attempt,
             provider_request_id: correlation(provider, &headers).map(str::to_owned),
             status,
+            store: store.clone(),
+            pricing,
         });
         let event_stream = headers.iter().any(|(name, value)| {
             name.eq_ignore_ascii_case("content-type") && value.contains("text/event-stream")
@@ -509,7 +519,7 @@ pub async fn run(
                 .into_parts();
             let mut response = builder.body(raw_body);
             provider_correlation(&mut response, provider, &headers)?;
-            apply_warnings(&mut response, &prepared.warnings)?;
+            apply_warnings(&mut response, prepared.warnings())?;
             return Ok(response);
         }
         if client_stream && event_stream && status < 400 {
@@ -519,8 +529,8 @@ pub async fn run(
                 .map_err(|_| invalid("Upstream stream is unavailable."))?;
             let relay = Relay {
                 source,
-                plan: prepared.decode.clone(),
-                decoder: StreamDecoder::new(prepared.decode),
+                plan: prepared.decode().clone(),
+                decoder: StreamDecoder::new(prepared.decode().clone()),
                 queue: VecDeque::new(),
                 done: false,
                 observation: observation.clone(),
@@ -596,9 +606,8 @@ pub async fn run(
                                 }
                                 for event in events {
                                     state.next_sequence = event
-                                        .data
-                                        .get("sequence_number")
-                                        .and_then(Value::as_u64)
+                                        .field("sequence_number")
+                                        .and_then(|value| value.deserialize::<u64>().ok())
                                         .map_or(state.next_sequence + 1, |number| number + 1);
                                     observe_event(&state.observation, &event);
                                     state.queue.push_back(event.encode_sse().into_bytes());
@@ -679,7 +688,7 @@ pub async fn run(
                 )
                 .map_err(|_| invalid("Invalid response header."))?;
             provider_correlation(&mut response, provider, &headers)?;
-            apply_warnings(&mut response, &prepared.warnings)?;
+            apply_warnings(&mut response, prepared.warnings())?;
             return Ok(response);
         }
         let bytes = match body::response_bytes(
@@ -695,7 +704,7 @@ pub async fn run(
                 return Err(error);
             }
         };
-        let decoded = match decode_response(&prepared.decode, status, &headers, &bytes) {
+        let decoded = match decode_response(prepared.decode(), status, &headers, &bytes) {
             Ok(decoded) => decoded,
             Err(error) => {
                 lifecycle.finish(Default::default(), None).await?;
@@ -721,8 +730,7 @@ pub async fn run(
         } else if let Some(raw) = decoded.raw_body {
             raw
         } else {
-            serde_json::to_vec(&decoded.body)
-                .map_err(|_| invalid("Upstream response cannot be encoded."))?
+            decoded.body.as_bytes().to_vec()
         };
         capture.configure(
             decoded.status,
@@ -750,7 +758,7 @@ pub async fn run(
                 .map_err(|_| invalid("Invalid response header."))?;
         }
         provider_correlation(&mut response, provider, &headers)?;
-        apply_warnings(&mut response, &prepared.warnings)?;
+        apply_warnings(&mut response, prepared.warnings())?;
         Ok(response)
     }
     .await;
@@ -821,52 +829,9 @@ impl Relay {
 }
 
 fn observe_event(observation: &ObservationHandle, event: &ProviderEvent) {
-    let terminal = match event.data.get("type").and_then(Value::as_str) {
-        Some("response.completed") => Some(SemanticTerminal::Completed),
-        Some("response.incomplete") => Some(SemanticTerminal::Incomplete),
-        Some("response.failed") => Some(SemanticTerminal::Failed),
-        Some("error") => Some(SemanticTerminal::Error),
-        _ if event.data.get("error").is_some() => Some(SemanticTerminal::Error),
-        _ => event
-            .data
-            .get("choices")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .find_map(
-                |choice| match choice.get("finish_reason").and_then(Value::as_str) {
-                    Some("stop" | "tool_calls" | "function_call") => {
-                        Some(SemanticTerminal::Completed)
-                    }
-                    Some("length" | "content_filter") => Some(SemanticTerminal::Incomplete),
-                    _ => None,
-                },
-            ),
-    };
-    if let Some(terminal) = terminal {
+    if let Some(terminal) = event.terminal() {
         observation.semantic_terminal(terminal);
     }
-}
-
-fn finish_hook(
-    lifecycle: Rc<Lifecycle>,
-    usage: Usage,
-    permit: Option<gateway_admission::Permit>,
-    capture: Rc<crate::inference_capture::Capture>,
-) -> FinishHook {
-    Box::new(move |observation| {
-        Box::pin(async move {
-            let usage = usage.borrow().clone();
-            if let Err(error) = lifecycle.finish(observation, usage).await {
-                worker::console_error!(
-                    "Durable request settlement remains pending: {}",
-                    error.envelope.error.message
-                );
-            }
-            capture.finish(observation).await;
-            drop(permit);
-        })
-    })
 }
 
 fn copy_headers(
@@ -894,10 +859,7 @@ fn copy_headers(
     Ok(())
 }
 
-fn correlation<'a>(
-    provider: UpstreamProvider,
-    headers: &'a gateway_providers::Headers,
-) -> Option<&'a str> {
+fn correlation(provider: UpstreamProvider, headers: &gateway_providers::Headers) -> Option<&str> {
     let names: &[&str] = if provider == UpstreamProvider::Deepseek {
         &["x-request-id", "x-ds-request-id", "x-deepseek-request-id"]
     } else if provider == UpstreamProvider::Cerebras {

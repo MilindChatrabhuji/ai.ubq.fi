@@ -576,7 +576,7 @@ async fn observed<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     key: &RecordKey,
 ) -> Result<Option<String>, GatewayError> {
-    let _: Option<Value> = tx.read(key).await?;
+    tx.observe_revision(key).await?;
     Ok(tx.revision(key))
 }
 fn digest(value: &impl Serialize) -> Result<String, GatewayError> {

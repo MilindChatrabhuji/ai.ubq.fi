@@ -1,8 +1,10 @@
-use super::{Audit, api_id, nullable_safe, nullable_text, positive, reference, safe, under};
+use super::{Audit, api_id, reference, source_fields as source, under};
 use crate::migration::ObservedRow;
-use crate::text;
-use gateway_core::GatewayError;
-use serde_json::Value;
+use gateway_core::{
+    GatewayError, js_string::JsString16, source_control::decode_source_control_record,
+    source_json::SourceJson,
+};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 fn hash(v: Option<&Value>) -> bool {
@@ -12,61 +14,67 @@ fn hash(v: Option<&Value>) -> bool {
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
     })
 }
-fn paid_policy(v: &Value, key: bool) -> bool {
-    if !v
-        .get("paid_fallback_enabled")
-        .is_some_and(Value::is_boolean)
-        || !(v["paid_fallback_limit_microcredits"] == -1
-            || safe(v.get("paid_fallback_limit_microcredits")))
+fn paid_policy(v: &SourceJson, key: bool) -> bool {
+    if !source::finite(v, "paid_fallback_enabled").is_some_and(|value| value.is_boolean())
+        || !(source::equals(v, "paid_fallback_limit_microcredits", &json!(-1))
+            || source::safe(v, "paid_fallback_limit_microcredits"))
         || ![
             "paid_fallback_spent_microcredits",
             "paid_fallback_reserved_microcredits",
         ]
         .iter()
-        .all(|f| safe(v.get(f)))
-        || !nullable_text(v.get("paid_fallback_reservation_request_id"), false)
+        .all(|f| source::safe(v, f))
+        || !source::nullable_string(v, "paid_fallback_reservation_request_id", false)
     {
         return false;
     }
-    let enabled = v["paid_fallback_enabled"] == true;
+    let enabled = source::equals(v, "paid_fallback_enabled", &json!(true));
     if enabled
-        && v["paid_fallback_limit_microcredits"] != -1
-        && !positive(v.get("paid_fallback_limit_microcredits"))
+        && !source::equals(v, "paid_fallback_limit_microcredits", &json!(-1))
+        && !source::positive(v, "paid_fallback_limit_microcredits")
     {
         return false;
     }
     if !key {
         return true;
     }
-    let models = v["paid_fallback_model_ids"].as_array();
-    if models.is_none_or(|models| {
-        models
-            .iter()
-            .any(|m| m.as_str().is_none_or(|s| s.trim().is_empty()))
-    }) || !safe(v.get("paid_fallback_quota_per_credit"))
-        || !nullable_safe(v.get("paid_fallback_pricing_checked_at_ms"), true)
+    let models =
+        source::member(v, "paid_fallback_model_ids").and_then(|value| value.array_items().ok());
+    if models.as_ref().is_none_or(|models| {
+        models.iter().any(|m| {
+            m.deserialize::<JsString16>()
+                .ok()
+                .is_none_or(|s| s.sanitize_js_whitespace_prefix(usize::MAX).is_none())
+        })
+    }) || !source::safe(v, "paid_fallback_quota_per_credit")
+        || !source::nullable_safe(v, "paid_fallback_pricing_checked_at_ms", true)
     {
         return false;
     }
     !enabled
         || (models.is_some_and(|m| !m.is_empty())
-            && positive(v.get("paid_fallback_quota_per_credit"))
-            && positive(v.get("paid_fallback_pricing_checked_at_ms")))
+            && source::positive(v, "paid_fallback_quota_per_credit")
+            && source::positive(v, "paid_fallback_pricing_checked_at_ms"))
 }
 pub fn valid_key_policy(v: &Value, key: bool) -> bool {
+    SourceJson::from_serializable(v).is_ok_and(|source| valid_source_key_policy(&source, key))
+}
+/// Source-family validation only; no policy/credential/authority is reconstructed.
+pub fn valid_source_key_policy(v: &SourceJson, key: bool) -> bool {
     if !paid_policy(v, key)
-        || !api_id(v.get("id"))
-        || !(v["expires_at_ms"] == -1 || safe(v.get("expires_at_ms")))
-        || !nullable_safe(v.get("revoked_at_ms"), false)
-        || !(v["usage_limit_requests"] == -1 || safe(v.get("usage_limit_requests")))
-        || !safe(v.get("usage_requests"))
-        || !positive(v.get("usage_reset_at_ms"))
-        || !positive(v.get("window_ms"))
+        || !api_id(source::finite(v, "id").as_ref())
+        || !(source::equals(v, "expires_at_ms", &json!(-1)) || source::safe(v, "expires_at_ms"))
+        || !source::nullable_safe(v, "revoked_at_ms", false)
+        || !(source::equals(v, "usage_limit_requests", &json!(-1))
+            || source::safe(v, "usage_limit_requests"))
+        || !source::safe(v, "usage_requests")
+        || !source::positive(v, "usage_reset_at_ms")
+        || !source::positive(v, "window_ms")
     {
         return false;
     }
-    !key || (hash(v.get("hash"))
-        && text(v, "prefix").is_some_and(|p| {
+    !key || (hash(source::finite(v, "hash").as_ref())
+        && source::text(v, "prefix").is_some_and(|p| {
             p.len() == 12
                 && p.starts_with("u_")
                 && p[2..]
@@ -74,9 +82,17 @@ pub fn valid_key_policy(v: &Value, key: bool) -> bool {
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         }))
 }
+/// Complete source policy pair plus finite facts needed by the other audits.
+/// Raw model/map units stay in the source documents, not a Value shadow.
+pub struct AuditedKeyPair {
+    pub id: SourceJson,
+    pub hash: SourceJson,
+    pub key_id: String,
+    pub unlimited_paid: bool,
+}
 pub fn inspect_key_pairs(
     rows: &[ObservedRow],
-) -> Result<(Vec<(Value, Value)>, Audit), GatewayError> {
+) -> Result<(Vec<AuditedKeyPair>, Audit), GatewayError> {
     let mut audit = Audit::default();
     let mut hashes = BTreeMap::new();
     let mut refs: BTreeMap<String, usize> = BTreeMap::new();
@@ -87,19 +103,22 @@ pub fn inspect_key_pairs(
     {
         audit.count("api_key_hashes");
         let p = &row.parts;
-        let value = row.value()?;
+        let value = decode_source_control_record(&row.record)?;
         if p.len() != 4 || !hash(p.get(3)) {
-            audit.errors.push(format!(
-                "api key hash entry has an invalid key: {}",
-                reference(p)
-            ));
+            audit.errors.push(
+                format!("api key hash entry has an invalid key: {}", reference(p))
+                    .as_str()
+                    .into(),
+            );
             continue;
         }
         let hash = p[3].as_str().unwrap_or("");
-        if !valid_key_policy(value, false) {
-            audit.errors.push(format!(
-                "api key hash policy has invalid core fields: {hash}"
-            ));
+        if !valid_source_key_policy(&value, false) {
+            audit.errors.push(
+                format!("api key hash policy has invalid core fields: {hash}")
+                    .as_str()
+                    .into(),
+            );
             continue;
         }
         hashes.insert(hash.to_owned(), value.clone());
@@ -110,30 +129,37 @@ pub fn inspect_key_pairs(
     {
         audit.count("api_key_ids");
         let p = &row.parts;
-        let v = row.value()?;
+        let v = decode_source_control_record(&row.record)?;
         if p.len() != 4 || !api_id(p.get(3)) {
-            audit.errors.push(format!(
-                "api key id entry has an invalid key: {}",
-                reference(p)
-            ));
+            audit.errors.push(
+                format!("api key id entry has an invalid key: {}", reference(p))
+                    .as_str()
+                    .into(),
+            );
             continue;
         }
         let id = p[3].as_str().unwrap_or("");
-        if !valid_key_policy(v, true) {
-            audit
-                .errors
-                .push(format!("api key has invalid v2 policy: {id}"));
+        if !valid_source_key_policy(&v, true) {
+            audit.errors.push(
+                format!("api key has invalid v2 policy: {id}")
+                    .as_str()
+                    .into(),
+            );
             continue;
         }
-        if text(v, "id") != Some(id) {
-            audit.errors.push(format!(
-                "api key id key suffix does not match record id: key={id} record={}",
-                text(v, "id").unwrap_or("")
-            ));
+        if source::text(&v, "id").as_deref() != Some(id) {
+            audit.errors.push(
+                format!(
+                    "api key id key suffix does not match record id: key={id} record={}",
+                    source::text(&v, "id").unwrap_or_default()
+                )
+                .as_str()
+                .into(),
+            );
             continue;
         }
-        let hash = text(v, "hash").unwrap_or("");
-        let paired = hashes.get(hash);
+        let hash = source::text(&v, "hash").unwrap_or_default();
+        let paired = hashes.get(&hash);
         let fields = [
             "id",
             "expires_at_ms",
@@ -149,23 +175,34 @@ pub fn inspect_key_pairs(
             "paid_fallback_reserved_microcredits",
             "paid_fallback_reservation_request_id",
         ];
-        if paired.is_none_or(|h| fields.iter().any(|f| v.get(f) != h.get(f))) {
-            audit.errors.push(format!(
-                "api key hash policy is missing or inconsistent: {id}"
-            ));
+        if paired.is_none_or(|h| fields.iter().any(|f| !source::same(&v, h, f))) {
+            audit.errors.push(
+                format!("api key hash policy is missing or inconsistent: {id}")
+                    .as_str()
+                    .into(),
+            );
             continue;
         }
         *refs.entry(hash.to_owned()).or_default() += 1;
-        pairs.push((v.clone(), paired.cloned().unwrap_or(Value::Null)));
+        pairs.push(AuditedKeyPair {
+            key_id: id.to_owned(),
+            unlimited_paid: source::equals(&v, "paid_fallback_limit_microcredits", &json!(-1)),
+            id: v,
+            hash: paired.cloned().expect("validated paired source policy"),
+        });
     }
     for hash in hashes.keys() {
         match refs.get(hash).copied().unwrap_or(0) {
-            0 => audit
-                .errors
-                .push(format!("api key hash policy is orphaned: {hash}")),
-            n if n > 1 => audit.errors.push(format!(
-                "api key hash policy has multiple id records: {hash}"
-            )),
+            0 => audit.errors.push(
+                format!("api key hash policy is orphaned: {hash}")
+                    .as_str()
+                    .into(),
+            ),
+            n if n > 1 => audit.errors.push(
+                format!("api key hash policy has multiple id records: {hash}")
+                    .as_str()
+                    .into(),
+            ),
             _ => {}
         }
     }
@@ -174,7 +211,9 @@ pub fn inspect_key_pairs(
     if ids != hash_count {
         audit.errors.insert(
             0,
-            format!("api key id/hash count mismatch: ids={ids} hashes={hash_count}"),
+            format!("api key id/hash count mismatch: ids={ids} hashes={hash_count}")
+                .as_str()
+                .into(),
         );
     }
     for row in rows.iter().filter(|r| {

@@ -20,7 +20,7 @@ const destinations = new Map([
   ["api.surplusintelligence.ai", { provider: "surplus", paths: ["/v1/responses", "/v1/chat/completions", "/v1/models"] }],
   ["api.openlux.ai", { provider: "openlux", paths: ["/v1/responses", "/v1/messages", "/v1/models", "/api/ratio_config", "/api/status", "/api/log/token"] }],
   ["api.lithosai.cloud", { provider: "lithos", paths: ["/v1/chat/completions", "/v1/models"] }],
-  ["openrouter.ai", { provider: "openrouter", paths: ["/api/v1/responses", "/api/v1/chat/completions", "/api/v1/models"] }],
+  ["openrouter.ai", { provider: "openrouter", paths: ["/api/v1/responses", "/api/v1/chat/completions", "/api/v1/models", "/api/v1/systemone"] }],
   ["api.deepseek.com", { provider: "deepseek", paths: ["/chat/completions"] }],
 ]);
 
@@ -76,7 +76,7 @@ function models(provider) {
           max_tokens: 1024,
           capabilities: {
             thinking: { types: { disabled: { supported: true }, adaptive: { supported: true } } },
-            effort: { supported: true, high: { supported: true } },
+            effort: { supported: true, medium: { supported: true }, high: { supported: true } },
           },
         },
       ],
@@ -100,13 +100,26 @@ function models(provider) {
   };
 }
 
-function completion(provider, body) {
+function replayMessage() {
+  return {
+    role: "assistant",
+    content: "replay answer 😀",
+    reasoning_content: "replay thought é",
+    tool_calls: [
+      { id: "call_context_lookup", type: "function", function: { name: "lookup", arguments: '{"query":"kept😀"}' } },
+      { id: "call_context_patch", type: "function", function: { name: "apply_patch", arguments: '{"input":"*** Begin Patch\\nfixture😀\\n*** End Patch"}' } },
+    ],
+  };
+}
+
+function completion(provider, body, marker) {
+  const replay = marker.startsWith("fixture:matrix:replay:producer-");
   return {
     id: `chatcmpl_matrix_${provider}`,
     object: "chat.completion",
     created: 1_800_000_000,
     model: body.model,
-    choices: [{ index: 0, message: { role: "assistant", content: "matrix answer" }, finish_reason: "stop" }],
+    choices: [{ index: 0, message: replay ? replayMessage() : { role: "assistant", content: "matrix answer" }, finish_reason: replay ? "tool_calls" : "stop" }],
     usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10, ...(provider === "surplus" ? { buyer_cost_micro: 5 } : {}) },
   };
 }
@@ -144,7 +157,24 @@ function anthropic(body) {
   };
 }
 
-function streamParts(provider, body, wire, truncate) {
+function replayChunks(provider, body) {
+  const base = { id: `chatcmpl_matrix_${provider}`, object: "chat.completion.chunk", created: 1_800_000_000, model: body.model };
+  const message = replayMessage();
+  return [
+    part(null, { ...base, choices: [{ index: 0, delta: { role: "assistant", reasoning_content: message.reasoning_content }, finish_reason: null }] }),
+    part(null, { ...base, choices: [{ index: 0, delta: { content: message.content }, finish_reason: null }] }),
+    part(null, { ...base, choices: [{ index: 0, delta: { tool_calls: message.tool_calls.map((call, index) => ({ ...call, index })) }, finish_reason: null }] }),
+    part(null, {
+      ...base,
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
+    }),
+    new TextEncoder().encode("data: [DONE]\n\n"),
+  ];
+}
+
+function streamParts(provider, body, wire, truncate, marker) {
+  if (wire === "chat" && marker.startsWith("fixture:matrix:replay:producer-")) return replayChunks(provider, body);
   if (wire === "anthropic") {
     const message = anthropic(body);
     return [
@@ -199,7 +229,7 @@ function streamParts(provider, body, wire, truncate) {
 }
 
 function streamed(provider, body, wire, marker, context, recordEvent) {
-  const chunks = streamParts(provider, body, wire, marker.endsWith(":truncated"));
+  const chunks = streamParts(provider, body, wire, marker.endsWith(":truncated"), marker);
   let closed = false;
   let timer;
   let finish;
@@ -267,6 +297,72 @@ function quota() {
   );
 }
 
+async function digest(value) {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Fixed M31 decision transport: answers are keyed by actual incoming questions, never a canned summary. */
+async function compactionDecisions(request, body, recordEvent) {
+  if (!isObject(body.state) || !isObject(body.questions)) return null;
+  const marker = JSON.stringify(body.state).match(/fixture:matrix:compaction:[a-z0-9_-]+/u)?.[0];
+  if (!marker) return null;
+  if (!credentialMatches(request, "openrouter", false)) return new Response(null, { status: 401 });
+  const names = Object.keys(body.questions);
+  if (
+    !names.every(
+      (name) => /^(call|result)_t\d+$/u.test(name) && body.questions[name]?.type === "noul" && typeof body.questions[name]?.instructions === "string"
+    )
+  ) {
+    return Response.json({ error: { type: "invalid_request_error", message: "Unexpected controlled compaction question shape" } }, { status: 400 });
+  }
+  await recordEvent({ kind: "matrix_compaction_jev", marker, model: body.model, questions: names, state_fields: Object.keys(body.state) });
+  if (marker.endsWith(":failure")) return Response.json({ error: { type: "server_error", message: "Controlled Jev decision failure" } }, { status: 503 });
+  const answered = marker.endsWith(":partial") ? names.slice(1) : names;
+  return Response.json({ answers: Object.fromEntries(answered.map((name) => [name, { noul: 0.1 }])) });
+}
+
+/** Observe actual synthetic wire bytes, never compute the application's replay or reduction. */
+async function contextObservation(body, marker) {
+  if (marker.startsWith("fixture:matrix:compaction:")) {
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    return {
+      compaction_messages: await Promise.all(
+        messages.map(async (message) => {
+          const text = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
+          return {
+            role: message.role,
+            tool_call_id: message.tool_call_id ?? null,
+            sha256: await digest(text),
+            bytes: new TextEncoder().encode(text).byteLength,
+          };
+        })
+      ),
+    };
+  }
+  if (marker.startsWith("fixture:matrix:replay:")) {
+    const captured = { context_input: body.input ?? null, context_messages: body.messages ?? null };
+    if (JSON.stringify(captured).length > 32_768) throw new Error("Controlled replay capture exceeded its fixed fixture bound");
+    return captured;
+  }
+  if (!marker.startsWith("fixture:matrix:unicode:")) return {};
+  const tool = body.messages?.find((message) => message.role === "tool" && message.tool_call_id === "call_unicode");
+  if (!tool || typeof tool.content !== "string") return { unicode: null };
+  const boundary = tool.content.indexOf("\n[gateway:");
+  const prefix = boundary < 0 ? tool.content : tool.content.slice(0, boundary);
+  return {
+    unicode: {
+      tool_call_id: tool.tool_call_id,
+      bytes: new TextEncoder().encode(tool.content).byteLength,
+      sha256: await digest(tool.content),
+      prefix_sha256: await digest(prefix),
+      marker: boundary < 0 ? null : tool.content.slice(boundary),
+      well_formed: tool.content.isWellFormed(),
+      replacement_character: tool.content.includes("\ufffd"),
+    },
+  };
+}
+
 /** Fixed destination upstream extension, not a standalone application. */
 export async function handleProviderMatrix(request, _env, context, recordEvent) {
   const url = new URL(request.url);
@@ -286,6 +382,7 @@ export async function handleProviderMatrix(request, _env, context, recordEvent) 
   if (request.method !== "POST") return null;
   const body = await request.clone().json();
   if (!isObject(body)) return null;
+  if (provider === "openrouter" && url.pathname === "/api/v1/systemone") return compactionDecisions(request, body, recordEvent);
   const marker = markerIn(body);
   if (!marker) return null;
   if (!credentialMatches(request, provider, false)) return Response.json({ error: { type: "authentication_error" } }, { status: 401 });
@@ -306,9 +403,13 @@ export async function handleProviderMatrix(request, _env, context, recordEvent) 
     anthropic_version: request.headers.get("anthropic-version"),
     workspace: request.headers.get("anthropic-workspace-id"),
     thinking: isObject(body.thinking) ? body.thinking.type : null,
+    ...(await contextObservation(body, marker)),
   });
   if (provider === "claude" && marker.endsWith(":workspace") && !request.headers.has("anthropic-workspace-id")) {
     return Response.json({ error: { type: "invalid_request_error", message: "Request is not scoped to a workspace" } }, { status: 400 });
+  }
+  if (provider === "lithos" && marker === "fixture:matrix:compaction:failure") {
+    return Response.json({ error: { type: "rate_limit_error", message: "Controlled compaction fallback rung" } }, { status: 429 });
   }
   if (marker.endsWith(":transient")) return Response.json({ error: { type: "server_error", message: "Controlled matrix transient failure" } }, { status: 503 });
   if (marker.endsWith(":unavailable"))
@@ -331,7 +432,7 @@ export async function handleProviderMatrix(request, _env, context, recordEvent) 
     });
   }
   if (body.stream === true || provider === "codex") return streamed(provider, body, wire, marker, context, recordEvent);
-  return Response.json(wire === "chat" ? completion(provider, body) : wire === "anthropic" ? anthropic(body) : response(provider, body), {
+  return Response.json(wire === "chat" ? completion(provider, body, marker) : wire === "anthropic" ? anthropic(body) : response(provider, body), {
     headers: { "x-request-id": requestId(provider, marker) },
   });
 }

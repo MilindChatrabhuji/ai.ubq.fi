@@ -312,6 +312,41 @@ test("a native-only test dependency stays outside the Worker library but remains
   assert.deepEqual(planRustVerification(root, ["rust/crates/gateway-native/src/lib.rs"], "native").packages, ["gateway-native", "gateway-worker"]);
 });
 
+test("the reviewed native-only NORMAL target edge stays outside WASM but remains a native reverse dependency", () => {
+  const root = fixture();
+  writeFileSync(
+    join(root, "rust/crates/gateway-worker/Cargo.toml"),
+    '[package]\nname="gateway-worker"\n[dependencies]\ngateway-core={path="../gateway-core"}\n[target.\'cfg(all(unix, not(target_arch = "wasm32")))\'.dependencies]\ngateway-native={path="../gateway-native"}\n'
+  );
+  assert.deepEqual(planRustVerification(root, ["rust/crates/gateway-worker/src/lib.rs"], "wasm").packages, ["gateway-worker"]);
+  assert.deepEqual(planRustVerification(root, ["rust/crates/gateway-native/src/lib.rs"], "native").packages, ["gateway-native", "gateway-worker"]);
+});
+
+test("native target BUILD edges remain conservative for host-target semantics", () => {
+  const root = fixture();
+  writeFileSync(
+    join(root, "rust/crates/gateway-worker/Cargo.toml"),
+    '[package]\nname="gateway-worker"\n[target.\'cfg(all(unix, not(target_arch = "wasm32")))\'.build-dependencies]\ngateway-native={path="../gateway-native"}\n'
+  );
+  assert.throws(() => planRustVerification(root, ["rust/crates/gateway-worker/src/lib.rs"], "wasm"), /native-only package/);
+});
+
+test("WASM-applicable and unknown target predicates cannot hide a native Worker dependency", () => {
+  for (const selector of [
+    'cfg(target_arch = "wasm32")',
+    'cfg(feature = "native-only")',
+    'cfg(all(unix, not(target_arch = "wa sm32")))',
+    'cfg(all(unix, not(target_arch = "wasm32"), new_predicate))',
+  ]) {
+    const root = fixture();
+    writeFileSync(
+      join(root, "rust/crates/gateway-worker/Cargo.toml"),
+      `[package]\nname="gateway-worker"\n[target.'${selector}'.dependencies]\ngateway-native={path="../gateway-native"}\n`
+    );
+    assert.throws(() => planRustVerification(root, ["rust/crates/gateway-worker/src/lib.rs"], "wasm"), /native-only package/);
+  }
+});
+
 test("isolated Rust children preserve account HOME and isolate ambient Git configuration", () => {
   const source = {
     HOME: "/home/build-account",

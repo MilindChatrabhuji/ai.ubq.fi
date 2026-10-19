@@ -1,0 +1,454 @@
+{
+  "schema": "native-import-source-vector-descriptors-v1",
+  "synthetic_only": true,
+  "cases": [
+    {
+      "id": "auth-empty",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": ""
+      }
+    },
+    {
+      "id": "auth-invalid-json",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{"
+      }
+    },
+    {
+      "id": "auth-null",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "null"
+      }
+    },
+    {
+      "id": "auth-array",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "[]"
+      }
+    },
+    {
+      "id": "auth-missing-tokens",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{}"
+      }
+    },
+    {
+      "id": "auth-empty-token",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{\"tokens\":{\"access_token\":\"\",\"refresh_token\":\"synthetic-fixture-refresh\",\"account_id\":\"synthetic-fixture-account\"}}"
+      }
+    },
+    {
+      "id": "auth-forbidden-access-only-auth-mode",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{\"tokens\":{\"access_token\":\"synthetic-fixture-access\",\"refresh_token\":\"synthetic-fixture-refresh\",\"account_id\":\"synthetic-fixture-account\"},\"auth_mode\":\"chatgptAuthTokens\"}"
+      }
+    },
+    {
+      "id": "auth-bare",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{\"tokens\":{\"access_token\":\"synthetic-fixture-access\",\"refresh_token\":\"synthetic-fixture-refresh\",\"account_id\":\"synthetic-fixture-account\"}}"
+      }
+    },
+    {
+      "id": "auth-wrapped",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{\"auth\":{\"tokens\":{\"access_token\":\"synthetic-fixture-access\",\"refresh_token\":\"synthetic-fixture-refresh\",\"account_id\":\"synthetic-fixture-account\"}}}"
+      }
+    },
+    {
+      "id": "auth-wrapped-null-overrides-valid-outer",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{\"tokens\":{\"access_token\":\"synthetic-fixture-access\",\"refresh_token\":\"synthetic-fixture-refresh\",\"account_id\":\"synthetic-fixture-account\"},\"auth\":null}"
+      }
+    },
+    {
+      "id": "auth-wrapped-malformed-models",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{\"auth\":{\"tokens\":{\"access_token\":\"synthetic-fixture-access\",\"refresh_token\":\"synthetic-fixture-refresh\",\"account_id\":\"synthetic-fixture-account\"}},\"models\":[]}"
+      }
+    },
+    {
+      "id": "auth-client-version-snake-wins",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{\"auth\":{\"tokens\":{\"access_token\":\"synthetic-fixture-access\",\"refresh_token\":\"synthetic-fixture-refresh\",\"account_id\":\"synthetic-fixture-account\"}},\"models\":{\"client_version\":\"0.126.0\",\"clientVersion\":\"0.127.0\"}}"
+      }
+    },
+    {
+      "id": "auth-client-version-camel",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{\"auth\":{\"tokens\":{\"access_token\":\"synthetic-fixture-access\",\"refresh_token\":\"synthetic-fixture-refresh\",\"account_id\":\"synthetic-fixture-account\"}},\"models\":{\"clientVersion\":\"0.127.0\"}}"
+      }
+    },
+    {
+      "id": "auth-client-version-empty-snake-defaults",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{\"auth\":{\"tokens\":{\"access_token\":\"synthetic-fixture-access\",\"refresh_token\":\"synthetic-fixture-refresh\",\"account_id\":\"synthetic-fixture-account\"}},\"models\":{\"client_version\":\"\",\"clientVersion\":\"0.127.0\"}}"
+      }
+    },
+    {
+      "id": "auth-client-version-nonstring-snake-uses-camel",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{\"auth\":{\"tokens\":{\"access_token\":\"synthetic-fixture-access\",\"refresh_token\":\"synthetic-fixture-refresh\",\"account_id\":\"synthetic-fixture-account\"}},\"models\":{\"client_version\":5,\"clientVersion\":\"0.127.0\"}}"
+      }
+    },
+    {
+      "id": "auth-client-version-invalid-defaults",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{\"auth\":{\"tokens\":{\"access_token\":\"synthetic-fixture-access\",\"refresh_token\":\"synthetic-fixture-refresh\",\"account_id\":\"synthetic-fixture-account\"}},\"models\":{\"client_version\":\"not-semver\",\"clientVersion\":\"0.127.0\"}}"
+      }
+    },
+    {
+      "id": "auth-one-bom",
+      "surface": "auth",
+      "body": {
+        "kind": "hex",
+        "hex": "efbbbf7b22746f6b656e73223a7b226163636573735f746f6b656e223a2273796e7468657469632d666978747572652d616363657373222c22726566726573685f746f6b656e223a2273796e7468657469632d666978747572652d72656672657368222c226163636f756e745f6964223a2273796e7468657469632d666978747572652d6163636f756e74227d7d"
+      }
+    },
+    {
+      "id": "auth-two-bom",
+      "surface": "auth",
+      "body": {
+        "kind": "hex",
+        "hex": "efbbbfefbbbf7b22746f6b656e73223a7b226163636573735f746f6b656e223a2273796e7468657469632d666978747572652d616363657373222c22726566726573685f746f6b656e223a2273796e7468657469632d666978747572652d72656672657368222c226163636f756e745f6964223a2273796e7468657469632d666978747572652d6163636f756e74227d7d"
+      }
+    },
+    {
+      "id": "auth-replacement-decoding",
+      "surface": "auth",
+      "body": {
+        "kind": "hex",
+        "hex": "7b2278223a22ff227d"
+      }
+    },
+    {
+      "id": "auth-length-01",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{}"
+      },
+      "headers": {
+        "content-length": "01"
+      }
+    },
+    {
+      "id": "auth-length--1",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{}"
+      },
+      "headers": {
+        "content-length": "-1"
+      }
+    },
+    {
+      "id": "auth-length-plus1",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{}"
+      },
+      "headers": {
+        "content-length": "+1"
+      }
+    },
+    {
+      "id": "auth-length-1e2",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{}"
+      },
+      "headers": {
+        "content-length": "1e2"
+      }
+    },
+    {
+      "id": "auth-length-9007199254740992",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{}"
+      },
+      "headers": {
+        "content-length": "9007199254740992"
+      }
+    },
+    {
+      "id": "auth-length-invalid",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{}"
+      },
+      "headers": {
+        "content-length": "invalid"
+      }
+    },
+    {
+      "id": "auth-zero-declared-still-reads",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{}"
+      },
+      "headers": {
+        "content-length": "0"
+      }
+    },
+    {
+      "id": "auth-declared-over32m",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{\"tokens\":{\"access_token\":\"synthetic-fixture-access\",\"refresh_token\":\"synthetic-fixture-refresh\",\"account_id\":\"synthetic-fixture-account\"}}"
+      },
+      "headers": {
+        "content-length": "33554433"
+      }
+    },
+    {
+      "id": "auth-exact32m",
+      "surface": "auth",
+      "body": {
+        "kind": "padded",
+        "prefix": "{}",
+        "length": 33554432
+      }
+    },
+    {
+      "id": "auth-actual-over32m",
+      "surface": "auth",
+      "body": {
+        "kind": "padded",
+        "prefix": "{}",
+        "length": 33554433
+      }
+    },
+    {
+      "id": "auth-store-unavailable-before-parse",
+      "surface": "auth",
+      "body": {
+        "kind": "text",
+        "text": "{"
+      },
+      "kv": "unavailable"
+    },
+    {
+      "id": "profile-default",
+      "surface": "profile",
+      "body": {
+        "kind": "text",
+        "text": ""
+      },
+      "query": ""
+    },
+    {
+      "id": "profile-blank-profile",
+      "surface": "profile",
+      "body": {
+        "kind": "text",
+        "text": ""
+      },
+      "query": "?profile=%20"
+    },
+    {
+      "id": "profile-local",
+      "surface": "profile",
+      "body": {
+        "kind": "text",
+        "text": ""
+      },
+      "query": "?profile=local"
+    },
+    {
+      "id": "profile-prod",
+      "surface": "profile",
+      "body": {
+        "kind": "text",
+        "text": ""
+      },
+      "query": "?profile=prod"
+    },
+    {
+      "id": "profile-dry-run-false-is-still-dry",
+      "surface": "profile",
+      "body": {
+        "kind": "text",
+        "text": ""
+      },
+      "query": "?profile=prod&dry_run=false&overwrite=true"
+    },
+    {
+      "id": "profile-write-dry-run-conflict",
+      "surface": "profile",
+      "body": {
+        "kind": "text",
+        "text": ""
+      },
+      "query": "?profile=prod&write=1&dry_run=true"
+    },
+    {
+      "id": "profile-truthy-options",
+      "surface": "profile",
+      "body": {
+        "kind": "text",
+        "text": ""
+      },
+      "query": "?profile=local&include_cache=YES&include_legacy=on&overwrite=yes&write=on"
+    },
+    {
+      "id": "profile-invalid-before-body",
+      "surface": "profile",
+      "body": {
+        "kind": "padded",
+        "prefix": "",
+        "length": 5242881
+      },
+      "query": "?profile=invalid"
+    },
+    {
+      "id": "profile-size-before-write-conflict",
+      "surface": "profile",
+      "body": {
+        "kind": "padded",
+        "prefix": "",
+        "length": 5242881
+      },
+      "query": "?profile=prod&write=1&dry_run=true"
+    },
+    {
+      "id": "profile-declared-over5m-plain",
+      "surface": "profile",
+      "body": {
+        "kind": "text",
+        "text": ""
+      },
+      "headers": {
+        "content-length": "5242881"
+      }
+    },
+    {
+      "id": "profile-declared-over5m-leading-zero",
+      "surface": "profile",
+      "body": {
+        "kind": "text",
+        "text": ""
+      },
+      "headers": {
+        "content-length": "05242881"
+      }
+    },
+    {
+      "id": "profile-declared-over5m-scientific",
+      "surface": "profile",
+      "body": {
+        "kind": "text",
+        "text": ""
+      },
+      "headers": {
+        "content-length": "6e6"
+      }
+    },
+    {
+      "id": "profile-invalid-length-reads-body",
+      "surface": "profile",
+      "body": {
+        "kind": "text",
+        "text": ""
+      },
+      "headers": {
+        "content-length": "invalid"
+      }
+    },
+    {
+      "id": "profile-exact5m",
+      "surface": "profile",
+      "body": {
+        "kind": "padded",
+        "prefix": "",
+        "length": 5242880
+      }
+    },
+    {
+      "id": "profile-actual-over5m",
+      "surface": "profile",
+      "body": {
+        "kind": "padded",
+        "prefix": "",
+        "length": 5242881
+      }
+    },
+    {
+      "id": "profile-reencoded-over5m",
+      "surface": "profile",
+      "body": {
+        "kind": "repeat-byte",
+        "byte": 255,
+        "length": 1747627
+      }
+    },
+    {
+      "id": "profile-partial422-applies-first-row",
+      "surface": "profile",
+      "body": {
+        "kind": "fixture-line",
+        "suffix": "\n{not-json}"
+      },
+      "query": "?profile=prod&write=1&overwrite=true"
+    },
+    {
+      "id": "profile-valid-row-default-dry",
+      "surface": "profile",
+      "body": {
+        "kind": "fixture-line"
+      },
+      "query": "?profile=prod&dry_run=false&overwrite=true"
+    },
+    {
+      "id": "profile-store-unavailable-before-options",
+      "surface": "profile",
+      "body": {
+        "kind": "text",
+        "text": "{"
+      },
+      "query": "?profile=invalid",
+      "kv": "unavailable"
+    }
+  ]
+}

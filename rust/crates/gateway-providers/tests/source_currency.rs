@@ -22,7 +22,7 @@ fn ba5ef_source_projection_vectors_match() {
         let projection =
             chat::project_responses(&case["raw"], "deepseek-flash", false, ChatProfile::Deepseek)
                 .unwrap();
-        let body = &projection.body;
+        let body = scalar(&projection.body);
         let observed = match case["select"].as_str().unwrap() {
             "reasoning" => json!(
                 body["messages"]
@@ -59,7 +59,7 @@ fn prepared_provider_wire_keeps_source_sampling_warnings_and_zero() {
         prepared.warnings,
         vec!["temperature_ignored", "top_p_ignored"]
     );
-    assert!(prepared.body.get("temperature").is_none());
+    assert!(scalar(&prepared.body).get("temperature").is_none());
     let mut disabled = raw;
     disabled["thinking"] = json!({"type":" DISABLED "});
     let prepared = prepare_request(
@@ -69,9 +69,9 @@ fn prepared_provider_wire_keeps_source_sampling_warnings_and_zero() {
         &options(),
     )
     .unwrap();
-    assert_eq!(prepared.body["reasoning_effort"], "none");
-    assert_eq!(prepared.body["temperature"], 0);
-    assert_eq!(prepared.body["top_p"], 0.5);
+    assert_eq!(scalar(&prepared.body)["reasoning_effort"], "none");
+    assert_eq!(scalar(&prepared.body)["temperature"], 0);
+    assert_eq!(scalar(&prepared.body)["top_p"], 0.5);
     assert!(prepared.warnings.is_empty());
     let mut lithos = disabled;
     lithos["model"] = json!("deepseek-ai/DeepSeek-V4.1-Flash");
@@ -83,7 +83,7 @@ fn prepared_provider_wire_keeps_source_sampling_warnings_and_zero() {
         &options(),
     )
     .unwrap();
-    assert_eq!(prepared.body["temperature"], 0);
+    assert_eq!(scalar(&prepared.body)["temperature"], 0);
     assert!(prepared.warnings.is_empty());
 }
 
@@ -91,20 +91,26 @@ fn prepared_provider_wire_keeps_source_sampling_warnings_and_zero() {
 fn lithos_tier_windows_use_same_case_and_trim_identity_as_dispatch() {
     use gateway_providers::policy::{LithosWindows, lithos_ladder};
     assert_eq!(
-        lithos_ladder("  DEEPSEEK-AI/deepseek-v4.1-flash-ULTRA "),
+        lithos_ladder(&"  DEEPSEEK-AI/deepseek-v4.1-flash-ULTRA ".into()),
         vec![
-            "deepseek-ai/DeepSeek-V4.1-Flash-fast",
-            "deepseek-ai/DeepSeek-V4.1-Flash"
+            "deepseek-ai/DeepSeek-V4.1-Flash-fast".into(),
+            "deepseek-ai/DeepSeek-V4.1-Flash".into()
         ]
     );
     let mut windows = LithosWindows::default();
-    windows.refuse(" DEEPSEEK-AI/DeepSeek-V4.1-FLASH-ultra ", 1000, 500);
+    windows.refuse(&" DEEPSEEK-AI/DeepSeek-V4.1-FLASH-ultra ".into(), 1000, 500);
     assert_eq!(
-        windows.select("deepseek-ai/deepseek-v4.1-flash-ultra", 1200),
-        "deepseek-ai/DeepSeek-V4.1-Flash-fast"
+        windows.select(&"deepseek-ai/deepseek-v4.1-flash-ultra".into(), 1200),
+        gateway_core::model::ModelId::from_scalar("deepseek-ai/DeepSeek-V4.1-Flash-fast")
     );
     assert_eq!(
-        windows.select("deepseek-ai/deepseek-v4.1-flash-ultra", 1500),
-        "deepseek-ai/DeepSeek-V4.1-Flash-ultra"
+        windows.select(&"deepseek-ai/deepseek-v4.1-flash-ultra".into(), 1500),
+        gateway_core::model::ModelId::from_scalar("deepseek-ai/DeepSeek-V4.1-Flash-ultra")
     );
+}
+
+fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+    value
+        .deserialize()
+        .expect("This frozen regression fixture has scalar text")
 }

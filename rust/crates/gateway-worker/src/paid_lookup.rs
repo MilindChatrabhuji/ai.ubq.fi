@@ -24,6 +24,40 @@ fn usage(row: TokenLog) -> PaidUsage {
     }
 }
 
+pub(crate) async fn stored_attempt(
+    store: &RemoteAuthorityStore,
+    reservation: &PaidReservation,
+) -> Result<PaidAttempt, GatewayError> {
+    let key =
+        gateway_authority::keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
+    let row = store
+        .read(&key)
+        .await?
+        .ok_or_else(|| unavailable("The paid attempt is unavailable."))?;
+    let attempt = gateway_authority::paid::decode_paid_attempt_record(&key, &row)?;
+    if attempt.v != 3 || attempt.reservation != *reservation {
+        return Err(unavailable(
+            "The billing lookup does not match its admitted attempt.",
+        ));
+    }
+    Ok(attempt)
+}
+
+pub(crate) async fn terminal_usage(
+    store: &RemoteAuthorityStore,
+    reservation: &PaidReservation,
+    usage: Option<&gateway_core::source_usage::UsageTokens>,
+    pricing: Option<&gateway_core::source_json::SourceJson>,
+) -> Result<Option<PaidUsage>, GatewayError> {
+    if reservation.provider != PaidProvider::Surplus {
+        return Ok(None);
+    }
+    let attempt = stored_attempt(store, reservation).await?;
+    Ok(gateway_authority::paid::surplus_usage_from_source(
+        &attempt, usage, pricing,
+    ))
+}
+
 pub async fn lookup(
     store: &RemoteAuthorityStore,
     env: &worker::Env,
@@ -32,20 +66,7 @@ pub async fn lookup(
     if reservation.provider == PaidProvider::Surplus {
         return Ok(None);
     }
-    let row = store
-        .read(&gateway_authority::keys::paid_attempt(
-            &reservation.key_id.0,
-            &reservation.attempt_id.0,
-        ))
-        .await?
-        .ok_or_else(|| unavailable("The paid attempt is unavailable."))?;
-    let attempt: PaidAttempt = serde_json::from_value(row.json_value()?.clone())
-        .map_err(|_| unavailable("The paid attempt is invalid."))?;
-    if attempt.v != 1 || attempt.reservation != *reservation {
-        return Err(unavailable(
-            "The billing lookup does not match its admitted attempt.",
-        ));
-    }
+    let attempt = stored_attempt(store, reservation).await?;
     let LookupPlan::Openlux(mut plan) = plan_lookup(
         reservation.provider,
         attempt.provider_request_id.as_deref(),

@@ -6,14 +6,18 @@ use super::{
 };
 use crate::{
     Authority, TokenSource,
-    routing::{ProbeCircuit, ProbeLease, model_quota_class, read_view},
+    routing::{ProbeCircuit, ProbeLease, model_quota_class, read_pinned_view},
     store::Transaction,
 };
 use gateway_auth::{
     crypto::Secret,
     provider_credentials::{CodexSourcePool, codex_source_pool_key, parse_codex_source_pool},
 };
-use gateway_core::{GatewayError, identity::AccountBinding, state::AuthorityStore};
+use gateway_core::{
+    GatewayError,
+    identity::{AccountBinding, PoolVersionstamp},
+    state::AuthorityStore,
+};
 use serde_json::Value;
 
 pub(super) struct Session {
@@ -94,7 +98,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     ) -> Result<bool, GatewayError> {
         self.record_bound_quota_block(
             &dispatch.binding,
-            model_quota_class(&dispatch.model),
+            model_quota_class(&gateway_core::model::ModelId::from_scalar(&dispatch.model)),
             dispatch.probe.as_ref(),
             block,
             now,
@@ -134,19 +138,59 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     pub(super) async fn cache_session_after_refresh(
         &self,
         session: &Session,
+        publication: &PoolVersionstamp,
         now: i64,
     ) -> Result<Result<Session, Reason>, GatewayError> {
-        let current = self.cache_session(now).await?;
-        if current.ids != session.ids {
+        let mut tx = self.transaction(now)?;
+        let key = codex_source_pool_key();
+        let value: Value = tx.read(&key).await?.ok_or_else(|| {
+            failed("Codex auth pool is unavailable for the prompt-cache scope experiment.")
+        })?;
+        let pool = parse_codex_source_pool(&value)?.ok_or_else(|| {
+            failed("Codex auth pool is unavailable for the prompt-cache scope experiment.")
+        })?;
+        let [first, second] = pool.accounts.as_slice() else {
+            return Ok(Err(Reason::AuthPoolDrift));
+        };
+        let current = Session {
+            revision: tx.revision(&key).ok_or_else(|| {
+                failed("Codex auth pool is unavailable for the prompt-cache scope experiment.")
+            })?,
+            ids: [first.account_id.clone(), second.account_id.clone()],
+            versions: [
+                first.identity().credential_version.0,
+                second.identity().credential_version.0,
+            ],
+        };
+        if current.revision != publication.0
+            || current.ids != session.ids
+            || current.versions[1] != session.versions[1]
+        {
             return Ok(Err(Reason::AuthPoolDrift));
         }
         if current.versions[0] == session.versions[0] {
             return Ok(Err(Reason::RefreshUnchanged));
         }
-        if current.versions[1] != session.versions[1] {
-            return Ok(Err(Reason::AuthPoolDrift));
-        }
         Ok(Ok(current))
+    }
+    /// Source refresh errors become drift only after a strong, valid pool read
+    /// proves that its revision changed. An unreadable/unknown outcome stays failed.
+    pub(super) async fn cache_pool_changed_after_refresh_error(
+        &self,
+        session: &Session,
+        now: i64,
+    ) -> Result<bool, GatewayError> {
+        let mut tx = self.transaction(now)?;
+        let key = codex_source_pool_key();
+        let Some(value) = tx.read::<Value>(&key).await? else {
+            return Ok(false);
+        };
+        if parse_codex_source_pool(&value)?.is_none() {
+            return Ok(false);
+        }
+        Ok(tx
+            .revision(&key)
+            .is_some_and(|revision| revision != session.revision))
     }
     pub(super) async fn cache_dispatch(
         &self,
@@ -178,13 +222,13 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     "Codex auth pool changed during the prompt-cache scope experiment.",
                 ));
             }
-            let mut view = read_view(&mut tx).await?;
+            let mut view = read_pinned_view(&mut tx).await?;
             let current = self.fresh_time(now)?;
             let evaluation = crate::routing::evaluate(
                 &view,
                 index,
-                &target.model,
-                model_quota_class(&target.model),
+                &gateway_core::model::ModelId::from_scalar(&target.model),
+                model_quota_class(&gateway_core::model::ModelId::from_scalar(&target.model)),
                 current,
             );
             if !evaluation.eligible {
@@ -208,7 +252,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     token: self.tokens.next_token()?,
                     generation: row.generation as i64,
                     circuit: ProbeCircuit::Quota,
-                    quota_class: Some(model_quota_class(&target.model)),
+                    quota_class: Some(model_quota_class(
+                        &gateway_core::model::ModelId::from_scalar(&target.model),
+                    )),
                     expires_at_ms: crate::add(current, crate::PROBE_LEASE_MS)?,
                 };
                 row.probe_lease = Some(lease.clone());
@@ -243,7 +289,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         };
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
-            let mut view = read_view(&mut tx).await?;
+            let mut view = read_pinned_view(&mut tx).await?;
             if !view.current_binding(&dispatch.binding) {
                 return Ok(());
             }
@@ -254,7 +300,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             row.probe_lease = None;
             match expected.circuit {
                 ProbeCircuit::Quota => {
-                    let class = model_quota_class(&dispatch.model);
+                    let class = model_quota_class(&gateway_core::model::ModelId::from_scalar(
+                        &dispatch.model,
+                    ));
                     let retained = (row.retained_reset_at_ms, row.reset_identity_stable);
                     let recovering = row.recovery_pending;
                     let block = row.quota_block_for(class);
@@ -305,15 +353,15 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         let campaign_key = record_key("campaign", target);
         let _: Option<Value> = tx.read(&cycle_key).await?;
         let _: Option<Value> = tx.read(&campaign_key).await?;
-        let view = read_view(&mut tx).await?;
+        let view = read_pinned_view(&mut tx).await?;
         let current = self.fresh_time(now)?;
         if view.pool.accounts.len() != 2
             || view.pool.pool_versionstamp.0 != target.auth_pool_versionstamp
             || !crate::routing::evaluate(
                 &view,
                 0,
-                &target.model,
-                model_quota_class(&target.model),
+                &gateway_core::model::ModelId::from_scalar(&target.model),
+                model_quota_class(&gateway_core::model::ModelId::from_scalar(&target.model)),
                 current,
             )
             .eligible

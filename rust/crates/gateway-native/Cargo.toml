@@ -15,6 +15,7 @@ serde_json.workspace = true
 time = { version = "=0.3.44", features = ["parsing", "formatting"] }
 
 [target.'cfg(unix)'.dependencies]
+rustix = { version = "=1.1.5", features = ["net"] }
 getrandom = "=0.4.3"
 tungstenite = { version = "=0.28.0", default-features = false, features = ["handshake"] }
 socket2 = "=0.6.5"

@@ -8,7 +8,8 @@ use crate::{
 use futures_util::lock::Mutex;
 use gateway_authority::{Authority, AuthorityClock, TokenSource, quota::KernelTerminal};
 use gateway_core::{
-    GatewayError, lifecycle::TransportObservation, provider::UpstreamProvider, query::QueryStore,
+    GatewayError, lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
+    query::QueryStore, source_json::SourceJson, source_serialization as source,
 };
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -111,6 +112,7 @@ pub struct AdmissionHandle<S, I, C, H> {
     parent: String,
     lock: Rc<Mutex<()>>,
     input: RoutingInput,
+    source_collator: std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>,
 }
 impl<
     S: QueryStore + Clone,
@@ -139,6 +141,7 @@ impl<
             parent: self.id().into(),
             lock: self.extra_lock.clone(),
             input: self.input.clone(),
+            source_collator: self.source_collator.clone(),
         }
     }
 }
@@ -151,13 +154,14 @@ impl<
 {
     fn authority(&self) -> Authority<S, I> {
         Authority::with_clock(self.store.clone(), self.tokens.clone(), self.clock.clone())
+            .with_source_string_collator(self.source_collator.clone())
     }
     /// Source image child transport is Codex-only. It never obtains a paid
     /// authorization, performs admission again, or settles the outer kernel.
     pub async fn prepare_image_child(
         &self,
         child: &ChildScope,
-        body: serde_json::Value,
+        body: SourceJson,
     ) -> RoutingResult<ImageChildAttempt> {
         let (_, row) = journal::load(&self.store, &self.parent).await?;
         settlement::ensure_active(&row)?;
@@ -171,7 +175,10 @@ impl<
                 journal::unavailable("This scope cannot prepare a Codex image child.").into(),
             );
         }
-        let model = gateway_schema::request::resolve_model(body.get("model"), None)?;
+        let model = ModelId::from_source(gateway_schema::source_request::resolve_model(
+            source::member(&body, "model").as_ref(),
+            None,
+        )?);
         crate::policy::validate_model(&self.input, &model, self.clock.now_ms()?)?;
         for _ in 0..3 {
             if self.host.cancelled() {
@@ -184,20 +191,33 @@ impl<
             let mut account = match selection {
                 gateway_authority::routing::RouteSelection::Eligible(account) => account,
                 gateway_authority::routing::RouteSelection::QuotaBlocked { proof, .. } => {
-                    if proof.full_cohort_exhausted()
-                        && matches!(
-                            self.host.recover_codex(&proof, &model).await?,
-                            CodexRecovery::Reselect
+                    let recovery = if proof.full_cohort_exhausted() {
+                        self.host.recover_codex(&proof, &model).await?
+                    } else {
+                        CodexRecovery::Declined
+                    };
+                    match recovery {
+                        CodexRecovery::Recovered(account) => {
+                            if account.requested_model != model
+                                || account.quota_class != crate::policy::class(&model)
+                                || account.probe_required
+                                || account.probe.is_none()
+                            {
+                                return Err(journal::unavailable("The elected image recovery admission does not match this child.").into());
+                            }
+                            self.authority()
+                                .ensure_admission_current(&account, self.clock.now_ms()?)
+                                .await?;
+                            account
+                        }
+                        CodexRecovery::Reselect => continue,
+                        CodexRecovery::Declined => return Err(GatewayError::new(
+                            429,
+                            "Codex subscriptions have no applicable capacity for this image child.",
+                            Some("codex_quota_blocked"),
                         )
-                    {
-                        continue;
+                        .into()),
                     }
-                    return Err(GatewayError::new(
-                        429,
-                        "Codex subscriptions have no applicable capacity for this image child.",
-                        Some("codex_quota_blocked"),
-                    )
-                    .into());
                 }
                 gateway_authority::routing::RouteSelection::CredentialsInvalid { .. } => {
                     return Err(GatewayError::new(
@@ -236,7 +256,7 @@ impl<
                     codex: Some(account.clone()),
                 })
                 .await?;
-            if !matches!(&credential.fence,CredentialFence::Codex{admission,..}if admission==&account)
+            if !matches!(credential.fence(),CredentialFence::Codex{admission,..}if admission==&account)
             {
                 return Err(journal::unavailable(
                     "Image child credential does not match its admission.",
@@ -244,7 +264,7 @@ impl<
                 .into());
             }
             self.host
-                .ensure_credential_current(&credential.fence, &self.input.principal, &model)
+                .ensure_credential_current(credential.fence(), &self.input.principal, &model)
                 .await?;
             let mut input = self.input.clone();
             input.raw = body.clone();
@@ -258,10 +278,16 @@ impl<
                 &credential,
                 &child.nonce,
             )?;
+            let crate::types::PreparedWireRequest::Ready(request) = request else {
+                return Err(journal::unavailable(
+                    "Image child credential does not match its admission.",
+                )
+                .into());
+            };
             return Ok(ImageChildAttempt {
                 scope: child.clone(),
                 request,
-                credential: credential.fence,
+                credential: credential.into_fence(),
             });
         }
         Err(journal::unavailable("Image child selection did not settle.").into())
@@ -390,12 +416,7 @@ impl<
             .await?
         {
             if current.model_sibling_retries >= 1 {
-                return Err(GatewayError::new(
-                    404,
-                    format!("The model '{model}' is not available for these subscriptions."),
-                    Some("model_not_found"),
-                )
-                .into());
+                return Err(crate::classify::model_unavailable_error(model).into());
             }
             journal::change(
                 &self.store,

@@ -1,5 +1,5 @@
 //! Source request syntax. Provider-specific interpretation remains outside official allowlists.
-use crate::{allowlists::*, prompt_cache::validate_prompt_cache_controls, util::*};
+use crate::util::*;
 use gateway_core::GatewayError;
 use serde_json::{Value, json};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,141 +17,56 @@ pub fn validate_request_fields(
     surface: RequestSurface,
     extensions: &RequestExtensions,
 ) -> Result<(), GatewayError> {
-    if !is_record(body) {
-        return Err(invalid("Invalid JSON body", None));
-    }
-    let allowed = match surface {
-        RequestSurface::ChatCompletions => CHAT_COMPLETIONS_REQUEST_KEYS,
-        RequestSurface::Responses => RESPONSES_REQUEST_KEYS,
-    };
-    for key in js_keys(body) {
-        let extension = (surface == RequestSurface::Responses && key == "client_metadata")
-            || (surface == RequestSurface::ChatCompletions
-                && extensions.deepseek_thinking
-                && key == "thinking")
-            || (extensions.openrouter_cache_control && key == "cache_control");
-        if !allowed.contains(&key.as_str()) && !extension {
-            return Err(invalid(
-                format!("Unrecognized request argument supplied: {key}"),
-                None,
-            ));
-        }
-    }
-    if extensions.openrouter_cache_control && body.get("cache_control").is_some() {
-        validate_cache_control(&body["cache_control"])?;
-    }
-    if surface == RequestSurface::Responses {
-        for field in ["max_output_tokens", "max_tool_calls"] {
-            if let Some(value) = body.get(field).filter(|v| !v.is_null())
-                && positive_integer(Some(value)).is_none()
-            {
-                return Err(invalid(
-                    format!("{field} must be a positive integer"),
-                    Some(field),
-                ));
-            }
-        }
-        if body
-            .get("parallel_tool_calls")
-            .is_some_and(|v| !v.is_boolean())
-        {
-            return Err(invalid(
-                "parallel_tool_calls must be a boolean",
-                Some("parallel_tool_calls"),
-            ));
-        }
-    }
-    validate_prompt_cache_controls(body)?;
-    if surface == RequestSurface::Responses
-        && let Some(metadata) = body.get("client_metadata")
-        && !metadata
-            .as_object()
-            .is_some_and(|m| m.values().all(Value::is_string))
-    {
-        return Err(invalid(
-            "client_metadata must be an object with string values",
-            Some("client_metadata"),
-        ));
-    }
-    Ok(())
+    crate::source_request::validate_request_fields(
+        &gateway_core::source_json::SourceJson::from_serializable(body)?,
+        surface,
+        extensions,
+    )
+    .map_err(crate::source_request::SourceRequestError::into_scalar)
 }
+
 pub fn parse_stream(value: Option<&Value>) -> Result<bool, GatewayError> {
-    match value {
-        None | Some(Value::Bool(false)) => Ok(false),
-        Some(Value::Bool(true)) => Ok(true),
-        _ => Err(invalid("stream must be a boolean", Some("stream"))),
-    }
+    let value = crate::source_request::scalar_value(value)?;
+    crate::source_request::parse_stream(value.as_ref())
+        .map_err(crate::source_request::SourceRequestError::into_scalar)
 }
+
 pub fn parse_chat_stream_options(value: Option<&Value>) -> Result<bool, GatewayError> {
-    let Some(value) = value else { return Ok(false) };
-    let Some(record) = value.as_object() else {
-        return Err(invalid(
-            "stream_options must be an object",
-            Some("stream_options"),
-        ));
-    };
-    if record.get("include_usage").is_some_and(|v| !v.is_boolean()) {
-        return Err(invalid(
-            "stream_options.include_usage must be a boolean",
-            Some("stream_options"),
-        ));
-    }
-    Ok(record.get("include_usage").and_then(Value::as_bool) == Some(true))
+    let value = crate::source_request::scalar_value(value)?;
+    crate::source_request::parse_chat_stream_options(value.as_ref())
+        .map_err(crate::source_request::SourceRequestError::into_scalar)
 }
 pub fn parse_max_completion_tokens(value: Option<&Value>) -> Result<Option<i64>, GatewayError> {
-    match value {
-        None => Ok(None),
-        Some(value) => positive_integer(Some(value)).map(Some).ok_or_else(|| {
-            invalid(
-                "max_completion_tokens must be a positive integer",
-                Some("max_completion_tokens"),
-            )
-        }),
-    }
+    let value = crate::source_request::scalar_value(value)?;
+    crate::source_request::parse_max_completion_tokens(value.as_ref())
+        .map_err(crate::source_request::SourceRequestError::into_scalar)
 }
+
 pub fn resolve_model(value: Option<&Value>, default: Option<&str>) -> Result<String, GatewayError> {
-    if value.is_some_and(|v| !v.is_null() && !v.is_string()) {
-        return Err(invalid("model must be a string", None));
-    }
-    normalized_string(value).or_else(|| default.map(str::to_owned)).ok_or_else(|| GatewayError::new(503,"Default model is unavailable: no configured default model or Codex model snapshot.",Some("server_error")))
+    let value = crate::source_request::scalar_value(value)?;
+    crate::source_request::resolve_model(value.as_ref(), default)
+        .map_err(crate::source_request::SourceRequestError::into_scalar)?
+        .try_utf8()
 }
 pub fn parse_instructions(value: Option<&Value>) -> Result<Option<String>, GatewayError> {
-    match value {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::String(s)) => Ok(Some(s.clone())),
-        _ => Err(invalid("instructions must be a string", None)),
-    }
-}
-pub fn validate_cache_control(control: &Value) -> Result<(), GatewayError> {
-    if !control.is_object() {
-        return Err(invalid(
-            "cache_control must be an object",
-            Some("cache_control"),
-        ));
-    }
-    if let Some(key) = unknown_key(control, &["type", "ttl"]) {
-        return Err(invalid(
-            format!("Unknown cache control field: {key}"),
-            Some(&format!("cache_control.{key}")),
-        ));
-    }
-    if control.get("type").and_then(Value::as_str) != Some("ephemeral") {
-        return Err(invalid(
-            "cache_control.type must be ephemeral",
-            Some("cache_control.type"),
-        ));
-    }
-    if control
-        .get("ttl")
-        .is_some_and(|v| !matches!(v.as_str(), Some("5m" | "1h")))
+    let value = crate::source_request::scalar_value(value)?;
+    match crate::source_request::parse_instructions(value.as_ref())
+        .map_err(crate::source_request::SourceRequestError::into_scalar)?
     {
-        return Err(invalid(
-            "cache_control.ttl must be 5m or 1h",
-            Some("cache_control.ttl"),
-        ));
+        crate::source_request::SourceField::Missing | crate::source_request::SourceField::Null => {
+            Ok(None)
+        }
+        crate::source_request::SourceField::Value(value) => value.try_utf8().map(Some),
     }
-    Ok(())
 }
+
+pub fn validate_cache_control(control: &Value) -> Result<(), GatewayError> {
+    crate::source_request::validate_cache_control(
+        &gateway_core::source_json::SourceJson::from_serializable(control)?,
+    )
+    .map_err(crate::source_request::SourceRequestError::into_scalar)
+}
+
 pub fn ignored_warnings(body: &Value, handled: &[&str]) -> Vec<String> {
     let mut warnings = Vec::new();
     for key in js_keys(body) {
@@ -323,10 +238,8 @@ pub fn normalize_tool_choice_for_codex(value: &Value) -> Value {
 /// TextDecoder's lossy UTF-8 and initial BOM handling precede JSON.parse in src/request.ts.
 /// arbitrary_precision carries exponent overflow until JS numeric checks/stringification handle it.
 pub fn parse_json_body(bytes: &[u8]) -> Result<Value, GatewayError> {
-    if bytes.is_empty() || bytes.len() > 32 * 1024 * 1024 {
-        return Err(invalid("Invalid JSON body", None));
-    }
-    let text = String::from_utf8_lossy(bytes);
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    serde_json::from_str(text).map_err(|_| invalid("Invalid JSON body", None))
+    crate::source_request::parse_http_body(bytes)
+        .map_err(crate::source_request::SourceRequestError::into_scalar)?
+        .deserialize()
+        .map_err(|_| invalid("Invalid JSON body", None))
 }

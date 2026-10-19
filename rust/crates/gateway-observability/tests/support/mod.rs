@@ -159,7 +159,26 @@ pub struct Host {
     pub at: Rc<Cell<i64>>,
     counter: Rc<Cell<u64>>,
 }
+// Non-comparison fixture only: unexpected source ordering must fail, never guess.
+struct MissingSourceCollator;
+impl gateway_schema::aliases::SourceStringCollator for MissingSourceCollator {
+    fn compare(
+        &self,
+        _left: &gateway_core::js_string::JsString16,
+        _right: &gateway_core::js_string::JsString16,
+    ) -> Result<std::cmp::Ordering, GatewayError> {
+        Err(GatewayError::unavailable(
+            "Fixture has no captured source ordering.",
+            "fixture_collation_missing",
+        ))
+    }
+}
 impl ObservabilityHost for Host {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        std::sync::Arc::new(MissingSourceCollator)
+    }
     fn now_ms(&self) -> i64 {
         self.at.get()
     }

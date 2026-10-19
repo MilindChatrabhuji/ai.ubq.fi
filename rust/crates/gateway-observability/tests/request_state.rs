@@ -24,6 +24,11 @@ impl Drop for RequestHost {
     }
 }
 impl ObservabilityHost for RequestHost {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        self.base.source_string_collator()
+    }
     fn now_ms(&self) -> i64 {
         self.base.now_ms()
     }
@@ -208,11 +213,14 @@ fn active_health_coalesces_only_a_receipt_and_never_reuses_an_old_io_host() {
 }
 #[test]
 fn cancelled_coalescer_releases_its_executor_waker_while_the_producer_remains_pending() {
-    struct Executor;
+    #[derive(Default)]
+    struct Executor(std::sync::atomic::AtomicUsize);
     impl std::task::Wake for Executor {
-        fn wake(self: std::sync::Arc<Self>) {}
+        fn wake(self: std::sync::Arc<Self>) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
     }
-    let executor = std::sync::Arc::new(Executor);
+    let executor = std::sync::Arc::new(Executor::default());
     let waker = Waker::from(executor.clone());
     let mut cx = Context::from_waker(&waker);
     let memory = Memory::default();

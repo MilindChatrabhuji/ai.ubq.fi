@@ -39,6 +39,7 @@ pub struct Capabilities {
     support: crate::admin_support_host::Binding,
     original: gateway_auth::AuthRequest,
     auth_config: gateway_auth::AuthConfig,
+    actor: std::rc::Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
 }
 
 impl Capabilities {
@@ -49,14 +50,16 @@ impl Capabilities {
         store: crate::authority::RemoteAuthorityStore,
         platform: &crate::host::PlatformHost,
         context: std::rc::Rc<worker::Context>,
-    ) -> Self {
-        let observations = crate::observability_host::bind(
+        actor: std::rc::Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
+    ) -> Result<Self, GatewayError> {
+        let observations = crate::observability_host::bind_admin(
             request_id,
             original_body,
             store.clone(),
             platform,
             context.clone(),
-        );
+            actor.clone(),
+        )?;
         let catalog_host = crate::catalog_host::Host {
             store: store.clone(),
             env: platform.env.clone(),
@@ -74,7 +77,7 @@ impl Capabilities {
             body: Vec::new(),
             native_peer: original_request.native_peer.clone(),
         };
-        Self {
+        Ok(Self {
             request_id: request_id.0.clone(),
             original_body_bytes: original_body.len(),
             catalog_service: crate::catalog::service(),
@@ -83,7 +86,8 @@ impl Capabilities {
             support,
             original,
             auth_config: crate::host::auth_config(&platform.env),
-        }
+            actor,
+        })
     }
     fn measured_body_bytes(&self, context: &Context) -> Result<usize, GatewayError> {
         if context.request_id != self.request_id {
@@ -156,8 +160,11 @@ impl RuntimeCapabilities for Capabilities {
         crate::codex_admin_host::execute(
             &self.catalog_host.store,
             &self.catalog_host.platform,
-            &self.original,
-            &self.auth_config,
+            crate::codex_admin_host::OriginalAdmin {
+                request: &self.original,
+                config: &self.auth_config,
+                actor: &self.actor,
+            },
             request,
             context,
             &self.observations,
@@ -173,7 +180,7 @@ impl RuntimeCapabilities for Capabilities {
     }
     async fn pricing(
         &self,
-        models: &[String],
+        models: &[gateway_core::model::ModelId],
     ) -> Result<gateway_admin_runtime::capabilities::PricingSnapshot, GatewayError> {
         self.support.pricing(models).await
     }
@@ -231,13 +238,11 @@ impl RuntimeCapabilities for Capabilities {
             CatalogRequest::Catalog => Operation::Catalog,
             CatalogRequest::Refresh => Operation::Refresh,
         };
-        let response = self
-            .catalog_service
-            .admin_catalog(&self.catalog_host.store, &self.catalog_host, operation)
-            .await?;
-        let mut wire = AuthResponse::json(response.status, response.body);
-        wire.headers.extend(response.headers);
-        Ok(wire)
+        Ok(crate::catalog::into_auth_response(
+            self.catalog_service
+                .admin_catalog(&self.catalog_host.store, &self.catalog_host, operation)
+                .await,
+        ))
     }
     async fn provider(
         &self,
@@ -255,8 +260,12 @@ impl RuntimeCapabilities for Capabilities {
         self.measured_body_bytes(&context)?;
         self.observations.analytics(request, context).await
     }
-    fn compare_admin_labels(&self, left: &str, right: &str) -> Result<Ordering, GatewayError> {
-        compare_labels(left, right)
+    fn compare_admin_labels(
+        &self,
+        left: &gateway_core::js_string::JsString16,
+        right: &gateway_core::js_string::JsString16,
+    ) -> Result<Ordering, GatewayError> {
+        crate::source_collator::shared().compare(left, right)
     }
 }
 

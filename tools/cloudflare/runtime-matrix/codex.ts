@@ -5,10 +5,6 @@ import { progressiveBody } from "./direct.ts";
 
 async function catalogCases(context: MatrixContext): Promise<void> {
   const headers = { authorization: `Bearer ${context.clientToken ?? "fixture-access"}` };
-  const ordinary = await responseObject(await fetch(context.url("/v1/models"), { headers }));
-  assert.equal(ordinary.object, "list");
-  assert(!("models" in ordinary));
-  assert(Array.isArray(ordinary.data) && ordinary.data.some((value) => object(value).id === MATRIX_MODELS.codex));
   const native = await responseObject(await fetch(context.url("/v1/models?client_version=0.163.0"), { headers }));
   assert(Array.isArray(native.models));
   const model = native.models.map(object).find((value) => value.slug === MATRIX_MODELS.codex);
@@ -20,6 +16,10 @@ async function catalogCases(context: MatrixContext): Promise<void> {
     "Nonempty source tiers cannot be hard-coded away"
   );
   assert(levels.map(object).some((level) => level.effort === "none"));
+  const ordinary = await responseObject(await fetch(context.url("/v1/models"), { headers }));
+  assert.equal(ordinary.object, "list");
+  assert(!("models" in ordinary));
+  assert(Array.isArray(ordinary.data) && ordinary.data.some((value) => object(value).id === MATRIX_MODELS.codex));
   context.cases.push("matrix_codex_official_and_exact_version_catalogues_preserve_source_tiers");
 }
 
@@ -62,8 +62,18 @@ async function truncated(context: MatrixContext): Promise<void> {
   assert(!text.includes("response.completed"));
   assert(text.includes("response.failed") || text.includes("response.incomplete"));
   const state = await settled(context, response);
-  assert.equal(state.semantic_committed, false);
-  context.cases.push("matrix_codex_truncated_stream_no_successful_terminal_or_semantic_commit");
+  assert.equal(state.finished, true);
+  // Any declared terminal seals retries; this flag does not mean successful completion.
+  assert.equal(state.semantic_committed, true);
+  const terminal = object(state.terminal_intent);
+  assert.deepEqual(terminal, { semantic_terminal: "response.failed", reader_termination: "eof", body: "drained", delivery: "unobserved" });
+  assertSingleAdmission(state, "chatgpt_codex");
+  const attempts = state.attempts;
+  assert(Array.isArray(attempts));
+  const attempt = object(attempts[0]);
+  assert.equal(attempt.phase, "Terminal");
+  assert.deepEqual(attempt.observation, terminal);
+  context.cases.push("matrix_codex_truncated_stream_retains_failed_terminal_without_success_or_delivery");
 }
 
 export async function codexProviderCases(context: MatrixContext): Promise<void> {

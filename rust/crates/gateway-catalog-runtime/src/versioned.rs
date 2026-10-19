@@ -1,12 +1,14 @@
 use crate::{CatalogRuntime, host::*, state};
-use gateway_core::{GatewayError, query::QueryStore};
+use gateway_core::{
+    GatewayError, model::ModelId, query::QueryStore, source_json::SourceJson,
+    source_serialization as source,
+};
 use gateway_schema::{
     catalog_cache::{self, CacheState, CatalogResponse, LoadedCatalog},
     catalog_store,
+    reasoning::js_trim_source,
     snapshot::union_account_catalogs,
-    util::{identifier, json_stringify},
 };
-use serde_json::Value;
 use std::{
     future::{Future, poll_fn},
     task::Poll,
@@ -19,7 +21,7 @@ struct Lease<'a> {
 }
 struct Fetched {
     response: CatalogFetchResponse,
-    evidence: Vec<(String, Vec<String>)>,
+    evidence: Vec<(String, Vec<ModelId>)>,
     publication: CredentialPublication,
     degraded: bool,
 }
@@ -106,23 +108,31 @@ fn degraded(error: &GatewayError) -> bool {
         Some("gateway_timeout" | "codex_upstream_unreachable")
     )
 }
-fn evidence(account: &str, parsed: &Value) -> Vec<(String, Vec<String>)> {
-    let Some(rows) = parsed.get("models").and_then(Value::as_array) else {
+fn evidence(account: &str, parsed: &SourceJson) -> Vec<(String, Vec<ModelId>)> {
+    let Some(rows) = source::member(parsed, "models")
+        .as_ref()
+        .and_then(source::array)
+    else {
         return Vec::new();
     };
     let mut slugs = Vec::new();
-    for slug in rows
-        .iter()
-        .filter_map(identifier)
-        .map(gateway_schema::util::js_trim)
-        .filter(|s| !s.is_empty())
-    {
-        if !slugs.iter().any(|s| s == slug) {
-            slugs.push(slug.to_owned());
+    for row in rows {
+        let slug = ["slug", "id", "model", "name"]
+            .iter()
+            .find_map(|key| source::member(&row, key).as_ref().and_then(source::string));
+        if let Some(slug) = slug
+            .map(|s| js_trim_source(&s))
+            .filter(|s| !s.as_units().is_empty())
+        {
+            let slug = ModelId::from_source(slug);
+            if !slugs.contains(&slug) {
+                slugs.push(slug);
+            }
         }
     }
     vec![(account.into(), slugs)]
 }
+
 async fn fetch_codex<H: CatalogHost>(
     host: &H,
     initial: &CredentialPublication,
@@ -173,7 +183,7 @@ async fn fetch_codex<H: CatalogHost>(
                 && response.single_account_observation_complete
                 && response.body.len() <= 4 * 1024 * 1024
             {
-                serde_json::from_str(&response.body)
+                SourceJson::parse(&response.body)
                     .ok()
                     .map(|p| evidence(&used.account_id, &p))
                     .unwrap_or_default()
@@ -188,9 +198,12 @@ async fn fetch_codex<H: CatalogHost>(
             });
         }
         if (200..300).contains(&response.status)
-            && let Ok(parsed) = serde_json::from_str::<Value>(&response.body)
-            && parsed.is_object()
-            && parsed.get("models").is_some_and(Value::is_array)
+            && let Ok(parsed) = SourceJson::parse(&response.body)
+            && source::entries(&parsed).is_some()
+            && source::member(&parsed, "models")
+                .as_ref()
+                .and_then(source::array)
+                .is_some()
         {
             catalogs.push((used.account_id, parsed));
             continue;
@@ -199,7 +212,10 @@ async fn fetch_codex<H: CatalogHost>(
     }
     if let Some((parsed, evidence)) = union_account_catalogs(&catalogs) {
         return Ok(Fetched {
-            response: CatalogFetchResponse::json(200, json_stringify(&parsed)),
+            response: CatalogFetchResponse::json(
+                200,
+                source::canonical(&parsed)?.as_str().to_owned(),
+            ),
             evidence,
             publication: accepted,
             degraded,
@@ -602,7 +618,7 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
         // The optional full snapshot cannot turn a successfully cached exact-version answer into a guessed schema.
         if let Err(error) = state::publish_snapshot(
             store,
-            &serde_json::from_str(&body).map_err(|_| unavailable("Catalog parsing failed"))?,
+            &SourceJson::parse(&body).map_err(|_| unavailable("Catalog parsing failed"))?,
             &context,
         )
         .await
@@ -644,4 +660,19 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod source_evidence_tests {
+    use super::*;
+    #[test]
+    fn single_account_evidence_retains_trimmed_units_and_distinguishes_escape_text() {
+        let document = SourceJson::parse(r#"{"models":[{"slug":" \ud800 "},{"slug":"\ud800"},{"slug":"\\ud800"},{"id":"\udc00"},{"slug":" "}]}"#).unwrap();
+        let result = evidence("source-account", &document);
+        assert_eq!(result[0].0, "source-account");
+        assert_eq!(result[0].1.len(), 3);
+        assert_eq!(result[0].1[0].as_js_string().as_units(), &[0xd800]);
+        assert!(result[0].1[1].matches_scalar(r"\ud800"));
+        assert_eq!(result[0].1[2].as_js_string().as_units(), &[0xdc00]);
+    }
 }

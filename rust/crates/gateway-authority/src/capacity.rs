@@ -11,6 +11,7 @@ use crate::{Authority, TokenSource, invalid, keys, text, unavailable};
 use gateway_auth::provider_credentials::{
     CodexNativeOwner, codex_source_pool_key, read_codex_source_pool,
 };
+use gateway_core::model::ModelId;
 use gateway_core::{
     GatewayError,
     identity::{CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash},
@@ -401,7 +402,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     }
     pub(crate) async fn reconcile_capacity_for_model(
         &self,
-        model: &str,
+        model: &ModelId,
         now: i64,
     ) -> Result<(), GatewayError> {
         for _ in 0..3 {

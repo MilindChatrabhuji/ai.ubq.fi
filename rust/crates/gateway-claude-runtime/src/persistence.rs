@@ -11,7 +11,8 @@ use gateway_auth::{
 };
 use gateway_core::{
     GatewayError,
-    state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck, StoredRecord},
+    model::ModelId,
+    state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck},
 };
 use serde_json::json;
 
@@ -100,7 +101,7 @@ pub(crate) async fn rotate<S: AuthorityStore, H: ClaudePoolHost>(
     view: &PoolView,
     expected: &AccountBinding,
     next_id: &str,
-    model: &str,
+    model: &ModelId,
 ) -> Result<bool, GatewayError> {
     for _ in 0..12 {
         let Some(mut current) = claude::read_roster(store, now(host)?).await? else {
@@ -146,13 +147,7 @@ pub(crate) async fn rotate<S: AuthorityStore, H: ClaudePoolHost>(
             checks,
             vec![RecordMutation::Put {
                 key: claude::account_store_key(),
-                record: StoredRecord::json(
-                    revision(host)?,
-                    serde_json::to_value(current.roster).map_err(|_| {
-                        crate::unavailable("Claude selection could not be encoded.")
-                    })?,
-                    None,
-                ),
+                record: claude::encode_roster_record(&revision(host)?, &current.roster, None)?,
             }],
         )
         .await?
@@ -170,7 +165,7 @@ pub(crate) async fn persist<S: AuthorityStore, H: ClaudePoolHost>(
     store: &S,
     host: &H,
     binding: &AccountBinding,
-    model: &str,
+    model: &ModelId,
     response: &ResponseObservation,
     classification: &Classification,
     observation: Option<&quota::QuotaObservation>,
@@ -257,13 +252,7 @@ pub async fn clear_guards<S: AuthorityStore, H: ClaudePoolHost>(
     let mutations = vec![
         RecordMutation::Put {
             key: roster_key,
-            record: StoredRecord::json(
-                revision(host)?,
-                serde_json::to_value(roster.roster).map_err(|_| {
-                    crate::unavailable("Claude guard generation could not be encoded.")
-                })?,
-                None,
-            ),
+            record: claude::encode_roster_record(&revision(host)?, &roster.roster, None)?,
         },
         RecordMutation::Put {
             key: quota_key(binding),

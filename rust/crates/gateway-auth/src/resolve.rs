@@ -104,19 +104,49 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         }
         let mut verification_config = self.config.clone();
         let key_row = self.store.read(&kernel_public_keys_key()).await?;
-        let stored_keys: Option<Vec<Value>> =
-            crate::store::decode(key_row.as_ref(), self.host.now_ms())?;
+        // Named kernel-public-key row only: generic auth storage remains Json.
+        let stored_keys =
+            key_row
+                .as_ref()
+                .map(
+                    |record| -> Result<
+                        Option<Vec<gateway_core::source_json::SourceJson>>,
+                        GatewayError,
+                    > {
+                        record.validate_version()?;
+                        if record
+                            .expires_at_ms
+                            .is_some_and(|expiry| expiry <= self.host.now_ms())
+                        {
+                            return Ok(None);
+                        }
+                        gateway_core::source_control::decode_source_control_record(record)?
+                            .deserialize::<Vec<gateway_core::source_json::SourceJson>>()
+                            .map(Some)
+                            .map_err(|_| {
+                                GatewayError::unavailable(
+                                    "Authentication state is corrupt",
+                                    "auth_state_corrupt",
+                                )
+                            })
+                    },
+                )
+                .transpose()?
+                .flatten();
         if let Some(stored_keys) = stored_keys {
             for record in stored_keys {
-                if let Some(pem) = record.get("pem").and_then(Value::as_str)
+                // Source skips each failed PEM import. Lone units necessarily
+                // fail atob; reject only this crypto projection, never storage.
+                if let Some(pem) = gateway_core::source_serialization::member(&record, "pem")
+                    .as_ref()
+                    .and_then(gateway_core::source_serialization::string)
+                    .and_then(|pem| pem.try_utf8().ok())
                     && !verification_config
                         .kernel_public_keys_pem
                         .iter()
-                        .any(|key| key == pem)
+                        .any(|key| key == &pem)
                 {
-                    verification_config
-                        .kernel_public_keys_pem
-                        .push(pem.to_owned());
+                    verification_config.kernel_public_keys_pem.push(pem);
                 }
             }
         }
@@ -277,13 +307,20 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 .await?;
             if let Some(row) = row {
                 row.validate_version()?;
-                if row.json_value()?.get("revoked_at_ms") == Some(&Value::Null)
+                // This one named ID row can now hold source name/model
+                // metadata. Keep the original peer/origin gate and separate
+                // model-free hash policy read; data decoding grants no role.
+                let metadata = gateway_core::source_control::decode_source_control_record(&row)?;
+                if gateway_core::source_serialization::member(&metadata, "revoked_at_ms")
+                    .is_some_and(|value| value.as_str() == "null")
                     && let (Some(hash), Some(id)) = (
-                        row.json_value()?.get("hash").and_then(Value::as_str),
-                        row.json_value()?.get("id").and_then(Value::as_str),
+                        gateway_core::source_serialization::member(&metadata, "hash")
+                            .and_then(|value| value.deserialize::<String>().ok()),
+                        gateway_core::source_serialization::member(&metadata, "id")
+                            .and_then(|value| value.deserialize::<String>().ok()),
                     )
                 {
-                    let hash_row = self.store.read(&api_keys::hash_key(hash)).await?;
+                    let hash_row = self.store.read(&api_keys::hash_key(&hash)).await?;
                     if let Some(hash_row) = hash_row {
                         hash_row.validate_version()?;
                         let record = serde_json::from_value(hash_row.json_value()?.clone())

@@ -1,8 +1,15 @@
 //! Source analytics.ts and admin/error-log.ts. This is the existing request ledger.
 use crate::{ObservabilityHost, ObservabilityRuntime, store};
-use gateway_core::{GatewayError, lifecycle::DeliveryOutcome, query::QueryStore};
+use gateway_core::{
+    GatewayError, js_string::JsString16, lifecycle::DeliveryOutcome, query::QueryStore,
+    source_json::SourceJson, source_serialization as source,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+#[path = "terminal_rollup.rs"]
+mod terminal_rollup;
+pub use terminal_rollup::TerminalUsageRollup;
 
 pub const REQUEST_RETENTION_MS: i64 = 365 * store::DAY;
 pub const ERROR_RETENTION_MS: i64 = 7 * store::DAY;
@@ -33,8 +40,8 @@ pub struct ErrorObservation {
     pub route: String,
     pub status: u16,
     pub provider: String,
-    pub model: Option<String>,
-    pub reasoning: Option<String>,
+    pub model: Option<JsString16>,
+    pub reasoning: Option<JsString16>,
     pub stream: Option<bool>,
     pub terminal_type: Option<String>,
     pub failure_kind: Option<String>,
@@ -50,20 +57,26 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         key_id: &str,
         input: &Value,
     ) -> Result<(), GatewayError> {
+        self.record_request_log_source(key_id, &SourceJson::from_serializable(input)?)
+            .await
+    }
+    pub async fn record_request_log_source(
+        &self,
+        key_id: &str,
+        input: &SourceJson,
+    ) -> Result<(), GatewayError> {
         if store::trim(key_id).is_empty() {
             return Ok(());
         }
         let at = store::now(self.host.as_ref())?;
-        let raw_id = input
-            .get("id")
-            .and_then(Value::as_str)
-            .map(gateway_core::js_string::JsString16::from_utf8);
+        let raw_id = source::member(input, "id").and_then(|v| v.deserialize::<JsString16>().ok());
         let id = crate::records::bounded_text(
             raw_id.as_ref(),
             120,
             &gateway_core::js_string::JsString16::from_utf8(&store::uuid(self.host.as_ref())?),
         );
-        let created = integer(input.get("created_at_ms"), at as f64);
+        let created =
+            crate::records::number(source::member(input, "created_at_ms").as_ref(), at as f64);
         self.mutate_request_log(key_id, created, &id, input, false)
             .await
     }
@@ -73,6 +86,21 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         created_at_ms: i64,
         request_id: &str,
         patch: &Value,
+    ) -> Result<(), GatewayError> {
+        self.update_request_log_source(
+            key_id,
+            created_at_ms,
+            request_id,
+            &SourceJson::from_serializable(patch)?,
+        )
+        .await
+    }
+    pub async fn update_request_log_source(
+        &self,
+        key_id: &str,
+        created_at_ms: i64,
+        request_id: &str,
+        patch: &SourceJson,
     ) -> Result<(), GatewayError> {
         self.mutate_request_log(
             key_id,
@@ -88,7 +116,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         key_id: &str,
         created: f64,
         request_id: &gateway_core::js_string::JsString16,
-        patch: &Value,
+        patch: &SourceJson,
         only_existing: bool,
     ) -> Result<(), GatewayError> {
         if store::trim(key_id).is_empty() {
@@ -121,7 +149,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             if only_existing && existing.is_none() {
                 return Ok(());
             }
-            let record = crate::records::merge_request_fields(
+            let record = crate::records::merge_request_fields_source(
                 existing.as_ref(),
                 patch,
                 key_id,

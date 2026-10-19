@@ -122,8 +122,12 @@ impl AuthHost for Host {
     }
 }
 impl ClaudePoolHost for Host {
-    fn compare_principals(&self, left: &str, right: &str) -> Result<Ordering, GatewayError> {
-        crate::admin_host::compare_labels(left, right)
+    fn compare_principals(
+        &self,
+        left: &gateway_core::js_string::JsString16,
+        right: &gateway_core::js_string::JsString16,
+    ) -> Result<Ordering, GatewayError> {
+        crate::source_collator::shared().compare(left, right)
     }
     fn parse_retry_after_date(&self, raw: &str) -> Option<i64> {
         let value = worker::js_sys::Date::parse(raw);
@@ -164,9 +168,9 @@ impl ClaudePoolHost for Host {
         })
     }
     async fn accepted_observation(&self, event: &AcceptedObservation) -> Result<(), GatewayError> {
-        let event = serde_json::from_value::<
-            gateway_observability::host_types::ClaudeAcceptedObservation,
-        >(event.source_value())
+        let event = gateway_observability::host_types::ClaudeAcceptedObservation::from_source(
+            &event.source_value(),
+        )
         .map_err(|_| super::invalid("Accepted Claude history DTO is invalid."))?;
         let runtime = ObservabilityRuntime::with_state(
             self.store.clone(),
@@ -206,39 +210,184 @@ impl ClaudePoolHost for Host {
     }
 }
 
-pub(super) fn headers(binding: &AccountBinding, workspace: bool) -> gateway_providers::Headers {
+/// Local physical construction only; deliberately no provider status or raw JS error.
+#[derive(Debug)]
+pub(super) struct ConstructionFailure;
+
+pub(super) fn credential_kind(
+    credential: &claude::Credential,
+) -> gateway_providers::ClaudeCredentialKind {
+    match credential.kind {
+        CredentialKind::Oauth => gateway_providers::ClaudeCredentialKind::Oauth,
+        CredentialKind::ApiKey => gateway_providers::ClaudeCredentialKind::ApiKey,
+    }
+}
+
+pub(super) fn headers(
+    binding: &AccountBinding,
+    workspace: bool,
+) -> Result<worker::Headers, ConstructionFailure> {
     credential_headers(
         &binding.credential,
         if workspace {
-            binding.workspace.as_ref().map(|value| value.id.as_str())
+            binding.workspace.as_ref().map(|value| &value.id)
         } else {
             None
         },
+        false,
     )
 }
+
 pub(super) fn credential_headers(
     credential: &claude::Credential,
-    workspace: Option<&str>,
-) -> gateway_providers::Headers {
-    let mut headers = gateway_providers::Headers::from([
-        ("Content-Type".into(), "application/json".into()),
-        ("Accept".into(), "application/json".into()),
-        ("anthropic-version".into(), "2023-06-01".into()),
-    ]);
-    match credential.kind {
-        CredentialKind::Oauth => {
-            headers.insert(
-                "Authorization".into(),
-                format!("Bearer {}", credential.secret.expose()),
-            );
-            headers.insert("anthropic-beta".into(), "oauth-2025-04-20".into());
+    workspace: Option<&gateway_core::js_string::JsString16>,
+    stream: bool,
+) -> Result<worker::Headers, ConstructionFailure> {
+    let headers = worker::Headers::new();
+    // Projection is late and field-local; workspace must not mask auth setter failure.
+    {
+        let secret = credential
+            .secret
+            .try_scalar_secret()
+            .map_err(|_| ConstructionFailure)?;
+        match credential.kind {
+            CredentialKind::Oauth => {
+                headers
+                    .set("Authorization", &format!("Bearer {}", secret.expose()))
+                    .map_err(|_| ConstructionFailure)?;
+                headers
+                    .set("anthropic-beta", "oauth-2025-04-20")
+                    .map_err(|_| ConstructionFailure)?;
+            }
+            CredentialKind::ApiKey => headers
+                .set("x-api-key", secret.expose())
+                .map_err(|_| ConstructionFailure)?,
         }
-        CredentialKind::ApiKey => {
-            headers.insert("x-api-key".into(), credential.secret.expose().into());
-        }
-    }
-    if let Some(workspace) = workspace {
-        headers.insert("anthropic-workspace-id".into(), workspace.into());
     }
     headers
+        .set("Content-Type", "application/json")
+        .map_err(|_| ConstructionFailure)?;
+    headers
+        .set(
+            "Accept",
+            if stream {
+                "text/event-stream"
+            } else {
+                "application/json"
+            },
+        )
+        .map_err(|_| ConstructionFailure)?;
+    headers
+        .set("anthropic-version", "2023-06-01")
+        .map_err(|_| ConstructionFailure)?;
+    if let Some(workspace) = workspace.and_then(trim_workspace) {
+        let value = workspace.try_utf8().map_err(|_| ConstructionFailure)?;
+        headers
+            .set("anthropic-workspace-id", &value)
+            .map_err(|_| ConstructionFailure)?;
+    }
+    Ok(headers)
+}
+
+fn trim_workspace(
+    value: &gateway_core::js_string::JsString16,
+) -> Option<gateway_core::js_string::JsString16> {
+    let units = value.as_units();
+    let whitespace = |unit: &u16| {
+        char::from_u32(u32::from(*unit)).is_some_and(gateway_schema::util::js_whitespace)
+    };
+    let start = units
+        .iter()
+        .position(|unit| !whitespace(unit))
+        .unwrap_or(units.len());
+    let end = units
+        .iter()
+        .rposition(|unit| !whitespace(unit))
+        .map_or(start, |at| at + 1);
+    (start < end)
+        .then(|| gateway_core::js_string::JsString16::from_units(units[start..end].to_vec()))
+}
+
+pub(super) fn physical_request(
+    binding: &AccountBinding,
+    body: &gateway_providers::PreparedClaudeBody,
+) -> Result<crate::transport::outbound::ConstructedRequest, ConstructionFailure> {
+    if body.kind() != credential_kind(&binding.credential) {
+        return Err(ConstructionFailure);
+    }
+    let headers = credential_headers(
+        &binding.credential,
+        binding.workspace.as_ref().map(|value| &value.id),
+        body.stream(),
+    )?;
+    let target = crate::transport::outbound::PinnedDestination::new(body.url())
+        .map_err(|_| ConstructionFailure)?;
+    crate::transport::outbound::construct_request(
+        &target,
+        worker::Method::Post,
+        headers,
+        body.body().as_bytes(),
+    )
+    .map_err(|_| ConstructionFailure)
+}
+
+#[cfg(test)]
+mod physical_tests {
+    use gateway_core::js_string::JsString16;
+    #[test]
+    fn actual_prepared_body_kind_rejects_wrong_binding_before_any_host_header() {
+        use gateway_admin_runtime::claude::{
+            AccountBinding, ClaudeSourceSecret, Credential, CredentialKind,
+        };
+        use gateway_core::source_json::SourceJson;
+        use gateway_providers::{
+            ClaudeBodyOptions, ClaudeCredentialKind, ClientSurface, PreparedClaudeBody,
+        };
+        let binding = AccountBinding {
+            account_id: "fixture-account".into(),
+            account_cohort_id: "fixture-cohort".into(),
+            credential_fingerprint: "fixture-fingerprint".into(),
+            evidence_generation: "fixture-generation".into(),
+            credential: Credential {
+                kind: CredentialKind::Oauth,
+                secret: std::sync::Arc::new(ClaudeSourceSecret::from_source(
+                    JsString16::from_units(vec![0xd800]),
+                )),
+                hint: JsString16::from_utf8("configured"),
+                label: None,
+                source: "fixture".into(),
+                updated_at_ms: None,
+            },
+            workspace: None,
+        };
+        let body = PreparedClaudeBody::prepare(
+            ClientSurface::Responses,
+            &SourceJson::parse(r#"{"model":"claude-fixture","input":"hello"}"#).unwrap(),
+            &"claude-fixture".into(),
+            &ClaudeBodyOptions::new(ClaudeCredentialKind::ApiKey),
+        )
+        .unwrap();
+        // This executes the real closed helper guard; calling host Headers on native would panic.
+        assert!(super::physical_request(&binding, &body).is_err());
+    }
+    #[test]
+    fn workspace_source_trim_retains_lone_units_until_late_field_projection() {
+        let source = JsString16::from_units(vec![0xfeff, 32, 0xd800, 32, 0xa0]);
+        let trimmed = super::trim_workspace(&source).unwrap();
+        assert_eq!(trimmed.as_units(), &[0xd800]);
+        assert!(trimmed.try_utf8().is_err());
+    }
+    #[test]
+    fn workspace_source_trim_omits_blank_and_preserves_scalar_data() {
+        assert!(super::trim_workspace(&JsString16::from_units(vec![0xfeff, 0xa0, 32])).is_none());
+        for value in ["ascii", "é", "�", "中", "😀"] {
+            assert_eq!(
+                super::trim_workspace(&JsString16::from_utf8(&format!(" {value} ")))
+                    .unwrap()
+                    .try_utf8()
+                    .unwrap(),
+                value
+            );
+        }
+    }
 }

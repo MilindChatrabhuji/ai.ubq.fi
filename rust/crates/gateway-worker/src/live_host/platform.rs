@@ -207,7 +207,7 @@ impl LiveHost for WorkerLiveHost {
                 Err(response)
             }
             LiveRouteSelection::ModelUnavailable { detail } => {
-                Err(model_unavailable(model, detail.as_deref()).map_err(body::error)?)
+                Err(model_unavailable(model, detail.as_ref()).map_err(body::error)?)
             }
             LiveRouteSelection::RoutingUnavailable => Err(body::error(GatewayError::unavailable(
                 "Codex routing state is temporarily unavailable; retry the request.",
@@ -305,14 +305,14 @@ impl LiveHost for WorkerLiveHost {
 
 fn model_unavailable(
     model: Option<&JsString16>,
-    detail: Option<&str>,
+    detail: Option<&JsString16>,
 ) -> Result<LiveResponse<Body>, GatewayError> {
     let mut units = "The model '".encode_utf16().collect::<Vec<_>>();
     units.extend(model.map(JsString16::as_units).unwrap_or_default());
     units.extend("' does not exist or is not available through this gateway. Use /v1/models for supported models.".encode_utf16());
     if let Some(detail) = detail {
         units.extend(" Upstream detail: ".encode_utf16());
-        units.extend(detail.encode_utf16());
+        units.extend_from_slice(detail.as_units());
     }
     let message = JsString16::from_units(units).to_source_json()?;
     let body = format!("{{\"error\":{{\"message\":{},\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"}}}}", message.as_str()).into_bytes();
@@ -322,4 +322,28 @@ fn model_unavailable(
         headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
         body: Body::Bytes(body),
     })
+}
+
+#[cfg(test)]
+mod source_detail_tests {
+    #[test]
+    fn unavailable_model_and_detail_keep_source_units() {
+        let model = gateway_core::js_string::JsString16::from_units(vec![109, 0xd800]);
+        let detail = gateway_core::js_string::JsString16::from_units(vec![100, 0xdc00]);
+        let response = super::model_unavailable(Some(&model), Some(&detail)).unwrap();
+        let super::Body::Bytes(bytes) = response.body else {
+            panic!("model refusal is bytes");
+        };
+        let value =
+            gateway_core::source_json::SourceJson::parse(std::str::from_utf8(&bytes).unwrap())
+                .unwrap();
+        let message = gateway_core::source_serialization::member(&value, "error")
+            .and_then(|value| gateway_core::source_serialization::member(&value, "message"))
+            .as_ref()
+            .and_then(gateway_core::source_serialization::string)
+            .unwrap();
+        assert!(message.as_units().contains(&0xd800));
+        assert!(message.as_units().contains(&0xdc00));
+        assert_eq!(response.status, 404);
+    }
 }

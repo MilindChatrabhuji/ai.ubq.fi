@@ -1,0 +1,242 @@
+{
+  "source": "actual String.prototype.toLowerCase(), no locale override",
+  "bun": "1.4.0",
+  "bun_revision": "34cbb9a40b4bd1bd767d134a7065e66c2432a676",
+  "icu": "78.1",
+  "unicode": "17.0",
+  "scalars": 1112064,
+  "changed_mappings": 1488,
+  "mappings_sha256": "0efe9a405b2cb73b172ad6cb294333a28060f2ff0374398f072a3d4258b5a2f0",
+  "cases": [
+    {
+      "name": "ascii",
+      "input": [65, 98, 67, 45, 48, 49, 32, 47, 32, 77, 79, 68, 69, 76, 32],
+      "output": [97, 98, 99, 45, 48, 49, 32, 47, 32, 109, 111, 100, 101, 108, 32]
+    },
+    {
+      "name": "final-sigma",
+      "input": [65, 931],
+      "output": [97, 962]
+    },
+    {
+      "name": "medial-sigma",
+      "input": [65, 931, 65],
+      "output": [97, 963, 97]
+    },
+    {
+      "name": "isolated-sigma",
+      "input": [931],
+      "output": [963]
+    },
+    {
+      "name": "before-ignorable",
+      "input": [65, 931, 769],
+      "output": [97, 962, 769]
+    },
+    {
+      "name": "between-ignorable",
+      "input": [65, 931, 769, 65],
+      "output": [97, 963, 769, 97]
+    },
+    {
+      "name": "joiner-final",
+      "input": [65, 931, 8205],
+      "output": [97, 962, 8205]
+    },
+    {
+      "name": "joiner-medial",
+      "input": [65, 931, 8205, 65],
+      "output": [97, 963, 8205, 97]
+    },
+    {
+      "name": "apostrophe-final",
+      "input": [65, 931, 39],
+      "output": [97, 962, 39]
+    },
+    {
+      "name": "apostrophe-medial",
+      "input": [65, 931, 39, 65],
+      "output": [97, 963, 39, 97]
+    },
+    {
+      "name": "dotted-i",
+      "input": [304, 73, 305, 105],
+      "output": [105, 775, 105, 305, 105]
+    },
+    {
+      "name": "greek-combining",
+      "input": [927, 931, 837],
+      "output": [959, 962, 837]
+    },
+    {
+      "name": "greek-cased-combining",
+      "input": [913, 931, 837, 913],
+      "output": [945, 963, 837, 945]
+    },
+    {
+      "name": "supplementary",
+      "input": [55297, 56320, 55354, 56576, 55299, 56448],
+      "output": [55297, 56360, 55354, 56610, 55299, 56512]
+    },
+    {
+      "name": "control-final",
+      "input": [65, 931, 0, 65],
+      "output": [97, 962, 0, 97]
+    },
+    {
+      "name": "noncharacter-final",
+      "input": [65, 931, 65535, 65],
+      "output": [97, 962, 65535, 97]
+    },
+    {
+      "name": "ZWSP",
+      "input": [65, 931, 8203, 65],
+      "output": [97, 963, 8203, 97]
+    },
+    {
+      "name": "soft-hyphen",
+      "input": [65, 931, 173, 65],
+      "output": [97, 963, 173, 97]
+    },
+    {
+      "name": "lone-high",
+      "input": [55296],
+      "output": [55296]
+    },
+    {
+      "name": "lone-low",
+      "input": [56320],
+      "output": [56320]
+    },
+    {
+      "name": "replacement",
+      "input": [65533],
+      "output": [65533]
+    },
+    {
+      "name": "literal-escape",
+      "input": [92, 117, 68, 56, 48, 48],
+      "output": [92, 117, 100, 56, 48, 48]
+    },
+    {
+      "name": "surrogate-after-sigma",
+      "input": [65, 931, 55296, 65],
+      "output": [97, 962, 55296, 97]
+    },
+    {
+      "name": "surrogate-before-sigma",
+      "input": [65, 55296, 931],
+      "output": [97, 55296, 963]
+    },
+    {
+      "name": "surrogate-first",
+      "input": [55296, 65, 931],
+      "output": [55296, 97, 962]
+    },
+    {
+      "name": "surrogate-last",
+      "input": [65, 931, 56320],
+      "output": [97, 962, 56320]
+    },
+    {
+      "name": "surrogate-ignorable",
+      "input": [65, 931, 769, 55296, 65],
+      "output": [97, 962, 769, 55296, 97]
+    },
+    {
+      "name": "reverse-pair",
+      "input": [65, 56320, 55296, 931, 65],
+      "output": [97, 56320, 55296, 963, 97]
+    },
+    {
+      "name": "valid-pair",
+      "input": [65, 55297, 56320, 931],
+      "output": [97, 55297, 56360, 962]
+    },
+    {
+      "name": "whitespace-preserved",
+      "input": [32, 9, 304, 931, 10],
+      "output": [32, 9, 105, 775, 962, 10]
+    },
+    {
+      "name": "case-ignorable-prefix",
+      "input": [65, 769, 931],
+      "output": [97, 769, 962]
+    },
+    {
+      "name": "ignorable-only-prefix",
+      "input": [769, 931],
+      "output": [769, 963]
+    },
+    {
+      "name": "sigma-word-boundary",
+      "input": [65, 931, 32, 65, 931, 65],
+      "output": [97, 962, 32, 97, 963, 97]
+    },
+    {
+      "name": "multi-expansion",
+      "input": [304, 304, 8072, 8490],
+      "output": [105, 775, 105, 775, 8064, 107]
+    },
+    {
+      "name": "before-55296",
+      "input": [65, 55296, 931],
+      "output": [97, 55296, 963]
+    },
+    {
+      "name": "after-55296",
+      "input": [65, 931, 55296, 65],
+      "output": [97, 962, 55296, 97]
+    },
+    {
+      "name": "between-ignorables-55296",
+      "input": [65, 931, 769, 55296, 8205, 65],
+      "output": [97, 962, 769, 55296, 8205, 97]
+    },
+    {
+      "name": "before-56319",
+      "input": [65, 56319, 931],
+      "output": [97, 56319, 963]
+    },
+    {
+      "name": "after-56319",
+      "input": [65, 931, 56319, 65],
+      "output": [97, 962, 56319, 97]
+    },
+    {
+      "name": "between-ignorables-56319",
+      "input": [65, 931, 769, 56319, 8205, 65],
+      "output": [97, 962, 769, 56319, 8205, 97]
+    },
+    {
+      "name": "before-56320",
+      "input": [65, 56320, 931],
+      "output": [97, 56320, 963]
+    },
+    {
+      "name": "after-56320",
+      "input": [65, 931, 56320, 65],
+      "output": [97, 962, 56320, 97]
+    },
+    {
+      "name": "between-ignorables-56320",
+      "input": [65, 931, 769, 56320, 8205, 65],
+      "output": [97, 962, 769, 56320, 8205, 97]
+    },
+    {
+      "name": "before-57343",
+      "input": [65, 57343, 931],
+      "output": [97, 57343, 963]
+    },
+    {
+      "name": "after-57343",
+      "input": [65, 931, 57343, 65],
+      "output": [97, 962, 57343, 97]
+    },
+    {
+      "name": "between-ignorables-57343",
+      "input": [65, 931, 769, 57343, 8205, 65],
+      "output": [97, 962, 769, 57343, 8205, 97]
+    }
+  ]
+}

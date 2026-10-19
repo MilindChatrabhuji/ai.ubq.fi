@@ -199,7 +199,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     ) -> Result<Option<AdmittedAccount>, GatewayError> {
         let now = self.fresh_time(0)?;
         self.elect_reset_recovery(
-            ResetAuthorization::FullPool(permit),
+            ResetAuthorization::ExistingLedger(permit.candidate(), permit.original()),
             expected,
             now,
             expected.routing_generation != permit.candidate().binding.routing_generation,

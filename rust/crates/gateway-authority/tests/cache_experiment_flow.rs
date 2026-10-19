@@ -91,6 +91,9 @@ struct Io {
     steal_cycle_on_first: Option<(gateway_core::state::RecordKey, i64)>,
     quota_on_first: bool,
     fail_recovery_probe: bool,
+    refresh_error_after_rotation: Option<bool>,
+    shrink_on_refresh: bool,
+    rotate_after_publication: bool,
 }
 impl Io {
     fn new(store: &MemoryStore) -> Self {
@@ -105,6 +108,9 @@ impl Io {
             steal_cycle_on_first: None,
             quota_on_first: false,
             fail_recovery_probe: false,
+            refresh_error_after_rotation: None,
+            shrink_on_refresh: false,
+            rotate_after_publication: false,
         }
     }
 }
@@ -224,26 +230,50 @@ impl ExperimentIo for Io {
             completed: true,
         })
     }
-    async fn refresh(&self, permit: RefreshPermit) -> Result<(), GatewayError> {
+    async fn refresh(&self, permit: RefreshPermit) -> Result<PoolVersionstamp, GatewayError> {
         assert_eq!(permit.context().slot, 1);
         assert_eq!(permit.context().prefix.len(), 5);
         assert_eq!(permit.binding().slot, 0);
         let count = self.refreshes.get() + 1;
         self.refreshes.set(count);
         if self.unchanged {
-            return Ok(());
+            if self.refresh_error_after_rotation.is_some() {
+                return Err(gateway_authority::cache_experiment::model::failed(
+                    "Controlled refresh outcome is unknown with an unchanged pool.",
+                ));
+            }
+            return Ok(PoolVersionstamp(
+                self.store.row(&codex_source_pool_key()).unwrap().revision,
+            ));
         }
         let mut source =
             parse_codex_source_pool(&self.store.row(&codex_source_pool_key()).unwrap().value)
                 .unwrap()
                 .unwrap();
         source.accounts[0].access_token = Secret::new(format!("fixture-refreshed-{count}"));
+        if self.shrink_on_refresh || self.refresh_error_after_rotation == Some(true) {
+            source.accounts.pop();
+        }
         seed_source(
             &self.store,
             &source.private_source_value(),
             &format!("pool-refresh-{count}"),
         );
-        Ok(())
+        if self.refresh_error_after_rotation.is_some() {
+            return Err(gateway_authority::cache_experiment::model::failed(
+                "Controlled refresh failed after the source pool changed.",
+            ));
+        }
+        if self.rotate_after_publication {
+            source.accounts[0].access_token =
+                Secret::new("fixture-foreign-post-publication".into());
+            seed_source(
+                &self.store,
+                &source.private_source_value(),
+                "pool-foreign-after-publication",
+            );
+        }
+        Ok(PoolVersionstamp(format!("pool-refresh-{count}")))
     }
 }
 #[test]
@@ -263,6 +293,148 @@ fn source_inventory_fingerprints_and_nondefault_target_match_actual_typescript()
         fixture["inventory"]["inventory_fingerprint"]
     );
     assert_eq!(binding.model, "fixture-a");
+}
+
+#[test]
+fn scalar_campaign_preserves_opaque_unrelated_catalog_metadata_through_promotion() {
+    use gateway_core::{
+        js_string::JsString16, source_control, source_json::SourceJson,
+        source_serialization as source, value::ValueEncoding,
+    };
+    let (store, authority, now) = setup();
+    let fixture = source_fixture();
+    let raw = SourceJson::from_serializable(&fixture["input"]["snapshot"]).unwrap();
+    let mut fields = source::entries(&raw).unwrap();
+    let opaque = SourceJson::parse(r#""\ud800""#).unwrap();
+    fields
+        .iter_mut()
+        .find(|(key, _)| key == &JsString16::from_utf8("source"))
+        .unwrap()
+        .1 = opaque.clone();
+    fields.push((
+        JsString16::from_utf8("opaque_unrelated_metadata"),
+        opaque.clone(),
+    ));
+    let raw = source::object_keys(fields).unwrap();
+    let catalog_key = key(&["ubq_ai", "codex_models"]);
+    store.seed_record(
+        catalog_key.clone(),
+        source_control::encode_source_control_record("catalog-1", &raw, None).unwrap(),
+    );
+    let prepared = run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap();
+    assert_eq!(
+        prepared.binding().capability_fingerprint,
+        fixture["inventory"]["targets"][0]["capability_fingerprint"]
+    );
+    assert_eq!(
+        prepared.binding().inventory_fingerprint,
+        fixture["inventory"]["inventory_fingerprint"]
+    );
+    let io = Io::new(&store);
+    let mut prepared = Some(prepared);
+    for index in 0..3 {
+        let target = prepared.take().unwrap_or_else(|| {
+            run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap()
+        });
+        let result = run(authority.run_cache_experiment(target, &io, now)).unwrap();
+        assert_eq!(
+            result["status"],
+            if index == 2 {
+                "completed"
+            } else {
+                "in_progress"
+            }
+        );
+    }
+    let row = store.row(&catalog_key).unwrap();
+    assert_eq!(row.value_encoding, ValueEncoding::ProfileV2);
+    let published = source_control::decode_source_control_record(&row).unwrap();
+    assert_eq!(source::member(&published, "source"), Some(opaque.clone()));
+    assert_eq!(
+        source::member(&published, "opaque_unrelated_metadata"),
+        Some(opaque.clone())
+    );
+    let runtime = source_control::decode_source_control_record(
+        &store
+            .row(&key(&["uos_ai", "runtime_config", "v2"]))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        source::member(&source::member(&runtime, "codex_models").unwrap(), "source"),
+        Some(opaque)
+    );
+    assert_eq!(
+        source::string(&source::member(&runtime, "default_model").unwrap()).unwrap(),
+        JsString16::from_utf8("fixture-z")
+    );
+    assert!(store.row(&gateway_authority::keys::active()).is_none());
+    assert_eq!(io.calls.borrow().len(), 30);
+}
+
+#[test]
+fn lone_model_refuses_only_at_source_uri_target_phase_before_any_campaign_effect() {
+    use gateway_core::{source_control, source_json::SourceJson};
+    // Actual pinned Bun target-id function bef7ecfb throws URIError for both lone units.
+    // src/admin/codex.ts:139-152 maps that unknown failure to this sanitized 503.
+    for replacement in [r#""\ud800""#, r#""\udc00""#] {
+        let (store, authority, now) = setup();
+        let fixture = source_fixture();
+        let raw = SourceJson::parse(
+            &serde_json::to_string(&fixture["input"]["snapshot"])
+                .unwrap()
+                .replace("\"fixture-a\"", replacement),
+        )
+        .unwrap();
+        let catalog_key = key(&["ubq_ai", "codex_models"]);
+        store.seed_record(
+            catalog_key.clone(),
+            source_control::encode_source_control_record("catalog-lone", &raw, None).unwrap(),
+        );
+        let before = store.row(&catalog_key).unwrap();
+        let error = match run(authority.prepare_cache_experiment(&"1".repeat(40), now)) {
+            Ok(_) => panic!("source URI construction must fail"),
+            Err(error) => error,
+        };
+        assert_eq!(error.status, 503);
+        assert_eq!(
+            error.envelope.error.code.as_deref(),
+            Some("prompt_cache_scope_experiment_failed")
+        );
+        assert_eq!(
+            error.envelope.error.message,
+            "Prompt-cache scope experiment could not run."
+        );
+        assert_eq!(store.row(&catalog_key).unwrap(), before);
+        assert!(store.row(&gateway_authority::keys::active()).is_none());
+    }
+}
+#[test]
+fn unrelated_malformed_active_selection_never_blocks_or_changes_a_pinned_experiment() {
+    for quota in [false, true] {
+        let (store, authority, now) = setup();
+        let mut io = Io::new(&store);
+        io.unchanged = true;
+        io.quota_on_first = quota;
+        let malformed = json!({"v": 99, "unrelated": "active-election"});
+        store.seed(gateway_authority::keys::active(), &malformed);
+        let prepared = run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap();
+        let result = run(authority.run_cache_experiment(prepared, &io, now));
+        if quota {
+            assert_eq!(
+                result.unwrap_err().envelope.error.code.as_deref(),
+                Some("prompt_cache_scope_experiment_failed")
+            );
+            assert_eq!(io.calls.borrow().len(), 1);
+        } else {
+            assert_eq!(result.unwrap()["inconclusive_reason"], "refresh_unchanged");
+            assert_eq!(io.calls.borrow().len(), 5);
+        }
+        assert_eq!(
+            store.row(&gateway_authority::keys::active()).unwrap().value,
+            malformed
+        );
+    }
 }
 #[test]
 fn unverified_catalog_controls_never_create_a_probeable_target() {
@@ -333,6 +505,59 @@ fn unchanged_forced_refresh_stops_after_five_rows_and_never_dispatches_the_discr
     let result = run(authority.run_cache_experiment(prepared, &io, now)).unwrap();
     assert_eq!(result["status"], "inconclusive");
     assert_eq!(result["inconclusive_reason"], "refresh_unchanged");
+    assert_eq!(io.calls.borrow().len(), 5);
+    assert_eq!(io.refreshes.get(), 1);
+}
+#[test]
+fn refresh_failure_after_a_valid_pool_revision_change_is_inconclusive_without_a_sixth_dispatch() {
+    for shrink in [false, true] {
+        let (store, authority, now) = setup();
+        let mut io = Io::new(&store);
+        io.refresh_error_after_rotation = Some(shrink);
+        let prepared = run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap();
+        let result = run(authority.run_cache_experiment(prepared, &io, now)).unwrap();
+        assert_eq!(result["status"], "inconclusive");
+        assert_eq!(result["inconclusive_reason"], "auth_pool_drift");
+        assert_eq!(io.calls.borrow().len(), 5);
+        assert_eq!(io.refreshes.get(), 1);
+    }
+}
+#[test]
+fn a_valid_one_account_pool_after_refresh_is_drift_without_a_sixth_dispatch() {
+    let (store, authority, now) = setup();
+    let mut io = Io::new(&store);
+    io.shrink_on_refresh = true;
+    let prepared = run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap();
+    let result = run(authority.run_cache_experiment(prepared, &io, now)).unwrap();
+    assert_eq!(result["status"], "inconclusive");
+    assert_eq!(result["inconclusive_reason"], "auth_pool_drift");
+    assert_eq!(io.calls.borrow().len(), 5);
+    assert_eq!(io.refreshes.get(), 1);
+}
+#[test]
+fn unknown_refresh_with_unchanged_source_stays_failed_without_a_sixth_dispatch() {
+    let (store, authority, now) = setup();
+    let mut io = Io::new(&store);
+    io.unchanged = true;
+    io.refresh_error_after_rotation = Some(false);
+    let prepared = run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap();
+    let error = run(authority.run_cache_experiment(prepared, &io, now)).unwrap_err();
+    assert_eq!(
+        error.envelope.error.code.as_deref(),
+        Some("prompt_cache_scope_experiment_failed")
+    );
+    assert_eq!(io.calls.borrow().len(), 5);
+    assert_eq!(io.refreshes.get(), 1);
+}
+#[test]
+fn same_account_rotation_after_verified_publication_is_drift_before_the_sixth_sample() {
+    let (store, authority, now) = setup();
+    let mut io = Io::new(&store);
+    io.rotate_after_publication = true;
+    let prepared = run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap();
+    let result = run(authority.run_cache_experiment(prepared, &io, now)).unwrap();
+    assert_eq!(result["status"], "inconclusive");
+    assert_eq!(result["inconclusive_reason"], "auth_pool_drift");
     assert_eq!(io.calls.borrow().len(), 5);
     assert_eq!(io.refreshes.get(), 1);
 }

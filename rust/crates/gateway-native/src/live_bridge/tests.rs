@@ -17,7 +17,10 @@ use std::{
     net::{SocketAddr, TcpListener},
     sync::atomic::AtomicUsize,
 };
-use tungstenite::client::IntoClientRequest;
+use tungstenite::{
+    client::IntoClientRequest,
+    handshake::server::{Callback, ErrorResponse, Request, Response},
+};
 
 struct Nonces;
 impl NativeNonceAuthority for Nonces {
@@ -226,6 +229,21 @@ fn request(address: SocketAddr) -> tungstenite::handshake::client::Request {
     request
 }
 
+struct FixedUpstreamHeaders;
+impl Callback for FixedUpstreamHeaders {
+    fn on_request(self, request: &Request, response: Response) -> Result<Response, ErrorResponse> {
+        assert_eq!(request.uri().path(), "/v1/live/rtc_call%2Fone");
+        assert_eq!(
+            request.headers()["authorization"],
+            "Bearer synthetic-access"
+        );
+        assert_eq!(request.headers()["chatgpt-account-id"], "synthetic-account");
+        assert_eq!(request.headers()["openai-alpha"], "quicksilver=v2");
+        assert!(request.headers().get("sec-websocket-extensions").is_none());
+        Ok(response)
+    }
+}
+
 #[test]
 fn actual_tls_upgrade_preserves_fixed_headers_immediate_binary_text_and_close_without_retiring() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -240,17 +258,7 @@ fn actual_tls_upgrade_preserves_fixed_headers_immediate_binary_text_and_close_wi
         let tls = StreamOwned::new(ServerConnection::new(server).unwrap(), stream);
         let mut socket = tungstenite::accept_hdr_with_config(
             tls,
-            |request: &tungstenite::handshake::server::Request, response| {
-                assert_eq!(request.uri().path(), "/v1/live/rtc_call%2Fone");
-                assert_eq!(
-                    request.headers()["authorization"],
-                    "Bearer synthetic-access"
-                );
-                assert_eq!(request.headers()["chatgpt-account-id"], "synthetic-account");
-                assert_eq!(request.headers()["openai-alpha"], "quicksilver=v2");
-                assert!(request.headers().get("sec-websocket-extensions").is_none());
-                Ok(response)
-            },
+            FixedUpstreamHeaders,
             Some(queue::websocket_config()),
         )
         .unwrap();

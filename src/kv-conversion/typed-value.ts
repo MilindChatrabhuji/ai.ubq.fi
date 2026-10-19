@@ -1,4 +1,6 @@
 /** Runtime-independent graph interchange. No V8/JSC bytes are ever confused. */
+import { Buffer } from "node:buffer";
+
 type Atom = { type: string; value?: string | number | boolean | null; ref?: number };
 type GraphNode = { type: string; value?: string; items?: Atom[]; entries?: [string | Atom, Atom][]; buffer?: Atom; offset?: number; length?: number };
 export type TypedValue = { root: Atom; nodes: GraphNode[] };
@@ -47,13 +49,14 @@ const primitiveAtom = (item: unknown): Atom | undefined => {
   }
   return undefined;
 };
-const writeSpecialNode = (item: object, node: GraphNode, visit: Visitor): boolean => {
+const writeSpecialNode = (item: object, node: GraphNode, visit: Visitor, nativeCapture: boolean): boolean => {
   if (item instanceof ArrayBuffer) {
     node.type = "ArrayBuffer";
     node.value = encodeBytes(new Uint8Array(item));
   } else if (ArrayBuffer.isView(item)) {
-    node.type = item.constructor.name;
-    if (!Object.hasOwn(ARRAY_TYPES, node.type)) {
+    const nativeBuffer = nativeCapture && Buffer.isBuffer(item);
+    node.type = nativeBuffer ? "Buffer" : item.constructor.name;
+    if (!nativeBuffer && !Object.hasOwn(ARRAY_TYPES, node.type)) {
       throw new TypeError("Unsupported typed array");
     }
     node.buffer = visit(item.buffer);
@@ -93,7 +96,7 @@ const writeContainerNode = (item: object, node: GraphNode, visit: Visitor): void
     node.entries = Object.entries(item).map(([key, entry]) => [key, visit(entry)]);
   }
 };
-export const encodeTypedValue = (value: unknown): TypedValue => {
+const encodeValueGraph = (value: unknown, nativeCapture: boolean): TypedValue => {
   const nodes: GraphNode[] = [];
   const seen = new Map<object, number>();
   const visit: Visitor = (item) => {
@@ -106,22 +109,29 @@ export const encodeTypedValue = (value: unknown): TypedValue => {
     const node: GraphNode = { type: "object" };
     nodes.push(node);
     seen.set(item, id);
-    if (!writeSpecialNode(item, node, visit)) writeContainerNode(item, node, visit);
+    if (!writeSpecialNode(item, node, visit, nativeCapture)) writeContainerNode(item, node, visit);
     return { type: "ref", ref: id };
   };
   return { root: visit(value), nodes };
 };
-const allocateView = (node: GraphNode, read: Reader): ArrayBufferView => {
+export const encodeTypedValue = (value: unknown): TypedValue => encodeValueGraph(value, false);
+/** Source-native capture only. The ordinary profile/legacy codec still refuses Buffer. */
+export const encodeNativeCaptureValue = (value: unknown): TypedValue => encodeValueGraph(value, true);
+const allocateView = (node: GraphNode, read: Reader, nativeCapture: boolean): ArrayBufferView => {
   const buffer = read(required(node.buffer)) as ArrayBuffer;
+  if (nativeCapture && node.type === "Buffer") {
+    if (!(buffer instanceof ArrayBuffer)) throw new TypeError("Native Buffer capture requires an ArrayBuffer backing");
+    return Buffer.from(buffer, required(node.offset), required(node.length));
+  }
   if (node.type === "DataView") return new DataView(buffer, node.offset, node.length);
   const ARRAY_TYPE = ARRAY_TYPES[node.type as Exclude<keyof typeof ARRAY_TYPES, "DataView">];
   return new ARRAY_TYPE(buffer, node.offset, required(node.length) / ARRAY_TYPE.BYTES_PER_ELEMENT);
 };
-const allocateNode = (node: GraphNode, read: Reader): unknown => {
+const allocateNode = (node: GraphNode, read: Reader, nativeCapture: boolean): unknown => {
   if (node.type === "ArrayBuffer") return decodeBytes(required(node.value)).buffer;
   if (node.type === "Date") return new Date(Number(node.value));
   if (node.type === "RegExp") return new RegExp(required(node.value), String(read(required(node.items)[0])));
-  if (Object.hasOwn(ARRAY_TYPES, node.type)) return allocateView(node, read);
+  if (Object.hasOwn(ARRAY_TYPES, node.type) || (nativeCapture && node.type === "Buffer")) return allocateView(node, read, nativeCapture);
   if (node.type === "Array") return new Array(node.length);
   if (node.type === "Map") return new Map();
   if (node.type === "Set") return new Set();
@@ -148,7 +158,7 @@ const populateNode = (value: unknown, node: GraphNode, read: Reader): void => {
     Object.defineProperty(value, key, { value: read(entry), writable: true, enumerable: !(value instanceof Error), configurable: true });
   }
 };
-export const decodeTypedValue = (graph: TypedValue): unknown => {
+const decodeValueGraph = (graph: TypedValue, nativeCapture: boolean): unknown => {
   const objects = new Map<number, unknown>();
   const read: Reader = (atom) => {
     switch (atom.type) {
@@ -172,10 +182,13 @@ export const decodeTypedValue = (graph: TypedValue): unknown => {
   const readNode = (id: number): unknown => {
     if (objects.has(id)) return objects.get(id);
     const node = required(graph.nodes.at(id));
-    const value = allocateNode(node, read);
+    const value = allocateNode(node, read, nativeCapture);
     objects.set(id, value);
     populateNode(value, node, read);
     return value;
   };
   return read(graph.root);
 };
+export const decodeTypedValue = (graph: TypedValue): unknown => decodeValueGraph(graph, false);
+/** Only the existing native SourceGraphV1 Buffer tag is added, never arbitrary classes. */
+export const decodeNativeCaptureValue = (graph: TypedValue): unknown => decodeValueGraph(graph, true);

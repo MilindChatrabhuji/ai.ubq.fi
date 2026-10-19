@@ -551,7 +551,8 @@ fn captured_uint8_catalog_is_usable_after_sqlite_restart_and_inverts_exactly() {
     let loaded = run(load_catalog(&store, "0.163.0", "auth-fixture", 2300))
         .unwrap()
         .unwrap();
-    assert_eq!(loaded.parsed["models"][0]["slug"], "gpt-fixture");
+    let parsed: Value = loaded.parsed.deserialize().expect("scalar catalog fixture");
+    assert_eq!(parsed["models"][0]["slug"], "gpt-fixture");
     assert!(loaded.source_body.is_some());
     assert!(
         run(load_catalog(
@@ -631,7 +632,7 @@ fn admin_input(body: Value) -> gateway_admin::AdminInput {
     gateway_admin::AdminInput {
         parameter: None,
         query: Default::default(),
-        body,
+        body: gateway_core::source_json::SourceJson::from_serializable(&body).unwrap(),
         actor: gateway_auth::AuthPrincipal {
             token: None,
             method: gateway_auth::AuthMethod::AdminAllowlist,
@@ -946,6 +947,15 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert() {
         .status,
         429
     );
+    let generated_window = run(store.read(&gateway_authority::keys::kernel_window(
+        "fixture-owner",
+        None,
+    )))
+    .unwrap()
+    .unwrap();
+    let generated = generated_window.json_value().unwrap();
+    assert_eq!(generated["reserved_requests"], 1);
+    assert_eq!(generated["reservations"].as_object().unwrap().len(), 1);
     let inverse = run(export_latest(&store, 2300)).unwrap();
     let window = inverse
         .entries
@@ -958,6 +968,18 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert() {
         .unwrap();
     assert_eq!(value["scope"], "org");
     assert!(value.get("repo").is_none());
+    assert_eq!(value["reserved_requests"], 1);
+    assert!(value.get("reservations").is_none());
+    assert_eq!(window.versionstamp, generated_window.revision);
+    assert_eq!(window.expires_at_ms, generated_window.expires_at_ms);
+    let mut missing_reservation = inverse.clone();
+    missing_reservation.entries.retain(|entry| {
+        entry.key.get(3) != Some(&raw(json!({"type":"string","value":"org_reservation"})))
+    });
+    assert!(matches!(
+        prepare(&missing_reservation, &CanonicalDates),
+        Err(MigrationError::SourceInventory(_))
+    ));
     let rollback = SqliteStore::open(&directory.file("kernel-inverse-new.sqlite3"));
     run(adopt_empty(
         &rollback,
@@ -1041,12 +1063,7 @@ fn rust_control_nonce_custody_is_separate_and_source_only_export_cannot_drop_it(
     let owner = gateway_authority::keys::paid_control_owner();
     store.put(owner.clone(),StoredRecord::json("current-owner-revision",json!({"v":1,"owner_id":"fixture-owner","owner_epoch":"fixture-epoch","key_fingerprint":"f".repeat(64)}),None));
     assert_eq!(
-        run(export_latest(&store, 2300))
-            .unwrap_err()
-            .envelope
-            .error
-            .code
-            .as_deref(),
+        run(export_latest(&store, 2300)).unwrap_err().code(),
         Some("migration_control_custody_required")
     );
     let context = ArtifactContext {
@@ -1102,12 +1119,7 @@ fn inverse_refuses_to_drop_derived_kernel_policy_without_matching_source_default
     changed.value["usage_limit_requests"] = json!(17);
     store.put(key, changed);
     assert_eq!(
-        run(export_latest(&store, 2300))
-            .unwrap_err()
-            .envelope
-            .error
-            .code
-            .as_deref(),
+        run(export_latest(&store, 2300)).unwrap_err().code(),
         Some("migration_state_invalid")
     );
     store.put(

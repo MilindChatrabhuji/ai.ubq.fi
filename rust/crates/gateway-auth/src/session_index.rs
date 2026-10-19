@@ -57,6 +57,25 @@ fn validate(fence: &SessionRevisionFence) -> Result<(), GatewayError> {
     Ok(())
 }
 
+/// Data-only validation of one exact stored custody row, including expired data.
+/// This does not check currentness, read a store, authenticate or mint a permission.
+pub fn validate_custody_record(key: &RecordKey, record: &StoredRecord) -> Result<(), GatewayError> {
+    record.validate_version()?;
+    let value = record.json_value()?;
+    let fence: SessionRevisionFence =
+        serde_json::from_value(value.clone()).map_err(|_| invalid())?;
+    validate(&fence)?;
+    if serde_json::to_value(&fence).map_err(|_| invalid())? != *value
+        || *key != index_key(&fence.session_digest)?
+        || record.revision != fence.session_revision
+        || record.expires_at_ms != Some(fence.expires_at_ms)
+        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&fence.expires_at_ms)
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 /// Data-only constructor for source creation and controlled migration. Publish it in the
 /// same atomic transition as the source session; this function grants no authorization.
 pub fn record_for_session(
@@ -94,19 +113,13 @@ pub async fn read_current<S: AuthorityStore>(
     session_digest: &str,
     now_ms: i64,
 ) -> Result<Option<SessionIndexSnapshot>, GatewayError> {
-    let Some(record) = store.read(&index_key(session_digest)?).await? else {
+    let key = index_key(session_digest)?;
+    let Some(record) = store.read(&key).await? else {
         return Ok(None);
     };
+    validate_custody_record(&key, &record)?;
     let fence: SessionRevisionFence =
         serde_json::from_value(record.json_value()?.clone()).map_err(|_| invalid())?;
-    validate(&fence)?;
-    if fence.session_digest != session_digest
-        || record.revision.trim().is_empty()
-        || record.revision != fence.session_revision
-        || record.expires_at_ms != Some(fence.expires_at_ms)
-    {
-        return Err(invalid());
-    }
     if fence.expires_at_ms <= now_ms {
         return Ok(None);
     }

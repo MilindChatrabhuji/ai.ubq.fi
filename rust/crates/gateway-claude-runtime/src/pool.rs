@@ -12,13 +12,14 @@ use gateway_catalog_runtime::{ProviderBinding, state::checks_current};
 use gateway_core::{
     GatewayError,
     js_string::JsString16,
+    model::ModelId,
     source_json::SourceJson,
+    source_serialization as source,
     state::{AuthorityStore, RevisionCheck},
 };
-use gateway_providers::{AuthMaterial, Headers};
+use gateway_providers::Headers;
 use gateway_schema::selection::ProviderSelection;
 use serde::Serialize;
-use serde_json::Value;
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
@@ -59,10 +60,7 @@ impl ClaudePoolSession {
                 host.compare_principals(a, b)
             })
             .await?;
-        Ok(
-            (!key.is_empty() && access.policy.allowed_key_ids.iter().any(|id| id == key))
-                .then_some(access.check),
-        )
+        Ok(access.policy.allows_scalar(key).then_some(access.check))
     }
     pub async fn select<S: AuthorityStore, H: ClaudePoolHost>(
         &self,
@@ -70,7 +68,7 @@ impl ClaudePoolSession {
         host: &H,
         input: SelectionInput<'_>,
     ) -> Result<PoolSelection, GatewayError> {
-        if !gateway_providers::anthropic::is_claude(input.model)
+        if !gateway_providers::anthropic::is_claude_model(input.model)
             || !ProviderSelection::enabled(input.selection, "claude_code")
         {
             return Ok(PoolSelection::NotApplicable);
@@ -164,26 +162,21 @@ impl ClaudePoolSession {
                 &generation,
                 Some(&binding),
                 &binding.credential,
-                binding.workspace.as_ref().map(|w| w.id.as_str()),
+                binding.workspace.as_ref().map(|w| &w.id),
             )
             .ok_or_else(|| crate::invalid("Claude catalog generation changed."))?;
         let mut options = retained.map(|s| s.options.clone()).unwrap_or_default();
-        options.auth = AuthMaterial {
-            secret: binding.credential.secret.expose().into(),
-            api_key: binding.credential.kind == CredentialKind::ApiKey,
-            account_id: Some(binding.account_id.clone()),
-            workspace_id: binding.workspace.as_ref().map(|w| w.id.clone()),
-        };
-        let effort = input
-            .raw
-            .get("reasoning")
-            .and_then(Value::as_object)
-            .and_then(|r| r.get("effort"));
+        let effort = input.effective_effort.as_ref();
+        if retained.is_some_and(|selected| selected.effective_effort.as_ref() != effort) {
+            return Err(crate::invalid(
+                "Claude effective reasoning changed within the request.",
+            ));
+        }
         if retained.is_none() {
             options.native_reasoning_efforts = Some(Vec::new());
             options.supports_native_effort = false;
             options.supports_disabled_thinking = false;
-            if let Some(effort) = effort {
+            if effort.is_some() {
                 let catalog = host
                     .catalog(
                         &binding,
@@ -193,22 +186,20 @@ impl ClaudePoolSession {
                     )
                     .await?;
                 if !catalog.stale
-                    && let Some(row) = catalog
-                        .models
-                        .iter()
-                        .find(|r| r.get("id").and_then(Value::as_str) == Some(input.model))
+                    && let Some(row) = catalog.models.iter().find(|r| {
+                        source::member(r, "id")
+                            .and_then(|value| source::string(&value))
+                            .is_some_and(|id| &ModelId::from_source(id) == input.model)
+                    })
                 {
                     options.supports_disabled_thinking =
-                        row.get("supports_disabled_thinking") == Some(&Value::Bool(true));
+                        source::member(row, "supports_disabled_thinking")
+                            .is_some_and(|value| value.as_str() == "true");
                     options.native_reasoning_efforts = Some(
-                        row.get("supported_reasoning_levels")
-                            .and_then(Value::as_array)
-                            .map(|a| {
-                                a.iter()
-                                    .filter_map(Value::as_str)
-                                    .map(str::to_owned)
-                                    .collect()
-                            })
+                        source::member(row, "supported_reasoning_levels")
+                            .as_ref()
+                            .and_then(source::array)
+                            .map(|a| a.iter().filter_map(source::string).collect())
                             .unwrap_or_default(),
                     );
                     options.supports_native_effort = options
@@ -216,9 +207,11 @@ impl ClaudePoolSession {
                         .as_ref()
                         .is_some_and(|a| !a.is_empty());
                 }
-                if !(effort == "none" && options.supports_disabled_thinking
-                    || effort.as_str().is_some_and(|e| {
-                        e != "none"
+                if !(effort.is_some_and(|effort| {
+                    effort.as_units().iter().copied().eq("none".encode_utf16())
+                }) && options.supports_disabled_thinking
+                    || effort.is_some_and(|e| {
+                        !e.as_units().iter().copied().eq("none".encode_utf16())
                             && options
                                 .native_reasoning_efforts
                                 .as_ref()
@@ -267,9 +260,11 @@ impl ClaudePoolSession {
             generation,
             options,
             key_id: input.key_id.into(),
-            model: input.model.into(),
+            model: input.model.clone(),
             raw: input.raw.clone(),
-            disabled: effort.and_then(Value::as_str) == Some("none"),
+            effective_effort: input.effective_effort.clone(),
+            disabled: effort
+                .is_some_and(|value| value.as_units().iter().copied().eq("none".encode_utf16())),
             native_checks,
             workspace_continuation: retained.is_some(),
         })
@@ -280,11 +275,11 @@ impl ClaudePoolSession {
         host: &H,
         selected: &SelectedAccount,
         key_id: &str,
-        model: &str,
-        raw: &Value,
+        model: &ModelId,
+        raw: &SourceJson,
     ) -> Result<(), GatewayError> {
         if selected.key_id != key_id
-            || selected.model != model
+            || &selected.model != model
             || &selected.raw != raw
             || !selected.generation.is_current()
         {
@@ -294,6 +289,7 @@ impl ClaudePoolSession {
             key_id,
             model,
             raw,
+            effective_effort: selected.effective_effort.clone(),
             selection: None,
         };
         let current = self

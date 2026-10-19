@@ -1,75 +1,164 @@
 use crate::{
     policy,
-    types::{PublishedCredential, RoutingInput},
+    types::{
+        CredentialFence, PreparedWireRequest, PublishedCredential, RoutingInput, RoutingResult,
+    },
 };
-use gateway_core::{GatewayError, provider::UpstreamProvider};
-use gateway_providers::{ClientSurface, prepare_request};
-use gateway_schema::reasoning::{ModelReasoning, effort_for_codex};
-use serde_json::{Value, json};
+use gateway_core::{
+    js_string::JsString16, model::ModelId, provider::UpstreamProvider, source_json::SourceJson,
+    source_serialization as source,
+};
+use gateway_providers::{
+    ClientSurface, OrdinaryPhaseOptions, OrdinaryPreparationContext, PreparedClaudeBody,
+    PreparedClaudeOrdinary, prepare_source_request,
+};
+use gateway_schema::source_request::SourceRequestError;
+/// A derived per-hop object, never a mutation of the authoritative original request.
+pub(crate) fn set(
+    raw: &mut SourceJson,
+    key: &str,
+    value: SourceJson,
+) -> Result<(), SourceRequestError> {
+    let mut fields = source::entries(raw)
+        .ok_or_else(|| SourceRequestError::invalid("Inference request must be an object.", None))?;
+    if let Some((_, old)) = fields
+        .iter_mut()
+        .find(|(name, _)| name.as_units().iter().copied().eq(key.encode_utf16()))
+    {
+        *old = value;
+    } else {
+        fields.push((JsString16::from_utf8(key), value));
+    }
+    *raw = source::object_keys(fields).map_err(SourceRequestError::from_gateway)?;
+    Ok(())
+}
 pub(crate) fn prepare(
     input: &RoutingInput,
     conversation_id: &str,
     now: i64,
     provider: UpstreamProvider,
-    model: &str,
+    model: &ModelId,
     publication: &PublishedCredential,
     nonce: &str,
-) -> Result<gateway_providers::PreparedRequest, GatewayError> {
-    let mut options = publication.options.clone();
-    options.auth = publication.material.clone();
-    options.client_version = input.client_version.clone();
-    options.native_session_id = input.native_session_id.clone();
-    options.response_id = format!("resp_{}", nonce.replace('-', ""));
-    options.conversation_id = Some(conversation_id.to_owned());
-    options.created_at = now / 1000;
-    options.allowed_models = policy::provider_ids(input, provider);
+) -> RoutingResult<PreparedWireRequest> {
+    let ordinary_preparation = ordinary_context(input, model, now)?;
     let mut raw = input.raw.clone();
-    if !raw.is_object() {
-        return Err(GatewayError::new(
-            400,
-            "Inference request must be an object.",
-            Some("invalid_request_error"),
-        ));
-    }
-    raw["model"] = json!(model);
-    gateway_schema::request::validate_request_fields(
-        &raw,
-        if input.surface == ClientSurface::Chat {
-            gateway_schema::request::RequestSurface::ChatCompletions
-        } else {
-            gateway_schema::request::RequestSurface::Responses
-        },
-        &gateway_schema::request::RequestExtensions {
-            deepseek_thinking: provider == UpstreamProvider::Deepseek,
-            openrouter_cache_control: provider == UpstreamProvider::Openrouter,
-        },
-    )?;
-    if provider == UpstreamProvider::ChatgptCodex {
-        let meta = ModelReasoning::from_record(input.catalog.codex().and_then(|s| s.find(model)));
-        let raw_effort = if input.surface == ClientSurface::Chat {
-            raw.get("reasoning_effort")
-        } else {
-            raw.get("reasoning").and_then(|v| v.get("effort"))
-        };
-        let effort = gateway_schema::reasoning::parse_effort(
-            raw_effort,
-            if input.surface == ClientSurface::Chat {
-                "reasoning_effort"
-            } else {
-                "reasoning.effort"
-            },
-        )?;
-        if let Some(effort) = effort {
-            let effort = effort_for_codex(&effort, &meta);
-            if input.surface == ClientSurface::Chat {
-                raw["reasoning_effort"] = json!(effort);
-            } else {
-                if raw.get("reasoning").is_none_or(Value::is_null) {
-                    raw["reasoning"] = json!({});
-                }
-                raw["reasoning"]["effort"] = json!(effort);
-            }
+    set(&mut raw, "model", model.to_source_json()?)?;
+    // Common-envelope validation belongs to planning. M35's one coordinator owns
+    // ordinary input -> selected cache capability -> reasoning/instructions/effort.
+    // No early effort parsing or duplicate content normalization is permitted here.
+    match publication {
+        PublishedCredential::Scalar {
+            material,
+            options,
+            fence,
+        } if provider != UpstreamProvider::ClaudeCode
+            && !matches!(fence, CredentialFence::Claude { .. }) =>
+        {
+            let mut options = options.as_ref().clone();
+            options.auth = material.clone();
+            options.client_version = input.client_version.clone();
+            options.native_session_id = input.native_session_id.clone();
+            options.response_id = format!("resp_{}", nonce.replace('-', ""));
+            options.conversation_id = Some(conversation_id.to_owned());
+            options.created_at = now / 1000;
+            options.allowed_models = policy::provider_ids(input, provider);
+            options.ordinary_preparation = Some(ordinary_preparation);
+            prepare_source_request(provider, input.surface, &raw, model, &options)
+                .map(PreparedWireRequest::Ready)
+                .map_err(Into::into)
         }
+        _ => Err(crate::journal::unavailable(
+            "Credential publication does not match the admitted provider/account.",
+        )
+        .into()),
     }
-    prepare_request(provider, input.surface, &raw, &options)
+}
+
+fn ordinary_context(
+    input: &RoutingInput,
+    model: &ModelId,
+    now: i64,
+) -> RoutingResult<OrdinaryPreparationContext> {
+    let mut catalog = input.catalog.clone();
+    catalog.snapshot = input.catalog.codex().cloned();
+    let metadata = gateway_schema::catalog::request_model_metadata(
+        &catalog,
+        model,
+        input.surface != ClientSurface::Chat,
+        now,
+    );
+    // src/openai.ts getDefaultReasoningEffort: runtime default, otherwise the
+    // existing source default `medium`, never a selected model's default tier.
+    let default_effort = match input.runtime.as_ref() {
+        None => JsString16::from_utf8("medium"),
+        Some(runtime) => source::member(runtime, "default_reasoning_effort")
+            .and_then(|value| source::string(&value))
+            .filter(|value| !value.as_units().is_empty())
+            .ok_or_else(|| {
+                gateway_core::GatewayError::unavailable(
+                    "The validated runtime default reasoning control is unavailable.",
+                    "runtime_config_invalid",
+                )
+            })?,
+    };
+    Ok(OrdinaryPreparationContext::from_metadata(
+        &metadata,
+        &default_effort,
+    ))
+}
+
+pub(crate) fn claude_ordinary(
+    input: &RoutingInput,
+    model: &ModelId,
+    now: i64,
+) -> RoutingResult<PreparedClaudeOrdinary> {
+    PreparedClaudeOrdinary::prepare(
+        input.surface,
+        &input.raw,
+        model,
+        &OrdinaryPhaseOptions {
+            allowed_models: policy::provider_ids(input, UpstreamProvider::ClaudeCode),
+            ordinary_preparation: Some(ordinary_context(input, model, now)?),
+        },
+    )
+    .map_err(Into::into)
+}
+
+pub(crate) fn finalize_claude(
+    input: &RoutingInput,
+    publication: &PublishedCredential,
+    phase: &PreparedClaudeOrdinary,
+    nonce: &str,
+    now: i64,
+) -> RoutingResult<PreparedWireRequest> {
+    if phase.surface() != input.surface {
+        return Err(crate::journal::unavailable(
+            "Claude ordinary surface changed within the request.",
+        )
+        .into());
+    }
+    let PublishedCredential::Claude {
+        fence: CredentialFence::Claude { .. },
+        body_options,
+    } = publication
+    else {
+        return Err(crate::journal::unavailable(
+            "Credential publication does not match the admitted provider/account.",
+        )
+        .into());
+    };
+    let mut options = body_options.clone();
+    options.response_id = format!("resp_{}", nonce.replace('-', ""));
+    options.created_at = now / 1000;
+    // The factory's requested/canonical association and already-normalized controls stay captured.
+    let canonical = phase.model().clone();
+    let body = PreparedClaudeBody::from_ordinary(phase.clone(), &input.raw, &options)?;
+    if body.decode().upstream_model != canonical || body.decode().surface != input.surface {
+        return Err(crate::journal::unavailable(
+            "Claude ordinary model association changed within the request.",
+        )
+        .into());
+    }
+    Ok(PreparedWireRequest::Claude(body))
 }

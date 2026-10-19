@@ -1,0 +1,27 @@
+{
+  "custody": {
+    "commit": "d27b44e4b5f7f802be5ccae4ab340d9453f18d56",
+    "source_path": "rust/crates/gateway-compaction/src/text.rs",
+    "source_sha256": "ea031db8ba4542189638f358ae46c97a224af762d154db07dc53df7562860a85",
+    "full_fixture_sha256": "93205b452206f539736defa91faffdfff5fe1691923a5d7ff9ba8e692f50a594",
+    "adaptation": "Only literal lone units in fixture JSON-text strings are spelled as JSON unicode escapes for the UTF8 SourceJson input; source parsed values and expected canonical bytes are unchanged."
+  },
+  "canonical": [
+    {
+      "raw": "{\"b\":1.0,\"2\":\"two\",\"1\":\"one\",\"b\":-0,\"x\":1e21,\"y\":1e-7}",
+      "expected": "{\"1\":\"one\",\"2\":\"two\",\"b\":0,\"x\":1e+21,\"y\":1e-7}"
+    },
+    {
+      "raw": "{\"\\ud800\":\"lone\",\"v\":\"\\udfff\",\"n\":1e400}",
+      "expected": "{\"\\ud800\":\"lone\",\"v\":\"\\udfff\",\"n\":null}"
+    },
+    {
+      "raw": "[1.00,-0,1e-6,1e20,1e21,2.5,\"🧩\"]",
+      "expected": "[1,0,0.000001,100000000000000000000,1e+21,2.5,\"🧩\"]"
+    },
+    {
+      "raw": "{\"__proto__\":{\"a\":1},\"constructor\":2,\"00\":1,\"0\":2,\"4294967294\":3,\"4294967295\":4}",
+      "expected": "{\"0\":2,\"4294967294\":3,\"__proto__\":{\"a\":1},\"constructor\":2,\"00\":1,\"4294967295\":4}"
+    }
+  ]
+}

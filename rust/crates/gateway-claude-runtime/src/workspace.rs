@@ -1,8 +1,10 @@
 use crate::{ClaudePoolSession, host::*, persistence};
 use gateway_admin_runtime::claude::{self, AccountUpdate, Workspace};
-use gateway_core::{GatewayError, state::AuthorityStore};
-use gateway_schema::util::js_trim;
-use serde_json::Value;
+use gateway_core::{
+    GatewayError, js_string::JsString16, js_string_case::lowercase_source, source_json::SourceJson,
+    source_serialization as source, state::AuthorityStore,
+};
+use gateway_schema::reasoning::js_trim_source;
 
 pub(crate) async fn discover<S: AuthorityStore, H: ClaudePoolHost>(
     session: &ClaudePoolSession,
@@ -40,32 +42,39 @@ pub(crate) async fn discover<S: AuthorityStore, H: ClaudePoolHost>(
     if !(200..300).contains(&response.status) {
         return Ok(None);
     }
-    let parsed = serde_json::from_str::<Value>(&response.body).ok();
+    let parsed = SourceJson::parse(&response.body).ok();
     let mut workspaces = parsed
         .as_ref()
-        .and_then(|value| value.get("data"))
-        .and_then(Value::as_array)
+        .and_then(|value| source::member(value, "data"))
+        .as_ref()
+        .and_then(source::array)
         .into_iter()
         .flatten()
         .filter_map(|row| {
-            let id = js_trim(row.get("id")?.as_str()?);
-            if !id.starts_with("wrkspc_") || row.get("archived_at").is_some_and(|v| !v.is_null()) {
+            let id = js_trim_source(&source::string(&source::member(&row, "id")?)?);
+            if !id
+                .as_units()
+                .iter()
+                .copied()
+                .take(7)
+                .eq("wrkspc_".encode_utf16())
+                || source::member(&row, "archived_at").is_some_and(|v| v.as_str() != "null")
+            {
                 return None;
             }
-            let name = row
-                .get("name")
-                .and_then(Value::as_str)
-                .map(js_trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_owned);
-            Some((id.to_owned(), name))
+            let name = source::member(&row, "name")
+                .as_ref()
+                .and_then(source::string)
+                .map(|name| js_trim_source(&name))
+                .filter(|name| !name.as_units().is_empty());
+            Some((id, name))
         })
         .collect::<Vec<_>>();
     let index = workspaces
         .iter()
         .position(|(_, name)| {
             name.as_ref()
-                .is_some_and(|s| js_trim(s).eq_ignore_ascii_case("default"))
+                .is_some_and(|name| lowercase_source(name) == JsString16::from_utf8("default"))
         })
         .unwrap_or(0);
     if workspaces.is_empty() {
@@ -127,6 +136,7 @@ pub(crate) async fn discover<S: AuthorityStore, H: ClaudePoolHost>(
         key_id: &selected.key_id,
         model: &selected.model,
         raw: &selected.raw,
+        effective_effort: selected.effective_effort.clone(),
         selection: None,
     };
     // Source exception: retain the already encoded non-disabled request; no new

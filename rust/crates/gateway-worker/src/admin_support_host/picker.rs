@@ -1,4 +1,4 @@
-use gateway_core::GatewayError;
+use gateway_core::{GatewayError, source_json::SourceJson, source_serialization as source};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -69,25 +69,40 @@ const PRESENTATION: &[(&str, &str, &str, &str, &str)] = &[
 ];
 
 pub(super) fn project(
-    catalog: &Value,
+    catalog: &SourceJson,
     subscriptions: Vec<Value>,
     secrets: &BTreeMap<String, String>,
 ) -> Result<Value, GatewayError> {
-    let models = catalog["models"].as_array().ok_or_else(|| {
-        GatewayError::unavailable(
-            "Provider catalog is invalid.",
-            "provider_picker_unavailable",
-        )
-    })?;
+    let models = source::member(catalog, "models")
+        .as_ref()
+        .and_then(source::array)
+        .ok_or_else(|| {
+            GatewayError::unavailable(
+                "Provider catalog is invalid.",
+                "provider_picker_unavailable",
+            )
+        })?;
     let mut providers = Vec::new();
     for (id, label, tier, detail, health) in PRESENTATION {
-        let source = &catalog["sources"][id];
+        let provider_source = source::member(catalog, "sources")
+            .as_ref()
+            .and_then(|sources| source::member(sources, id));
         let count = models
             .iter()
             .filter(|model| {
-                model["providers"]
-                    .as_array()
-                    .is_some_and(|rows| rows.iter().any(|row| row["id"] == *id))
+                source::member(model, "providers")
+                    .as_ref()
+                    .and_then(source::array)
+                    .is_some_and(|rows| {
+                        rows.iter().any(|row| {
+                            source::member(row, "id")
+                                .as_ref()
+                                .and_then(source::string)
+                                .is_some_and(|value| {
+                                    value.as_units().iter().copied().eq(id.encode_utf16())
+                                })
+                        })
+                    })
             })
             .count();
         let gated = match *id {
@@ -99,12 +114,21 @@ pub(super) fn project(
             ),
             _ => None,
         };
+        // Generated source-status/bool fields are scalar; model IDs never pass through Value.
         let status = gated
-            .map(|yes| if yes { "available" } else { "unavailable" })
-            .unwrap_or_else(|| source["status"].as_str().unwrap_or("unavailable"));
+            .map(|yes| if yes { "available" } else { "unavailable" }.to_owned())
+            .unwrap_or_else(|| {
+                provider_source
+                    .as_ref()
+                    .and_then(|row| source::member(row, "status"))
+                    .and_then(|value| value.deserialize::<String>().ok())
+                    .unwrap_or_else(|| "unavailable".into())
+            });
         let configured = gated.unwrap_or_else(|| {
-            source["configured"]
-                .as_bool()
+            provider_source
+                .as_ref()
+                .and_then(|row| source::member(row, "configured"))
+                .and_then(|value| value.deserialize::<bool>().ok())
                 .unwrap_or(status == "available")
         });
         let endpoints = match *id {
@@ -168,7 +192,10 @@ mod tests {
     #[test]
     fn picker_keeps_roster_and_unknown_sources_without_claiming_gateway_capacity() {
         let result = project(
-            &json!({"models":[{"providers":[{"id":"codex"}]}],"sources":{}}),
+            &SourceJson::from_serializable(
+                &json!({"models":[{"providers":[{"id":"codex"}]}],"sources":{}}),
+            )
+            .unwrap(),
             vec![],
             &BTreeMap::from([("cerebras".into(), "fixture".into())]),
         )
@@ -187,5 +214,23 @@ mod tests {
             Some("fallback@example.com")
         );
         assert_eq!(account_email("invalid"), None);
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    #[test]
+    fn picker_counts_source_models_without_scalarizing_their_labels() {
+        let document = gateway_core::source_json::SourceJson::parse(r#"{"models":[{"id":"model\ud800","providers":[{"id":"codex"}]}],"sources":{"codex":{"status":"available","configured":true}}}"#).unwrap();
+        let body = super::project(&document, Vec::new(), &Default::default()).unwrap();
+        let codex = body["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == "codex")
+            .unwrap();
+        assert_eq!(codex["model_count"], 1);
+        assert_eq!(codex["status"], "available");
+        assert_eq!(codex["configured"], true);
     }
 }
