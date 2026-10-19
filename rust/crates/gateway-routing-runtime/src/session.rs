@@ -39,6 +39,12 @@ impl<
     H: RoutingHost,
 > RoutingSession<S, I, C, H>
 {
+    pub fn original_source(&self) -> &gateway_core::source_json::SourceJson {
+        self.input.original_source()
+    }
+    pub fn original_context(&self) -> &gateway_core::identity::RequestContext {
+        &self.input.context
+    }
     pub fn elapsed_wait_ms(&self) -> i64 {
         self.elapsed_wait_ms.get()
     }
@@ -182,6 +188,74 @@ impl<
             extra_lock: std::rc::Rc::new(futures_util::lock::Mutex::new(())),
         })
     }
+    /// Consume M34's original Planning capability; never reserve another lifetime.
+    pub async fn from_local_admission(
+        admission: crate::local_work::LocalProviderAdmission<S, I, C, H>,
+    ) -> RoutingResult<Self> {
+        let metadata = admission.original_metadata();
+        let input = RoutingInput::from_source_request(
+            crate::local_work::LocalRequestMetadata {
+                context: metadata.context.clone(),
+                principal: metadata.principal.clone(),
+                catalog: metadata.catalog.clone(),
+                runtime: metadata.runtime.clone(),
+                client_version: metadata.client_version.clone(),
+                native_session_id: metadata.native_session_id.clone(),
+                retry_prohibited: metadata.retry_prohibited,
+            },
+            admission
+                .original
+                .input
+                .original
+                .for_surface(gateway_schema::request::RequestSurface::Responses),
+        );
+        let planned: RoutingResult<(RoutePlan, String)> = (|| {
+            if admission.original.host.cancelled() {
+                return Err(admission.original.host.cancellation_error().into());
+            }
+            let now = admission.original.clock.now_ms()?;
+            if now < input.context.started_at_ms || now > 9_007_199_254_740_991 {
+                return Err(
+                    journal::unavailable("Invalid original request identity or clock.").into(),
+                );
+            }
+            let plan = policy::plan(&input, now)?;
+            let conversation = admission.original.tokens.next_token()?;
+            Ok((plan, conversation))
+        })();
+        let (plan, conversation_id) = match planned {
+            Ok(planned) => planned,
+            Err(error) => {
+                admission.fail_planning().await?;
+                return Err(error);
+            }
+        };
+        let parts = admission.attest_plan(plan).await?;
+        // The opaque parts came from the SAME original admission and checked revisions.
+        debug_assert_eq!(
+            parts.input.original.original_source(),
+            input.original_source()
+        );
+        debug_assert_eq!(parts.input.metadata.context, input.context);
+        let streamed = input.streamed();
+        Ok(Self {
+            store: parts.store,
+            tokens: parts.tokens,
+            clock: parts.clock,
+            host: parts.host,
+            input,
+            plan: parts.plan,
+            lithos: RefCell::new(LithosWindows::default()),
+            waits: RefCell::new(WaitBudget {
+                waits: 0,
+                waited_ms: 0,
+                streamed,
+            }),
+            conversation_id,
+            elapsed_wait_ms: std::cell::Cell::new(0),
+            extra_lock: std::rc::Rc::new(futures_util::lock::Mutex::new(())),
+        })
+    }
     pub(crate) async fn change<F: Fn(&mut Journal) -> Result<(), GatewayError>>(
         &self,
         update: F,
@@ -270,7 +344,7 @@ impl<
         model: &str,
         publication: &PublishedCredential,
         nonce: &str,
-    ) -> Result<gateway_providers::PreparedRequest, GatewayError> {
+    ) -> RoutingResult<gateway_providers::PreparedRequest> {
         crate::wire::prepare(
             &self.input,
             &self.conversation_id,

@@ -284,61 +284,6 @@ pub fn concrete_scope(scope: &Value, reproducible_cycles: i64) -> bool {
         && scope.get("reproducible_cycles").and_then(Value::as_i64) == Some(reproducible_cycles)
         && normalized_string(scope.get("effective_model")).is_some()
 }
-fn breakpoints(raw: &Value, input_key: &str) -> Vec<(String, Option<String>)> {
-    let mut found = Vec::new();
-    let Some(items) = raw.get(input_key).and_then(Value::as_array) else {
-        return found;
-    };
-    fn collect(value: &Value, param: String, found: &mut Vec<(String, Option<String>)>) {
-        if value
-            .pointer("/prompt_cache_breakpoint/mode")
-            .and_then(Value::as_str)
-            == Some("explicit")
-        {
-            found.push((
-                param,
-                value.get("type").and_then(Value::as_str).map(str::to_owned),
-            ));
-        }
-    }
-    for (i, item) in items.iter().enumerate() {
-        let param = format!("{input_key}[{i}]");
-        if input_key == "input" {
-            collect(item, format!("{param}.prompt_cache_breakpoint"), &mut found);
-        }
-        for key in ["content", "output"] {
-            if key == "output"
-                && (input_key != "input"
-                    || item.get("type").and_then(Value::as_str) != Some("function_call_output"))
-            {
-                continue;
-            }
-            if let Some(parts) = item.get(key).and_then(Value::as_array) {
-                for (j, part) in parts.iter().enumerate() {
-                    collect(
-                        part,
-                        format!("{param}.{key}[{j}].prompt_cache_breakpoint"),
-                        &mut found,
-                    );
-                }
-            }
-        }
-    }
-    found
-}
-fn contains_breakpoint(value: &Value) -> bool {
-    let content = value.get("content").and_then(Value::as_array);
-    let output = if value.get("type").and_then(Value::as_str) == Some("function_call_output") {
-        value.get("output").and_then(Value::as_array)
-    } else {
-        None
-    };
-    content.into_iter().chain(output).flatten().any(|v| {
-        v.pointer("/prompt_cache_breakpoint/mode")
-            .and_then(Value::as_str)
-            == Some("explicit")
-    })
-}
 pub fn validate_known_unsupported(
     model: &str,
     record: Option<&Value>,
@@ -346,122 +291,17 @@ pub fn validate_known_unsupported(
     input: &[Value],
     input_key: &str,
 ) -> Result<(), GatewayError> {
-    let markers = if input.iter().any(contains_breakpoint) {
-        breakpoints(body, input_key)
-    } else {
-        Vec::new()
-    };
-    let unsupported = |param: &str| {
-        invalid(
-            format!("Prompt cache control '{param}' is not supported for model '{model}'."),
-            Some(param),
-        )
-    };
-    if record.and_then(|r| r.get("prompt_cache")) == Some(&Value::Bool(false)) {
-        let param = [
-            "prompt_cache_key",
-            "prompt_cache_options",
-            "prompt_cache_retention",
-        ]
+    let body = gateway_core::source_json::SourceJson::from_serializable(body)?;
+    let input = input
         .iter()
-        .find(|k| body.get(**k).is_some())
-        .map(|s| (*s).to_owned())
-        .or_else(|| markers.first().map(|(p, _)| p.clone()));
-        if let Some(param) = param {
-            return Err(invalid(
-                format!("Prompt caching is not supported for model '{model}'."),
-                Some(&param),
-            ));
-        }
-        return Ok(());
-    }
-    let capabilities = normalize_capabilities(record.and_then(|r| r.get("prompt_cache")));
-    let Some(controls) = capabilities
-        .as_ref()
-        .and_then(|v| v.get("providers"))
-        .and_then(Value::as_array)
-        .and_then(|ps| {
-            ps.iter()
-                .find(|p| p.get("id").and_then(Value::as_str) == Some(CODEX_PROVIDER))
-        })
-        .and_then(|p| p.get("controls"))
-    else {
-        return Ok(());
-    };
-    let mode_unsupported = |mode: &str| {
-        controls
-            .get("modes")
-            .and_then(Value::as_array)
-            .is_some_and(|m| !m.iter().any(|v| v.as_str() == Some(mode)))
-    };
-    if body.get("prompt_cache_key").is_some() && controls.get("key") == Some(&Value::Bool(false)) {
-        return Err(unsupported("prompt_cache_key"));
-    }
-    let options = body.get("prompt_cache_options").filter(|v| v.is_object());
-    let requested = options.map(|o| {
-        if o.get("mode").and_then(Value::as_str) == Some("explicit") {
-            ("explicit", "prompt_cache_options.mode")
-        } else {
-            (
-                "implicit",
-                if o.get("mode").is_some() {
-                    "prompt_cache_options.mode"
-                } else {
-                    "prompt_cache_options"
-                },
-            )
-        }
-    });
-    if let Some(("implicit", param)) = requested
-        && (controls.get("implicit") == Some(&Value::Bool(false)) || mode_unsupported("implicit"))
-    {
-        return Err(unsupported(param));
-    }
-    for (raw, allowed, param) in [
-        (
-            options.and_then(|o| o.get("ttl")),
-            controls.get("ttls"),
-            "prompt_cache_options.ttl",
-        ),
-        (
-            body.get("prompt_cache_retention"),
-            controls.get("legacy_retentions"),
-            "prompt_cache_retention",
-        ),
-    ] {
-        if let (Some(value), Some(allowed)) = (
-            raw.and_then(Value::as_str),
-            allowed.and_then(Value::as_array),
-        ) && !allowed.iter().any(|v| v.as_str() == Some(value))
-        {
-            return Err(unsupported(param));
-        }
-    }
-    for (param, kind) in markers {
-        if controls.get("explicit_breakpoints") == Some(&Value::Bool(false))
-            || mode_unsupported("explicit")
-        {
-            return Err(unsupported(&param));
-        }
-        let endpoint = if input_key == "input" {
-            "responses"
-        } else {
-            "chat_completions"
-        };
-        if let Some(allowed) = controls
-            .get("breakpoint_block_types")
-            .and_then(|v| v.get(endpoint))
-            .and_then(Value::as_array)
-            && !kind.is_some_and(|k| allowed.iter().any(|v| v.as_str() == Some(k.as_str())))
-        {
-            return Err(unsupported(&param));
-        }
-    }
-    if let Some(("explicit", param)) = requested
-        && (controls.get("explicit_breakpoints") == Some(&Value::Bool(false))
-            || mode_unsupported("explicit"))
-    {
-        return Err(unsupported(param));
-    }
-    Ok(())
+        .map(gateway_core::source_json::SourceJson::from_serializable)
+        .collect::<Result<Vec<_>, _>>()?;
+    crate::source_request::validate_known_unsupported_prompt_cache(
+        &gateway_core::js_string::JsString16::from_utf8(model),
+        record.and_then(|record| record.get("prompt_cache")),
+        &body,
+        &input,
+        input_key,
+    )
+    .map_err(crate::source_request::SourceRequestError::into_scalar)
 }
