@@ -48,7 +48,7 @@ fn manual_reset_authenticates_before_validating_and_dispatches_only_exact_hash()
         run(runtime.execute(AdminOperation::CodexResetConsume, unauthorized))
             .unwrap_err()
             .status,
-        403
+        401
     );
     assert_eq!(store.reads.get(), 0);
     for body in [
