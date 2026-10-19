@@ -108,6 +108,12 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         receipt: &PaidRoutingReceipt,
         now: i64,
     ) -> Result<PaidAdmission, GatewayError> {
+        if receipt.original_request.is_none() {
+            return Err(unavailable(
+                "paid_control_unavailable",
+                "Original request ownership is required before paid reservation.",
+            ));
+        }
         text(&input.key_id.0)?;
         text(&input.request_id.0)?;
         text(&input.attempt_id.0)?;

@@ -2,6 +2,9 @@ mod capacity_cases;
 mod claude_cases;
 mod full_pool_reset;
 mod paid_control_cases;
+#[path = "paid_control_cases/original.rs"]
+mod paid_original;
+mod paid_retention_f13;
 mod reset_spend;
 mod routing_source_cases;
 mod source_model_cases;
@@ -57,7 +60,7 @@ async fn reserve_paid(
 ) -> Result<PaidAdmission, gateway_core::GatewayError> {
     authority.store().clock(now);
     let context = paid_control_cases::context(input);
-    let receipt = authority.authorize_paid_route(input, &context, now).await?;
+    let receipt = paid_original::authorize(authority, input, &context, now).await?;
     authority
         .reserve_paid(input, authorization, &receipt, now)
         .await
