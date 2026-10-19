@@ -14,6 +14,13 @@ const ALIASES = new Map([
   ["#kv", "src/storage/kv.ts"],
 ]);
 const UNTRACKED_ROOTS = ["src/", "scripts/", "tests/", "ops/", "benchmarks/", "tools/", "static/", "rust/"];
+const WORKER_RUNTIME_TEST = "tests/native-authority-workerd.test.ts";
+const WORKER_RUNTIME_INPUT = /^(?:tests\/fixtures\/native-authority\/|tools\/worker-test-runtime\/|scripts\/prepare-worker-test-runtime\.ts$)/;
+const WORKER_RUNTIME_FIXTURES = ["tests/fixtures/native-authority/fixture-worker.mjs", "tests/fixtures/native-authority/bun-client.ts"];
+const workerRuntimeTestExists = (root: string): boolean => {
+  const path = resolve(root, WORKER_RUNTIME_TEST);
+  return existsSync(path) && statSync(path).isFile();
+};
 
 export type ChangeScope = Readonly<{
   paths: readonly string[];
@@ -35,6 +42,7 @@ export type CiScope = TestSelection &
     needsValidate: boolean;
     needsNativeKv: boolean;
     needsNativeBuild: boolean;
+    needsWorkerRuntime: boolean;
     needsMacContainment: boolean;
     needsDarwinNative: boolean;
     needsDarwinTests: boolean;
@@ -158,7 +166,19 @@ const testTouchesChangedPath = (testPath: string, changedPaths: ReadonlySet<stri
 
 export const selectAffectedTestFiles = (changedPaths: readonly string[], candidateTests: readonly string[], root = ROOT): string[] => {
   const changed = new Set(changedPaths.map(normalizePath));
-  return uniqueSorted(candidateTests.map(normalizePath).filter((testPath) => changed.has(testPath) || testTouchesChangedPath(testPath, changed, root)));
+  // The Node harness reads/bundles these files instead of importing them into Bun.
+  // Never synthesize a test which has not been committed or created in this checkout.
+  const workerInputsChanged =
+    candidateTests.includes(WORKER_RUNTIME_TEST) &&
+    workerRuntimeTestExists(root) &&
+    ([...changed].some((path) => WORKER_RUNTIME_INPUT.test(path)) || WORKER_RUNTIME_FIXTURES.some((path) => testTouchesChangedPath(path, changed, root)));
+  return uniqueSorted(
+    candidateTests
+      .map(normalizePath)
+      .filter(
+        (testPath) => changed.has(testPath) || testTouchesChangedPath(testPath, changed, root) || (testPath === WORKER_RUNTIME_TEST && workerInputsChanged)
+      )
+  );
 };
 
 export const testRequiresNativeKv = (testPath: string, root = ROOT): boolean => {
@@ -226,6 +246,7 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT, envir
     selection.paths.some((path) => NATIVE_PATH.test(path)) ||
     (!docsOnly && selection.affectedTests.some((path) => testRequiresNativeKv(path, root)));
   const needsArtifact = completeCheckSet || (!docsOnly && selection.paths.some((path) => RELEASE_PATH.test(path)));
+  const needsWorkerRuntime = workerRuntimeTestExists(root) && (selection.runAll || selection.affectedTests.includes(WORKER_RUNTIME_TEST));
   const needsDarwinTests = !docsOnly && (selection.runAll || selection.paths.some((path) => DARWIN_PATH.test(path)));
   return {
     ...selection,
@@ -235,7 +256,8 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT, envir
     needsValidate: completeCheckSet || !docsOnly,
     needsTypeScriptValidate: completeCheckSet || (!docsOnly && (selection.runAll || hasTypeScriptWork)),
     needsNativeKv,
-    needsNativeBuild: needsNativeKv || needsArtifact,
+    needsNativeBuild: needsNativeKv || needsArtifact || needsWorkerRuntime,
+    needsWorkerRuntime,
     needsMacContainment: completeCheckSet || (!docsOnly && (selection.runAll || selection.paths.some((path) => MAC_PATH.test(path)))),
     needsDarwinNative: completeCheckSet || needsDarwinTests,
     needsDarwinTests,

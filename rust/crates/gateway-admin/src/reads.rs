@@ -11,7 +11,7 @@ use gateway_core::{
 use serde_json::{Value, json};
 
 use crate::{
-    audit::{KeyChange, RETENTION_MS},
+    audit::{self, RETENTION_MS},
     keys::{ApiKeyRecord, public_record},
 };
 
@@ -227,16 +227,12 @@ pub async fn key_changes<S: QueryStore>(
         .await?;
     let mut events = Vec::new();
     for entry in page.entries {
-        let event: KeyChange =
-            serde_json::from_value(entry.record.json_value()?.clone()).map_err(|_| {
-                GatewayError::unavailable("API key audit state is corrupt", "api_key_audit_invalid")
-            })?;
-        if event.at_ms >= now - RETENTION_MS {
+        if let Some(event) = audit::retained_event(&entry.record, now - RETENTION_MS)? {
             events.push(event);
         }
     }
-    Ok(AuthResponse::json(
+    Ok(AuthResponse::source_json(
         200,
-        json!({"object":"list","data":events,"next_cursor":page.next_cursor,"retention_days":90}),
+        audit::page(&events, page.next_cursor.as_deref())?,
     ))
 }

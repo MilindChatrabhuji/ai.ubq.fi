@@ -1,15 +1,11 @@
+import * as policy from "../authority/native-api-key-policy.ts";
+import { buildApiKeyUpdateRecord, apiKeyUpdateChanged, apiKeyUpdateAuditChanges, retryableLocalDeletionGuard } from "../authority/native-api-key-policy.ts";
+import type { ApiKeyUpdateFields, ApiKeyUpdateIdentity, ApiKeyUpdateQuota, ApiKeyUpdatePaidFallback } from "../authority/native-api-key-policy.ts";
 import type { Kv, KvEntryMaybe, KvKey } from "#kv";
 // Admin API key mutation handlers, split out of src/admin.ts.
 
 import { json, openaiError } from "../http.ts";
-import {
-  apiKeyHashKey,
-  apiKeyIdKey,
-  coerceApiKeyExpiresAtMs,
-  coerceApiKeyWindowMs,
-  paidFallbackCreditsToMicrocredits,
-  paidFallbackMicrocreditsToCredits,
-} from "../api-keys.ts";
+import { getDefaultExpiryMs, DEFAULT_USAGE_LIMIT_REQUESTS, apiKeyHashKey, apiKeyIdKey, coerceApiKeyExpiresAtMs, coerceApiKeyWindowMs } from "../api-keys.ts";
 import {
   API_KEY_USAGE_V2_PREFIX,
   apiKeyPolicyFromHashRecord,
@@ -32,17 +28,7 @@ import { readJsonBody } from "../request.ts";
 import { getString, isRecord } from "../utils.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyUsageWindowV3 } from "../types.ts";
 import { appendApiKeyChangeEvent, buildApiKeyChangeEvent, type ApiKeyAuditContext } from "./api-key-audit.ts";
-import {
-  normalizeApiKeyExpiresAtMs,
-  normalizeApiKeyName,
-  normalizeApiKeyUsageLimit,
-  normalizeApiKeyWindowMsInput,
-  normalizeOptionalBoolean,
-  paidFallbackInitializationError,
-  paidFallbackInputError,
-  paidFallbackPublicFields,
-  rejectRetiredApiKeyResetSetting,
-} from "./api-keys.ts";
+import { paidFallbackInitializationError, paidFallbackInputError, paidFallbackPublicFields, rejectRetiredApiKeyResetSetting } from "./api-keys.ts";
 
 type ApiKeyUpdateTarget = Readonly<{
   ok: true;
@@ -72,85 +58,21 @@ const resolveApiKeyUpdateTarget = async (kv: Kv, raw: Record<string, unknown>): 
   return { ok: true, id, idKey, entry, record };
 };
 
-type ApiKeyUpdateFields = Readonly<{
-  name: string;
-  expiresAtMs: number;
-  usageLimitRequests: number;
-  windowMs: number;
-  paidFallbackEnabled: boolean;
-  paidFallbackLimitMicrocredits: number;
-  paidFallbackModelIds: string[];
-  paidFallbackQuotaPerCredit: number;
-  paidFallbackMaxExposureMicrocredits: Record<string, number>;
-  paidFallbackPricingCheckedAtMs: number | null;
-  resetUsage: boolean;
-}>;
-
-type ApiKeyUpdateIdentity = Pick<ApiKeyUpdateFields, "name" | "expiresAtMs">;
-type ApiKeyUpdateQuota = Pick<ApiKeyUpdateFields, "usageLimitRequests" | "windowMs">;
-type ApiKeyUpdatePaidFallback = Pick<
-  ApiKeyUpdateFields,
-  | "paidFallbackEnabled"
-  | "paidFallbackLimitMicrocredits"
-  | "paidFallbackModelIds"
-  | "paidFallbackQuotaPerCredit"
-  | "paidFallbackMaxExposureMicrocredits"
-  | "paidFallbackPricingCheckedAtMs"
->;
-
-/** `name` and `expires_at_ms`, validated in that order. */
 const resolveApiKeyUpdateIdentity = (
   raw: Record<string, unknown>,
   record: ApiKeyRecord,
   currentExpiresAtMs: number,
   nowMs: number
 ): { ok: true; identity: ApiKeyUpdateIdentity } | { ok: false; response: Response } => {
-  let name = record.name;
-  if (Object.prototype.hasOwnProperty.call(raw, "name")) {
-    const normalized = normalizeApiKeyName(raw.name);
-    if (!normalized) return { ok: false, response: openaiError(400, "name must be a non-empty string (<=80 chars)", "invalid_request_error") };
-    name = normalized;
-  }
-
-  let expiresAtMs = currentExpiresAtMs;
-  if (Object.prototype.hasOwnProperty.call(raw, "expires_at_ms")) {
-    const normalized = normalizeApiKeyExpiresAtMs(raw.expires_at_ms, nowMs);
-    if (normalized === null) {
-      return {
-        ok: false,
-        response: openaiError(400, "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1", "invalid_request_error"),
-      };
-    }
-    expiresAtMs = normalized;
-  }
-
-  return { ok: true, identity: { name, expiresAtMs } };
+  const result = policy.resolveApiKeyUpdateIdentity(raw, record, currentExpiresAtMs, nowMs, getDefaultExpiryMs(nowMs));
+  return result.ok ? result : { ok: false, response: openaiError(400, result.error, "invalid_request_error") };
 };
-
-/** `usage_limit_requests` and `window_ms`, validated in that order. */
 const resolveApiKeyUpdateQuota = (
   raw: Record<string, unknown>,
   record: ApiKeyRecord
 ): { ok: true; quota: ApiKeyUpdateQuota } | { ok: false; response: Response } => {
-  let usageLimitRequests = record.usage_limit_requests;
-  if (Object.prototype.hasOwnProperty.call(raw, "usage_limit_requests")) {
-    const normalized = normalizeApiKeyUsageLimit(raw.usage_limit_requests);
-    if (normalized === null) {
-      return { ok: false, response: openaiError(400, "usage_limit_requests must be a non-negative number or -1 for unlimited", "invalid_request_error") };
-    }
-    usageLimitRequests = normalized;
-  }
-
-  let windowMs = coerceApiKeyWindowMs(record);
-  if (Object.prototype.hasOwnProperty.call(raw, "window_ms")) {
-    const normalized = normalizeApiKeyWindowMsInput(raw.window_ms);
-    if (normalized === null) {
-      return { ok: false, response: openaiError(400, "window_ms must be a positive number", "invalid_request_error") };
-    }
-    windowMs = normalized;
-  }
-
-  return { ok: true, quota: { usageLimitRequests, windowMs } };
+  const result = policy.resolveApiKeyUpdateQuota(raw, record, DEFAULT_USAGE_LIMIT_REQUESTS);
+  return result.ok ? result : { ok: false, response: openaiError(400, result.error, "invalid_request_error") };
 };
 
 /**
@@ -162,35 +84,10 @@ const resolveApiKeyUpdatePaidFallback = async (
   record: ApiKeyRecord,
   signal: AbortSignal
 ): Promise<{ ok: true; paidFallback: ApiKeyUpdatePaidFallback } | { ok: false; response: Response }> => {
-  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled") && typeof raw.paid_fallback_enabled !== "boolean") {
-    return { ok: false, response: paidFallbackInputError("paid_fallback_enabled must be a boolean") };
-  }
-  let paidFallbackEnabled = record.paid_fallback_enabled;
-  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled")) {
-    paidFallbackEnabled = raw.paid_fallback_enabled === true;
-  }
-
-  let paidFallbackLimitMicrocredits = record.paid_fallback_limit_microcredits;
-  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_limit_credits")) {
-    const limitMicrocredits = paidFallbackCreditsToMicrocredits(raw.paid_fallback_limit_credits);
-    if (limitMicrocredits === null) {
-      return { ok: false, response: paidFallbackInputError("paid_fallback_limit_credits must be a non-negative number or -1") };
-    }
-    paidFallbackLimitMicrocredits = limitMicrocredits;
-  }
-  if (paidFallbackEnabled && paidFallbackLimitMicrocredits === 0) {
-    return { ok: false, response: paidFallbackInputError("paid_fallback_limit_credits must be positive or -1 when paid fallback is enabled") };
-  }
-
-  const paidFallback: ApiKeyUpdatePaidFallback = {
-    paidFallbackEnabled,
-    paidFallbackLimitMicrocredits,
-    paidFallbackModelIds: record.paid_fallback_model_ids,
-    paidFallbackQuotaPerCredit: record.paid_fallback_quota_per_credit,
-    paidFallbackMaxExposureMicrocredits: record.paid_fallback_max_exposure_microcredits ?? {},
-    paidFallbackPricingCheckedAtMs: record.paid_fallback_pricing_checked_at_ms,
-  };
-  if (record.paid_fallback_enabled || !paidFallbackEnabled) return { ok: true, paidFallback };
+  const result = policy.resolveApiKeyUpdatePaidFallback(raw, record);
+  if (!result.ok) return { ok: false, response: paidFallbackInputError(result.error) };
+  const paidFallback = result.paidFallback;
+  if (!result.needsInitialization) return { ok: true, paidFallback };
 
   try {
     const initialized = await initializePaidFallbackPolicy(signal);
@@ -225,9 +122,8 @@ const resolveApiKeyUpdateFields = async (
   const paidFallback = await resolveApiKeyUpdatePaidFallback(raw, record, signal);
   if (!paidFallback.ok) return paidFallback;
 
-  if (Object.prototype.hasOwnProperty.call(raw, "reset_usage") && typeof raw.reset_usage !== "boolean") {
-    return { ok: false, response: openaiError(400, "reset_usage must be a boolean", "invalid_request_error") };
-  }
+  const reset = policy.resolveApiKeyResetUsage(raw);
+  if (!reset.ok) return { ok: false, response: openaiError(400, reset.error, "invalid_request_error") };
 
   return {
     ok: true,
@@ -235,101 +131,9 @@ const resolveApiKeyUpdateFields = async (
       ...identity.identity,
       ...quota.quota,
       ...paidFallback.paidFallback,
-      resetUsage: normalizeOptionalBoolean(raw.reset_usage),
+      resetUsage: reset.resetUsage,
     },
   };
-};
-
-/**
- * Merges the patch into the stored record. A reset (explicit, or implied by a
- * window change) must always select a distinct V3 aggregate identity: a create
- * followed by an immediate reset can otherwise share the same millisecond start
- * and overwrite the current window instead of opening a fresh one.
- */
-const buildApiKeyUpdateRecord = (
-  record: ApiKeyRecord,
-  fields: ApiKeyUpdateFields,
-  nowMs: number,
-  currentWindowMs: number
-): { updated: ApiKeyRecord; resetUsage: boolean; replaceQuotaWindow: boolean } => {
-  const replaceQuotaWindow = fields.resetUsage || fields.windowMs !== currentWindowMs;
-  let usageRequests = record.usage_requests;
-  let usageResetAtMs = record.usage_reset_at_ms;
-  let paidFallbackSpentMicrocredits = record.paid_fallback_spent_microcredits;
-  if (replaceQuotaWindow) {
-    usageRequests = 0;
-    const currentWindowStartMs = record.usage_reset_at_ms - currentWindowMs;
-    const freshWindowStartMs = Math.max(nowMs, currentWindowStartMs + 1);
-    usageResetAtMs = freshWindowStartMs + fields.windowMs;
-    paidFallbackSpentMicrocredits = 0;
-  }
-  return {
-    updated: {
-      ...record,
-      name: fields.name,
-      expires_at_ms: fields.expiresAtMs,
-      usage_limit_requests: fields.usageLimitRequests,
-      usage_requests: usageRequests,
-      usage_reset_at_ms: usageResetAtMs,
-      window_ms: fields.windowMs,
-      paid_fallback_enabled: fields.paidFallbackEnabled,
-      paid_fallback_limit_microcredits: fields.paidFallbackLimitMicrocredits,
-      paid_fallback_spent_microcredits: paidFallbackSpentMicrocredits,
-      paid_fallback_reserved_microcredits: record.paid_fallback_reserved_microcredits,
-      paid_fallback_reservation_request_id: record.paid_fallback_reservation_request_id,
-      paid_fallback_model_ids: fields.paidFallbackModelIds,
-      paid_fallback_quota_per_credit: fields.paidFallbackQuotaPerCredit,
-      paid_fallback_max_exposure_microcredits: fields.paidFallbackMaxExposureMicrocredits,
-      paid_fallback_pricing_checked_at_ms: fields.paidFallbackPricingCheckedAtMs,
-    },
-    resetUsage: fields.resetUsage,
-    replaceQuotaWindow,
-  };
-};
-
-const apiKeyUpdateIdentityChanged = (record: ApiKeyRecord, updated: ApiKeyRecord, currentExpiresAtMs: number): boolean =>
-  updated.name !== record.name || updated.expires_at_ms !== currentExpiresAtMs;
-
-const apiKeyUpdateQuotaChanged = (record: ApiKeyRecord, updated: ApiKeyRecord, currentWindowMs: number, resetUsage: boolean): boolean =>
-  updated.usage_limit_requests !== record.usage_limit_requests ||
-  updated.window_ms !== currentWindowMs ||
-  (resetUsage && (updated.usage_requests !== record.usage_requests || updated.usage_reset_at_ms !== record.usage_reset_at_ms));
-
-const apiKeyUpdatePaidFallbackChanged = (record: ApiKeyRecord, updated: ApiKeyRecord): boolean =>
-  updated.paid_fallback_enabled !== record.paid_fallback_enabled ||
-  updated.paid_fallback_limit_microcredits !== record.paid_fallback_limit_microcredits ||
-  updated.paid_fallback_spent_microcredits !== record.paid_fallback_spent_microcredits ||
-  updated.paid_fallback_reserved_microcredits !== record.paid_fallback_reserved_microcredits ||
-  updated.paid_fallback_reservation_request_id !== record.paid_fallback_reservation_request_id ||
-  updated.paid_fallback_model_ids !== record.paid_fallback_model_ids ||
-  updated.paid_fallback_quota_per_credit !== record.paid_fallback_quota_per_credit ||
-  updated.paid_fallback_pricing_checked_at_ms !== record.paid_fallback_pricing_checked_at_ms;
-
-/** Every comparison is pure, so this matches the original short-circuit chain. */
-const apiKeyUpdateChanged = (record: ApiKeyRecord, updated: ApiKeyRecord, currentExpiresAtMs: number, currentWindowMs: number, resetUsage: boolean): boolean =>
-  apiKeyUpdateIdentityChanged(record, updated, currentExpiresAtMs) ||
-  apiKeyUpdateQuotaChanged(record, updated, currentWindowMs, resetUsage) ||
-  apiKeyUpdatePaidFallbackChanged(record, updated);
-
-/** The safe policy fields that actually changed, ready for the audit allowlist. */
-const apiKeyUpdateAuditChanges = (
-  record: ApiKeyRecord,
-  updated: ApiKeyRecord,
-  currentExpiresAtMs: number,
-  currentWindowMs: number,
-  resetUsage: boolean
-): Record<string, unknown> => {
-  const changed: Record<string, unknown> = {};
-  if (updated.name !== record.name) changed.name = updated.name;
-  if (updated.expires_at_ms !== currentExpiresAtMs) changed.expires_at_ms = updated.expires_at_ms;
-  if (updated.usage_limit_requests !== record.usage_limit_requests) changed.usage_limit_requests = updated.usage_limit_requests;
-  if (updated.window_ms !== currentWindowMs) changed.window_ms = updated.window_ms;
-  if (updated.paid_fallback_enabled !== record.paid_fallback_enabled) changed.paid_fallback_enabled = updated.paid_fallback_enabled;
-  if (updated.paid_fallback_limit_microcredits !== record.paid_fallback_limit_microcredits) {
-    changed.paid_fallback_limit_credits = paidFallbackMicrocreditsToCredits(updated.paid_fallback_limit_microcredits);
-  }
-  if (resetUsage) changed.reset_usage = true;
-  return changed;
 };
 
 /** The no-op response, which reports the live usage counter of the stored policy. */
@@ -438,17 +242,7 @@ const persistApiKeyUpdate = async (
 > => {
   const hashKey = apiKeyHashKey(input.record.hash);
   const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
-  const updatedHash: ApiKeyHashRecord = {
-    id: input.updated.id,
-    expires_at_ms: input.updated.expires_at_ms,
-    revoked_at_ms: input.updated.revoked_at_ms,
-    usage_limit_requests: input.updated.usage_limit_requests,
-    usage_requests: input.updated.usage_requests,
-    usage_reset_at_ms: input.updated.usage_reset_at_ms,
-    window_ms: input.updated.window_ms,
-    usage_quota_version: input.updated.usage_quota_version,
-    ...paidFallbackHashFields(input.updated),
-  };
+  const updatedHash = policy.apiKeyHashRecordFor(input.updated);
 
   const quotaPolicy = apiKeyPolicyFromHashRecord(input.updated.hash, updatedHash, input.nowMs);
   if (!quotaPolicy) {
@@ -586,22 +380,10 @@ export const handleAdminApiKeysRevoke = async (req: Request, context?: ApiKeyAud
 
   const now = Date.now();
   const expiresAtMs = coerceApiKeyExpiresAtMs(entry.value);
-  const updated: ApiKeyRecord = entry.value.revoked_at_ms
-    ? { ...entry.value, expires_at_ms: expiresAtMs }
-    : { ...entry.value, expires_at_ms: expiresAtMs, revoked_at_ms: now };
+  const updated = policy.buildApiKeyRevocationRecord(entry.value, expiresAtMs, now);
   const hashKey = apiKeyHashKey(entry.value.hash);
   const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
-  const updatedHash: ApiKeyHashRecord = {
-    id,
-    expires_at_ms: updated.expires_at_ms,
-    revoked_at_ms: updated.revoked_at_ms,
-    usage_limit_requests: updated.usage_limit_requests,
-    usage_requests: updated.usage_requests,
-    usage_reset_at_ms: updated.usage_reset_at_ms,
-    window_ms: updated.window_ms,
-    usage_quota_version: updated.usage_quota_version,
-    ...paidFallbackHashFields(updated),
-  };
+  const updatedHash = policy.apiKeyHashRecordFor(updated, id);
 
   const atomic = kv.atomic().check(entry).set(idKey, updated).set(hashKey, updatedHash);
   if (hashEntry.versionstamp) atomic.check(hashEntry);
@@ -611,10 +393,7 @@ export const handleAdminApiKeysRevoke = async (req: Request, context?: ApiKeyAud
       action: "revoke",
       targetKeyId: id,
       targetKeyName: updated.name,
-      changed: {
-        ...(updated.revoked_at_ms !== entry.value.revoked_at_ms ? { revoked_at_ms: updated.revoked_at_ms } : {}),
-        ...(updated.expires_at_ms !== entry.value.expires_at_ms ? { expires_at_ms: updated.expires_at_ms } : {}),
-      },
+      changed: policy.apiKeyRevokeAuditChanges(entry.value, updated),
       context,
       nowMs: now,
     })
@@ -657,29 +436,20 @@ export const handleAdminApiKeysUnrevoke = async (req: Request, context?: ApiKeyA
   }
 
   const deletionGuard = await kv.get(paidFallbackDeletionGuardV3Key(id), { consistency: "strong" });
-  if (deletionGuard.value) {
+  const unrevokeDecision = policy.apiKeyUnrevokeDecision(entry.value, deletionGuard.value);
+  if (unrevokeDecision === "blocked") {
     return openaiError(409, "API key deletion is in progress and cannot be reversed", "paid_fallback_deletion_in_progress");
   }
-  if (!entry.value.revoked_at_ms) {
+  if (unrevokeDecision === "unchanged") {
     return json(200, { id, revoked_at_ms: null }, { "x-uos-upstream": "chatgpt_codex" });
   }
 
   const now = Date.now();
   const expiresAtMs = coerceApiKeyExpiresAtMs(entry.value);
-  const updated: ApiKeyRecord = { ...entry.value, expires_at_ms: expiresAtMs, revoked_at_ms: null };
+  const updated = policy.buildApiKeyUnrevocationRecord(entry.value, expiresAtMs);
   const hashKey = apiKeyHashKey(entry.value.hash);
   const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
-  const updatedHash: ApiKeyHashRecord = {
-    id,
-    expires_at_ms: updated.expires_at_ms,
-    revoked_at_ms: updated.revoked_at_ms,
-    usage_limit_requests: updated.usage_limit_requests,
-    usage_requests: updated.usage_requests,
-    usage_reset_at_ms: updated.usage_reset_at_ms,
-    window_ms: updated.window_ms,
-    usage_quota_version: updated.usage_quota_version,
-    ...paidFallbackHashFields(updated),
-  };
+  const updatedHash = policy.apiKeyHashRecordFor(updated, id);
 
   const atomic = kv.atomic().check(entry).check(deletionGuard).set(idKey, updated).set(hashKey, updatedHash);
   if (hashEntry.versionstamp) atomic.check(hashEntry);
@@ -715,13 +485,6 @@ type LocalApiKeyDeletionClaim = Readonly<{
   guard: LocalDevelopmentDeletionGuard;
   check: Readonly<{ key: KvKey; versionstamp: string }>;
 }>;
-
-const retryableLocalDeletionGuard = (value: unknown): LocalDevelopmentDeletionGuard | null => {
-  if (!isRecord(value) || !isRecord(value.local_deletion)) return null;
-  if (typeof value.created_at_ms !== "number" || !Number.isSafeInteger(value.created_at_ms) || value.created_at_ms <= 0) return null;
-  if (value.local_deletion.owner !== null || value.local_deletion.completed_at_ms !== null) return null;
-  return { created_at_ms: value.created_at_ms, local_deletion: { owner: null, completed_at_ms: null } };
-};
 
 const claimLocalDeletion = async (
   kv: Kv,
@@ -809,7 +572,7 @@ export const handleAdminApiKeysDelete = async (req: Request, context?: ApiKeyAud
   const entry = await kv.get<ApiKeyRecord>(idKey);
   if (!entry.value) return openaiError(404, "Not found", "not_found");
 
-  if (!entry.value.revoked_at_ms) {
+  if (policy.apiKeyDeleteDecision(entry.value) === "requires_revocation") {
     return openaiError(400, "Only revoked keys can be deleted", "invalid_request_error");
   }
 

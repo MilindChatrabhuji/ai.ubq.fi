@@ -1,3 +1,5 @@
+import * as policy from "../authority/native-api-key-policy.ts";
+import type { ApiKeyCreateFields } from "../authority/native-api-key-policy.ts";
 import type { Kv } from "#kv";
 // Admin API key creation and listing, split out of src/admin.ts.
 
@@ -9,24 +11,14 @@ import {
   API_KEY_NO_USAGE_LIMIT,
   apiKeyHashKey,
   apiKeyIdKey,
-  calculateNextResetMs,
   coerceApiKeyExpiresAtMs,
   coerceApiKeyWindowMs,
   DEFAULT_USAGE_LIMIT_REQUESTS,
   generateApiKeyToken,
   getDefaultExpiryMs,
-  paidFallbackCreditsToMicrocredits,
   paidFallbackMicrocreditsToCredits,
-  USAGE_RESET_PERIOD_MS,
 } from "../api-keys.ts";
-import {
-  apiKeyPolicyFromHashRecord,
-  apiKeyUsageV3RetentionMs,
-  apiKeyUsageV3WindowKey,
-  getApiKeyUsageV3,
-  looksLikeUosApiKey,
-  makeApiKeyUsageWindowV3,
-} from "../api-key-policy.ts";
+import { apiKeyPolicyFromHashRecord, apiKeyUsageV3RetentionMs, apiKeyUsageV3WindowKey, getApiKeyUsageV3, makeApiKeyUsageWindowV3 } from "../api-key-policy.ts";
 import { defaultPaidFallbackPolicy, initializePaidFallbackPolicy, paidFallbackHashFields } from "../paid-fallback/index.ts";
 import { reconcileDuePaidFallbacksV3 } from "../paid-fallback/ledger-backfill.ts";
 import { getPaidFallbackProviderUsageV3, getPaidFallbackWindowProjectionV3, listPaidFallbackRequestsV3 } from "../paid-fallback/ledger-state.ts";
@@ -37,31 +29,9 @@ import { isRecord, sha256Base64Url } from "../utils.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord } from "../types.ts";
 import { MeteredError } from "../provider/metered.ts";
 
-const normalizeApiKeyName = (value: unknown): string | null => {
-  if (typeof value !== "string") return null;
-  const name = value.trim();
-  if (!name) return null;
-  if (name.length > 80) return null;
-  if (/[\r\n]/.test(name)) return null;
-  return name;
-};
-
-const normalizeOptionalApiKeyToken = (value: unknown): string | null => {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== "string") return null;
-  const token = value.trim();
-  return looksLikeUosApiKey(token) ? token : null;
-};
-
-const normalizeApiKeyExpiresAtMs = (value: unknown, nowMs: number): number | null => {
-  if (value === undefined || value === null) return getDefaultExpiryMs(nowMs);
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  const expiresAtMs = Math.trunc(value);
-  if (expiresAtMs === API_KEY_NO_EXPIRATION_MS) return API_KEY_NO_EXPIRATION_MS;
-  if (expiresAtMs < 0) return null;
-  if (expiresAtMs <= nowMs) return null;
-  return expiresAtMs;
-};
+const normalizeApiKeyName = policy.normalizeApiKeyName;
+const normalizeOptionalApiKeyToken = policy.normalizeOptionalApiKeyToken;
+const normalizeApiKeyExpiresAtMs = (value: unknown, nowMs: number): number | null => policy.normalizeApiKeyExpiresAtMs(value, nowMs, getDefaultExpiryMs(nowMs));
 
 const shouldIncludeUsage = (value: string | null): boolean => {
   if (!value) return false;
@@ -69,39 +39,17 @@ const shouldIncludeUsage = (value: string | null): boolean => {
   return normalized === "1" || normalized === "true" || normalized === "yes";
 };
 
-const normalizeApiKeyUsageLimit = (value: unknown): number | null => {
-  if (value === undefined || value === null) return DEFAULT_USAGE_LIMIT_REQUESTS;
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  const limit = Math.trunc(value);
-  if (limit === API_KEY_NO_USAGE_LIMIT) return API_KEY_NO_USAGE_LIMIT;
-  if (limit < 0) return null;
-  return limit;
-};
-
-const normalizeWindowMsInput = (value: unknown): number | null => {
-  if (value === undefined || value === null) return null;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const parsed = Number(trimmed);
-    if (!Number.isFinite(parsed)) return null;
-    value = parsed;
-  }
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  const windowMs = Math.trunc(value);
-  if (windowMs <= 0) return null;
-  return windowMs;
-};
+const normalizeApiKeyUsageLimit = (value: unknown): number | null => policy.normalizeApiKeyUsageLimit(value, DEFAULT_USAGE_LIMIT_REQUESTS);
+const normalizeWindowMsInput = policy.normalizeApiKeyWindowMsInput;
 
 /** API-key quota windows and Kernel policy windows share this positive-number validation. */
-const normalizeApiKeyWindowMsInput = normalizeWindowMsInput;
 const normalizeKernelWindowMsInput = normalizeWindowMsInput;
 
 const paidFallbackInputError = (message: string): Response => openaiError(400, message, "invalid_request_error");
 
 const rejectRetiredApiKeyResetSetting = (raw: Record<string, unknown>): Response | null => {
-  if (!Object.prototype.hasOwnProperty.call(raw, "banked_resets_enabled")) return null;
-  return openaiError(400, "banked_resets_enabled is retired; configure banked resets per Codex subscription", "invalid_request_error");
+  const error = policy.rejectRetiredApiKeyResetSetting(raw);
+  return error === null ? null : openaiError(400, error, "invalid_request_error");
 };
 
 const paidFallbackInitializationError = (error: unknown): Response => {
@@ -199,10 +147,6 @@ const normalizeKernelScope = (value: unknown): "repo" | "org" => {
   return "repo";
 };
 
-const normalizeOptionalBoolean = (value: unknown): boolean => {
-  return value === true;
-};
-
 const normalizeDefaultModel = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
   const model = value.trim();
@@ -237,14 +181,6 @@ const estimateJsonSize = (value: unknown): number | null => {
 const MAX_KV_BYTES = 65_536;
 const SAFE_KV_BYTES = 60_000;
 
-type ApiKeyCreateFields = Readonly<{
-  expiresAtMs: number;
-  usageLimitRequests: number;
-  windowMs: number;
-  paidFallbackEnabled: boolean;
-  paidFallbackLimitMicrocredits: number;
-}>;
-
 /** Resolves the caller-supplied token, or mints one when it is absent. */
 const resolveApiKeyCreateToken = (raw: Record<string, unknown>): { ok: true; token: string } | { ok: false; response: Response } => {
   const providedToken = normalizeOptionalApiKeyToken(raw.token);
@@ -254,59 +190,12 @@ const resolveApiKeyCreateToken = (raw: Record<string, unknown>): { ok: true; tok
   return { ok: true, token: providedToken ?? generateApiKeyToken() };
 };
 
-/** `paid_fallback_enabled` and `paid_fallback_limit_credits`, validated in that order. */
-const resolveApiKeyCreatePaidFallback = (
-  raw: Record<string, unknown>
-): { ok: true; paidFallbackEnabled: boolean; paidFallbackLimitMicrocredits: number } | { ok: false; response: Response } => {
-  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled") && typeof raw.paid_fallback_enabled !== "boolean") {
-    return { ok: false, response: paidFallbackInputError("paid_fallback_enabled must be a boolean") };
-  }
-  const paidFallbackEnabled = raw.paid_fallback_enabled === true;
-  const paidFallbackLimitMicrocredits = Object.prototype.hasOwnProperty.call(raw, "paid_fallback_limit_credits")
-    ? paidFallbackCreditsToMicrocredits(raw.paid_fallback_limit_credits)
-    : 0;
-  if (paidFallbackLimitMicrocredits === null) {
-    return { ok: false, response: paidFallbackInputError("paid_fallback_limit_credits must be a non-negative number or -1") };
-  }
-  if (paidFallbackEnabled && paidFallbackLimitMicrocredits === 0) {
-    return { ok: false, response: paidFallbackInputError("paid_fallback_limit_credits must be positive or -1 when paid fallback is enabled") };
-  }
-  return { ok: true, paidFallbackEnabled, paidFallbackLimitMicrocredits };
-};
-
-/** Every create-time field except `name` and `token`, validated in the original order. */
 const resolveApiKeyCreateFields = (
   raw: Record<string, unknown>,
   nowMs: number
 ): { ok: true; fields: ApiKeyCreateFields } | { ok: false; response: Response } => {
-  const expiresAtMs = normalizeApiKeyExpiresAtMs(raw.expires_at_ms, nowMs);
-  if (expiresAtMs === null) {
-    return { ok: false, response: openaiError(400, "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1", "invalid_request_error") };
-  }
-
-  const usageLimitRequests = normalizeApiKeyUsageLimit(raw.usage_limit_requests);
-  if (usageLimitRequests === null) {
-    return { ok: false, response: openaiError(400, "usage_limit_requests must be a positive number or -1 for unlimited", "invalid_request_error") };
-  }
-
-  const windowMs = normalizeApiKeyWindowMsInput(raw.window_ms);
-  if (raw.window_ms !== undefined && windowMs === null) {
-    return { ok: false, response: openaiError(400, "window_ms must be a positive number", "invalid_request_error") };
-  }
-
-  const paidFallback = resolveApiKeyCreatePaidFallback(raw);
-  if (!paidFallback.ok) return paidFallback;
-
-  return {
-    ok: true,
-    fields: {
-      expiresAtMs,
-      usageLimitRequests,
-      windowMs: windowMs ?? USAGE_RESET_PERIOD_MS,
-      paidFallbackEnabled: paidFallback.paidFallbackEnabled,
-      paidFallbackLimitMicrocredits: paidFallback.paidFallbackLimitMicrocredits,
-    },
-  };
+  const result = policy.resolveApiKeyCreateFields(raw, nowMs, { expiryMs: getDefaultExpiryMs(nowMs), usageLimitRequests: DEFAULT_USAGE_LIMIT_REQUESTS });
+  return result.ok ? result : { ok: false, response: openaiError(400, result.error, "invalid_request_error") };
 };
 
 /**
@@ -367,37 +256,11 @@ export const handleAdminApiKeysCreate = async (req: Request, context?: ApiKeyAud
     return openaiError(409, "API key already exists", "invalid_request_error");
   }
 
-  const policy = await resolveApiKeyCreatePolicy(req.signal, createFields.fields);
-  if (!policy.ok) return policy.response;
+  const policyResult = await resolveApiKeyCreatePolicy(req.signal, createFields.fields);
+  if (!policyResult.ok) return policyResult.response;
 
   const id = crypto.randomUUID();
-  const usageResetAtMs = calculateNextResetMs(now, windowMs);
-  const record: ApiKeyRecord = {
-    id,
-    name,
-    prefix: token.slice(0, 12),
-    hash,
-    created_at_ms: now,
-    expires_at_ms: expiresAtMs,
-    revoked_at_ms: null,
-    usage_limit_requests: usageLimitRequests,
-    usage_requests: 0,
-    usage_reset_at_ms: usageResetAtMs,
-    window_ms: windowMs,
-    usage_quota_version: 3,
-    ...policy.policy,
-  };
-  const hashRecord: ApiKeyHashRecord = {
-    id,
-    expires_at_ms: expiresAtMs,
-    revoked_at_ms: null,
-    usage_limit_requests: usageLimitRequests,
-    usage_requests: 0,
-    usage_reset_at_ms: usageResetAtMs,
-    window_ms: windowMs,
-    usage_quota_version: 3,
-    ...paidFallbackHashFields(record),
-  };
+  const { record, hashRecord } = policy.buildApiKeyCreateRecords({ id, name, prefix: token.slice(0, 12), hash }, createFields.fields, policyResult.policy, now);
   const quotaPolicy = apiKeyPolicyFromHashRecord(hash, hashRecord, now);
   if (!quotaPolicy) {
     return openaiError(500, "Failed to build API key quota policy", "server_error");
@@ -572,14 +435,12 @@ export {
   normalizeApiKeyExpiresAtMs,
   normalizeApiKeyName,
   normalizeApiKeyUsageLimit,
-  normalizeApiKeyWindowMsInput,
   normalizeDefaultModel,
   normalizeKernelExpiresAtMsInput,
   normalizeKernelRepoPart,
   normalizeKernelScope,
   normalizeKernelUsageLimitInput,
   normalizeKernelWindowMsInput,
-  normalizeOptionalBoolean,
   paidFallbackInitializationError,
   paidFallbackInputError,
   paidFallbackPublicFields,

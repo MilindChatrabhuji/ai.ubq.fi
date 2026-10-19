@@ -944,6 +944,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-compaction"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "gateway-core",
+ "regress",
+ "ryu-js",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-core"
 version = "0.1.0"
 dependencies = [
