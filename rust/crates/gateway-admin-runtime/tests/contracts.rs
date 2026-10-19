@@ -718,7 +718,9 @@ fn claude_roster_rotation_preserves_identity_and_fences_prior_generations() {
     assert_eq!(first.account_cohort_id, same.account_cohort_id);
     assert_eq!(first.evidence_generation, same.evidence_generation);
     let mut rotated = credential;
-    rotated.secret = gateway_auth::crypto::Secret::new("sk-ant-api-rotated-secret".into());
+    rotated.secret = std::sync::Arc::new(ClaudeSourceSecret::from_source(
+        "sk-ant-api-rotated-secret".into(),
+    ));
     let next = run(update_account(
         &store,
         &host,
@@ -761,7 +763,7 @@ fn claude_tombstone_refuses_legacy_or_environment_resurrection() {
     )
     .unwrap();
     store.rows.borrow_mut().insert(
-        gateway_admin_runtime::claude::legacy_auth_key().0,
+        gateway_auth::store::key(json!(["ubq_ai", "claude_code_auth"])).0,
         gateway_admin_runtime::claude::encode_credential_record("fixture", &credential, None)
             .unwrap(),
     );
@@ -1387,7 +1389,10 @@ fn shared_claude_access_loader_returns_exact_fence_and_does_not_reseed_explicit_
     ))
     .unwrap();
     assert_eq!(loaded.policy.source, PolicySource::Env);
-    assert_eq!(loaded.policy.allowed_key_ids, vec!["trusted-seed"]);
+    assert_eq!(
+        loaded.policy.allowed_key_ids,
+        vec![JsString16::from_utf8("trusted-seed")]
+    );
     let actual = run(store.read(&policy_key())).unwrap().unwrap();
     assert_eq!(loaded.check.expected_revision, Some(actual.revision));
     store.put(
