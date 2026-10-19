@@ -479,6 +479,7 @@ async function extrasCases(input: {
   assert(Array.isArray(vectors.data) && isObject(vectors.data[0]) && Array.isArray(vectors.data[0].embedding));
   assert.equal(vectors.data[0].embedding.length, 256);
   assert.equal(vectors.data[0].embedding[0], 0.125);
+  assert.deepEqual(vectors.usage, { prompt_tokens: 7, total_tokens: 7 });
   const embeddingId = embedding.headers.get("x-uos-request-id");
   assert(embeddingId);
   const committed = await lifecycle(embeddingId);
@@ -487,7 +488,7 @@ async function extrasCases(input: {
   assert(isObject(committed.kernel_override));
   assert.equal(committed.kernel_override.terminal, "committed");
   const dispatchCount = (await events()).filter((event) => isObject(event) && event.kind === "extras_dispatch").length;
-  assert.deepEqual(await objectBody(await post("/uos/embeddings", requestBody)), vectors);
+  assert.deepEqual(await objectBody(await post("/uos/embeddings", requestBody)), { ...vectors, usage: { prompt_tokens: 0, total_tokens: 0 } });
   assert.equal((await events()).filter((event) => isObject(event) && event.kind === "extras_dispatch").length, dispatchCount);
   cases.push("actual_voyage_embedding_fixed_transport_cache_and_one_original_admission");
 
