@@ -92,20 +92,18 @@ fn source_paid_audit_keeps_pending_aggregate_and_malformed_control_refusals() {
     let document = request(r#""\ud800""#, r#""none""#);
     let mut rows = inventory(&document);
     rows.pop();
-    assert!(
-        inspect(&rows)
-            .errors
-            .iter()
-            .any(|error| error.contains("missing its pending marker"))
-    );
+    assert!(inspect(&rows).errors.iter().any(|error| {
+        error
+            .try_utf8()
+            .is_ok_and(|text| text.contains("missing its pending marker"))
+    }));
     rows = inventory(&document);
     rows[0].record.value["reserved_microcredits"] = json!(4);
-    assert!(
-        inspect(&rows)
-            .errors
-            .iter()
-            .any(|error| error.contains("window aggregate is inconsistent"))
-    );
+    assert!(inspect(&rows).errors.iter().any(|error| {
+        error
+            .try_utf8()
+            .is_ok_and(|text| text.contains("window aggregate is inconsistent"))
+    }));
     for (model, effort) in [
         ("null", r#""none""#),
         (r#""""#, "null"),
@@ -114,12 +112,11 @@ fn source_paid_audit_keeps_pending_aggregate_and_malformed_control_refusals() {
     ] {
         let malformed = request(model, effort);
         assert!(!audit::valid_source_paid_request(&malformed));
-        assert!(
-            inspect(&inventory(&malformed))
-                .errors
-                .iter()
-                .any(|error| error.contains("request is malformed"))
-        );
+        assert!(inspect(&inventory(&malformed)).errors.iter().any(|error| {
+            error
+                .try_utf8()
+                .is_ok_and(|text| text.contains("request is malformed"))
+        }));
     }
     let mut missing = document.object_entries().unwrap();
     missing.retain(|(key, _)| {
