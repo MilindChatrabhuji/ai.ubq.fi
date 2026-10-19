@@ -102,7 +102,7 @@ pub fn validate_known_unsupported_prompt_cache(
             "prompt_cache_retention",
         ]
         .iter()
-        .find(|k| body.get(**k).is_some())
+        .find(|k| body.get(k).is_some())
         .map(|s| (*s).to_owned())
         .or_else(|| markers.first().map(|(p, _)| p.clone()));
         if let Some(param) = param {
