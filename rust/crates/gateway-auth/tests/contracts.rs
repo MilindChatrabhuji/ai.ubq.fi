@@ -485,3 +485,100 @@ impl gateway_auth::webauthn::WebAuthnCrypto for Host {
         ))
     }
 }
+
+#[test]
+fn named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection() {
+    use gateway_core::{source_control::encode_source_control_record, source_json::SourceJson};
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/kernel-source-public.json")).unwrap();
+    let pem = fixture["pem"].as_str().unwrap();
+    let good = SourceJson::from_serializable(
+        &json!({"app_id":1,"pem":pem,"owner":"fixture","added_at_ms":1}),
+    )
+    .unwrap();
+    let invalid=SourceJson::parse(r#"{"app_id":2,"pem":"-----BEGIN PUBLIC KEY-----\ud800-----END PUBLIC KEY-----","owner":"\udc00","added_at_ms":1}"#).unwrap();
+    let key = kernel_public_keys_key();
+    run(async {
+        for source in [
+            format!("[{}]", good.as_str()),
+            format!("[{},{}]", invalid.as_str(), good.as_str()),
+        ] {
+            let store = Store::default();
+            let host = Host::default();
+            let row = encode_source_control_record(
+                "exact-revision",
+                &SourceJson::parse(&source).unwrap(),
+                Some(1_000_001),
+            )
+            .unwrap();
+            store.rows.borrow_mut().insert(key.0.clone(), row.clone());
+            let cfg = AuthConfig {
+                production: true,
+                ..Default::default()
+            };
+            let service = AuthService::new(&store, &host, &cfg);
+            let mut req = request("https://ai.ubq.fi/v1/responses");
+            req.headers
+                .insert("authorization".into(), "Bearer ghp_fixture".into());
+            req.headers.insert(
+                "x-ubiquity-kernel-token".into(),
+                fixture["jwt"].as_str().unwrap().into(),
+            );
+            // The genuine RSA signature passes, then the pre-existing injected
+            // host refuses its GitHub lookup. No network or authority is minted.
+            let error = service.authenticate_client(&req).await.unwrap_err();
+            assert_eq!(error.status, 502);
+            assert_eq!(error.envelope.error.code.as_deref(), Some("bad_gateway"));
+            assert_eq!(store.read(&key).await.unwrap(), Some(row));
+        }
+        let store = Store::default();
+        let host = Host::default();
+        let cfg = AuthConfig {
+            production: true,
+            ..Default::default()
+        };
+        let service = AuthService::new(&store, &host, &cfg);
+        let mut req = request("https://ai.ubq.fi/v1/responses");
+        req.headers
+            .insert("authorization".into(), "Bearer ghp_fixture".into());
+        req.headers.insert(
+            "x-ubiquity-kernel-token".into(),
+            fixture["jwt"].as_str().unwrap().into(),
+        );
+        let bad = SourceJson::parse(&format!("[{}]", invalid.as_str())).unwrap();
+        store.rows.borrow_mut().insert(
+            key.0.clone(),
+            encode_source_control_record("invalid-pem", &bad, None).unwrap(),
+        );
+        // Source skips an invalid imported PEM after persistence. The existing
+        // no-public-key response remains, not a row/profile decoding failure.
+        assert_eq!(
+            service.authenticate_client(&req).await.unwrap_err().status,
+            500
+        );
+        let good = SourceJson::parse(&format!("[{}]", good.as_str())).unwrap();
+        store.rows.borrow_mut().insert(
+            key.0.clone(),
+            encode_source_control_record("expired", &good, Some(1_000_000)).unwrap(),
+        );
+        assert_eq!(
+            service.authenticate_client(&req).await.unwrap_err().status,
+            500
+        );
+        store.rows.borrow_mut().insert(
+            key.0.clone(),
+            StoredRecord::json("bad-shape", json!({"pem":pem}), None),
+        );
+        assert_eq!(
+            service
+                .authenticate_client(&req)
+                .await
+                .unwrap_err()
+                .envelope
+                .error
+                .code
+                .as_deref(),
+            Some("auth_state_corrupt")
+        );
+    });
+}

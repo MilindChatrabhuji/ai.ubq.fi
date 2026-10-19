@@ -1,5 +1,9 @@
+#[path = "../../gateway-authority/tests/paid_control_cases/original.rs"]
+mod original_request_fixture;
 #[path = "../../gateway-schema/tests/support/source_catalog.rs"]
 mod source_catalog;
+type MemoryStore = Store;
+type TestAuthority = gateway_authority::Authority<Store, Tokens>;
 use gateway_authority::{keys, paid_control::*};
 use gateway_catalog_runtime::{state, *};
 use gateway_core::{
@@ -115,6 +119,14 @@ impl Store {
             "catalog-generation-rev",
             json!("catalog-generation"),
         );
+    }
+    // Reuse the established authority fixture's full journal writer and actual
+    // reserve_api_key/bind_paid_original_request flow; do not clone its DTO.
+    fn row(&self, key: &RecordKey) -> Option<StoredRecord> {
+        self.get(key)
+    }
+    fn seed(&self, key: RecordKey, value: &Value) {
+        self.put(key, "original-fixture", value.clone());
     }
     fn projection(&self) -> PaidRoutingProjection {
         decode_source_control_record(&self.get(&keys::paid_routing()).unwrap())
@@ -835,9 +847,13 @@ fn actual_publisher_receipt_and_reservation_share_one_authority_and_reject_stale
     );
     let authority =
         Authority::with_clock(store.clone(), Tokens(Cell::new(0)), Clock(store.now.get()));
-    let receipt =
-        run(authority.authorize_paid_route(&request, &context("paid-only"), store.now.get()))
-            .unwrap();
+    let receipt = run(original_request_fixture::authorize(
+        &authority,
+        &request,
+        &context("paid-only"),
+        store.now.get(),
+    ))
+    .unwrap();
     assert!(matches!(
         run(authority.reserve_paid(
             &request,

@@ -147,13 +147,7 @@ pub(crate) async fn rotate<S: AuthorityStore, H: ClaudePoolHost>(
             checks,
             vec![RecordMutation::Put {
                 key: claude::account_store_key(),
-                record: StoredRecord::json(
-                    revision(host)?,
-                    serde_json::to_value(current.roster).map_err(|_| {
-                        crate::unavailable("Claude selection could not be encoded.")
-                    })?,
-                    None,
-                ),
+                record: claude::encode_roster_record(&revision(host)?, &current.roster, None)?,
             }],
         )
         .await?
@@ -258,13 +252,7 @@ pub async fn clear_guards<S: AuthorityStore, H: ClaudePoolHost>(
     let mutations = vec![
         RecordMutation::Put {
             key: roster_key,
-            record: StoredRecord::json(
-                revision(host)?,
-                serde_json::to_value(roster.roster).map_err(|_| {
-                    crate::unavailable("Claude guard generation could not be encoded.")
-                })?,
-                None,
-            ),
+            record: claude::encode_roster_record(&revision(host)?, &roster.roster, None)?,
         },
         RecordMutation::Put {
             key: quota_key(binding),

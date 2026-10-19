@@ -10,7 +10,7 @@ use gateway_core::{
     query::{QueryRequest, QuerySelector, QueryStore},
     state::{RecordKey, StoredRecord},
 };
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::{
     audit::{self, RETENTION_MS},

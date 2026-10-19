@@ -300,9 +300,9 @@ pub fn input(id: &str, model: &str, providers: &[&str]) -> RoutingInput {
         );
     }
     catalog.full_snapshot = Some(ModelSnapshot {
-        models: vec![
-            gateway_core::source_json::SourceJson::from_serializable(&json!({"slug":"gpt-test","supported_reasoning_levels":[{"effort":"none"},{"effort":"high"},{"effort":"ultra"}],"default_reasoning_level":"none"})).unwrap(),
-        ],
+        models: vec![source_catalog::json(
+            &json!({"slug":"gpt-test","supported_reasoning_levels":[{"effort":"none"},{"effort":"high"},{"effort":"ultra"}],"default_reasoning_level":"none"}),
+        )],
         source: "fixture".into(),
         updated_at_ms: NOW,
         client_version: Some("0.163.0".into()),
