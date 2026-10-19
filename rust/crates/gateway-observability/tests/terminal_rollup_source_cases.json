@@ -1,0 +1,991 @@
+[
+  {
+    "name": "subscription",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": true
+      },
+      "reads": 1,
+      "commits": 1,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 1792328400000, "model", "chatgpt_codex", 12],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 1792328400000,
+            "model": "model",
+            "provider": "chatgpt_codex",
+            "request_count": 1,
+            "quota_sum": 0,
+            "input_tokens": 10,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "spend_microcredits": 0,
+            "first_request_at_ms": 1792329599000,
+            "last_request_at_ms": 1792329599000,
+            "updated_at_ms": 1792329600000
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "cerebras",
+    "model": "model",
+    "provider": "cerebras",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": true
+      },
+      "reads": 1,
+      "commits": 1,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 1792328400000, "model", "cerebras", 12],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 1792328400000,
+            "model": "model",
+            "provider": "cerebras",
+            "request_count": 1,
+            "quota_sum": 0,
+            "input_tokens": 10,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "spend_microcredits": 0,
+            "first_request_at_ms": 1792329599000,
+            "last_request_at_ms": 1792329599000,
+            "updated_at_ms": 1792329600000
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "skip_metered",
+    "model": "model",
+    "provider": "metered",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": false
+      },
+      "reads": 0,
+      "commits": 0,
+      "rows": []
+    }
+  },
+  {
+    "name": "skip_surplus",
+    "model": "model",
+    "provider": "surplus",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": false
+      },
+      "reads": 0,
+      "commits": 0,
+      "rows": []
+    }
+  },
+  {
+    "name": "skip_gateway",
+    "model": "model",
+    "provider": "gateway",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": false
+      },
+      "reads": 0,
+      "commits": 0,
+      "rows": []
+    }
+  },
+  {
+    "name": "skip_mixed",
+    "model": "model",
+    "provider": "mixed",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": false
+      },
+      "reads": 0,
+      "commits": 0,
+      "rows": []
+    }
+  },
+  {
+    "name": "missing_model",
+    "model": null,
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": false
+      },
+      "reads": 0,
+      "commits": 0,
+      "rows": []
+    }
+  },
+  {
+    "name": "missing_provider",
+    "model": "model",
+    "provider": null,
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": false
+      },
+      "reads": 0,
+      "commits": 0,
+      "rows": []
+    }
+  },
+  {
+    "name": "unknown_input",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": false
+      },
+      "reads": 0,
+      "commits": 0,
+      "rows": []
+    }
+  },
+  {
+    "name": "unknown_output",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": false
+      },
+      "reads": 0,
+      "commits": 0,
+      "rows": []
+    }
+  },
+  {
+    "name": "unknown_cached_source_zero",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": true
+      },
+      "reads": 1,
+      "commits": 1,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 1792328400000, "model", "chatgpt_codex", 12],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 1792328400000,
+            "model": "model",
+            "provider": "chatgpt_codex",
+            "request_count": 1,
+            "quota_sum": 0,
+            "input_tokens": 10,
+            "cached_input_tokens": 0,
+            "output_tokens": 3,
+            "spend_microcredits": 0,
+            "first_request_at_ms": 1792329599000,
+            "last_request_at_ms": 1792329599000,
+            "updated_at_ms": 1792329600000
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "known_zero_usage",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": true
+      },
+      "reads": 1,
+      "commits": 1,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 1792328400000, "model", "chatgpt_codex", 12],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 1792328400000,
+            "model": "model",
+            "provider": "chatgpt_codex",
+            "request_count": 1,
+            "quota_sum": 0,
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "output_tokens": 0,
+            "spend_microcredits": 0,
+            "first_request_at_ms": 1792329599000,
+            "last_request_at_ms": 1792329599000,
+            "updated_at_ms": 1792329600000
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "invalid_total_known_counts",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 99,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": true
+      },
+      "reads": 1,
+      "commits": 1,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 1792328400000, "model", "chatgpt_codex", 12],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 1792328400000,
+            "model": "model",
+            "provider": "chatgpt_codex",
+            "request_count": 1,
+            "quota_sum": 0,
+            "input_tokens": 10,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "spend_microcredits": 0,
+            "first_request_at_ms": 1792329599000,
+            "last_request_at_ms": 1792329599000,
+            "updated_at_ms": 1792329600000
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "source_trim_and_utf16_shard",
+    "model": "﻿ model  ",
+    "provider": " chatgpt_codex ",
+    "request_id": "request-😀",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": true
+      },
+      "reads": 1,
+      "commits": 1,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 1792328400000, "model", "chatgpt_codex", 0],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 1792328400000,
+            "model": "model",
+            "provider": "chatgpt_codex",
+            "request_count": 1,
+            "quota_sum": 0,
+            "input_tokens": 10,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "spend_microcredits": 0,
+            "first_request_at_ms": 1792329599000,
+            "last_request_at_ms": 1792329599000,
+            "updated_at_ms": 1792329600000
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "created_fraction_truncated",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329598999.25,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": true
+      },
+      "reads": 1,
+      "commits": 1,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 1792328400000, "model", "chatgpt_codex", 12],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 1792328400000,
+            "model": "model",
+            "provider": "chatgpt_codex",
+            "request_count": 1,
+            "quota_sum": 0,
+            "input_tokens": 10,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "spend_microcredits": 0,
+            "first_request_at_ms": 1792329598999,
+            "last_request_at_ms": 1792329598999,
+            "updated_at_ms": 1792329600000
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "created_negative_clamped",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": -1.5,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": true
+      },
+      "reads": 1,
+      "commits": 1,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 0, "model", "chatgpt_codex", 12],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 0,
+            "model": "model",
+            "provider": "chatgpt_codex",
+            "request_count": 1,
+            "quota_sum": 0,
+            "input_tokens": 10,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "spend_microcredits": 0,
+            "first_request_at_ms": 0,
+            "last_request_at_ms": 0,
+            "updated_at_ms": 1792329600000
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "created_absent_now",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": true
+      },
+      "reads": 1,
+      "commits": 1,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 1792328400000, "model", "chatgpt_codex", 12],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 1792328400000,
+            "model": "model",
+            "provider": "chatgpt_codex",
+            "request_count": 1,
+            "quota_sum": 0,
+            "input_tokens": 10,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "spend_microcredits": 0,
+            "first_request_at_ms": 1792329600000,
+            "last_request_at_ms": 1792329600000,
+            "updated_at_ms": 1792329600000
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "created_nonfinite_now",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "created_nonfinite": true,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": true
+      },
+      "reads": 1,
+      "commits": 1,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 1792328400000, "model", "chatgpt_codex", 12],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 1792328400000,
+            "model": "model",
+            "provider": "chatgpt_codex",
+            "request_count": 1,
+            "quota_sum": 0,
+            "input_tokens": 10,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "spend_microcredits": 0,
+            "first_request_at_ms": 1792329600000,
+            "last_request_at_ms": 1792329600000,
+            "updated_at_ms": 1792329600000
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "valid_historical_fraction_kept",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "existing": {
+      "v": 1,
+      "bucket_start_at_ms": 1792328400000,
+      "model": "model",
+      "provider": "chatgpt_codex",
+      "request_count": 2,
+      "quota_sum": 1.5,
+      "input_tokens": 20,
+      "cached_input_tokens": 4,
+      "output_tokens": 6,
+      "spend_microcredits": 0.25,
+      "first_request_at_ms": 1792329598000,
+      "last_request_at_ms": 1792329599000,
+      "updated_at_ms": 1792329599000
+    },
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": true
+      },
+      "reads": 1,
+      "commits": 1,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 1792328400000, "model", "chatgpt_codex", 12],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 1792328400000,
+            "model": "model",
+            "provider": "chatgpt_codex",
+            "request_count": 3,
+            "quota_sum": 1.5,
+            "input_tokens": 30,
+            "cached_input_tokens": 6,
+            "output_tokens": 9,
+            "spend_microcredits": 0.25,
+            "first_request_at_ms": 1792329598000,
+            "last_request_at_ms": 1792329599000,
+            "updated_at_ms": 1792329600000
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "invalid_historical_count_replaced",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "existing": {
+      "v": 1,
+      "bucket_start_at_ms": 1792328400000,
+      "model": "model",
+      "provider": "chatgpt_codex",
+      "request_count": 0.25,
+      "quota_sum": 1.5,
+      "input_tokens": 20,
+      "cached_input_tokens": 4,
+      "output_tokens": 6,
+      "spend_microcredits": 0.25,
+      "first_request_at_ms": 1792329598000,
+      "last_request_at_ms": 1792329599000,
+      "updated_at_ms": 1792329599000
+    },
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": true
+      },
+      "reads": 1,
+      "commits": 1,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 1792328400000, "model", "chatgpt_codex", 12],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 1792328400000,
+            "model": "model",
+            "provider": "chatgpt_codex",
+            "request_count": 1,
+            "quota_sum": 0,
+            "input_tokens": 10,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "spend_microcredits": 0,
+            "first_request_at_ms": 1792329599000,
+            "last_request_at_ms": 1792329599000,
+            "updated_at_ms": 1792329600000
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "two_conflicts_then_commit_once",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 2,
+    "calls": 1,
+    "existing": {
+      "v": 1,
+      "bucket_start_at_ms": 1792328400000,
+      "model": "model",
+      "provider": "chatgpt_codex",
+      "request_count": 2,
+      "quota_sum": 1.5,
+      "input_tokens": 20,
+      "cached_input_tokens": 4,
+      "output_tokens": 6,
+      "spend_microcredits": 0.25,
+      "first_request_at_ms": 1792329598000,
+      "last_request_at_ms": 1792329599000,
+      "updated_at_ms": 1792329599000
+    },
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": true
+      },
+      "reads": 3,
+      "commits": 3,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 1792328400000, "model", "chatgpt_codex", 12],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 1792328400000,
+            "model": "model",
+            "provider": "chatgpt_codex",
+            "request_count": 3,
+            "quota_sum": 1.5,
+            "input_tokens": 30,
+            "cached_input_tokens": 6,
+            "output_tokens": 9,
+            "spend_microcredits": 0.25,
+            "first_request_at_ms": 1792329598000,
+            "last_request_at_ms": 1792329599000,
+            "updated_at_ms": 1792329600000
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "three_conflicts_no_write",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 3,
+    "calls": 1,
+    "existing": {
+      "v": 1,
+      "bucket_start_at_ms": 1792328400000,
+      "model": "model",
+      "provider": "chatgpt_codex",
+      "request_count": 2,
+      "quota_sum": 1.5,
+      "input_tokens": 20,
+      "cached_input_tokens": 4,
+      "output_tokens": 6,
+      "spend_microcredits": 0.25,
+      "first_request_at_ms": 1792329598000,
+      "last_request_at_ms": 1792329599000,
+      "updated_at_ms": 1792329599000
+    },
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": false
+      },
+      "reads": 3,
+      "commits": 3,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 1792328400000, "model", "chatgpt_codex", 12],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 1792328400000,
+            "model": "model",
+            "provider": "chatgpt_codex",
+            "request_count": 2,
+            "quota_sum": 1.5,
+            "input_tokens": 20,
+            "cached_input_tokens": 4,
+            "output_tokens": 6,
+            "spend_microcredits": 0.25,
+            "first_request_at_ms": 1792329598000,
+            "last_request_at_ms": 1792329599000,
+            "updated_at_ms": 1792329599000
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "store_read_error",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "read_error": true,
+    "expected": {
+      "outcome": {
+        "kind": "error",
+        "message": "fixture unavailable"
+      },
+      "reads": 1,
+      "commits": 0,
+      "rows": []
+    }
+  },
+  {
+    "name": "no_kv_capability",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 1,
+    "no_kv": true,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": false
+      },
+      "reads": 0,
+      "commits": 0,
+      "rows": []
+    }
+  },
+  {
+    "name": "source_repeat_call_is_not_new_dedup_ledger",
+    "model": "model",
+    "provider": "chatgpt_codex",
+    "request_id": "a",
+    "created": 1792329599000,
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2
+      }
+    },
+    "conflicts": 0,
+    "calls": 2,
+    "expected": {
+      "outcome": {
+        "kind": "ok",
+        "value": true
+      },
+      "reads": 2,
+      "commits": 2,
+      "rows": [
+        {
+          "key": ["uos_ai", "paid_fallback", "v3", "usage_rollup", 1792328400000, "model", "chatgpt_codex", 12],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 1792328400000,
+            "model": "model",
+            "provider": "chatgpt_codex",
+            "request_count": 2,
+            "quota_sum": 0,
+            "input_tokens": 20,
+            "cached_input_tokens": 4,
+            "output_tokens": 6,
+            "spend_microcredits": 0,
+            "first_request_at_ms": 1792329599000,
+            "last_request_at_ms": 1792329599000,
+            "updated_at_ms": 1792329600000
+          }
+        }
+      ]
+    }
+  }
+]

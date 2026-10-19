@@ -570,7 +570,7 @@
       }
     },
     "pricing": {
-      "input_price_per_token": 1e+300,
+      "input_price_per_token": 1e300,
       "output_price_per_token": 0.002,
       "cache_read_price_per_token": 0.0001,
       "cache_write_price_per_token": 0.0003
