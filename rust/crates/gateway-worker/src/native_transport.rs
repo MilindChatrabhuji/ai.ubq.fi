@@ -10,6 +10,7 @@ use gateway_auth::{
     native_control::{NATIVE_CONTROL_MAX_BYTES, unverified},
 };
 use worker::js_sys::Uint8Array;
+use worker::worker_sys::ext::ResponseExt;
 use worker::{Fetcher, Headers, Method, Request, RequestInit, RequestRedirect, Response};
 
 use crate::{

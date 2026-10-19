@@ -312,4 +312,4 @@ fn invalid(message: &str) -> GatewayError {
     GatewayError::new(400, message, Some("claude_code_request_invalid"))
 }
 
-pub use catalog::{Publication, fetch_catalog, publication};
+pub use catalog::{fetch_catalog, publication};

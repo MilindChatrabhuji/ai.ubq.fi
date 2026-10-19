@@ -320,14 +320,36 @@ pub async fn managed_publication(
         &config,
         &incoming,
     );
-    let applied=receiver.publish_managed(&proof,bytes).await.map(|receipt| gateway_publication::managed::ManagedPublicationReceipt {
-        v:2,operation:"managed_access_publish".into(),
-        disposition:match receipt.disposition {gateway_authority::native_control::NativeManagedPublicationDisposition::Applied=>gateway_publication::wire::PublicationDisposition::Applied,gateway_authority::native_control::NativeManagedPublicationDisposition::AlreadyCurrent=>gateway_publication::wire::PublicationDisposition::AlreadyCurrent},
-        owner_id:receipt.owner_id,owner_epoch:receipt.owner_epoch,action_ref:receipt.action_ref,operation_id:receipt.operation_id,native_owner_id:receipt.native_owner_id,
-        owner_revision:receipt.owner_revision,source_revision:receipt.source_revision,normalized_revision:receipt.normalized_revision,publication_revision:receipt.publication_revision,
-        current_source_revision:receipt.current_source_revision,current_normalized_revision:receipt.current_normalized_revision,
-        previous_native_source_generation:receipt.previous_native_source_generation,native_source_generation:receipt.native_source_generation,access_generation:receipt.access_generation,
-    });
+    use gateway_authority::native_control::NativeManagedPublicationDisposition as Disposition;
+    use gateway_publication::{ManagedPublicationReceipt, PublicationDisposition};
+    let applied = receiver
+        .publish_managed(&proof, bytes)
+        .await
+        .map(|receipt| {
+            let disposition = match receipt.disposition {
+                Disposition::Applied => PublicationDisposition::Applied,
+                Disposition::AlreadyCurrent => PublicationDisposition::AlreadyCurrent,
+            };
+            ManagedPublicationReceipt {
+                v: 2,
+                operation: "managed_access_publish".into(),
+                disposition,
+                owner_id: receipt.owner_id,
+                owner_epoch: receipt.owner_epoch,
+                action_ref: receipt.action_ref,
+                operation_id: receipt.operation_id,
+                native_owner_id: receipt.native_owner_id,
+                owner_revision: receipt.owner_revision,
+                source_revision: receipt.source_revision,
+                normalized_revision: receipt.normalized_revision,
+                publication_revision: receipt.publication_revision,
+                current_source_revision: receipt.current_source_revision,
+                current_normalized_revision: receipt.current_normalized_revision,
+                previous_native_source_generation: receipt.previous_native_source_generation,
+                native_source_generation: receipt.native_source_generation,
+                access_generation: receipt.access_generation,
+            }
+        });
     let (status, output) = result(applied)?;
     let mac =
         transport

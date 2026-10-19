@@ -20,7 +20,7 @@ impl GatewayResponse {
     pub fn headers(&self) -> Headers {
         match self {
             Self::Http(response) => response.headers().clone(),
-            Self::Raw(response) => response.headers().into(),
+            Self::Raw(response) => Headers(response.headers()),
         }
     }
     pub fn headers_mut(&mut self) -> Headers {
