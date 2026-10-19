@@ -9,8 +9,16 @@ import {
   type NativeCapability,
   type NativeAttempt,
 } from "./native-authority-contracts.ts";
+import { apiKeyHashKey } from "../api-keys.ts";
+import { apiKeyPolicyFromHashRecord } from "./native-api-key-policy.ts";
 
 const TABLES: readonly NativeTable[] = [
+  "key_control_grant",
+  "principal_resolution",
+  "api_key_id",
+  "api_key_hash",
+  "api_key_audit",
+  "key_control_receipt",
   "kernel_default",
   "authority_config",
   "capability",
@@ -268,5 +276,18 @@ export class NativeAuthoritySql {
     const cap = this.read("capability", [id], now).value;
     if (!cap || cap.revoked || cap.epoch !== this.epoch) throw new NativeAuthorityError("capability_revoked_or_wrong_epoch", 403);
     return cap;
+  }
+  currentKeyPolicy(tokenHash: string, keyId: string, now: number) {
+    const source = this.read("api_policy", apiKeyHashKey(tokenHash), now);
+    if (source.value?.api.key_id !== keyId) return null;
+    if (!source.value.rawSource) return { ...source, value: source.value };
+    const raw = this.read("api_key_hash", apiKeyHashKey(tokenHash), now).value;
+    if (raw?.id !== keyId || raw.revoked_at_ms !== null) return null;
+    const api = apiKeyPolicyFromHashRecord(tokenHash, raw, now);
+    if (!api) return null;
+    // API admission rolls this source anchor at its own request time. Paid admission
+    // must retain it so an older request still selects its original billing window.
+    const anchored = { ...api, window_start_ms: raw.usage_reset_at_ms - api.window_ms, usage_reset_at_ms: raw.usage_reset_at_ms };
+    return { ...source, value: { ...source.value, api: anchored } };
   }
 }

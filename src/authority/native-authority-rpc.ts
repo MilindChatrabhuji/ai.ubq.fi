@@ -1,4 +1,12 @@
 import { API_KEY_USAGE_PROVIDERS } from "./native-api-key.ts";
+import type {
+  NativeControlArguments,
+  NativeControlBinding,
+  NativeControlCommand,
+  NativeControlMethod,
+  NativeControlReply,
+  NativePrincipalControlRunner,
+} from "./native-principal-contracts.ts";
 import {
   NativeAuthorityError,
   nativeObject,
@@ -203,6 +211,81 @@ export class NativeAuthorityClient {
     const reply = await this._transport.execute(command);
     if ("error" in reply) throw new NativeAuthorityError(reply.error.code, reply.error.status);
     if (!nativeObject(reply.result) || typeof reply.result.kind !== "string") throw new NativeAuthorityError("invalid_authority_reply", 503);
+    return reply.result;
+  }
+}
+
+const controlIntent =
+  (reset: boolean): Guard =>
+  (value) =>
+    nativeObject(value) &&
+    Object.keys(value).every((key) =>
+      [
+        "name",
+        "expires_at_ms",
+        "usage_limit_requests",
+        "window_ms",
+        "paid_fallback_enabled",
+        "paid_fallback_limit_credits",
+        "banked_resets_enabled",
+        ...(reset ? ["reset_usage"] : []),
+      ].includes(key)
+    );
+const CONTROL_GUARDS: Readonly<Record<NativeControlMethod, Guard>> = {
+  resolvePrincipal: shape({}),
+  createKey: shape({ input: controlIntent(false) }),
+  updateKey: shape({ input: controlIntent(true) }),
+  revokeKey: shape({}),
+  unrevokeKey: shape({}),
+  deleteKey: shape({}),
+};
+export const parseNativeControlCommand = (value: unknown): NativeControlCommand => {
+  if (
+    !nativeObject(value) ||
+    Object.keys(value).length !== 4 ||
+    !text(value.epoch) ||
+    !text(value.operationId) ||
+    typeof value.method !== "string" ||
+    !Object.hasOwn(CONTROL_GUARDS, value.method) ||
+    !Object.keys(value).every((key) => ["epoch", "operationId", "method", "args"].includes(key))
+  )
+    throw new NativeAuthorityError("invalid_control_operation", 400);
+  if (!CONTROL_GUARDS[value.method as NativeControlMethod](value.args)) throw new NativeAuthorityError("invalid_control_arguments", 400);
+  if (new TextEncoder().encode(nativeCommandBytes(value)).byteLength > 65_536) throw new NativeAuthorityError("control_command_too_large", 413);
+  return structuredClone(value) as NativeControlCommand;
+};
+export type NativeControlRpcResult = Readonly<{ result: NativeControlReply }> | Readonly<{ error: Readonly<{ code: string; status: number }> }>;
+export type NativeControlRpcTransport = Readonly<{ control(command: unknown): Promise<NativeControlRpcResult> }>;
+/** Private transport construction binds the invocation context; the wire accepts intent only. */
+export class NativePrincipalControlServer implements NativeControlRpcTransport {
+  private readonly _binding: NativeControlBinding;
+  constructor(
+    private readonly _authority: NativePrincipalControlRunner,
+    binding: NativeControlBinding
+  ) {
+    this._binding = structuredClone(binding);
+  }
+  async control(command: unknown): Promise<NativeControlRpcResult> {
+    try {
+      return { result: await this._authority.control(this._binding, parseNativeControlCommand(command)) };
+    } catch (error) {
+      if (error instanceof NativeAuthorityError) return { error: { code: error.code, status: error.status } };
+      throw error;
+    }
+  }
+}
+export class NativePrincipalControlClient {
+  constructor(
+    private readonly _transport: NativeControlRpcTransport,
+    private readonly _epoch: string
+  ) {}
+  async call<TMethod extends NativeControlMethod>(
+    method: TMethod,
+    args: NativeControlArguments[TMethod],
+    operationId: string = crypto.randomUUID()
+  ): Promise<NativeControlReply> {
+    const reply = await this._transport.control(parseNativeControlCommand({ epoch: this._epoch, operationId, method, args }));
+    if ("error" in reply) throw new NativeAuthorityError(reply.error.code, reply.error.status);
     return reply.result;
   }
 }
