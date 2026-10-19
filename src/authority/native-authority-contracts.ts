@@ -1,4 +1,8 @@
 import type { ApiKeyPolicy, ApiKeyUsageProvider, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "./native-contracts.ts";
+import type { ApiKeyHashRecord, ApiKeyRecord } from "../types.ts";
+import type { ApiKeyChangeEvent } from "./native-api-key-audit.ts";
+import type { LocalDevelopmentDeletionGuard } from "../auth/local-development-key.ts";
+import type { NativeControlReceipt, NativeKeyControlGrant, NativePrincipalResolution } from "./native-principal-contracts.ts";
 import type {
   KernelDefaultWindowCutoverV2,
   KernelQuotaConstants,
@@ -54,7 +58,7 @@ export type NativePaidPolicy = Readonly<{
   eligibleModels: readonly string[];
   allowUnrosteredUnlimited: boolean;
 }>;
-export type NativeKeyPolicy = Readonly<{ api: ApiKeyPolicy; paid: NativePaidPolicy; revoked: boolean }>;
+export type NativeKeyPolicy = Readonly<{ api: ApiKeyPolicy; paid: NativePaidPolicy; revoked: boolean; rawSource?: true }>;
 export type NativeOwner = Readonly<{
   administrativeAccountLabelHash: string;
   routingAccountIdHash: string;
@@ -147,6 +151,12 @@ export type NativeAttempt = Readonly<{
 export type NativeCursor = Readonly<{ id: string; capabilityId: string; family: string; after: string; parent: string | null; lease: string | null }>;
 export type NativeReply = Readonly<{ kind: string; handle?: string; attemptHandle?: string; cursor?: string | null; lease?: string; detail?: unknown }>;
 export type NativeRows = {
+  key_control_grant: NativeKeyControlGrant;
+  principal_resolution: NativePrincipalResolution;
+  api_key_id: ApiKeyRecord;
+  api_key_hash: ApiKeyHashRecord;
+  api_key_audit: ApiKeyChangeEvent;
+  key_control_receipt: NativeControlReceipt;
   kernel_default: number;
   authority_config: Readonly<{ providerHops: readonly NativeProviderHop[] }>;
   capability: NativeCapability;
@@ -170,7 +180,7 @@ export type NativeRows = {
   paid_lease: PaidFallbackReconciliationLeaseV3;
   paid_backfill_lease: PaidFallbackBackfillLeaseV3;
   paid_rollup: PaidFallbackUsageRollup;
-  paid_deletion_guard: PaidFallbackDeletionGuardV3;
+  paid_deletion_guard: PaidFallbackDeletionGuardV3 | LocalDevelopmentDeletionGuard;
   request_lifetime: NativeRequest;
   attempt_lifetime: NativeAttempt;
   cursor: NativeCursor;

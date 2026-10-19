@@ -25,6 +25,8 @@ import { NativeAuthorityApi } from "./native-authority-api.ts";
 import { NativeAuthorityKernel } from "./native-authority-kernel.ts";
 import { NativeAuthorityCodex } from "./native-authority-codex.ts";
 import { NativeAuthorityPaid } from "./native-authority-paid.ts";
+import { NativeAuthorityPrincipals } from "./native-authority-principals.ts";
+import type { NativeControlBinding, NativeControlCommand, NativeControlReply, NativePrincipalControlInitial } from "./native-principal-contracts.ts";
 import { NATIVE_METHOD_ROLES, nativeCommandBytes, parseNativeCommand } from "./native-authority-rpc.ts";
 
 /** All families share this single injected SQLite transaction domain. Provider and credential I/O stay outside it. */
@@ -34,14 +36,21 @@ export class NativeAuthority {
   private readonly _kernel: NativeAuthorityKernel;
   private readonly _codex: NativeAuthorityCodex;
   private readonly _paid: NativeAuthorityPaid;
+  private readonly _principals: NativeAuthorityPrincipals | null;
   constructor(
     storage: NativeSqlStorage,
     initial: NativeAuthorityInitial,
-    private readonly _clock: () => number = Date.now
+    private readonly _clock: () => number = Date.now,
+    control?: NativePrincipalControlInitial
   ) {
     if (initial.kernelConstants.noUsageLimit !== API_KEY_NO_USAGE_LIMIT || initial.kernelConstants.noExpirationMs !== API_KEY_NO_EXPIRATION_MS)
       throw new NativeAuthorityError("native_constants_mismatch", 500);
     this._sql = new NativeAuthoritySql(storage, initial.namespace, initial.epoch);
+    this._api = new NativeAuthorityApi(this._sql);
+    this._kernel = new NativeAuthorityKernel(this._sql, this._api, initial);
+    this._codex = new NativeAuthorityCodex(this._sql, this._api);
+    this._paid = new NativeAuthorityPaid(this._sql, this._api);
+    this._principals = control ? new NativeAuthorityPrincipals(this._sql, this._api, this._paid, control, _clock) : null;
     this._sql.initialize(() => {
       this._sql.write("authority_config", ["config"], { providerHops: structuredClone(initial.providerHops) });
       this._sql.write("kernel_default", ["default", "kernel_policy_limit_requests"], initial.kernelDefaults.limit);
@@ -62,24 +71,30 @@ export class NativeAuthority {
       this._sql.write("codex_capacity", CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY, initial.capacity);
       for (const owner of initial.owners) this._sql.write("codex_owner", [owner.routingAccountIdHash], owner);
       for (const proof of initial.resetProofs) this._sql.write("codex_reset", [proof.id], proof);
+      this._principals?.initialize();
     });
-    this._api = new NativeAuthorityApi(this._sql);
-    this._kernel = new NativeAuthorityKernel(this._sql, this._api, initial);
-    this._codex = new NativeAuthorityCodex(this._sql, this._api);
-    this._paid = new NativeAuthorityPaid(this._sql, this._api);
+  }
+  async control(binding: NativeControlBinding, command: NativeControlCommand): Promise<NativeControlReply> {
+    if (!this._principals) throw new NativeAuthorityError("principal_control_unavailable", 503);
+    return await this._principals.control(binding, command);
   }
   private _authorize(capabilityId: string, command: NativeCommand, now: number): NativeCapability {
     this._sql.assertEpoch();
     if (command.epoch !== this._sql.epoch) throw new NativeAuthorityError("authority_epoch_mismatch", 403);
     const cap = this._sql.capability(capabilityId, now);
     if (!cap.roles.includes(NATIVE_METHOD_ROLES[command.method])) throw new NativeAuthorityError("authority_capability_denied", 403);
+    if (["reserveKernelUsage", "selectCodexAccount", "electCodexResetProbe", "refreshCodexAdmission"].includes(command.method)) {
+      const policy = this._sql.currentKeyPolicy(cap.tokenHash, cap.keyId, now)?.value;
+      if (!policy || policy.revoked || (policy.api.expires_at_ms !== -1 && policy.api.expires_at_ms <= now))
+        throw new NativeAuthorityError("api_policy_revoked", 403);
+    }
     if ("handle" in command.args) this._api.request(cap, command.args.handle, now);
     if ("attemptHandle" in command.args && command.args.attemptHandle !== undefined) this._paid.attempt(cap, command.args.attemptHandle, now);
     return cap;
   }
   private _requestForDispatch(cap: NativeCapability, handle: string, provider: string, now: number): NativeRequest {
     const request = this._api.request(cap, handle, now),
-      policy = this._sql.read("api_policy", apiKeyHashKey(cap.tokenHash), now).value;
+      policy = this._sql.currentKeyPolicy(cap.tokenHash, cap.keyId, now)?.value;
     if (!policy || policy.revoked || policy.api.key_id !== cap.keyId || (policy.api.expires_at_ms !== -1 && policy.api.expires_at_ms <= now))
       throw new NativeAuthorityError("api_policy_revoked", 403);
     if (provider === "chatgpt_codex") this._codex.fence(cap, handle, now);
@@ -171,6 +186,11 @@ export class NativeAuthority {
   }
   private _validateReceipt(cap: NativeCapability, command: NativeCommand, receipt: NativeRows["operation_receipt"], canonical: string, now: number): void {
     if (receipt.command !== canonical) throw new NativeAuthorityError("authority_operation_replay_conflict");
+    if (command.method === "reserveApiUsage" || command.method === "reservePaidAttempt") {
+      const policy = this._sql.currentKeyPolicy(cap.tokenHash, cap.keyId, now)?.value;
+      if (!policy || policy.revoked || (policy.api.expires_at_ms !== -1 && policy.api.expires_at_ms <= now))
+        throw new NativeAuthorityError("api_policy_revoked", 403);
+    }
     if (command.method === "markApiDispatch" && receipt.reply.kind === "dispatched") this._api.assertDispatchReceipt(cap, command.args.handle, now);
     if (command.method === "refreshCodexAdmission" && receipt.reply.kind === "current") {
       if (!receipt.codexAuthorization) throw new NativeAuthorityError("cached_codex_authorization_missing");

@@ -1,14 +1,16 @@
-import { apiKeyHashKey } from "../api-keys.ts";
 import {
+  apiKeyUsageV3RetentionMs,
   currentApiKeyUsageWindow,
   isApiKeyUsageReservationExpired,
+  makeApiKeyUsageWindowV3,
+  matchingApiKeyUsageWindowV3,
   normalizeApiKeyUsageRequestV3,
   planApiKeyUsageDispatch,
   planApiKeyUsageDispatchCancellation,
   planApiKeyUsageReservation,
   planApiKeyUsageReservedRelease,
 } from "./native-api-key.ts";
-import type { ApiKeyPolicy, ApiKeyUsageWritePlan } from "./native-contracts.ts";
+import type { ApiKeyPolicy, ApiKeyUsageWritePlan, ApiKeyUsageRequestV3 } from "./native-contracts.ts";
 import { NativeAuthorityError, type NativeArguments, type NativeCapability, type NativeReply, type NativeRequest } from "./native-authority-contracts.ts";
 import { nativeKey, NativeAuthoritySql } from "./native-authority-sql.ts";
 
@@ -63,7 +65,7 @@ export class NativeAuthorityApi {
     }
   }
   reserve(cap: NativeCapability, args: NativeArguments["reserveApiUsage"], now: number): NativeReply {
-    const source = this._sql.read("api_policy", apiKeyHashKey(cap.tokenHash), now).value;
+    const source = this._sql.currentKeyPolicy(cap.tokenHash, cap.keyId, now)?.value;
     if (
       source?.api.key_id !== cap.keyId ||
       source.api.token_hash !== cap.tokenHash ||
@@ -184,5 +186,59 @@ export class NativeAuthorityApi {
   status(cap: NativeCapability, handle: string, now: number): NativeReply {
     const row = this.request(cap, handle, now);
     return { kind: "status", handle, detail: { api: this._snapshot(row, now).request } };
+  }
+  usage(policy: ApiKeyPolicy, now: number): number {
+    return matchingApiKeyUsageWindowV3(this._sql.read("api_window", windowKey(policy), now).value, policy)?.committed_requests ?? 0;
+  }
+  createWindow(policy: ApiKeyPolicy, now: number): void {
+    if (this._sql.read("api_window", windowKey(policy), now).value) throw new NativeAuthorityError("api_window_identity_conflict");
+    const window = makeApiKeyUsageWindowV3(policy, now);
+    this._sql.write("api_window", windowKey(policy), window, now + apiKeyUsageV3RetentionMs(window.window_reset_at_ms, now), { scope: policy.key_id });
+  }
+  /** Key-wide administrative inspection uses each request's original stored identity. */
+  private _resetReservation(keyId: string, encoded: string, value: ApiKeyUsageRequestV3 | null, now: number): boolean {
+    const row = normalizeApiKeyUsageRequestV3(value);
+    if (row?.key_id !== keyId) throw new NativeAuthorityError("API key quota ledger is unavailable", 503);
+    if (row.state !== "reserved") return false;
+    const lifetimes = this._sql.page("request_lifetime", now, "", 2, { parent: encoded });
+    const lifetime = lifetimes[0]?.row.value;
+    if (lifetimes.length !== 1 || !lifetime || nativeKey(requestKey(lifetime.api, lifetime.requestId)) !== encoded || lifetime.keyId !== keyId)
+      throw new NativeAuthorityError("api_reset_original_identity_missing", 503);
+    if (!isApiKeyUsageReservationExpired(row, now)) return true;
+    const release = planApiKeyUsageReservedRelease(
+      lifetime.api,
+      row.request_id,
+      "reservation_lease_expired",
+      { request: row, window: this._sql.read("api_window", windowKey(lifetime.api), now).value },
+      now,
+      lifetime.route
+    );
+    if (release.kind !== "write") throw new NativeAuthorityError("API key quota ledger is unavailable", 503);
+    this._write(lifetime.api, release, now);
+    return false;
+  }
+  inspectKeyReset(keyId: string, now: number): boolean {
+    let after = "",
+      live = false;
+    for (;;) {
+      const page = this._sql.page("api_request", now, after, 100, { scope: keyId });
+      for (const entry of page) {
+        // Always inspect every entry, including after a live reservation was found.
+        const reserved = this._resetReservation(keyId, entry.encoded, entry.row.value, now);
+        live = live || reserved;
+      }
+      if (page.length < 100) break;
+      after = page[page.length - 1].encoded;
+    }
+    return live;
+  }
+  deleteForKey(keyId: string, now: number): void {
+    for (const table of ["api_request", "api_window", "principal_resolution"] as const) {
+      for (;;) {
+        const page = this._sql.page(table, now, "", 100, { scope: keyId });
+        for (const entry of page) this._sql.delete(table, entry.key);
+        if (page.length < 100) break;
+      }
+    }
   }
 }
