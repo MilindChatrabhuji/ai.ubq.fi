@@ -302,7 +302,10 @@ fn import_source_owner_action_epoch_and_expiry_replacement_refuse_mint() {
                 "race" => {
                     let key = codex_source_pool_key();
                     let row = store.rows.lock().unwrap().get(&key.0).unwrap().clone();
-                    store.race(key, Some(StoredRecord::json("source-raced", row.value, None)));
+                    store.race(
+                        key,
+                        Some(StoredRecord::json("source-raced", row.value, None)),
+                    );
                 }
                 "owner" => store.seed(
                     keys::paid_control_owner(),
