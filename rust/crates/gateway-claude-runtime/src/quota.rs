@@ -219,7 +219,7 @@ mod proof_map {
     pub fn deserialize<'de, D: serde::Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<BTreeMap<JsString16, PoolProof>>, D::Error> {
-        let value = SourceJson::deserialize(deserializer)?;
+        let value = <SourceJson as Deserialize>::deserialize(deserializer)?;
         if value.as_str() == "null" {
             return Ok(None);
         }

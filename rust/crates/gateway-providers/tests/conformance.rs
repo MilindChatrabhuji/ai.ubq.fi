@@ -397,7 +397,11 @@ fn lithos_rung_windows_recover_independently() {
     let ultra = "deepseek-ai/DeepSeek-V4.1-Flash-ultra";
     windows.refuse(&ultra.into(), 0, 100);
     windows.refuse(&"deepseek-ai/DeepSeek-V4.1-Flash-fast".into(), 0, 200);
-    assert!(windows.select(&ultra.into(), 50).matches_scalar("deepseek-ai/DeepSeek-V4.1-Flash"));
+    assert!(
+        windows
+            .select(&ultra.into(), 50)
+            .matches_scalar("deepseek-ai/DeepSeek-V4.1-Flash")
+    );
     assert!(windows.select(&ultra.into(), 150).matches_scalar(ultra));
     let mut waits = policy::WaitBudget {
         waits: 0,
