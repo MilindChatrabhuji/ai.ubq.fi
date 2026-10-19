@@ -991,6 +991,7 @@ dependencies = [
  "gateway-claude-runtime",
  "gateway-core",
  "gateway-native",
+ "gateway-routing-runtime",
  "gateway-schema",
  "rusqlite",
  "serde",
@@ -1117,6 +1118,19 @@ dependencies = [
  "serde",
  "serde_json",
  "wasm-bindgen",
+ "worker",
+]
+
+[[package]]
+name = "gateway-worker-fixture"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-publication",
+ "gateway-worker",
+ "serde_json",
  "worker",
 ]
 

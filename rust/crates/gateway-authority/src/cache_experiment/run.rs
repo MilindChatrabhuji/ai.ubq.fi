@@ -3,7 +3,7 @@ use super::{
     PreparedTarget, RefreshPermit, model::*, state::CyclePermit, transport::CacheDispatch,
 };
 use crate::{Authority, TokenSource};
-use gateway_core::{GatewayError, state::AuthorityStore};
+use gateway_core::{GatewayError, identity::PoolVersionstamp, state::AuthorityStore};
 use serde_json::{Value, json};
 use std::future::Future;
 
@@ -15,6 +15,7 @@ pub trait ExperimentIo {
     type Response;
     fn release_git_sha(&self) -> &str;
     fn uuid(&self) -> Result<String, GatewayError>;
+    fn begin_cycle(&self, deadline_ms: i64) -> Result<(), GatewayError>;
     fn fetch(
         &self,
         dispatch: &CacheDispatch,
@@ -37,7 +38,10 @@ pub trait ExperimentIo {
         index: usize,
         deadline_ms: i64,
     ) -> impl Future<Output = Result<ReadSample, GatewayError>>;
-    fn refresh(&self, permit: RefreshPermit) -> impl Future<Output = Result<(), GatewayError>>;
+    fn refresh(
+        &self,
+        permit: RefreshPermit,
+    ) -> impl Future<Output = Result<PoolVersionstamp, GatewayError>>;
 }
 pub fn request_body(model: &str, cycle: &str, key: &str) -> String {
     let prefix = std::iter::repeat_n("cache", 2_560)
@@ -90,7 +94,17 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                         )
                         .await;
                 }
-                Err(error)
+                if matches!(
+                    error.envelope.error.code.as_deref(),
+                    Some(
+                        "prompt_cache_scope_experiment_busy"
+                            | "prompt_cache_scope_experiment_unavailable"
+                    )
+                ) {
+                    Err(error)
+                } else {
+                    Err(failed(&error.envelope.error.message))
+                }
             }
         }
     }
@@ -130,6 +144,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 .await;
         }
         let deadline = crate::add(self.fresh_time(now)?, CYCLE_MS)?;
+        io.begin_cycle(deadline)?;
         let cycle_nonce = io.uuid()?;
         let cache_key = format!("uos-cache-scope-v5-{}", io.uuid()?);
         let body = request_body(&target.model, &cycle_nonce, &cache_key);
@@ -168,9 +183,22 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                         self.fresh_time(now)?,
                     )
                     .await?;
-                io.refresh(refresh).await?;
+                let publication = match io.refresh(refresh).await {
+                    Ok(publication) => publication,
+                    Err(error) => {
+                        if self
+                            .cache_pool_changed_after_refresh_error(&session, self.fresh_time(now)?)
+                            .await
+                            .unwrap_or(false)
+                        {
+                            cycle.inconclusive_reason = Some(Reason::AuthPoolDrift);
+                            break;
+                        }
+                        return Err(error);
+                    }
+                };
                 match self
-                    .cache_session_after_refresh(&session, self.fresh_time(now)?)
+                    .cache_session_after_refresh(&session, &publication, self.fresh_time(now)?)
                     .await?
                 {
                     Ok(next) => {

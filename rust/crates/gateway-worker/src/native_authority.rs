@@ -175,10 +175,47 @@ pub async fn handle(
             &bytes,
             now,
         )?;
+        let parsed = RenewalRequest::parse(&bytes)?;
+        let owners = native.renewal_owners()?;
+        let owner = match &parsed {
+            RenewalRequest::Claim { .. } => {
+                let original = parsed.original_control_body()?;
+                let envelope =
+                    gateway_auth::native_control::NativeControlEnvelope::parse(&original)?;
+                let gateway_auth::native_control::NativeControlRequest::CodexRenewAccess {
+                    action_ref,
+                } = &envelope.request;
+                owners.for_action(&authority, action_ref).await?
+            }
+            RenewalRequest::Start {
+                operation_id,
+                claim_ref,
+                ..
+            }
+            | RenewalRequest::Recheck {
+                operation_id,
+                claim_ref,
+                ..
+            }
+            | RenewalRequest::Published {
+                operation_id,
+                claim_ref,
+                ..
+            }
+            | RenewalRequest::Unknown {
+                operation_id,
+                claim_ref,
+                ..
+            } => {
+                owners
+                    .for_operation(&authority, operation_id, claim_ref)
+                    .await?
+            }
+        };
         let receiver = NativeRenewalAuthority::configured(
             &authority,
             &transport.identity,
-            native.renewal_owner()?,
+            owner,
             &config,
             &incoming,
         );
@@ -313,10 +350,21 @@ pub async fn managed_publication(
         .await?;
     let authority = Authority::with_clock(store.clone(), PlatformTokens, PlatformClock);
     let config = crate::host::auth_config(env);
+    // The authenticated action reference only selects a configured owner. The
+    // common receiver still validates the entire v2 publication and current claim.
+    #[derive(serde::Deserialize)]
+    struct Selector {
+        action_ref: String,
+    }
+    let selector: Selector = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    let owner = native
+        .renewal_owners()?
+        .for_action(&authority, &selector.action_ref)
+        .await?;
     let receiver = NativeRenewalAuthority::configured(
         &authority,
         &transport.identity,
-        native.renewal_owner()?,
+        owner,
         &config,
         &incoming,
     );

@@ -29,6 +29,7 @@ pub struct Host {
     pub env: Env,
     pub platform: PlatformHost,
     claude: crate::claude_host::Binding,
+    original: gateway_core::identity::RequestContext,
 }
 
 fn provider_name(provider: UpstreamProvider) -> Option<&'static str> {
@@ -211,7 +212,7 @@ impl RoutingHost for Host {
     async fn refresh_codex(&self, fence: &CredentialFence) -> Result<RefreshOutcome, GatewayError> {
         self.platform
             .native
-            .refresh_routing(fence, &self.platform)
+            .refresh_routing(fence, &self.platform, &self.original)
             .await
     }
     async fn select_claude(
@@ -239,12 +240,19 @@ impl RoutingHost for Host {
     }
     async fn recover_codex(
         &self,
-        _proof: &CohortProof,
-        _model: &str,
+        proof: &CohortProof,
+        model: &str,
     ) -> Result<CodexRecovery, GatewayError> {
-        Err(unavailable(
-            "The native reset/redemption capability is not yet configured.",
-        ))
+        crate::codex_admin_host::recover_full_pool(
+            &self.store,
+            &self.platform,
+            &self.platform.original,
+            &crate::host::auth_config(&self.platform.env),
+            &self.original,
+            proof,
+            model,
+        )
+        .await
     }
     async fn lookup_paid(
         &self,
@@ -259,6 +267,7 @@ impl Host {
         store: RemoteAuthorityStore,
         platform: PlatformHost,
         context: std::rc::Rc<worker::Context>,
+        original: gateway_core::identity::RequestContext,
     ) -> Self {
         let claude = crate::claude_host::Binding::new(store.clone(), platform.clone(), context);
         Self {
@@ -266,6 +275,7 @@ impl Host {
             env: platform.env.clone(),
             platform,
             claude,
+            original,
         }
     }
     async fn wait_result(&self, milliseconds: i64) -> Result<(), GatewayError> {

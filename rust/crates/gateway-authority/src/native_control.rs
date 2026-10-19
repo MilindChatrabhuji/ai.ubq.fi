@@ -7,21 +7,75 @@ use gateway_core::GatewayError;
 use serde::{Deserialize, Serialize};
 
 pub mod actor;
+mod custody;
 mod facts;
+mod live_renewal;
 mod managed;
+mod owners;
 mod receiver;
 mod rows;
 pub mod wire;
+pub use custody::validate_native_control_custody;
 pub use managed::{NativeManagedPublication, NativeManagedPublicationDisposition};
+pub use owners::RegisteredRenewalOwners;
 pub use receiver::{NativeRenewalAuthority, RegisteredRenewalOwner};
 
 pub const OWNER_RENEWAL_MAX_MS: i64 = 45_000;
+pub const NATIVE_RENEWAL_FENCE_VERSION: u8 = 2;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum NativeRenewalContext {
+    Inference {
+        attempt_id: String,
+        original_admission_digest: String,
+        model: String,
+        slot: u64,
+    },
+    LiveCreate {
+        binding: gateway_core::identity::AccountBinding,
+        active_generation: u64,
+        #[serde(deserialize_with = "required_model_units")]
+        model_utf16: Option<Vec<u16>>,
+    },
+    LiveMapped {
+        call_id: String,
+        mapping_revision: String,
+    },
+    CacheExperiment {
+        context: Box<crate::cache_experiment::RefreshContext>,
+    },
+}
+fn required_model_units<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Vec<u16>>, D::Error> {
+    Option::<Vec<u16>>::deserialize(d)
+}
+fn fence_v2<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u8, D::Error> {
+    let v = u8::deserialize(d)?;
+    if v != NATIVE_RENEWAL_FENCE_VERSION {
+        return Err(serde::de::Error::custom(
+            "unsupported native renewal fence version",
+        ));
+    }
+    Ok(v)
+}
+fn required_nullable_time<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
+    Option::<i64>::deserialize(d)
+}
+fn required_nullable_text<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(d)
+}
 
 /// The source-native generation and the cloud access credential version are distinct.
 /// Publication must independently prove both; a managed credential is never relabelled external.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeRenewalFence {
+    #[serde(deserialize_with = "fence_v2")]
+    pub v: u8,
     pub owner_id: String,
     pub owner_epoch: String,
     pub owner_revision: String,
@@ -32,14 +86,14 @@ pub struct NativeRenewalFence {
     pub credential_version: String,
     pub source_native_generation: String,
     pub access_generation: String,
+    #[serde(deserialize_with = "required_nullable_time")]
     pub access_expires_at_ms: Option<i64>,
+    #[serde(deserialize_with = "required_nullable_text")]
     pub native_refreshed_at: Option<String>,
     pub principal: String,
     pub principal_policy_digest: String,
     pub original_request_id: String,
-    pub original_admission_digest: String,
-    pub model: String,
-    pub slot: u64,
+    pub context: NativeRenewalContext,
 }
 
 /// This capability is minted only after server authentication and fixed strong-read/CAS checks.

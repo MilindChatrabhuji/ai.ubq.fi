@@ -147,6 +147,20 @@ pub(crate) struct RoutingView {
 pub(crate) async fn read_view<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
 ) -> Result<RoutingView, GatewayError> {
+    read_view_for(tx, true).await
+}
+
+/// Source slot-pinned callers hydrate the same state without consulting the global election.
+pub(crate) async fn read_pinned_view<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+) -> Result<RoutingView, GatewayError> {
+    read_view_for(tx, false).await
+}
+
+async fn read_view_for<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    read_active: bool,
+) -> Result<RoutingView, GatewayError> {
     let mut pool: SubscriptionPool = tx
         .read(&keys::pool())
         .await?
@@ -161,7 +175,11 @@ pub(crate) async fn read_view<S: AuthorityStore, I: TokenSource>(
             .transpose()?,
         tx.now,
     )?;
-    let active: Option<ActiveSelection> = tx.read(&keys::active()).await?;
+    let active: Option<ActiveSelection> = if read_active {
+        tx.read(&keys::active()).await?
+    } else {
+        None
+    };
     if let Some(active) = &active {
         validate_binding(&active.binding)?;
         if active.v != 1 || active.generation == 0 {
@@ -737,6 +755,17 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     "Codex admission is stale.",
                 ));
             }
+            if let Some(probe) = &admission.probe {
+                let slot = &view.state.slots[admission.binding.slot as usize];
+                if slot.probe_lease.as_ref() != Some(probe)
+                    || probe.expires_at_ms <= self.fresh_time(now)?
+                {
+                    return Err(unavailable(
+                        "codex_routing_unavailable",
+                        "Codex probe lease is stale.",
+                    ));
+                }
+            }
             if tx.commit().await? {
                 return Ok(());
             }
@@ -753,30 +782,48 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         block: QuotaBlock,
         now: i64,
     ) -> Result<bool, GatewayError> {
+        self.record_bound_quota_block(
+            &admission.binding,
+            admission.quota_class,
+            admission.probe.as_ref(),
+            block,
+            now,
+        )
+        .await
+    }
+
+    /// Shared source writer; non-inference callers retain their own sealed physical dispatch.
+    pub(crate) async fn record_bound_quota_block(
+        &self,
+        binding: &AccountBinding,
+        class: CodexQuotaClass,
+        probe: Option<&ProbeLease>,
+        block: QuotaBlock,
+        now: i64,
+    ) -> Result<bool, GatewayError> {
         nonnegative(block.blocked_until_ms)?;
         if let Some(at) = block.observed_at_ms {
             nonnegative(at)?;
         }
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
-            let mut view = read_view(&mut tx).await?;
-            let slot_index = admission.binding.slot as usize;
+            let mut view = read_pinned_view(&mut tx).await?;
+            let slot_index = binding.slot as usize;
             let foreign_probe = view.state.slots.get(slot_index).is_some_and(|slot| {
-                slot.account_id_hash.as_ref() == Some(&admission.binding.account_id_hash)
-                    && slot.credential_version == admission.binding.credential_version
-                    && view.pool.pool_versionstamp == admission.binding.pool_versionstamp
-                    && slot.probe_lease.as_ref().is_some_and(|lease| {
-                        lease
-                            .quota_class
-                            .is_some_and(|c| c != admission.quota_class)
-                    })
-                    && admission.probe.is_none()
+                slot.account_id_hash.as_ref() == Some(&binding.account_id_hash)
+                    && slot.credential_version == binding.credential_version
+                    && view.pool.pool_versionstamp == binding.pool_versionstamp
+                    && slot
+                        .probe_lease
+                        .as_ref()
+                        .is_some_and(|lease| lease.quota_class.is_some_and(|c| c != class))
+                    && probe.is_none()
             });
-            if !view.current_binding(&admission.binding) && !foreign_probe {
+            if !view.current_binding(binding) && !foreign_probe {
                 return Ok(false);
             }
-            let slot = &mut view.state.slots[admission.binding.slot as usize];
-            let prior = slot.quota_blocks.get(class_name(admission.quota_class));
+            let slot = &mut view.state.slots[binding.slot as usize];
+            let prior = slot.quota_blocks.get(class_name(class));
             if prior.is_some_and(|prior| prior.observed_at_ms > block.observed_at_ms) {
                 return Ok(false);
             }
@@ -786,7 +833,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 next.reset_ambiguous |= prior.reset_ambiguous
                     || (prior.reset_is_stable && prior.reset_at_ms != next.reset_at_ms);
             }
-            slot.insert_quota_block(admission.quota_class, next);
+            slot.insert_quota_block(class, next);
             if !foreign_probe {
                 slot.probe_lease = None;
                 slot.generation = next_generation(slot.generation)?;

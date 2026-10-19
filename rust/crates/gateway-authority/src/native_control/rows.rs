@@ -61,7 +61,6 @@ pub(super) struct ActionRow {
     pub v: u8,
     pub action_ref: String,
     pub actor: Actor,
-    pub attempt_id: String,
     pub created_at_ms: i64,
     pub deadline_ms: i64,
     pub fence: NativeRenewalFence,

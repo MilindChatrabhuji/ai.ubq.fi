@@ -129,7 +129,11 @@ pub struct PaidRollup {
     pub input_tokens: i64,
     pub cached_input_tokens: i64,
     pub output_tokens: i64,
-    pub spend_microcredits: i64,
+    #[serde(
+        serialize_with = "serialize_rollup_spend",
+        deserialize_with = "deserialize_rollup_spend"
+    )]
+    pub spend_microcredits: f64,
     pub first_request_at_ms: i64,
     pub last_request_at_ms: i64,
     pub updated_at_ms: i64,
@@ -151,4 +155,29 @@ pub enum PaidCorrelation {
         attempt_id: PaidAttemptId,
         buyer_cost_micro: Option<i64>,
     },
+}
+
+// Source rollup spend is finite/nonnegative, unlike exact integer request/window billing.
+fn deserialize_rollup_spend<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<f64, D::Error> {
+    let value = f64::deserialize(deserializer)?;
+    if value.is_finite() && value >= 0.0 {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom("Invalid source aggregate spend"))
+    }
+}
+fn serialize_rollup_spend<S: serde::Serializer>(
+    value: &f64,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    if !value.is_finite() || *value < 0.0 {
+        return Err(serde::ser::Error::custom("Invalid source aggregate spend"));
+    }
+    if value.fract() == 0.0 && *value <= gateway_core::identity::MAX_SAFE_INTEGER as f64 {
+        serializer.serialize_i64(*value as i64)
+    } else {
+        serializer.serialize_f64(*value)
+    }
 }

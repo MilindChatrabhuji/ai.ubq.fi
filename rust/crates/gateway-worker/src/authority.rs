@@ -29,6 +29,11 @@ const AUTHORITY_OBJECT: &str = "gateway-authority-v1";
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 enum StoreRequest {
+    ProfileMigration {
+        request: ProfileMigration,
+        request_id: String,
+        now_ms: i64,
+    },
     Read {
         key: String,
     },
@@ -43,6 +48,73 @@ enum StoreRequest {
         cursor: Option<String>,
         now_ms: i64,
     },
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum ProfileMigration {
+    Import {
+        ndjson: String,
+        profile: ProfileKind,
+        include_cache: bool,
+        include_legacy: bool,
+        overwrite: bool,
+        dry_run: bool,
+    },
+    Validate,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ProfileKind {
+    Local,
+    Prod,
+}
+impl From<gateway_admin_runtime::capabilities::MigrationRequest> for ProfileMigration {
+    fn from(request: gateway_admin_runtime::capabilities::MigrationRequest) -> Self {
+        use gateway_admin_runtime::capabilities::{MigrationProfile, MigrationRequest};
+        match request {
+            MigrationRequest::Validate => Self::Validate,
+            MigrationRequest::Import(value) => Self::Import {
+                ndjson: value.ndjson,
+                profile: match value.profile {
+                    MigrationProfile::Local => ProfileKind::Local,
+                    MigrationProfile::Prod => ProfileKind::Prod,
+                },
+                include_cache: value.include_cache,
+                include_legacy: value.include_legacy,
+                overwrite: value.overwrite,
+                dry_run: value.dry_run,
+            },
+        }
+    }
+}
+impl From<ProfileMigration> for gateway_admin_runtime::capabilities::MigrationRequest {
+    fn from(request: ProfileMigration) -> Self {
+        use gateway_admin_runtime::capabilities::{
+            MigrationImport, MigrationProfile, MigrationRequest,
+        };
+        match request {
+            ProfileMigration::Validate => MigrationRequest::Validate,
+            ProfileMigration::Import {
+                ndjson,
+                profile,
+                include_cache,
+                include_legacy,
+                overwrite,
+                dry_run,
+            } => MigrationRequest::Import(MigrationImport {
+                ndjson,
+                profile: match profile {
+                    ProfileKind::Local => MigrationProfile::Local,
+                    ProfileKind::Prod => MigrationProfile::Prod,
+                },
+                include_cache,
+                include_legacy,
+                overwrite,
+                dry_run,
+            }),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -115,6 +187,11 @@ enum WireMutation {
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 enum StoreResponse {
+    ProfileMigration {
+        status: u16,
+        headers: std::collections::BTreeMap<String, String>,
+        body: gateway_core::source_json::SourceJson,
+    },
     Read {
         record: Option<StoredRecord>,
     },
@@ -156,6 +233,28 @@ impl DurableObject for GatewayAuthority {
                 .map_err(|_| unavailable("authority_wire_invalid"))?;
             let store = SqliteAuthorityStore::open(self.state.storage()).await?;
             match message {
+                StoreRequest::ProfileMigration {
+                    request,
+                    request_id,
+                    now_ms,
+                } => {
+                    let result = crate::migration_host::execute_profile(
+                        &store,
+                        request.into(),
+                        gateway_admin_runtime::capabilities::Context { request_id, now_ms },
+                    )
+                    .await?;
+                    if result.stream.is_some() {
+                        return Err(unavailable("authority_wire_invalid"));
+                    }
+                    Ok(StoreResponse::ProfileMigration {
+                        status: result.status,
+                        headers: result.headers,
+                        body: gateway_core::source_json::SourceJson::parse_bytes(
+                            &result.body.to_bytes()?,
+                        )?,
+                    })
+                }
                 StoreRequest::Read { key } => Ok(StoreResponse::Read {
                     record: store.read(&RecordKey(key)).await?,
                 }),
@@ -247,6 +346,32 @@ impl RemoteAuthorityStore {
         Ok(Self {
             stub: Rc::new(stub),
         })
+    }
+
+    pub(crate) async fn profile_migration(
+        &self,
+        request: gateway_admin_runtime::capabilities::MigrationRequest,
+        context: gateway_admin_runtime::capabilities::Context,
+    ) -> Result<gateway_auth::AuthResponse, GatewayError> {
+        match self
+            .exchange(StoreRequest::ProfileMigration {
+                request: request.into(),
+                request_id: context.request_id,
+                now_ms: context.now_ms,
+            })
+            .await?
+        {
+            StoreResponse::ProfileMigration {
+                status,
+                headers,
+                body,
+            } => {
+                let mut response = gateway_auth::AuthResponse::source_json(status, body);
+                response.headers = headers;
+                Ok(response)
+            }
+            _ => Err(unavailable("authority_wire_invalid")),
+        }
     }
 
     async fn exchange(&self, message: StoreRequest) -> Result<StoreResponse, GatewayError> {

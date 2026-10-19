@@ -5,14 +5,13 @@ use futures_util::StreamExt;
 use gateway_auth::provider_credentials::CodexSourceAccount;
 use gateway_core::GatewayError;
 use gateway_live_runtime::{
-    LIVE_CALL_CAPTURE_TIMEOUT_MS, LIVE_CALL_CAPTURED_ERROR_MAX_BYTES,
-    LIVE_CALL_HEADERS_TIMEOUT_MS, LIVE_CALLS_PATH, LiveCreateRequest, LiveDispatchAttempt,
-    LiveDispatchFailure, LiveResponse,
+    LIVE_CALL_CAPTURE_TIMEOUT_MS, LIVE_CALL_CAPTURED_ERROR_MAX_BYTES, LIVE_CALL_HEADERS_TIMEOUT_MS,
+    LIVE_CALLS_PATH, LiveCreateRequest, LiveDispatchAttempt, LiveDispatchFailure, LiveResponse,
 };
-use worker::{Context, Headers, Response, ResponseBody};
 use worker::js_sys::Uint8Array;
 use worker::wasm_bindgen::JsCast;
 use worker::wasm_bindgen_futures::JsFuture;
+use worker::{Context, Headers, Response, ResponseBody};
 
 use crate::{
     host::{PlatformHost, setting},
@@ -24,7 +23,10 @@ use crate::{
 
 pub enum Body {
     Bytes(Vec<u8>),
-    Upstream { response: Response, cancellation: Rc<Cancellation> },
+    Upstream {
+        response: Response,
+        cancellation: Rc<Cancellation>,
+    },
 }
 
 pub(super) fn error(error: GatewayError) -> LiveResponse<Body> {
@@ -37,7 +39,11 @@ pub(super) fn error(error: GatewayError) -> LiveResponse<Body> {
 }
 
 fn unreachable() -> GatewayError {
-    GatewayError::new(502, "Codex upstream request failed: upstream unreachable.", Some("codex_upstream_unreachable"))
+    GatewayError::new(
+        502,
+        "Codex upstream request failed: upstream unreachable.",
+        Some("codex_upstream_unreachable"),
+    )
 }
 
 pub(super) async fn send<F, Fut>(
@@ -55,25 +61,46 @@ where
         let deadline = cancellation.set_timeout_ms(LIVE_CALL_HEADERS_TIMEOUT_MS as i32)?;
         let base = setting(&platform.env, "CODEX_BASE_URL")
             .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".into());
-        let url = format!("{}{LIVE_CALLS_PATH}", gateway_schema::util::js_trim(&base).trim_end_matches('/'));
+        let url = format!(
+            "{}{LIVE_CALLS_PATH}",
+            gateway_schema::util::js_trim(&base).trim_end_matches('/')
+        );
         PinnedDestination::new(&url)?;
         let headers = Headers::new();
-        for (name, value) in request.headers { headers.set(&name, &value).map_err(|_| unreachable())?; }
-        headers.set("authorization", &format!("Bearer {}", account.access_token.expose())).map_err(|_| unreachable())?;
-        headers.set("chatgpt-account-id", &account.account_id).map_err(|_| unreachable())?;
+        for (name, value) in request.headers {
+            headers.set(&name, &value).map_err(|_| unreachable())?;
+        }
+        headers
+            .set(
+                "authorization",
+                &format!("Bearer {}", account.access_token.expose()),
+            )
+            .map_err(|_| unreachable())?;
+        headers
+            .set("chatgpt-account-id", &account.account_id)
+            .map_err(|_| unreachable())?;
         let init = worker::web_sys::RequestInit::new();
         init.set_method("POST");
         init.set_redirect(worker::web_sys::RequestRedirect::Manual);
         init.set_headers(headers.as_ref());
         init.set_body(&Uint8Array::from(request.body.as_bytes()).into());
         init.set_signal(Some(&cancellation.signal()));
-        let request = worker::web_sys::Request::new_with_str_and_init(&url, &init).map_err(|_| unreachable())?;
+        let request = worker::web_sys::Request::new_with_str_and_init(&url, &init)
+            .map_err(|_| unreachable())?;
         Ok((request, cancellation, deadline))
     };
-    let failure = |error, attempt| LiveDispatchFailure { response: self::error(error), attempt };
-    let (request, cancellation, deadline) = prepare().map_err(|e| failure(e, LiveDispatchAttempt::NotStarted))?;
-    before_dispatch().await.map_err(|e| failure(e, LiveDispatchAttempt::NotStarted))?;
-    if cancellation.signal().aborted() { return Err(failure(unreachable(), LiveDispatchAttempt::NotStarted)); }
+    let failure = |error, attempt| LiveDispatchFailure {
+        response: self::error(error),
+        attempt,
+    };
+    let (request, cancellation, deadline) =
+        prepare().map_err(|e| failure(e, LiveDispatchAttempt::NotStarted))?;
+    before_dispatch()
+        .await
+        .map_err(|e| failure(e, LiveDispatchAttempt::NotStarted))?;
+    if cancellation.signal().aborted() {
+        return Err(failure(unreachable(), LiveDispatchAttempt::NotStarted));
+    }
     let scope: worker::web_sys::WorkerGlobalScope = worker::js_sys::global().unchecked_into();
     // No await occurs between the current-owner fence and this actual fetch invocation.
     let result = JsFuture::from(scope.fetch_with_request(&request)).await;
@@ -84,18 +111,37 @@ where
         } else { unreachable() };
         failure(error, LiveDispatchAttempt::Started)
     })?;
-    let raw: worker::web_sys::Response = result.dyn_into().map_err(|_| failure(unreachable(), LiveDispatchAttempt::Started))?;
+    let raw: worker::web_sys::Response = result
+        .dyn_into()
+        .map_err(|_| failure(unreachable(), LiveDispatchAttempt::Started))?;
     let status_text = Some(raw.status_text());
     let response = Response::from(raw);
-    Ok(LiveResponse { status: response.status_code(), status_text, headers: response.headers().entries().collect(), body: Body::Upstream { response, cancellation } })
+    Ok(LiveResponse {
+        status: response.status_code(),
+        status_text,
+        headers: response.headers().entries().collect(),
+        body: Body::Upstream {
+            response,
+            cancellation,
+        },
+    })
 }
 
-pub(super) async fn capture(mut response: LiveResponse<Body>, parent: &Cancellation) -> LiveResponse<Body> {
+pub(super) async fn capture(
+    mut response: LiveResponse<Body>,
+    parent: &Cancellation,
+) -> LiveResponse<Body> {
     response.headers.retain(|name, _| name == "content-type");
     let mut bytes = Vec::new();
     match response.body {
-        Body::Bytes(mut body) => { body.truncate(LIVE_CALL_CAPTURED_ERROR_MAX_BYTES); bytes = body; },
-        Body::Upstream { mut response, cancellation: _cancellation } => {
+        Body::Bytes(mut body) => {
+            body.truncate(LIVE_CALL_CAPTURED_ERROR_MAX_BYTES);
+            bytes = body;
+        }
+        Body::Upstream {
+            mut response,
+            cancellation: _cancellation,
+        } => {
             if let Ok(child) = parent.child()
                 && let Ok(_deadline) = child.set_timeout_ms(LIVE_CALL_CAPTURE_TIMEOUT_MS as i32)
                 && let Ok(mut source) = response.stream()
@@ -103,40 +149,79 @@ pub(super) async fn capture(mut response: LiveResponse<Body>, parent: &Cancellat
                 loop {
                     let next = std::future::poll_fn(|cx| {
                         child.register_waker(cx.waker());
-                        if child.signal().aborted() { Poll::Ready(None) } else { source.poll_next_unpin(cx) }
-                    }).await;
+                        if child.signal().aborted() {
+                            Poll::Ready(None)
+                        } else {
+                            source.poll_next_unpin(cx)
+                        }
+                    })
+                    .await;
                     match next {
                         Some(Ok(chunk)) => {
-                            let length = chunk.len().min(LIVE_CALL_CAPTURED_ERROR_MAX_BYTES - bytes.len());
+                            let length = chunk
+                                .len()
+                                .min(LIVE_CALL_CAPTURED_ERROR_MAX_BYTES - bytes.len());
                             bytes.extend_from_slice(&chunk[..length]);
-                            if length < chunk.len() || bytes.len() == LIVE_CALL_CAPTURED_ERROR_MAX_BYTES { break; }
-                        },
+                            if length < chunk.len()
+                                || bytes.len() == LIVE_CALL_CAPTURED_ERROR_MAX_BYTES
+                            {
+                                break;
+                            }
+                        }
                         _ => break,
                     }
                 }
                 // Pinned stream cancellation on Drop releases the original replaced response.
                 drop(source);
             }
-        },
+        }
     }
     response.body = Body::Bytes(bytes);
     response
 }
 
-pub fn into_response(response: LiveResponse<Body>, context: Rc<Context>) -> Result<Response, GatewayError> {
+pub fn into_response(
+    response: LiveResponse<Body>,
+    context: Rc<Context>,
+) -> Result<crate::GatewayResponse, GatewayError> {
     let headers = Headers::new();
-    for (name, value) in response.headers { headers.set(&name, &value).map_err(|_| unreachable())?; }
+    for (name, value) in response.headers {
+        headers.set(&name, &value).map_err(|_| unreachable())?;
+    }
     let output = match response.body {
         Body::Bytes(bytes) => Response::from_bytes(bytes).map_err(|_| unreachable())?,
-        Body::Upstream { mut response, cancellation } => {
-            if matches!(response.body(), ResponseBody::Empty) { Response::empty().map_err(|_| unreachable())? }
-            else {
+        Body::Upstream {
+            mut response,
+            cancellation,
+        } => {
+            if matches!(response.body(), ResponseBody::Empty) {
+                Response::empty().map_err(|_| unreachable())?
+            } else {
                 let stream = response.stream().map_err(|_| unreachable())?;
-                ObservedStream::new(stream, ObservationHandle::default(), context, cancellation, None, Box::new(|_| Box::pin(async {})))
-                    .into_response().map_err(|_| unreachable())?
+                ObservedStream::new(
+                    stream,
+                    ObservationHandle::default(),
+                    context,
+                    cancellation,
+                    None,
+                    Box::new(|_| Box::pin(async {})),
+                )
+                .into_response()
+                .map_err(|_| unreachable())?
             }
-        },
+        }
     };
-    Ok(output.with_status(response.status).with_headers(headers))
+    let raw: worker::web_sys::Response = output.into();
+    let init = worker::web_sys::ResponseInit::new();
+    init.set_status(response.status);
+    if let Some(status_text) = response.status_text {
+        init.set_status_text(&status_text);
+    }
+    init.set_headers(headers.as_ref());
+    let raw = worker::web_sys::Response::new_with_opt_readable_stream_and_init(
+        raw.body().as_ref(),
+        &init,
+    )
+    .map_err(|_| unreachable())?;
+    Ok(crate::GatewayResponse::Raw(raw))
 }
-

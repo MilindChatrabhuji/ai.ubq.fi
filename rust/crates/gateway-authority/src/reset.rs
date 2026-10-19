@@ -155,7 +155,84 @@ fn shadow_episode(candidate: &ResetCandidate) -> String {
     hash(&value.to_string())
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ResetAuthorization<'a> {
+    Legacy(&'a ResetCandidate),
+    FullPool(&'a crate::full_pool_reset::AutomaticResetPermit),
+    ExistingLedger(
+        &'a ResetCandidate,
+        &'a gateway_core::identity::RequestContext,
+    ),
+}
+impl<'a> ResetAuthorization<'a> {
+    pub(crate) fn candidate(self) -> &'a ResetCandidate {
+        match self {
+            Self::Legacy(candidate) => candidate,
+            Self::FullPool(permit) => permit.candidate(),
+            Self::ExistingLedger(candidate, _) => candidate,
+        }
+    }
+    pub(crate) async fn validate_full<S: AuthorityStore, I: TokenSource>(
+        self,
+        tx: &mut Transaction<'_, S, I>,
+    ) -> Result<(), GatewayError> {
+        if let Self::FullPool(permit) = self {
+            let now = tx.now;
+            crate::full_pool_reset::validate_automatic_permit(tx, permit, now).await?;
+        }
+        if let Self::ExistingLedger(candidate, original) = self {
+            let current = crate::full_pool_reset::capture_reconciliation_candidates(
+                tx,
+                &candidate.proof,
+                original,
+            )
+            .await?;
+            if !current.iter().any(|current| {
+                current.binding == candidate.binding
+                    && current.quota_reset_at_ms == candidate.quota_reset_at_ms
+            }) {
+                return Err(unavailable(
+                    "routing_fence_stale",
+                    "Existing reset recovery context changed.",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+pub(crate) async fn authorization_fences<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    authorization: ResetAuthorization<'_>,
+) -> Result<ResetInvocation, GatewayError> {
+    authorization.validate_full(tx).await?;
+    match authorization {
+        ResetAuthorization::Legacy(candidate) => reset_fences(tx, candidate).await,
+        ResetAuthorization::FullPool(permit) => permit.invocation(),
+        ResetAuthorization::ExistingLedger(candidate, _) => {
+            let view = read_view(tx).await?;
+            reset_invocation(
+                &view.pool.accounts[candidate.binding.slot as usize]
+                    .admin_account_hash
+                    .0,
+                &candidate.binding.credential_version.0,
+                candidate.quota_reset_at_ms,
+            )
+        }
+    }
+}
+
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    pub(crate) fn check_reset_authorization_deadline(
+        &self,
+        authorization: ResetAuthorization<'_>,
+        anchor: i64,
+    ) -> Result<(), GatewayError> {
+        if let ResetAuthorization::FullPool(permit) = authorization {
+            permit.check_deadline(self.fresh_time(anchor)?)?;
+        }
+        Ok(())
+    }
+
     /// Preserve the original audit (including expiry) so inspection cannot revive or arm it.
     pub async fn read_reset_shadow(
         &self,
@@ -380,8 +457,29 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         candidate: &ResetCandidate,
         now: i64,
     ) -> Result<ResetClaim, GatewayError> {
+        self.claim_reset_guarded(ResetAuthorization::Legacy(candidate), now)
+            .await
+    }
+
+    /// Complete source audit permission, validated inside the existing shared spend transaction.
+    pub async fn claim_full_pool_reset(
+        &self,
+        permit: &crate::full_pool_reset::AutomaticResetPermit,
+    ) -> Result<ResetClaim, GatewayError> {
+        let now = self.fresh_time(0)?;
+        self.claim_reset_guarded(ResetAuthorization::FullPool(permit), now)
+            .await
+    }
+
+    async fn claim_reset_guarded(
+        &self,
+        authorization: ResetAuthorization<'_>,
+        now: i64,
+    ) -> Result<ResetClaim, GatewayError> {
+        let candidate = authorization.candidate();
         for _ in 0..4 {
             let mut tx = self.transaction(now)?;
+            authorization.validate_full(&mut tx).await?;
             let view = read_view(&mut tx).await?;
             let slot = usize::try_from(candidate.binding.slot)
                 .map_err(|_| invalid("Reset slot is invalid."))?;
@@ -426,6 +524,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     takeover.lease_expires_at_ms = add(now, PROBE_LEASE_MS)?;
                     takeover.updated_at_ms = now;
                     tx.put(&key, &takeover, None)?;
+                    self.check_reset_authorization_deadline(authorization, now)?;
                     if tx.commit().await? {
                         return Ok(ResetClaim::Reconcile {
                             record: takeover,
@@ -439,36 +538,38 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             if let Some(reason) = config.live_reason() {
                 return Ok(ResetClaim::Disabled(reason));
             }
-            let invocation = reset_fences(&mut tx, candidate).await?;
+            let invocation = authorization_fences(&mut tx, authorization).await?;
             if candidate.quota_reset_at_ms <= now {
                 return Err(unavailable(
                     "quota_window_expired",
                     "Reset quota window expired.",
                 ));
             }
-            let shadow: ResetShadow = tx
-                .read(&keys::reset_shadow(&shadow_episode(candidate)))
-                .await?
-                .ok_or_else(|| {
-                    unavailable(
-                        "shadow_decision_missing",
-                        "Reset requires a prior live-armed decision.",
-                    )
-                })?;
-            if shadow.account_id_hash != invocation.identity.account_id_hash
-                || shadow.quota_generation != invocation.identity.quota_generation
-            {
-                return Err(unavailable(
-                    "shadow_decision_stale",
-                    "Shadow decision selected a different reset account/window.",
-                ));
-            }
-            if shadow.expires_at_ms <= now
-                || shadow
-                    .armed_at_ms
-                    .is_none_or(|armed| armed >= candidate.request_started_at_ms)
-            {
-                return Ok(ResetClaim::Disabled("live_armed"));
+            if let ResetAuthorization::Legacy(_) = authorization {
+                let shadow: ResetShadow = tx
+                    .read(&keys::reset_shadow(&shadow_episode(candidate)))
+                    .await?
+                    .ok_or_else(|| {
+                        unavailable(
+                            "shadow_decision_missing",
+                            "Reset requires a prior live-armed decision.",
+                        )
+                    })?;
+                if shadow.account_id_hash != invocation.identity.account_id_hash
+                    || shadow.quota_generation != invocation.identity.quota_generation
+                {
+                    return Err(unavailable(
+                        "shadow_decision_stale",
+                        "Shadow decision selected a different reset account/window.",
+                    ));
+                }
+                if shadow.expires_at_ms <= now
+                    || shadow
+                        .armed_at_ms
+                        .is_none_or(|armed| armed >= candidate.request_started_at_ms)
+                {
+                    return Ok(ResetClaim::Disabled("live_armed"));
+                }
             }
             let row = if let Some(mut row) = existing {
                 if row.routing_generation != candidate.binding.routing_generation {
@@ -514,6 +615,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 ));
             }
             tx.put(&key, &row, None)?;
+            self.check_reset_authorization_deadline(authorization, now)?;
             if tx.commit().await? {
                 return Ok(ResetClaim::Submit {
                     record: row,
@@ -534,9 +636,31 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         expected: &ResetRecord,
         now: i64,
     ) -> Result<ResetRecord, GatewayError> {
+        self.prepare_reset_submission_guarded(ResetAuthorization::Legacy(candidate), expected, now)
+            .await
+    }
+
+    /// Complete source audit permission, validated inside the existing shared spend transaction.
+    pub async fn prepare_full_pool_reset_submission(
+        &self,
+        permit: &crate::full_pool_reset::AutomaticResetPermit,
+        expected: &ResetRecord,
+    ) -> Result<ResetRecord, GatewayError> {
+        let now = self.fresh_time(0)?;
+        self.prepare_reset_submission_guarded(ResetAuthorization::FullPool(permit), expected, now)
+            .await
+    }
+
+    async fn prepare_reset_submission_guarded(
+        &self,
+        authorization: ResetAuthorization<'_>,
+        expected: &ResetRecord,
+        now: i64,
+    ) -> Result<ResetRecord, GatewayError> {
+        let candidate = authorization.candidate();
         for _ in 0..4 {
             let mut tx = self.transaction(now)?;
-            let invocation = reset_fences(&mut tx, candidate).await?;
+            let invocation = authorization_fences(&mut tx, authorization).await?;
             let config: ResetConfig = tx.read(&keys::reset_config()).await?.unwrap_or_default();
             if let Some(reason) = config.live_reason() {
                 return Err(unavailable(reason, "Reset live policy changed."));
@@ -587,6 +711,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             row.lease_expires_at_ms = add(now, PROBE_LEASE_MS)?;
             tx.put(&key, &row, None)?;
             tx.put(&day_key, &budget, None)?;
+            self.check_reset_authorization_deadline(authorization, now)?;
             if tx.commit().await? {
                 return Ok(row);
             }
@@ -605,9 +730,31 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         expected: &ResetRecord,
         now: i64,
     ) -> Result<ResetRecord, GatewayError> {
+        self.renew_reset_before_redeem_guarded(ResetAuthorization::Legacy(candidate), expected, now)
+            .await
+    }
+
+    /// Complete source audit permission, validated inside the existing shared spend transaction.
+    pub async fn renew_full_pool_reset_before_redeem(
+        &self,
+        permit: &crate::full_pool_reset::AutomaticResetPermit,
+        expected: &ResetRecord,
+    ) -> Result<ResetRecord, GatewayError> {
+        let now = self.fresh_time(0)?;
+        self.renew_reset_before_redeem_guarded(ResetAuthorization::FullPool(permit), expected, now)
+            .await
+    }
+
+    async fn renew_reset_before_redeem_guarded(
+        &self,
+        authorization: ResetAuthorization<'_>,
+        expected: &ResetRecord,
+        now: i64,
+    ) -> Result<ResetRecord, GatewayError> {
+        let candidate = authorization.candidate();
         for _ in 0..4 {
             let mut tx = self.transaction(now)?;
-            let invocation = reset_fences(&mut tx, candidate).await?;
+            let invocation = authorization_fences(&mut tx, authorization).await?;
             let config: ResetConfig = tx.read(&keys::reset_config()).await?.unwrap_or_default();
             if let Some(reason) = config.live_reason() {
                 return Err(unavailable(reason, "Reset live policy changed."));
@@ -629,6 +776,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             row.lease_expires_at_ms = add(now, PROBE_LEASE_MS)?;
             row.updated_at_ms = now;
             tx.put(&key, &row, None)?;
+            self.check_reset_authorization_deadline(authorization, now)?;
             if tx.commit().await? {
                 return Ok(row);
             }

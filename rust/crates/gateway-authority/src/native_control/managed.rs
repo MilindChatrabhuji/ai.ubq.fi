@@ -103,23 +103,19 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         if tx.now >= action.deadline_ms {
             return Err(fail());
         }
-        let control = facts::read_control(
-            tx,
-            &action.actor,
-            &action.fence.original_request_id,
-            Some(&action.attempt_id),
-            self.identity,
-            self.current_config,
-        )
-        .await?;
-        if control.checks_digest != action.control_checks_digest {
+        let control_digest = self.context_control_digest(tx, action).await?;
+        if control_digest != action.control_checks_digest {
             return Err(fail());
         }
         let source_key = codex_source_pool_key();
         let source: Value = tx.read(&source_key).await?.ok_or_else(fail)?;
         let pool = parse_codex_source_pool(&source)?.ok_or_else(fail)?;
         let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;
-        let slot = usize::try_from(action.fence.slot).map_err(|_| fail())?;
+        let slot = pool
+            .accounts
+            .iter()
+            .position(|a| a.identity().routing_account_hash.0 == action.fence.account_id_hash)
+            .ok_or_else(fail)?;
         if tx.revision(&source_key).as_deref() != Some(&terminal.source_revision)
             || tx.revision(&keys::pool()).as_deref() != Some(&terminal.normalized_revision)
             || normalized.pool_versionstamp.0 != terminal.source_revision
@@ -266,7 +262,11 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             let mut source = parse_codex_source_pool(&raw)?.ok_or_else(fail)?;
             let old_normalized: SubscriptionPool =
                 tx.read(&keys::pool()).await?.ok_or_else(fail)?;
-            let slot = usize::try_from(action.fence.slot).map_err(|_| fail())?;
+            let slot = source
+                .accounts
+                .iter()
+                .position(|a| a.identity().routing_account_hash.0 == action.fence.account_id_hash)
+                .ok_or_else(fail)?;
             let previous = source.accounts.get(slot).ok_or_else(fail)?;
             let native = previous.native_owner.as_ref().ok_or_else(fail)?;
             let previous_physical = native
@@ -292,12 +292,12 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             let expiry = codex_access_expiry_ms(&access)
                 .filter(|n| n.is_finite() && n.fract() == 0.0 && *n <= 9_007_199_254_740_991.0)
                 .ok_or_else(fail)?;
-            let old_expiry = action.fence.access_expires_at_ms.ok_or_else(fail)?;
+            let old_expiry = action.fence.access_expires_at_ms;
             let changed = w.native_source_generation != w.previous_native_source_generation;
             if id.routing_account_hash.0 != w.account_id_hash
                 || id.native_generation_hash != w.access_generation
                 || expiry <= self.time(tx.now)?.saturating_add(120_000) as f64
-                || expiry < old_expiry as f64
+                || old_expiry.is_some_and(|old| expiry < old as f64)
             {
                 return Err(fail());
             }
@@ -309,7 +309,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 .is_some_and(|_| new_time.is_none())
                 || (!changed && w.access_generation != native.generation_hash)
                 || (changed
-                    && (expiry == old_expiry as f64
+                    && (old_expiry.is_some_and(|old| expiry == old as f64)
                         || w.access_generation == native.generation_hash)
                     && !matches!((old_time,new_time),(Some(old),Some(new))if new>old))
             {

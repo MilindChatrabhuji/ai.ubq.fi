@@ -140,6 +140,8 @@ pub enum ClaudeSelection {
 }
 #[derive(Clone, Debug)]
 pub enum CodexRecovery {
+    /// Exact authority-elected recovery generation and existing quota probe.
+    Recovered(AdmittedAccount),
     Reselect,
     Declined,
 }

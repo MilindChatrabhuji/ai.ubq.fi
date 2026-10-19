@@ -22,7 +22,7 @@ use crate::{
 #[derive(Clone, Default)]
 pub struct NativeBindings {
     transport: Option<NativeTransport>,
-    renewal_owner: Option<Rc<gateway_authority::native_control::RegisteredRenewalOwner>>,
+    renewal_owners: Option<Rc<gateway_authority::native_control::RegisteredRenewalOwners>>,
 }
 
 impl NativeBindings {
@@ -31,17 +31,17 @@ impl NativeBindings {
     pub fn configured(carrier: Fetcher, identity: NativeTransportIdentity) -> Self {
         Self {
             transport: Some(NativeTransport::configured(carrier, identity)),
-            renewal_owner: None,
+            renewal_owners: None,
         }
     }
 
     /// The fixed native owner registry is explicit trusted configuration. A
     /// supervisor carrier alone never supplies credential-renewal ownership.
-    pub fn with_renewal_owner(
+    pub fn with_renewal_owners(
         mut self,
-        owner: gateway_authority::native_control::RegisteredRenewalOwner,
+        owners: gateway_authority::native_control::RegisteredRenewalOwners,
     ) -> Self {
-        self.renewal_owner = Some(Rc::new(owner));
+        self.renewal_owners = Some(Rc::new(owners));
         self
     }
 
@@ -49,10 +49,10 @@ impl NativeBindings {
         self.transport.as_ref().ok_or_else(unavailable)
     }
 
-    pub(crate) fn renewal_owner(
+    pub(crate) fn renewal_owners(
         &self,
-    ) -> Result<&gateway_authority::native_control::RegisteredRenewalOwner, GatewayError> {
-        self.renewal_owner.as_deref().ok_or_else(unavailable)
+    ) -> Result<&gateway_authority::native_control::RegisteredRenewalOwners, GatewayError> {
+        self.renewal_owners.as_deref().ok_or_else(unavailable)
     }
 
     /// Only shared current authority mints this action; the native carrier still
@@ -71,8 +71,8 @@ impl NativeBindings {
         &self,
         fence: &gateway_routing_runtime::CredentialFence,
         platform: &PlatformHost,
+        original: &gateway_core::identity::RequestContext,
     ) -> Result<gateway_routing_runtime::RefreshOutcome, GatewayError> {
-        use gateway_auth::native_control::{NativeControlDisposition, NativeControlRequest};
         use gateway_authority::{Authority, native_control::NativeRenewalAuthority};
         let gateway_routing_runtime::CredentialFence::Codex {
             admission,
@@ -84,13 +84,24 @@ impl NativeBindings {
             return Err(unverified());
         };
         let transport = self.transport()?;
-        let owner = self.renewal_owner()?;
         let authority = Authority::with_clock(
             platform.store.clone(),
             crate::host::PlatformTokens,
             crate::host::PlatformClock,
         );
         let config = crate::host::auth_config(&platform.env);
+        let actor = gateway_authority::native_control::actor::authenticate_client_actor(
+            &authority,
+            platform,
+            &config,
+            &platform.original,
+            original,
+        )
+        .await?;
+        let owner = self
+            .renewal_owners()?
+            .for_inference(&authority, admission)
+            .await?;
         let receiver = NativeRenewalAuthority::configured(
             &authority,
             &transport.identity,
@@ -98,14 +109,7 @@ impl NativeBindings {
             &config,
             platform,
         );
-        let action = receiver
-            .authenticate_and_prepare(
-                platform,
-                &config,
-                &platform.original,
-                &platform.request_id.0,
-            )
-            .await?;
+        let action = receiver.prepare_routing(&actor).await?;
         let current = action.fence();
         if current.account_id_hash != admission.binding.account_id_hash.0
             || current.credential_version != admission.binding.credential_version.0
@@ -114,6 +118,115 @@ impl NativeBindings {
         {
             return Err(unverified());
         }
+        self.complete_renewal(&action, &receiver, platform).await?;
+        Ok(gateway_routing_runtime::RefreshOutcome::Published)
+    }
+
+    pub(crate) async fn renew_live_create(
+        &self,
+        actor: &gateway_authority::native_control::actor::NativeRenewalActor,
+        selected: &gateway_authority::routing::LiveAccountSelection,
+        platform: &PlatformHost,
+        config: &gateway_auth::AuthConfig,
+    ) -> Result<(), GatewayError> {
+        let transport = self.transport()?;
+        let authority = gateway_authority::Authority::with_clock(
+            platform.store.clone(),
+            crate::host::PlatformTokens,
+            crate::host::PlatformClock,
+        );
+        let owner = self
+            .renewal_owners()?
+            .for_live_create(&authority, selected)
+            .await?;
+        let receiver = gateway_authority::native_control::NativeRenewalAuthority::configured(
+            &authority,
+            &transport.identity,
+            owner,
+            config,
+            platform,
+        );
+        let action = receiver
+            .prepare_live_create_renewal(actor, selected)
+            .await?;
+        self.complete_renewal(&action, &receiver, platform).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn renew_live_mapped(
+        &self,
+        actor: &gateway_authority::native_control::actor::NativeRenewalActor,
+        call_id: &str,
+        platform: &PlatformHost,
+        config: &gateway_auth::AuthConfig,
+    ) -> Result<(), GatewayError> {
+        let transport = self.transport()?;
+        let authority = gateway_authority::Authority::with_clock(
+            platform.store.clone(),
+            crate::host::PlatformTokens,
+            crate::host::PlatformClock,
+        );
+        let owner = self
+            .renewal_owners()?
+            .for_live_mapped(&authority, actor, config, call_id)
+            .await?;
+        let receiver = gateway_authority::native_control::NativeRenewalAuthority::configured(
+            &authority,
+            &transport.identity,
+            owner,
+            config,
+            platform,
+        );
+        let action = receiver.prepare_live_mapped_renewal(actor, call_id).await?;
+        self.complete_renewal(&action, &receiver, platform).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn renew_cache_experiment(
+        &self,
+        actor: &gateway_authority::native_control::actor::NativeRenewalActor,
+        permit: &gateway_authority::cache_experiment::RefreshPermit,
+        platform: &PlatformHost,
+        config: &gateway_auth::AuthConfig,
+    ) -> Result<gateway_core::identity::PoolVersionstamp, GatewayError> {
+        let transport = self.transport()?;
+        let authority = gateway_authority::Authority::with_clock(
+            platform.store.clone(),
+            crate::host::PlatformTokens,
+            crate::host::PlatformClock,
+        );
+        let owner = self
+            .renewal_owners()?
+            .for_cache_experiment(&authority, permit)
+            .await?;
+        let receiver = gateway_authority::native_control::NativeRenewalAuthority::configured(
+            &authority,
+            &transport.identity,
+            owner,
+            config,
+            platform,
+        );
+        let action = receiver
+            .prepare_cache_experiment_renewal(actor, permit)
+            .await?;
+        let verified = self.complete_renewal(&action, &receiver, platform).await?;
+        Ok(gateway_core::identity::PoolVersionstamp(
+            verified.source_revision,
+        ))
+    }
+
+    async fn complete_renewal(
+        &self,
+        action: &gateway_authority::native_control::NativeRenewalAction,
+        receiver: &gateway_authority::native_control::NativeRenewalAuthority<
+            '_,
+            crate::authority::RemoteAuthorityStore,
+            crate::host::PlatformTokens,
+            PlatformHost,
+        >,
+        platform: &PlatformHost,
+    ) -> Result<gateway_authority::native_control::NativeRenewalFence, GatewayError> {
+        use gateway_auth::native_control::{NativeControlDisposition, NativeControlRequest};
         let envelope = NativeControlEnvelope {
             v: NATIVE_WIRE_VERSION,
             operation_id: crate::transport::random::opaque_token()?,
@@ -136,9 +249,8 @@ impl NativeBindings {
             .as_deref()
             .ok_or_else(unverified)?;
         receiver
-            .verify_action_publication(&action, &envelope.operation_id, publication)
-            .await?;
-        Ok(gateway_routing_runtime::RefreshOutcome::Published)
+            .verify_action_publication(action, &envelope.operation_id, publication)
+            .await
     }
 
     pub async fn rpc(
@@ -233,7 +345,16 @@ impl NativeBindings {
         platform: &PlatformHost,
     ) -> Result<NativeControlResponse, GatewayError> {
         envelope.validate()?;
-        self.renewal_owner()?;
+        let authority = gateway_authority::Authority::with_clock(
+            platform.store.clone(),
+            crate::host::PlatformTokens,
+            crate::host::PlatformClock,
+        );
+        let gateway_auth::native_control::NativeControlRequest::CodexRenewAccess { action_ref } =
+            &envelope.request;
+        self.renewal_owners()?
+            .for_action(&authority, action_ref)
+            .await?;
         let transport = self.transport.as_ref().ok_or_else(unavailable)?;
         let body = serde_json::to_vec(envelope).map_err(|_| unavailable())?;
         let mut exchange = transport
