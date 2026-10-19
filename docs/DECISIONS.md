@@ -6,6 +6,18 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## TypeScript-only VPS releases reuse verified payloads - 2026-10-19
+
+The VPS deploy CLI reuses the selected immutable release's `node_modules` and `.native/kv` payload when the root lockfile
+and native input manifest match exactly. A mismatch falls back to the existing fresh install/build path. This avoids
+recompiling the unchanged native KV addon for routing and client-only changes.
+
+Reason: repeated Cargo builds delayed small TypeScript releases and kept the service on stale behavior longer than
+necessary. Reuse is bound to the selected release's verified provenance and the current tracked native inputs.
+
+Reversal risk: reusing across a changed lockfile or native input would violate the immutable release identity, so either
+mismatch must continue to rebuild and verify from source.
+
 ## Client Retry-After is bounded independently of quota deadlines - 2026-10-19
 
 Gateway routing errors retain their durable quota or reset deadline, but the client-facing `Retry-After` hint is capped
