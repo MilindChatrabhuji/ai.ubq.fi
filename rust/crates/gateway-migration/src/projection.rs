@@ -29,6 +29,10 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
         return Ok(());
     }
     if row.record.value_encoding != gateway_core::value::ValueEncoding::Json {
+        if quota_family(p) {
+            gateway_claude_runtime::quota::parse_record(&row.record, 0)?;
+            return Ok(());
+        }
         if retained_typed(p) && known(p) {
             return Ok(());
         }
@@ -164,8 +168,16 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
             return Err(invalid("Paid window identity/counters malformed"));
         }
     } else if starts(p, &["ubq_ai", "codex_auth"]) {
-        if gateway_auth::provider_credentials::parse_codex_source_pool(&v)?.is_none() {
-            return Err(invalid("Source Codex pool is malformed"));
+        let pool = gateway_auth::provider_credentials::parse_codex_source_pool(&v)?
+            .ok_or_else(|| invalid("Source Codex pool is malformed"))?;
+        if pool
+            .accounts
+            .iter()
+            .any(|a| !a.refresh_token.expose().is_empty())
+        {
+            return Err(unavailable(
+                "Managed source credentials require trusted offline native-owner normalization before common-candidate ingestion",
+            ));
         }
     } else if starts(p, &["uos_ai", "codex_active_account"]) {
         let _: gateway_core::identity::ActiveSelection = decode(&v)?;
@@ -173,6 +185,8 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
         gateway_authority::routing::parse_routing_state(&v)?;
     } else if starts(p, &["uos_ai", "codex_capacity_routing"]) {
         gateway_authority::routing::parse_capacity_store(&v)?;
+    } else if quota_family(p) {
+        gateway_claude_runtime::quota::parse_record(&row.record, 0)?;
     } else if starts(p, &["uos_ai", "claude_code_accounts"]) {
         gateway_admin_runtime::claude::parse_roster(&v)?;
     } else if starts(p, &["uos_ai", "auth", "users"]) {
@@ -273,7 +287,7 @@ pub fn known_source_family(p: &[Value]) -> bool {
 pub(crate) fn known(p: &[Value]) -> bool {
     known_source_family(p)
 }
-fn retained_typed(p: &[Value]) -> bool {
+pub(crate) fn retained_typed(p: &[Value]) -> bool {
     p.first()
         .and_then(Value::as_str)
         .is_some_and(|s| ["default", "key", "agent_messages", "embeddings"].contains(&s))
@@ -299,4 +313,8 @@ pub(crate) fn outstanding(row: &PaidAttempt) -> bool {
         row.billing_state,
         BillingState::Pending | BillingState::Unresolved
     )
+}
+
+pub(crate) fn quota_family(parts: &[Value]) -> bool {
+    starts(parts, &["uos_ai", "claude_code_quota"])
 }
