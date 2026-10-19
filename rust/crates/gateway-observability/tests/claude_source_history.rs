@@ -111,7 +111,7 @@ fn actual_bun_writer_scalar_and_utf16_documents_match_point_digest_bucket_rollup
             assert!(!record.revision.is_empty());
             assert_eq!(
                 record.value_encoding,
-                if index == 0 {
+                if index != 1 {
                     ValueEncoding::Json
                 } else {
                     ValueEncoding::ProfileV2
