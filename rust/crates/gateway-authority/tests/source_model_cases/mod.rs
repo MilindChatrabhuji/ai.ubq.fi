@@ -107,7 +107,8 @@ fn expanded_source_selection_cannot_use_a_partial_cohort_after_new_projection() 
     super::paid_control_cases::republish(&store);
     let mut input = paid_request("selection-expanded", PaidProvider::Surplus);
     input.model = "gpt-test".into();
-    let receipt = run(authority.authorize_paid_route(
+    let receipt = run(super::paid_original::authorize(
+        &authority,
         &input,
         &super::paid_control_cases::context(&input),
         NOW,
