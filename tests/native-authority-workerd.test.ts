@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readWorkerTestRuntime } from "../scripts/prepare-worker-test-runtime.ts";
@@ -47,6 +47,7 @@ test("real mixed Bun HTTP and Worker clients preserve native authority contentio
     throw new Error("Mixed authority acceptance requires the existing isolated Linux ARM64 test runner");
   expect(Bun.version).toBe("1.4.0");
   const runtime = readWorkerTestRuntime(ROOT);
+  const runtimeReceiptBytes = readFileSync(resolve(ROOT, ".tmp/worker-test-runtime/linux-arm64/receipt.json"));
   const child = Bun.spawn(
     [runtime.nodePath, fileURLToPath(new URL("./fixtures/native-authority/mixed-client-workerd.mjs", import.meta.url)), ROOT, process.execPath, "mixed"],
     {
@@ -69,7 +70,8 @@ test("real mixed Bun HTTP and Worker clients preserve native authority contentio
     const reportPath = realpathSync(summary.reportPath);
     const local = relative(resolve(ROOT, ".tmp"), reportPath);
     if (isAbsolute(local) || local === ".." || local.startsWith(`..${sep}`)) throw new Error("Mixed authority report escaped task-local scratch");
-    const report = JSON.parse(readFileSync(reportPath, "utf8")) as MixedReport;
+    const reportBytes = readFileSync(reportPath);
+    const report = JSON.parse(reportBytes.toString("utf8")) as MixedReport;
     expect(report.state).toBe("local-native-authority-runtime-pass");
     expect(report.mode).toBe("mixed");
     expect(report.mixedAcceptance).toBe("passed");
@@ -143,6 +145,19 @@ test("real mixed Bun HTTP and Worker clients preserve native authority contentio
     }
     const bundlePath = resolve(dirname(reportPath), "workerd-bundle.mjs");
     expect(createHash("sha256").update(readFileSync(bundlePath)).digest("hex")).toBe(report.bundleSha256);
+    const evidenceDirectory = resolve(ROOT, ".tmp/native-authority-evidence");
+    mkdirSync(evidenceDirectory, { recursive: true, mode: 0o700 });
+    expect(realpathSync(evidenceDirectory)).toBe(evidenceDirectory);
+    const retainedReportPath = resolve(evidenceDirectory, "mixed-runtime-result.json");
+    const reportSha256 = createHash("sha256").update(reportBytes).digest("hex");
+    const runtimeReceiptSha256 = createHash("sha256").update(runtimeReceiptBytes).digest("hex");
+    writeFileSync(retainedReportPath, reportBytes, { mode: 0o600 });
+    writeFileSync(resolve(evidenceDirectory, "worker-runtime-receipt.json"), runtimeReceiptBytes, { mode: 0o600 });
+    writeFileSync(
+      resolve(evidenceDirectory, "SHA256SUMS"),
+      `${reportSha256}  mixed-runtime-result.json\n${runtimeReceiptSha256}  worker-runtime-receipt.json\n`,
+      { mode: 0o600 }
+    );
     console.log(
       JSON.stringify({
         mixedAcceptance: report.mixedAcceptance,
@@ -150,6 +165,9 @@ test("real mixed Bun HTTP and Worker clients preserve native authority contentio
         phases: PHASES,
         paidRows: report.final.paidRequestCount,
         reportPath,
+        retainedReportPath,
+        reportSha256,
+        runtimeReceiptSha256,
       })
     );
   } finally {
