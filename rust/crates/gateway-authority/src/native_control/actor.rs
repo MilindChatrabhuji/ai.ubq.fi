@@ -298,14 +298,13 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
             let stored_keys: Option<Vec<Value>> =
                 tx.read(&upstream::kernel_public_keys_key()).await?;
             for item in stored_keys.into_iter().flatten() {
-                if let Some(pem) = item.get("pem").and_then(Value::as_str) {
-                    if !configured
+                if let Some(pem) = item.get("pem").and_then(Value::as_str)
+                    && !configured
                         .kernel_public_keys_pem
                         .iter()
                         .any(|key| key == pem)
-                    {
-                        configured.kernel_public_keys_pem.push(pem.into());
-                    }
+                {
+                    configured.kernel_public_keys_pem.push(pem.into());
                 }
             }
             let claims =
@@ -588,7 +587,8 @@ fn config_digest(config: &AuthConfig) -> Result<String, GatewayError> {
         &json!({"v":1,"auth":config.auth_tokens.iter().map(|secret|sha256_hex(secret.expose().as_bytes())).collect::<Vec<_>>(),"admin":config.admin_tokens.iter().map(|secret|sha256_hex(secret.expose().as_bytes())).collect::<Vec<_>>(),"production":config.production,"hosted":config.hosted,"git":config.git_sha_known,"candidate":config.candidate_passkeys,"relay":config.extra_relay_origins,"kernel":config.kernel_public_keys_pem.iter().map(|pem|sha256_hex(pem.as_bytes())).collect::<Vec<_>>(),"app":config.deno_app_slug,"org":config.deno_org_slug,"deployment":config.deno_deployment_id}),
     )
 }
-fn principal_id(principal: &AuthPrincipal) -> String {
+/// Source-exact projection; only actual AuthService authentication can mint an actor.
+pub fn principal_id(principal: &AuthPrincipal) -> String {
     match &principal.method {
         AuthMethod::KvApiKey { key_id, .. } => format!("api-key:{key_id}"),
         AuthMethod::PasskeySession { user_id, .. } => format!("passkey-user:{user_id}"),

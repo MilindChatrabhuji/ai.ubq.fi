@@ -1,6 +1,7 @@
 //! Existing source CORS policy, including trusted credential origins and Vary merging.
+use crate::response::GatewayResponse;
 use gateway_auth::origin::trusted_relay_origin;
-use worker::{Env, Request, Response};
+use worker::{Env, Request};
 
 use crate::host::{auth_config, setting};
 
@@ -42,7 +43,7 @@ impl Cors {
         })
     }
 
-    pub fn apply(&self, response: &mut Response) -> worker::Result<()> {
+    pub fn apply(&self, response: &mut GatewayResponse) -> worker::Result<()> {
         if self.admin {
             response.headers_mut().set("Cache-Control", "no-store")?;
         }

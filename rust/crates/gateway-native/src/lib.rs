@@ -9,6 +9,8 @@ pub mod daemon_config;
 #[cfg(unix)]
 pub mod http_server;
 #[cfg(unix)]
+pub mod live_bridge;
+#[cfg(unix)]
 pub mod managed_publication_http;
 #[cfg(unix)]
 pub mod nonce_sqlite;

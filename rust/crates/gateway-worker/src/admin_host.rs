@@ -36,12 +36,16 @@ pub struct Capabilities {
     catalog_service: gateway_catalog_runtime::CatalogRuntime,
     catalog_host: crate::catalog_host::Host,
     observations: crate::observability_host::Runtime,
+    support: crate::admin_support_host::Binding,
+    original: gateway_auth::AuthRequest,
+    auth_config: gateway_auth::AuthConfig,
 }
 
 impl Capabilities {
     pub fn new(
         request_id: &RequestId,
         original_body: &[u8],
+        original_request: &gateway_auth::AuthRequest,
         store: crate::authority::RemoteAuthorityStore,
         platform: &crate::host::PlatformHost,
         context: std::rc::Rc<worker::Context>,
@@ -53,17 +57,32 @@ impl Capabilities {
             platform,
             context.clone(),
         );
+        let catalog_host = crate::catalog_host::Host {
+            store: store.clone(),
+            env: platform.env.clone(),
+            platform: platform.clone(),
+            context,
+        };
+        let support =
+            crate::admin_support_host::Binding::new(catalog_host.clone(), observations.clone());
+        // AuthService consumes the exact original authentication metadata. Its
+        // raw body stays in the separately measured request receipt, not a second copy.
+        let original = gateway_auth::AuthRequest {
+            method: original_request.method.clone(),
+            url: original_request.url.clone(),
+            headers: original_request.headers.clone(),
+            body: Vec::new(),
+            native_peer: original_request.native_peer.clone(),
+        };
         Self {
             request_id: request_id.0.clone(),
             original_body_bytes: original_body.len(),
             catalog_service: crate::catalog::service(),
-            catalog_host: crate::catalog_host::Host {
-                store: store.clone(),
-                env: platform.env.clone(),
-                platform: platform.clone(),
-                context,
-            },
+            catalog_host,
             observations,
+            support,
+            original,
+            auth_config: crate::host::auth_config(&platform.env),
         }
     }
     fn measured_body_bytes(&self, context: &Context) -> Result<usize, GatewayError> {
@@ -78,6 +97,90 @@ impl Capabilities {
 }
 
 impl RuntimeCapabilities for Capabilities {
+    async fn capture(
+        &self,
+        request: gateway_admin_runtime::capabilities::CaptureRequest,
+        context: Context,
+    ) -> Result<AuthResponse, GatewayError> {
+        self.measured_body_bytes(&context)?;
+        use gateway_admin_runtime::capabilities::CaptureRequest;
+        match request {
+            CaptureRequest::Request { request_id } => {
+                self.observations.export_capture_request(&request_id).await
+            }
+            CaptureRequest::Interval {
+                after_ms,
+                before_ms,
+                cursor,
+            } => {
+                self.observations
+                    .export_capture_interval(after_ms, before_ms, cursor.as_deref())
+                    .await
+            }
+            CaptureRequest::Incident {
+                incident_id,
+                cursor,
+            } => {
+                self.observations
+                    .export_incident_captures(&incident_id, cursor.as_deref())
+                    .await
+            }
+            CaptureRequest::Incidents {
+                incident_id,
+                cursor,
+                limit,
+            } => {
+                self.observations
+                    .list_incidents(incident_id.as_deref(), cursor.as_deref(), limit)
+                    .await
+            }
+        }
+    }
+    async fn codex(
+        &self,
+        request: gateway_admin_runtime::capabilities::CodexRequest,
+        context: Context,
+    ) -> Result<AuthResponse, GatewayError> {
+        self.measured_body_bytes(&context)?;
+        crate::codex_admin_host::execute(
+            &self.catalog_host.store,
+            &self.catalog_host.platform,
+            &self.original,
+            &self.auth_config,
+            request,
+            context,
+            &self.observations,
+        )
+        .await
+    }
+    async fn provider_picker(&self, context: Context) -> Result<serde_json::Value, GatewayError> {
+        self.measured_body_bytes(&context)?;
+        self.support.provider_picker(context).await
+    }
+    async fn metered_diagnostics(&self) -> Result<serde_json::Value, GatewayError> {
+        self.support.metered_diagnostics().await
+    }
+    async fn pricing(
+        &self,
+        models: &[String],
+    ) -> Result<gateway_admin_runtime::capabilities::PricingSnapshot, GatewayError> {
+        self.support.pricing(models).await
+    }
+    async fn error_diagnostics(
+        &self,
+        context: Context,
+    ) -> Result<gateway_admin_runtime::capabilities::ErrorDiagnostics, GatewayError> {
+        self.measured_body_bytes(&context)?;
+        self.support.error_diagnostics(context).await
+    }
+    async fn supervisor_brief(
+        &self,
+        target: gateway_admin_runtime::capabilities::SupervisorBriefTarget,
+        context: Context,
+    ) -> Result<AuthResponse, GatewayError> {
+        self.measured_body_bytes(&context)?;
+        self.support.supervisor_brief(target, context).await
+    }
     async fn claude(
         &self,
         request: gateway_admin_runtime::capabilities::ClaudeRequest,

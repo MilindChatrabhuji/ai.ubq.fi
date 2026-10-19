@@ -53,9 +53,6 @@ impl OwnedNativeAuthHeaders {
             mac: one(NATIVE_MAC_HEADER)?,
         })
     }
-    pub(crate) fn nonce(&self) -> &str {
-        &self.nonce
-    }
     pub fn pairs(&self) -> Vec<(String, String)> {
         vec![
             (NATIVE_VERSION_HEADER.into(), self.version.clone()),

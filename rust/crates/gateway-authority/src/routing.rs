@@ -249,16 +249,16 @@ impl RoutingView {
     }
 }
 
-struct Evaluation {
-    slot: usize,
-    reason: Option<ActiveTransitionReason>,
-    eligible: bool,
-    probe: bool,
-    retry: Option<i64>,
-    detail: Option<String>,
+pub(crate) struct Evaluation {
+    pub(crate) slot: usize,
+    pub(crate) reason: Option<ActiveTransitionReason>,
+    pub(crate) eligible: bool,
+    pub(crate) probe: bool,
+    pub(crate) retry: Option<i64>,
+    pub(crate) detail: Option<String>,
 }
 
-fn evaluate(
+pub(crate) fn evaluate(
     view: &RoutingView,
     slot: usize,
     model: &str,

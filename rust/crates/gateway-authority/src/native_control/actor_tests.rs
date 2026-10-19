@@ -1,4 +1,5 @@
 use super::*;
+#[path = "actor_tests/live_manual.rs"]
 mod live_manual;
 use gateway_auth::{
     crypto::{Secret, sha256_base64url},
@@ -32,9 +33,10 @@ fn run<F: Future>(future: F) -> F::Output {
 struct Store {
     rows: Arc<Mutex<BTreeMap<String, StoredRecord>>>,
     now: Arc<AtomicI64>,
-    race: Arc<Mutex<Option<(RecordKey, Option<StoredRecord>)>>>,
+    race: Arc<Mutex<PendingRace>>,
     commit_time: Arc<AtomicI64>,
 }
+type PendingRace = Option<(RecordKey, Option<StoredRecord>)>;
 impl Default for Store {
     fn default() -> Self {
         Self {
@@ -149,7 +151,7 @@ impl AuthHost for Host {
         self.fetches.fetch_add(1, Ordering::SeqCst);
         Ok(AuthUpstreamResponse {
             status: 200,
-            body: json!({}),
+            body: b"{}".to_vec(),
         })
     }
     async fn kernel_principal(

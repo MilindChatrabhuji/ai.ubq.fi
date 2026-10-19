@@ -6,6 +6,7 @@ use worker::event;
 use worker::{Context, Env, Method, Request, Response, Result};
 
 mod admin_host;
+mod admin_support_host;
 mod admission;
 mod agent_messages;
 mod assets;
@@ -13,6 +14,7 @@ pub mod authority;
 mod catalog;
 mod catalog_host;
 mod claude_host;
+mod codex_admin_host;
 mod cors;
 mod extras;
 mod extras_host;
@@ -21,11 +23,13 @@ mod image_host;
 mod inference;
 mod lifecycle;
 mod multipart;
+mod native_authority;
 mod native_host;
 mod native_transport;
 mod observability_host;
 mod paid_lookup;
 mod publication;
+mod response;
 mod routing_host;
 mod runtime;
 pub mod storage;
@@ -33,6 +37,7 @@ pub mod transport;
 
 pub use authority::GatewayAuthority;
 pub use native_host::NativeBindings;
+pub use response::GatewayResponse;
 
 fn error_response(error: GatewayError) -> Result<Response> {
     let mut response = Response::from_json(&error.envelope)?.with_status(error.status);
@@ -48,7 +53,7 @@ fn error_response(error: GatewayError) -> Result<Response> {
 }
 
 #[cfg_attr(feature = "entrypoint", event(fetch))]
-pub async fn fetch(request: Request, env: Env, context: Context) -> Result<Response> {
+pub async fn fetch(request: Request, env: Env, context: Context) -> Result<GatewayResponse> {
     fetch_with_publication(request, env, context, None).await
 }
 
@@ -59,7 +64,7 @@ pub async fn fetch_with_publication(
     env: Env,
     context: Context,
     receiver: Option<&gateway_publication::transport::PublicationReceiver>,
-) -> Result<Response> {
+) -> Result<GatewayResponse> {
     fetch_with_bindings(request, env, context, receiver, NativeBindings::default()).await
 }
 
@@ -71,20 +76,27 @@ pub async fn fetch_with_bindings(
     context: Context,
     receiver: Option<&gateway_publication::transport::PublicationReceiver>,
     native: NativeBindings,
-) -> Result<Response> {
+) -> Result<GatewayResponse> {
     let identity = match ReleaseIdentity::cloudflare(
         env!("UOS_RUST_BUILD_GIT_SHA"),
         env!("UOS_RUST_BUILD_DEPLOYMENT_ID"),
     ) {
         Ok(identity) => identity,
-        Err(error) => return error_response(error),
+        Err(error) => return error_response(error).map(Into::into),
     };
     let request_id = match transport::random::random_uuid() {
         Ok(id) => id,
-        Err(error) => return error_response(error),
+        Err(error) => return error_response(error).map(Into::into),
     };
+    if native_authority::is_path(&request.path()) {
+        let response = match native_authority::handle(request, &env, &native).await {
+            Ok(response) => response,
+            Err(error) => error_response(error)?,
+        };
+        return Ok(response.into());
+    }
     if request.path() == gateway_auth::native::NATIVE_PUBLICATION_PATH {
-        let mut response = match publication::handle(request, &env, receiver).await {
+        let mut response = match publication::handle(request, &env, receiver, &native).await {
             Ok(response) => response,
             Err(error) => error_response(error)?,
         };
@@ -98,19 +110,20 @@ pub async fn fetch_with_bindings(
         response
             .headers_mut()
             .set(DEPLOYMENT_ID_HEADER, identity.deployment_id())?;
-        return Ok(response);
+        return Ok(response.into());
     }
     let cors = cors::Cors::from_request(&request, &env)?;
     let mut response = if request.method() == Method::Options {
-        Response::empty()?.with_status(204)
-    } else if request.path() == "/health" && matches!(request.method(), Method::Get | Method::Head)
+        Response::empty()?.with_status(204).into()
+    } else if normalized_path(&request.path()) == "/health"
+        && matches!(request.method(), Method::Get | Method::Head)
     {
         if request.method() == Method::Head {
-            Response::empty()?
+            Response::empty()?.into()
         } else {
             match crate::observability_host::health_response().and_then(runtime::auth_response) {
-                Ok(response) => response,
-                Err(error) => return error_response(error),
+                Ok(response) => response.into(),
+                Err(error) => return error_response(error).map(Into::into),
             }
         }
     } else {
@@ -125,9 +138,14 @@ pub async fn fetch_with_bindings(
         .await
         {
             Ok(response) => response,
-            Err(error) => error_response(error)?,
+            Err(error) => error_response(error)?.into(),
         }
     };
+    // A trusted native sideband returns the actual switching response. Keep its
+    // WebSocket and upgrade headers together without ordinary HTTP decoration.
+    if response.status_code() == 101 {
+        return Ok(response);
+    }
     if response.headers().get("Cache-Control")?.is_none() {
         response.headers_mut().set("Cache-Control", "no-store")?;
     }
@@ -142,4 +160,30 @@ pub async fn fetch_with_bindings(
         .headers_mut()
         .set(DEPLOYMENT_ID_HEADER, identity.deployment_id())?;
     Ok(response)
+}
+
+/// The source public router removes every trailing slash except the root slash.
+pub(crate) fn normalized_path(path: &str) -> &str {
+    if path == "/" {
+        path
+    } else {
+        path.trim_end_matches('/')
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    #[test]
+    fn normalization_matches_source_without_decoding_segments() {
+        for (source, expected) in [
+            ("/", "/"),
+            ("/health///", "/health"),
+            ("/v1/responses/", "/v1/responses"),
+            ("/api/auth/login/start//", "/api/auth/login/start"),
+            ("/v1/live/rtc_%2F/", "/v1/live/rtc_%2F"),
+            ("///", ""),
+        ] {
+            assert_eq!(super::normalized_path(source), expected);
+        }
+    }
 }

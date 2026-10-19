@@ -32,8 +32,8 @@ fn test_authority(store: &Store) -> Authority<Store, UniqueTokens> {
 fn source(store: &Store, access: &str, revision: &str) -> SubscriptionPool {
     let account = CodexSourceAccount {
         account_id: "source-account".into(),
-        access_token: Secret::new(access),
-        refresh_token: Secret::new("SYNTHETIC_REFRESH"),
+        access_token: Secret::new(access.to_owned()),
+        refresh_token: Secret::new("SYNTHETIC_REFRESH".to_owned()),
         updated_at_ms: 1_000_000.0,
         native_owner: None,
     };
@@ -426,7 +426,7 @@ fn live_rechecks_current_external_access_and_reconciles_real_terminal_after_revo
         };
         assert_eq!(access.expose(), "CURRENT_ACCESS");
         store.rows.lock().unwrap().remove(
-            &session_index::index_key(&sha256_hex(token.as_bytes()))
+            &session_index::index_key(&session_index::digest(&token))
                 .unwrap()
                 .0,
         );
@@ -480,4 +480,57 @@ fn private_wire_and_source_intent_refuse_forged_fields_or_malformed_rows() {
     let mut missing = row.clone();
     missing.as_object_mut().unwrap().remove("promoted_at_ms");
     assert!(parse_manual_intent(&missing).is_err());
+}
+
+#[test]
+fn admin_recheck_writes_only_routing_and_retains_ambiguous_reset_identity() {
+    run(async {
+        let store = Store::default();
+        let pool = source(&store, "SYNTHETIC_ACCESS", "source-one");
+        let mut state = normalize_routing_state(&pool, None, 1_000_000).unwrap();
+        let slot = &mut state.slots[0];
+        slot.quota_blocked_until_ms = Some(9_000_000);
+        slot.quota_blocked_classes = vec!["standard".into()];
+        slot.retained_reset_at_ms = Some(9_000_000);
+        slot.reset_identity_stable = true;
+        slot.quota_blocks.insert(
+            "standard".into(),
+            QuotaBlock {
+                blocked_until_ms: 9_000_000,
+                source: QuotaBlockSource::BodyResetsAt,
+                legacy_fallback: false,
+                observed_at_ms: Some(900_000),
+                reset_at_ms: Some(9_000_000),
+                reset_is_stable: true,
+                reset_ambiguous: false,
+                recovery_pending: false,
+            },
+        );
+        store.seed(keys::routing(), "routing-before", &state);
+        let token = session_setup(&store, true, true);
+        let auth = test_authority(&store);
+        let cfg = config();
+        let host = Host::new(&store);
+        let actor = authenticate_admin_actor(
+            &auth,
+            &host,
+            &cfg,
+            &request(&token),
+            &context("passkey-user:user-fixture", None),
+        )
+        .await
+        .unwrap();
+        assert!(auth.recheck_codex_slot(&actor, &cfg, 1).await.unwrap());
+        let rows = store.rows.lock().unwrap();
+        let next = parse_routing_state(rows.get(&keys::routing().0).unwrap().json_value().unwrap())
+            .unwrap();
+        let slot = &next.slots[0];
+        assert_eq!(slot.quota_blocked_until_ms, Some(1_000_000));
+        assert_eq!(slot.retained_reset_at_ms, Some(9_000_000));
+        assert!(slot.reset_identity_ambiguous);
+        assert!(slot.quota_blocks["standard"].reset_ambiguous);
+        assert_eq!(slot.generation, state.slots[0].generation + 1);
+        assert!(!rows.contains_key(&keys::active().0));
+        assert_eq!(host.fetches.load(Ordering::SeqCst), 0);
+    });
 }
