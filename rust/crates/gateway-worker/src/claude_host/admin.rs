@@ -322,8 +322,7 @@ async fn validate(
             Ok(request) => request,
             Err(_) => return Ok(Validation::unavailable(None)),
         };
-        let mut response = match send_constructed(request, &cancellation, || async { Ok(()) })
-        .await
+        let mut response = match send_constructed(request, &cancellation, || async { Ok(()) }).await
         {
             Ok(response) => response,
             Err(_) => return Ok(Validation::unavailable(None)),

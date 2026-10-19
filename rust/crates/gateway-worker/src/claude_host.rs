@@ -84,7 +84,7 @@ impl Binding {
             .borrow()
             .clone()
             .ok_or_else(|| invalid("The request has no selected Claude account."))?;
-        if &credential(&selected).fence != fence {
+        if &credential_fence(&selected) != fence {
             return Err(invalid(
                 "Claude credential fence belongs to another attempt.",
             ));
@@ -208,7 +208,8 @@ impl Binding {
         fence: &CredentialFence,
         model: &ModelId,
         body: &gateway_providers::PreparedClaudeBody,
-    ) -> Result<crate::transport::outbound::ConstructedRequest, gateway_routing_runtime::RoutingError> {
+    ) -> Result<crate::transport::outbound::ConstructedRequest, gateway_routing_runtime::RoutingError>
+    {
         let (_request, selected) = self.selected(fence, model)?;
         platform::physical_request(selected.binding(), body)
             .map_err(|_| crate::inference_local_lifecycle::wrapper_error())
@@ -298,21 +299,29 @@ impl Binding {
     }
 }
 
-fn credential(selected: &SelectedAccount) -> PublishedCredential {
+fn credential_fence(selected: &SelectedAccount) -> CredentialFence {
     let account = selected.binding();
-    PublishedCredential {
-        material: selected.auth_material(),
-        options: selected.prepare_options(Default::default()),
-        fence: CredentialFence::Claude {
-            account_id: account.account_id.clone(),
-            cohort_id: account.account_cohort_id.clone(),
-            credential_fingerprint: account.credential_fingerprint.clone(),
-            evidence_generation: account.evidence_generation.clone(),
-            workspace_id: account
-                .workspace
-                .as_ref()
-                .map(|workspace| workspace.id.clone()),
-            checks: selected.checks().iter().map(Into::into).collect(),
+    CredentialFence::Claude {
+        account_id: account.account_id.clone(),
+        cohort_id: account.account_cohort_id.clone(),
+        credential_fingerprint: account.credential_fingerprint.clone(),
+        evidence_generation: account.evidence_generation.clone(),
+        workspace_id: account
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.id.clone()),
+        checks: selected.checks().iter().map(Into::into).collect(),
+    }
+}
+fn credential(selected: &SelectedAccount) -> PublishedCredential {
+    let kind = platform::credential_kind(&selected.binding().credential);
+    let options = selected.prepare_options(Default::default());
+    PublishedCredential::Claude {
+        fence: credential_fence(selected),
+        body_options: gateway_providers::ClaudeBodyOptions {
+            native_reasoning_efforts: options.native_reasoning_efforts,
+            supports_disabled_thinking: options.supports_disabled_thinking,
+            ..gateway_providers::ClaudeBodyOptions::new(kind)
         },
     }
 }

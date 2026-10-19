@@ -225,8 +225,11 @@ async fn page(
         .transpose()?;
     let target = PinnedDestination::new(url.as_str())?;
     let headers = platform::headers(account, true).map_err(|_| physical_failure())?;
-    let request = construct_request(&target, worker::Method::Get, headers, &[]).map_err(|_| physical_failure())?;
-    let mut response = send_constructed(request, &cancellation, || current(store, platform, account, generation))
+    let request = construct_request(&target, worker::Method::Get, headers, &[])
+        .map_err(|_| physical_failure())?;
+    let mut response = send_constructed(request, &cancellation, || {
+        current(store, platform, account, generation)
+    })
     .await
     .map_err(|failure| failure.error)?;
     let status = response.status_code();
@@ -250,8 +253,11 @@ pub(super) async fn workspace_list(
     current(&host.store, &host.platform, account, &snapshot).await?;
     let target = PinnedDestination::new("https://api.anthropic.com/v1/organizations/workspaces")?;
     let headers = platform::headers(account, false).map_err(|_| physical_failure())?;
-    let request = construct_request(&target, worker::Method::Get, headers, &[]).map_err(|_| physical_failure())?;
-    let mut response = send_constructed(request, &host.platform.cancellation, || current(&host.store, &host.platform, account, &snapshot))
+    let request = construct_request(&target, worker::Method::Get, headers, &[])
+        .map_err(|_| physical_failure())?;
+    let mut response = send_constructed(request, &host.platform.cancellation, || {
+        current(&host.store, &host.platform, account, &snapshot)
+    })
     .await
     .map_err(|failure| failure.error)?;
     let status = response.status_code();

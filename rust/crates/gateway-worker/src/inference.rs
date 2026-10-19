@@ -25,7 +25,7 @@ use crate::{
     storage::now_ms,
     transport::{
         body,
-        outbound::{DispatchAttempt, PinnedDestination, send_http},
+        outbound::{DispatchAttempt, PinnedDestination, send_constructed, send_http},
         stream::{ObservationHandle, ObservedStream},
     },
 };
@@ -62,10 +62,10 @@ async fn dispatch_attempts(
                 (attempt, None, None)
             };
         let continuing = continuation.is_some();
-        let target = PinnedDestination::new(&attempt.request.url)?;
+        let target = PinnedDestination::new(attempt.request.url())?;
         let wire = match retained_wire {
             Some(wire) => wire,
-            None => attempt.request.body.as_bytes().to_vec(),
+            None => attempt.request.body().as_bytes().to_vec(),
         };
         let gate_session = session.clone();
         let gate_attempt = attempt.clone();
@@ -73,32 +73,52 @@ async fn dispatch_attempts(
         let gate_capture = capture.clone();
         let passive_trace = Rc::new(RefCell::new(None));
         let gate_trace = passive_trace.clone();
-        let result = send_http(
-            &target,
-            Method::Post,
-            &attempt.request.headers,
-            &wire,
-            &cancellation,
-            || async move {
-                if let Some(continuation) = continuation {
-                    gate_session
-                        .before_workspace_dispatch(continuation)
-                        .await
-                        .map_err(|error| *error.error)?;
-                } else {
-                    gate_session
-                        .before_dispatch(&gate_attempt)
-                        .await
-                        .map_err(|error| *error.error)?;
-                }
-                // No await follows this real dispatch gate before the actual fetch.
-                if !gate_cancel.signal().aborted() {
-                    *gate_trace.borrow_mut() = gate_capture.start(gate_attempt.request.provider);
-                }
-                Ok(())
-            },
-        )
-        .await;
+        // Claude actual body exists before any same-binding material/host constructor.
+        let physical = match &attempt.request {
+            gateway_routing_runtime::PreparedWireRequest::Claude(_) => {
+                Some(routing.physical_claude(&attempt)?)
+            }
+            gateway_routing_runtime::PreparedWireRequest::Ready(_) => None,
+        };
+        let before_dispatch = || async move {
+            if let Some(continuation) = continuation {
+                gate_session
+                    .before_workspace_dispatch(continuation)
+                    .await
+                    .map_err(|error| *error.error)?;
+            } else {
+                gate_session
+                    .before_dispatch(&gate_attempt)
+                    .await
+                    .map_err(|error| *error.error)?;
+            }
+            // No await follows this real dispatch gate before the actual fetch.
+            if !gate_cancel.signal().aborted() {
+                *gate_trace.borrow_mut() = gate_capture.start(gate_attempt.request.provider());
+            }
+            Ok(())
+        };
+        let result = match &attempt.request {
+            gateway_routing_runtime::PreparedWireRequest::Ready(request) => {
+                send_http(
+                    &target,
+                    Method::Post,
+                    &request.headers,
+                    &wire,
+                    &cancellation,
+                    before_dispatch,
+                )
+                .await
+            }
+            gateway_routing_runtime::PreparedWireRequest::Claude(_) => {
+                send_constructed(
+                    physical.ok_or_else(crate::inference_local_lifecycle::wrapper_error)?,
+                    &cancellation,
+                    before_dispatch,
+                )
+                .await
+            }
+        };
         let trace = passive_trace.borrow_mut().take();
         let (mut response, observed_at_ms) = match result {
             Ok(response) => {
@@ -182,7 +202,7 @@ async fn dispatch_attempts(
                 gateway_routing_runtime::ResponseHead {
                     status,
                     headers: headers.clone(),
-                    provider_request_id: correlation(attempt.request.provider, &headers)
+                    provider_request_id: correlation(attempt.request.provider(), &headers)
                         .map(str::to_owned),
                     observed_at_ms,
                 },
@@ -199,7 +219,7 @@ async fn dispatch_attempts(
                 .await?;
             return Ok((response, attempt));
         }
-        let (capture, evidence) = if attempt.request.provider == UpstreamProvider::ClaudeCode {
+        let (capture, evidence) = if attempt.request.provider() == UpstreamProvider::ClaudeCode {
             let captured =
                 crate::transport::claude_body::capture(&mut response, &cancellation).await;
             (
@@ -210,7 +230,7 @@ async fn dispatch_attempts(
                 )?,
             )
         } else {
-            let capture = match (attempt.request.provider, status) {
+            let capture = match (attempt.request.provider(), status) {
                 (UpstreamProvider::ChatgptCodex, 400) => {
                     body::refusal_probe(&mut response, &cancellation, 250).await
                 }
@@ -356,7 +376,12 @@ pub async fn run(
             retry_prohibited: false,
         };
         // This clone shares the original Claude Binding owner across local fallback and dispatch.
-        let routing = routing_host::Host::new(store.clone(), host.clone(), context.clone(), original.clone());
+        let routing = routing_host::Host::new(
+            store.clone(),
+            host.clone(),
+            context.clone(),
+            original.clone(),
+        );
         let client_stream = document.stream().unwrap_or(false);
         let session = if local_compaction {
             match crate::inference_local::start(
@@ -430,21 +455,25 @@ pub async fn run(
             )
             .await;
         let deadline = host.cancellation.set_timeout_ms(ATTEMPT_DEADLINE_MS)?;
-        let (mut upstream, attempt) =
-            match dispatch_attempts(session.clone(), routing, host.cancellation.clone(), capture.clone())
-                .await
-            {
-                Ok(dispatched) => dispatched,
-                Err(error) => {
-                    session
-                        .finish(Default::default())
-                        .await
-                        .map_err(|error| *error.error)?;
-                    return crate::inference_source::error_response(error, &capture).await;
-                }
-            };
+        let (mut upstream, attempt) = match dispatch_attempts(
+            session.clone(),
+            routing,
+            host.cancellation.clone(),
+            capture.clone(),
+        )
+        .await
+        {
+            Ok(dispatched) => dispatched,
+            Err(error) => {
+                session
+                    .finish(Default::default())
+                    .await
+                    .map_err(|error| *error.error)?;
+                return crate::inference_source::error_response(error, &capture).await;
+            }
+        };
         let status = upstream.status_code();
-        let provider = attempt.request.decode.provider;
+        let provider = attempt.request.decode().provider;
         let prepared = attempt.request.clone();
         let headers = upstream
             .headers()
@@ -453,7 +482,7 @@ pub async fn run(
         capture.correlate(correlation(provider, &headers));
         let pricing = crate::inference_source::pricing_metadata(
             session.surplus_billing(),
-            prepared.url.ends_with("/messages"),
+            prepared.url().ends_with("/messages"),
         )?;
         let lifecycle = Rc::new(Lifecycle {
             session,
@@ -495,7 +524,7 @@ pub async fn run(
                 .into_parts();
             let mut response = builder.body(raw_body);
             provider_correlation(&mut response, provider, &headers)?;
-            apply_warnings(&mut response, &prepared.warnings)?;
+            apply_warnings(&mut response, prepared.warnings())?;
             return Ok(response);
         }
         if client_stream && event_stream && status < 400 {
@@ -505,8 +534,8 @@ pub async fn run(
                 .map_err(|_| invalid("Upstream stream is unavailable."))?;
             let relay = Relay {
                 source,
-                plan: prepared.decode.clone(),
-                decoder: StreamDecoder::new(prepared.decode),
+                plan: prepared.decode().clone(),
+                decoder: StreamDecoder::new(prepared.decode().clone()),
                 queue: VecDeque::new(),
                 done: false,
                 observation: observation.clone(),
@@ -664,7 +693,7 @@ pub async fn run(
                 )
                 .map_err(|_| invalid("Invalid response header."))?;
             provider_correlation(&mut response, provider, &headers)?;
-            apply_warnings(&mut response, &prepared.warnings)?;
+            apply_warnings(&mut response, prepared.warnings())?;
             return Ok(response);
         }
         let bytes = match body::response_bytes(
@@ -680,7 +709,7 @@ pub async fn run(
                 return Err(error);
             }
         };
-        let decoded = match decode_response(&prepared.decode, status, &headers, &bytes) {
+        let decoded = match decode_response(prepared.decode(), status, &headers, &bytes) {
             Ok(decoded) => decoded,
             Err(error) => {
                 lifecycle.finish(Default::default(), None).await?;
@@ -734,7 +763,7 @@ pub async fn run(
                 .map_err(|_| invalid("Invalid response header."))?;
         }
         provider_correlation(&mut response, provider, &headers)?;
-        apply_warnings(&mut response, &prepared.warnings)?;
+        apply_warnings(&mut response, prepared.warnings())?;
         Ok(response)
     }
     .await;
