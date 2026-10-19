@@ -15,6 +15,7 @@ pub trait ExperimentIo {
     type Response;
     fn release_git_sha(&self) -> &str;
     fn uuid(&self) -> Result<String, GatewayError>;
+    fn begin_cycle(&self, deadline_ms: i64) -> Result<(), GatewayError>;
     fn fetch(
         &self,
         dispatch: &CacheDispatch,
@@ -90,7 +91,17 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                         )
                         .await;
                 }
-                Err(error)
+                if matches!(
+                    error.envelope.error.code.as_deref(),
+                    Some(
+                        "prompt_cache_scope_experiment_busy"
+                            | "prompt_cache_scope_experiment_unavailable"
+                    )
+                ) {
+                    Err(error)
+                } else {
+                    Err(failed(&error.envelope.error.message))
+                }
             }
         }
     }
@@ -130,6 +141,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 .await;
         }
         let deadline = crate::add(self.fresh_time(now)?, CYCLE_MS)?;
+        io.begin_cycle(deadline)?;
         let cycle_nonce = io.uuid()?;
         let cache_key = format!("uos-cache-scope-v5-{}", io.uuid()?);
         let body = request_body(&target.model, &cycle_nonce, &cache_key);
