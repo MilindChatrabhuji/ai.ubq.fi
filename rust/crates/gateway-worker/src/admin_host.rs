@@ -180,7 +180,7 @@ impl RuntimeCapabilities for Capabilities {
     }
     async fn pricing(
         &self,
-        models: &[String],
+        models: &[gateway_core::model::ModelId],
     ) -> Result<gateway_admin_runtime::capabilities::PricingSnapshot, GatewayError> {
         self.support.pricing(models).await
     }
