@@ -24,6 +24,26 @@ pub(super) fn string(value: &SourceJson) -> Option<String> {
         .try_utf8()
         .ok()
 }
+/// Unknown event names may contain unpaired UTF16. The source ignores those
+/// events; failure to convert an unrelated name is not a malformed stream.
+pub(super) fn event_type(event: &SourceJson) -> Result<Option<String>, GatewayError> {
+    let kind = member(event, "type")?
+        .as_ref()
+        .and_then(|value| JsString16::from_json_token(value.as_raw()).ok())
+        .filter(|value| {
+            value.as_units().iter().any(|&unit| {
+                char::from_u32(u32::from(unit))
+                    .is_none_or(|character| !gateway_schema::util::js_whitespace(character))
+            })
+        })
+        .ok_or_else(|| gateway_authority::cache_experiment::model::failed(
+            "Prompt-cache scope experiment stream failed: Upstream emitted a Responses SSE event without a type."
+        ))?;
+    Ok(kind
+        .try_utf8()
+        .ok()
+        .map(|value| gateway_schema::util::js_trim(&value).to_owned()))
+}
 pub(super) fn completed(
     response: &SourceJson,
     slot: u8,
@@ -115,6 +135,27 @@ mod tests {
                     "sample": { "slot": sample.slot, "raw_usage": sample.raw_usage, "usage": sample.usage }
                 }),
                 Err(reason) => json!({ "status": "inconclusive", "reason": reason }),
+            };
+            assert_eq!(actual, case["expected"], "{}", case["name"]);
+        }
+    }
+
+    #[test]
+    fn unknown_utf16_event_names_follow_the_actual_source_stream_parser() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("event-types-source-v1.json")).unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let event = SourceJson::parse(case["raw"].as_str().unwrap()).unwrap();
+            let actual = match event_type(&event) {
+                Ok(kind) => json!({
+                    "status": "parsed",
+                    "kind": match kind.as_deref() {
+                        Some("response.completed") => "completed",
+                        Some("error" | "response.failed" | "response.incomplete") => "terminal",
+                        _ => "other",
+                    }
+                }),
+                Err(_) => json!({"status": "error"}),
             };
             assert_eq!(actual, case["expected"], "{}", case["name"]);
         }
