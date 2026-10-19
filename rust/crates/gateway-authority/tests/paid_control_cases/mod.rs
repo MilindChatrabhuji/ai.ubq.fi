@@ -185,8 +185,13 @@ fn every_source_and_control_change_invalidates_existing_and_new_paid_receipts() 
             paid_setup(&store);
             let authority = authority(&store);
             let input = paid_request("stale-control", PaidProvider::Surplus);
-            let receipt =
-                run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+            let receipt = run(super::paid_original::authorize(
+                &authority,
+                &input,
+                &context(&input),
+                NOW,
+            ))
+            .unwrap();
             if existing {
                 run(authority.reserve_paid(
                     &input,
@@ -232,7 +237,13 @@ fn source_change_inside_the_actual_paid_cas_never_writes_exposure() {
         paid_setup(&store);
         let authority = authority(&store);
         let input = paid_request("control-race", PaidProvider::Surplus);
-        let receipt = run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+        let receipt = run(super::paid_original::authorize(
+            &authority,
+            &input,
+            &context(&input),
+            NOW,
+        ))
+        .unwrap();
         if existing {
             run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &receipt, NOW))
                 .unwrap();
@@ -271,7 +282,13 @@ fn source_stale_routes_remain_usable_without_invented_refresh_ttl() {
     raw["stale"] = json!(true);
     store.seed(key, &raw);
     republish(&store);
-    let receipt = run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+    let receipt = run(super::paid_original::authorize(
+        &authority,
+        &input,
+        &context(&input),
+        NOW,
+    ))
+    .unwrap();
     assert_eq!(receipt.owner_id(), "fixture-owner");
     assert_eq!(receipt.owner_epoch(), "fixture-epoch");
     assert_eq!(
@@ -306,7 +323,13 @@ fn missing_openlux_catalog_keeps_configured_known_codex_fallback() {
     republish(&store);
     let mut input = paid_request("missing-catalog", PaidProvider::Metered);
     input.model = "gpt-test".into();
-    let receipt = run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+    let receipt = run(super::paid_original::authorize(
+        &authority,
+        &input,
+        &context(&input),
+        NOW,
+    ))
+    .unwrap();
     assert!(matches!(
         run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &receipt, NOW))
             .unwrap(),
@@ -390,7 +413,13 @@ fn receipt_binds_logical_model_not_physical_effort_alias_and_exact_attempt() {
     let mut input = paid_request("logical-alias", PaidProvider::Metered);
     input.model = "gpt-5.6-sol".into();
     input.reasoning = Some("none".into());
-    let receipt = run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+    let receipt = run(super::paid_original::authorize(
+        &authority,
+        &input,
+        &context(&input),
+        NOW,
+    ))
+    .unwrap();
     input.model = "gpt-5.6-sol-low".into();
     assert!(
         run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &receipt, NOW))
@@ -416,7 +445,13 @@ fn source_defined_expiry_crossing_awaited_paid_reads_never_commits() {
     raw["source_valid_until_ms"] = json!(NOW + 100);
     store.seed(key, &raw);
     republish(&store);
-    let receipt = run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+    let receipt = run(super::paid_original::authorize(
+        &authority,
+        &input,
+        &context(&input),
+        NOW,
+    ))
+    .unwrap();
     store.jump_on_read(keys::paid_deletion("key-a"), NOW + 100);
     assert!(
         run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &receipt, NOW))
@@ -452,7 +487,13 @@ fn openlux_discovery_and_spend_bindings_are_distinct_current_facts() {
     paid_setup(&store);
     let authority = authority(&store);
     let input = paid_request("two-openlux-roles", PaidProvider::Metered);
-    let receipt = run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+    let receipt = run(super::paid_original::authorize(
+        &authority,
+        &input,
+        &context(&input),
+        NOW,
+    ))
+    .unwrap();
     assert_eq!(receipt.credential_binding(), "fixture-openlux-binding");
     let observation_key = keys::paid_control_observation(PaidProvider::Metered);
     let mut observation = store.row(&observation_key).unwrap().value;

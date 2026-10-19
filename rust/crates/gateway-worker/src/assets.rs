@@ -192,6 +192,7 @@ pub async fn handle(
             | "/models.js"
             | "/toast.js"
             | "/admin.js"
+            | "/admin-reset.js"
             | "/admin-supervisor.js"
             | "/admin-cache.js"
             | "/auth.js"

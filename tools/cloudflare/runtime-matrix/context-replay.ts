@@ -29,7 +29,7 @@ async function oneDispatch(context: MatrixContext, marker: string, provider: str
 }
 
 /** A client-side SSE reader, not a provider transform or replay oracle. */
-async function streamedCompletion(response: Response): Promise<Record<string, unknown>> {
+async function streamedCompletion(response: Response, expectedDelta = "replay"): Promise<Record<string, unknown>> {
   assert.equal(response.status, 200);
   assert(response.headers.get("content-type")?.startsWith("text/event-stream"));
   assert(response.body);
@@ -53,7 +53,7 @@ async function streamedCompletion(response: Response): Promise<Record<string, un
         .join("\n");
       if (!data || data === "[DONE]") continue;
       const event = object(JSON.parse(data));
-      if (typeof event.type === "string" && event.type.endsWith(".delta") && typeof event.delta === "string" && event.delta.includes("replay")) {
+      if (typeof event.type === "string" && event.type.endsWith(".delta") && typeof event.delta === "string" && event.delta.includes(expectedDelta)) {
         deltaThisRead = true;
       }
       events.push(event);
@@ -273,4 +273,133 @@ export async function unicodeForwardingCases(context: MatrixContext): Promise<vo
   );
   assert.equal(dispatches(await context.events(), marker).length, 0, "Disabled truncation must refuse before any actual upstream fetch");
   context.cases.push("matrix_disabled_unicode_truncation_preserves_exact_source_error_and_zero_dispatch");
+}
+
+const compactionMetadata = JSON.stringify({ request_kind: "compaction", compaction: { implementation: "responses" } });
+const oldCompactionResult = "Obsolete tool result with its original evidence. ".repeat(100);
+const keptCompactionText = "retain_compaction_fallback_artifact";
+
+function compactionInput(marker: string): Record<string, unknown>[] {
+  const message = (role: string, text: string): Record<string, unknown> => ({ type: "message", role, content: [{ type: "input_text", text }] });
+  return [
+    message("user", `Keep ${keptCompactionText} ${marker} verbatim while completing the release.`),
+    message("assistant", "Inspecting old evidence."),
+    { type: "function_call", call_id: "old_a", name: "shell", arguments: '{"command":"read old evidence"}' },
+    { type: "function_call_output", call_id: "old_a", output: oldCompactionResult },
+    { type: "function_call", call_id: "old_b", name: "shell", arguments: '{"command":"read more old evidence"}' },
+    { type: "function_call_output", call_id: "old_b", output: oldCompactionResult },
+    message("assistant", "The old investigation is finished."),
+    message("user", "First recent follow-up: draft the release outline."),
+    message("assistant", "Drafted."),
+    message("user", "Second recent follow-up: check the artifact."),
+    message("assistant", "Checked."),
+    message("user", `Final goal: retain ${keptCompactionText} ${marker}.`),
+    message("user", "You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary."),
+  ];
+}
+
+function compactionRequest(context: MatrixContext, marker: string, metadata?: string, stream = true): Promise<Response> {
+  return fetch(context.url("/v1/responses"), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${context.clientToken ?? "fixture-access"}`,
+      "content-type": "application/json",
+      connection: "close",
+      ...(metadata === undefined ? {} : { "x-codex-turn-metadata": metadata }),
+    },
+    body: JSON.stringify({ model: "deepseek-flash", input: compactionInput(marker), stream, reasoning: { effort: "low" }, max_output_tokens: 128 }),
+  });
+}
+
+function jevCalls(events: unknown[], marker: string): Record<string, unknown>[] {
+  return events.map(object).filter((event) => event.kind === "matrix_compaction_jev" && event.marker === marker);
+}
+
+async function compactionHeaderControls(context: MatrixContext): Promise<void> {
+  const controls = [
+    undefined,
+    "{not json",
+    JSON.stringify({ request_kind: "compaction", compaction: { implementation: "responses_compaction_v2" } }),
+    JSON.stringify({ request_kind: "turn", compaction: { implementation: "responses" } }),
+  ];
+  for (const [index, metadata] of controls.entries()) {
+    const marker = `fixture:matrix:compaction:ordinary-${String(index)}`;
+    const response = await compactionRequest(context, marker, metadata, false);
+    assert.equal((await responseObject(response)).status, "completed");
+    assert.equal(response.headers.get("x-jev-compaction"), null);
+    assertSingleAdmission(await settled(context, response), "lithos");
+    assert.equal(jevCalls(await context.events(), marker).length, 0, "Only the exact header predicate may invoke Jev");
+    await oneDispatch(context, marker, "lithos");
+  }
+  context.cases.push("matrix_compaction_header_absent_malformed_wrong_implementation_and_ordinary_turn_do_not_invoke_jev");
+}
+
+async function compactionFailedFallback(context: MatrixContext, mode: "failure" | "partial"): Promise<void> {
+  const created = await responseObject(
+    await context.post(
+      "/admin/api-keys",
+      { name: "compaction one-request fixture", usage_limit_requests: 1, window_ms: 3_600_000, paid_fallback_enabled: false },
+      context.adminToken ?? "fixture-admin"
+    )
+  );
+  assert(typeof created.token === "string" && typeof created.id === "string");
+  const client = { ...context, clientToken: created.token };
+  const marker = `fixture:matrix:compaction:${mode}`;
+  const response = await compactionRequest(client, marker, compactionMetadata);
+  assert.equal((await streamedCompletion(response, "matrix ")).status, "completed");
+  assert.equal(response.headers.get("x-jev-compaction"), null, "A failed or partial Jev result cannot become an adopted summary");
+  const id = response.headers.get("x-uos-request-id");
+  assert(id);
+  const state = await settled(context, response);
+  assert.equal(object(state.context).request_id, id);
+  assert.equal(object(state.api).request_id, id);
+  assert.equal(object(state.api).key_id, created.id);
+  const calls = dispatches(await context.events(), marker);
+  const providers = mode === "failure" ? ["lithos", "deepseek"] : ["lithos"];
+  assert.deepEqual(
+    calls.map((call) => call.provider),
+    providers
+  );
+  assert.deepEqual(
+    records(state.attempts).map((attempt) => attempt.provider),
+    providers
+  );
+  assert(records(state.attempts).every((attempt) => attempt.transport_started === true));
+  for (const call of calls) {
+    const messages = records(call.compaction_messages);
+    for (const callId of ["old_a", "old_b"]) {
+      assert(messages.some((message) => message.role === "tool" && message.tool_call_id === callId && message.sha256 === hash(oldCompactionResult)));
+    }
+    assert(
+      messages.some(
+        (message) => message.role === "user" && message.sha256 === hash(`Keep ${keptCompactionText} ${marker} verbatim while completing the release.`)
+      )
+    );
+  }
+  const decisions = jevCalls(await context.events(), marker);
+  assert.equal(decisions.length, 1, "The actual Worker must invoke the decision service before this fallback");
+  assert.equal(decisions[0]?.model, "~typesafe/jev-latest");
+  const questions = decisions[0]?.questions;
+  assert(Array.isArray(questions));
+  const names: string[] = [];
+  for (const name of questions) {
+    assert(typeof name === "string");
+    names.push(name);
+  }
+  names.sort((left, right) => left.localeCompare(right));
+  assert.deepEqual(names, ["call_t0", "call_t1", "result_t0", "result_t1"]);
+  const blockedMarker = `fixture:matrix:compaction:quota-${mode}`;
+  const blocked = await post(client, "/v1/responses", { model: "deepseek-flash", input: blockedMarker, stream: false });
+  assert.equal(blocked.status, 429, "The completed fallback must consume the key's sole dispatch allowance");
+  await blocked.arrayBuffer();
+  assert.equal(dispatches(await context.events(), blockedMarker).length, 0);
+  context.cases.push(`matrix_compaction_${mode}_fallback_preserves_original_input_admission_and_one_request_quota`);
+}
+
+/** Uses real fallback journals; local-success/cancellation accounting waits for M05's finite observation API. */
+export async function compactionFallbackCases(context: MatrixContext): Promise<void> {
+  await selectProviders(context, ["lithos", "deepseek", "openrouter"]);
+  await compactionHeaderControls(context);
+  await compactionFailedFallback(context, "failure");
+  await compactionFailedFallback(context, "partial");
 }
