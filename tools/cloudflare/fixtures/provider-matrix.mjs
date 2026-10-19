@@ -100,13 +100,26 @@ function models(provider) {
   };
 }
 
-function completion(provider, body) {
+function replayMessage() {
+  return {
+    role: "assistant",
+    content: "replay answer 😀",
+    reasoning_content: "replay thought é",
+    tool_calls: [
+      { id: "call_context_lookup", type: "function", function: { name: "lookup", arguments: '{"query":"kept😀"}' } },
+      { id: "call_context_patch", type: "function", function: { name: "apply_patch", arguments: '{"input":"*** Begin Patch\\nfixture😀\\n*** End Patch"}' } },
+    ],
+  };
+}
+
+function completion(provider, body, marker) {
+  const replay = marker.startsWith("fixture:matrix:replay:producer-");
   return {
     id: `chatcmpl_matrix_${provider}`,
     object: "chat.completion",
     created: 1_800_000_000,
     model: body.model,
-    choices: [{ index: 0, message: { role: "assistant", content: "matrix answer" }, finish_reason: "stop" }],
+    choices: [{ index: 0, message: replay ? replayMessage() : { role: "assistant", content: "matrix answer" }, finish_reason: replay ? "tool_calls" : "stop" }],
     usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10, ...(provider === "surplus" ? { buyer_cost_micro: 5 } : {}) },
   };
 }
@@ -144,7 +157,24 @@ function anthropic(body) {
   };
 }
 
-function streamParts(provider, body, wire, truncate) {
+function replayChunks(provider, body) {
+  const base = { id: `chatcmpl_matrix_${provider}`, object: "chat.completion.chunk", created: 1_800_000_000, model: body.model };
+  const message = replayMessage();
+  return [
+    part(null, { ...base, choices: [{ index: 0, delta: { role: "assistant", reasoning_content: message.reasoning_content }, finish_reason: null }] }),
+    part(null, { ...base, choices: [{ index: 0, delta: { content: message.content }, finish_reason: null }] }),
+    part(null, { ...base, choices: [{ index: 0, delta: { tool_calls: message.tool_calls.map((call, index) => ({ ...call, index })) }, finish_reason: null }] }),
+    part(null, {
+      ...base,
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
+    }),
+    new TextEncoder().encode("data: [DONE]\n\n"),
+  ];
+}
+
+function streamParts(provider, body, wire, truncate, marker) {
+  if (wire === "chat" && marker.startsWith("fixture:matrix:replay:producer-")) return replayChunks(provider, body);
   if (wire === "anthropic") {
     const message = anthropic(body);
     return [
@@ -199,7 +229,7 @@ function streamParts(provider, body, wire, truncate) {
 }
 
 function streamed(provider, body, wire, marker, context, recordEvent) {
-  const chunks = streamParts(provider, body, wire, marker.endsWith(":truncated"));
+  const chunks = streamParts(provider, body, wire, marker.endsWith(":truncated"), marker);
   let closed = false;
   let timer;
   let finish;
@@ -267,6 +297,36 @@ function quota() {
   );
 }
 
+async function digest(value) {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Observe actual synthetic wire bytes, never compute the application's replay or reduction. */
+async function contextObservation(body, marker) {
+  if (marker.startsWith("fixture:matrix:replay:")) {
+    const captured = { context_input: body.input ?? null, context_messages: body.messages ?? null };
+    if (JSON.stringify(captured).length > 32_768) throw new Error("Controlled replay capture exceeded its fixed fixture bound");
+    return captured;
+  }
+  if (!marker.startsWith("fixture:matrix:unicode:")) return {};
+  const tool = body.messages?.find((message) => message.role === "tool" && message.tool_call_id === "call_unicode");
+  if (!tool || typeof tool.content !== "string") return { unicode: null };
+  const boundary = tool.content.indexOf("\n[gateway:");
+  const prefix = boundary < 0 ? tool.content : tool.content.slice(0, boundary);
+  return {
+    unicode: {
+      tool_call_id: tool.tool_call_id,
+      bytes: new TextEncoder().encode(tool.content).byteLength,
+      sha256: await digest(tool.content),
+      prefix_sha256: await digest(prefix),
+      marker: boundary < 0 ? null : tool.content.slice(boundary),
+      well_formed: tool.content.isWellFormed(),
+      replacement_character: tool.content.includes("\ufffd"),
+    },
+  };
+}
+
 /** Fixed destination upstream extension, not a standalone application. */
 export async function handleProviderMatrix(request, _env, context, recordEvent) {
   const url = new URL(request.url);
@@ -306,6 +366,7 @@ export async function handleProviderMatrix(request, _env, context, recordEvent) 
     anthropic_version: request.headers.get("anthropic-version"),
     workspace: request.headers.get("anthropic-workspace-id"),
     thinking: isObject(body.thinking) ? body.thinking.type : null,
+    ...(await contextObservation(body, marker)),
   });
   if (provider === "claude" && marker.endsWith(":workspace") && !request.headers.has("anthropic-workspace-id")) {
     return Response.json({ error: { type: "invalid_request_error", message: "Request is not scoped to a workspace" } }, { status: 400 });
@@ -331,7 +392,7 @@ export async function handleProviderMatrix(request, _env, context, recordEvent) 
     });
   }
   if (body.stream === true || provider === "codex") return streamed(provider, body, wire, marker, context, recordEvent);
-  return Response.json(wire === "chat" ? completion(provider, body) : wire === "anthropic" ? anthropic(body) : response(provider, body), {
+  return Response.json(wire === "chat" ? completion(provider, body, marker) : wire === "anthropic" ? anthropic(body) : response(provider, body), {
     headers: { "x-request-id": requestId(provider, marker) },
   });
 }
