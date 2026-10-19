@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     Authority, TokenSource,
-    routing::{ProbeCircuit, ProbeLease, model_quota_class, read_view},
+    routing::{ProbeCircuit, ProbeLease, model_quota_class, read_pinned_view},
     store::Transaction,
 };
 use gateway_auth::{
@@ -222,7 +222,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     "Codex auth pool changed during the prompt-cache scope experiment.",
                 ));
             }
-            let mut view = read_view(&mut tx).await?;
+            let mut view = read_pinned_view(&mut tx).await?;
             let current = self.fresh_time(now)?;
             let evaluation = crate::routing::evaluate(
                 &view,
@@ -287,7 +287,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         };
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
-            let mut view = read_view(&mut tx).await?;
+            let mut view = read_pinned_view(&mut tx).await?;
             if !view.current_binding(&dispatch.binding) {
                 return Ok(());
             }
@@ -349,7 +349,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         let campaign_key = record_key("campaign", target);
         let _: Option<Value> = tx.read(&cycle_key).await?;
         let _: Option<Value> = tx.read(&campaign_key).await?;
-        let view = read_view(&mut tx).await?;
+        let view = read_pinned_view(&mut tx).await?;
         let current = self.fresh_time(now)?;
         if view.pool.accounts.len() != 2
             || view.pool.pool_versionstamp.0 != target.auth_pool_versionstamp
