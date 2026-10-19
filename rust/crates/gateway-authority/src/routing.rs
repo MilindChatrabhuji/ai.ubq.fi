@@ -1,4 +1,5 @@
 //! Global serial subscription selection; source routing-serial.ts and routing-evaluation.ts.
+use gateway_core::{js_string::JsString16, model::ModelId};
 use std::collections::{BTreeMap, BTreeSet};
 
 use gateway_core::GatewayError;
@@ -14,7 +15,68 @@ use crate::{
     unavailable,
 };
 
+use crate::capacity_rules::capacity_for;
+pub use crate::capacity_rules::{
+    CapacityObservationStorePlan, capacity_headroom_for_observation, capacity_observation_is_fresh,
+    normalize_capacity_window, parse_capacity_observation, parse_capacity_store,
+    plan_capacity_observation_store,
+};
+use crate::routing_codec::normalize;
+pub use crate::routing_codec::{normalize as normalize_routing_state, parse_routing_state};
+pub use crate::routing_rules::apply_capacity_observation;
 pub use crate::routing_types::*;
+
+pub fn model_quota_class(model: &ModelId) -> CodexQuotaClass {
+    let trimmed = gateway_schema::reasoning::js_trim_source(model.as_js_string());
+    let lower = lower_control_units(trimmed.as_units());
+    let same = |s: &str| lower.iter().copied().eq(s.encode_utf16());
+    if same("gpt-5.3-codex-spark") {
+        CodexQuotaClass::Spark
+    } else if same("gpt-oss-120b") {
+        CodexQuotaClass::GptOss120b
+    } else if model_quota_label(model) == "gptreserve" {
+        CodexQuotaClass::Reserve
+    } else if lower.is_empty() {
+        CodexQuotaClass::Unknown
+    } else {
+        CodexQuotaClass::Standard
+    }
+}
+// Only finite ASCII class comparisons consume this projection; original model data is untouched.
+fn lower_control_units(units: &[u16]) -> Vec<u16> {
+    gateway_core::js_string_case::lowercase_source(&JsString16::from_units(units.to_vec()))
+        .as_units()
+        .to_vec()
+}
+pub(crate) fn model_quota_label(model: &ModelId) -> String {
+    lower_control_units(model.as_js_string().as_units())
+        .into_iter()
+        .filter_map(|u| {
+            u8::try_from(u)
+                .ok()
+                .filter(u8::is_ascii_alphanumeric)
+                .map(char::from)
+        })
+        .collect()
+}
+
+/// Non-inference account identity. The source model remains optional UTF16 and is never replaced.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LiveAccountSelection {
+    pub binding: AccountBinding,
+    pub active_generation: u64,
+    pub quota_class: CodexQuotaClass,
+    pub probe_required: bool,
+    pub model: Option<gateway_core::js_string::JsString16>,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum LiveRouteSelection {
+    Eligible(LiveAccountSelection),
+    QuotaBlocked { retry_at_ms: Option<i64> },
+    CredentialsInvalid,
+    ModelUnavailable { detail: Option<JsString16> },
+    RoutingUnavailable,
+}
 
 pub fn class_name(class: CodexQuotaClass) -> &'static str {
     match class {
@@ -36,7 +98,7 @@ pub(crate) fn validate_binding(binding: &AccountBinding) -> Result<(), GatewayEr
 }
 
 impl SubscriptionPool {
-    fn validate(&self) -> Result<(), GatewayError> {
+    pub(crate) fn validate(&self) -> Result<(), GatewayError> {
         if self.v != 1 || self.accounts.is_empty() {
             return Err(invalid("Codex subscription pool is missing or malformed."));
         }
@@ -54,111 +116,13 @@ impl SubscriptionPool {
     }
 }
 
-fn normalize(
-    pool: &SubscriptionPool,
-    prior: Option<RoutingState>,
-    now: i64,
-) -> Result<RoutingState, GatewayError> {
-    let prior = prior.unwrap_or(RoutingState {
-        v: 2,
-        updated_at_ms: now,
-        legacy_identity_unresolved: false,
-        slots: Vec::new(),
-    });
-    if prior.v != 2 {
-        return Err(invalid("Unsupported Codex routing state."));
-    }
-    nonnegative(prior.updated_at_ms)?;
-    let mut slots = Vec::new();
-    for account in &pool.accounts {
-        let existing = prior
-            .slots
-            .iter()
-            .find(|slot| slot.account_id_hash == account.account_id_hash);
-        let mut slot = existing.cloned().unwrap_or(RoutingSlot {
-            account_id_hash: account.account_id_hash.clone(),
-            credential_version: account.credential_version.clone(),
-            generation: 0,
-            invalid_credential_version: None,
-            quota_blocks: BTreeMap::new(),
-            probe_lease: None,
-            retained_reset_at_ms: None,
-            reset_identity_ambiguous: false,
-        });
-        generation(slot.generation)?;
-        for block in slot.quota_blocks.values() {
-            nonnegative(block.blocked_until_ms)?;
-            nonnegative(block.observed_at_ms)?;
-            if let Some(reset) = block.reset_at_ms {
-                nonnegative(reset)?;
-            }
-        }
-        if slot.credential_version != account.credential_version {
-            slot.retained_reset_at_ms = slot
-                .quota_blocks
-                .values()
-                .filter_map(|block| block.reset_at_ms)
-                .max()
-                .or(slot.retained_reset_at_ms);
-            slot.reset_identity_ambiguous |= slot.retained_reset_at_ms.is_some();
-            slot.credential_version = account.credential_version.clone();
-            slot.generation = next_generation(slot.generation)?;
-            slot.invalid_credential_version = None;
-            slot.quota_blocks.clear();
-            if let Some(lease) = &mut slot.probe_lease {
-                lease.generation = slot.generation;
-            }
-        }
-        slots.push(slot);
-    }
-    Ok(RoutingState { slots, ..prior })
-}
-
-fn headroom(windows: &[CapacityWindow]) -> Option<f64> {
-    windows
-        .iter()
-        .filter_map(|window| window.used_percent)
-        .filter(|percent| percent.is_finite())
-        .map(|percent| (100.0 - percent).clamp(0.0, 100.0))
-        .reduce(f64::min)
-}
-
-fn capacity_for<'a>(
-    capacity: &'a CapacityStore,
-    account: &RoutingAccountHash,
-    model: &str,
-    now: i64,
-) -> Option<(&'a CapacityObservation, f64)> {
-    let observation = capacity.observations.iter().find(|row| {
-        &row.account_id_hash == account
-            && row.available
-            && row.snapshot_at_ms >= 0
-            && row.snapshot_at_ms <= now
-            && now - row.snapshot_at_ms <= 30 * crate::MINUTE_MS
-    })?;
-    let model_limits: Vec<_> = observation
-        .additional
-        .iter()
-        .filter(|limit| limit.model.eq_ignore_ascii_case(model))
-        .collect();
-    let available = if model_limits.is_empty() {
-        headroom(&observation.windows)
-    } else {
-        model_limits
-            .into_iter()
-            .filter_map(|limit| headroom(&limit.windows))
-            .reduce(f64::max)
-    }?;
-    Some((observation, available))
-}
-
 fn unavailable_model(
     models: &ModelAvailability,
     pool: &SubscriptionPool,
     account: &RoutingAccountHash,
-    model: &str,
+    model: &ModelId,
     now: i64,
-) -> Option<Option<String>> {
+) -> Option<Option<JsString16>> {
     if let Some(learned) = models
         .unsupported
         .get(&account.0)
@@ -189,22 +153,48 @@ pub(crate) struct RoutingView {
     pub state: RoutingState,
     pub active: Option<ActiveSelection>,
     models: ModelAvailability,
-    models_source: serde_json::Value,
+    models_source: gateway_core::source_json::SourceJson,
     source_ids: BTreeMap<String, String>,
-    capacity: CapacityStore,
+    pub(crate) capacity: CapacityStore,
     pub(crate) overage: BTreeMap<String, bool>,
 }
 
 pub(crate) async fn read_view<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
 ) -> Result<RoutingView, GatewayError> {
+    read_view_for(tx, true).await
+}
+
+/// Source slot-pinned callers hydrate the same state without consulting the global election.
+pub(crate) async fn read_pinned_view<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+) -> Result<RoutingView, GatewayError> {
+    read_view_for(tx, false).await
+}
+
+async fn read_view_for<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    read_active: bool,
+) -> Result<RoutingView, GatewayError> {
     let mut pool: SubscriptionPool = tx
         .read(&keys::pool())
         .await?
         .ok_or_else(|| unavailable("codex_routing_unavailable", "Codex pool is unavailable."))?;
     pool.validate()?;
-    let state = normalize(&pool, tx.read(&keys::routing()).await?, tx.now)?;
-    let active: Option<ActiveSelection> = tx.read(&keys::active()).await?;
+    let state = normalize(
+        &pool,
+        tx.read::<serde_json::Value>(&keys::routing())
+            .await?
+            .as_ref()
+            .map(parse_routing_state)
+            .transpose()?,
+        tx.now,
+    )?;
+    let active: Option<ActiveSelection> = if read_active {
+        tx.read(&keys::active()).await?
+    } else {
+        None
+    };
     if let Some(active) = &active {
         validate_binding(&active.binding)?;
         if active.v != 1 || active.generation == 0 {
@@ -212,7 +202,13 @@ pub(crate) async fn read_view<S: AuthorityStore, I: TokenSource>(
         }
         generation(active.generation)?;
     }
-    let capacity = tx.read(&keys::capacity()).await?.unwrap_or_default();
+    let capacity = tx
+        .read::<serde_json::Value>(&keys::capacity())
+        .await?
+        .as_ref()
+        .map(parse_capacity_store)
+        .transpose()?
+        .unwrap_or_default();
     let source_models = crate::source_models::load(tx, &pool).await?;
     let selection: Option<serde_json::Value> = tx.read(&keys::provider_selection()).await?;
     let selection = selection
@@ -286,19 +282,19 @@ impl RoutingView {
     }
 }
 
-struct Evaluation {
-    slot: usize,
-    reason: Option<ActiveTransitionReason>,
-    eligible: bool,
-    probe: bool,
-    retry: Option<i64>,
-    detail: Option<String>,
+pub(crate) struct Evaluation {
+    pub(crate) slot: usize,
+    pub(crate) reason: Option<ActiveTransitionReason>,
+    pub(crate) eligible: bool,
+    pub(crate) probe: bool,
+    pub(crate) retry: Option<i64>,
+    pub(crate) detail: Option<JsString16>,
 }
 
-fn evaluate(
+pub(crate) fn evaluate(
     view: &RoutingView,
     slot: usize,
-    model: &str,
+    model: &ModelId,
     class: CodexQuotaClass,
     now: i64,
 ) -> Evaluation {
@@ -315,21 +311,30 @@ fn evaluate(
         result.reason = Some(ActiveTransitionReason::CredentialInvalid);
         return result;
     }
-    if let Some(detail) =
-        unavailable_model(&view.models, &view.pool, &row.account_id_hash, model, now)
-    {
+    if let Some(detail) = unavailable_model(
+        &view.models,
+        &view.pool,
+        &view.pool.accounts[slot].account_id_hash,
+        model,
+        now,
+    ) {
         result.reason = Some(ActiveTransitionReason::ModelUnavailable);
         result.detail = detail;
         return result;
     }
-    let block = row.quota_blocks.get(class_name(class));
-    let observed = capacity_for(&view.capacity, &row.account_id_hash, model, now).filter(
-        |(observation, _)| {
-            block.is_none_or(|block| block.observed_at_ms < observation.snapshot_at_ms)
-        },
+    let block = row.quota_block_for(class);
+    let observed = capacity_for(
+        &view.capacity,
+        &view.pool.accounts[slot].account_id_hash,
+        model,
+        now,
     );
-    let override_positive = observed.is_some_and(|(_, available)| available > 0.0);
-    if let Some(block) = block
+    let newer_signal = observed.is_some_and(|(observation, _)| {
+        row.quota_signal_for(class)
+            .is_some_and(|at| at >= observation.snapshot_at_ms)
+    });
+    let override_positive = !newer_signal && observed.is_some_and(|(_, available)| available > 0.0);
+    if let Some(block) = &block
         && block.blocked_until_ms > now
         && !override_positive
     {
@@ -337,16 +342,19 @@ fn evaluate(
         result.retry = Some(block.blocked_until_ms);
         return result;
     }
-    if let Some((observation, available)) = observed.filter(|(_, available)| *available == 0.0) {
+    if let Some((observation, available)) =
+        observed.filter(|(_, available)| *available == 0.0 && !newer_signal)
+    {
         debug_assert_eq!(available, 0.0);
         if !view
             .overage
-            .get(&row.account_id_hash.0)
+            .get(&view.pool.accounts[slot].account_id_hash.0)
             .copied()
             .unwrap_or(false)
             && let Some(reset) = observation
                 .windows
-                .first()
+                .primary
+                .as_ref()
                 .and_then(|window| window.reset_at_ms)
                 .filter(|reset| *reset > now)
         {
@@ -355,12 +363,14 @@ fn evaluate(
             return result;
         }
         result.probe = true;
+        result.eligible = true;
+        return result;
     }
-    if row
-        .probe_lease
-        .as_ref()
-        .is_some_and(|lease| lease.expires_at_ms > now && lease.quota_class == class)
-    {
+    if row.probe_lease.as_ref().is_some_and(|lease| {
+        lease.expires_at_ms > now
+            && lease.circuit == ProbeCircuit::Quota
+            && lease.quota_class.is_none_or(|c| c == class)
+    }) {
         return result;
     }
     result.eligible = true;
@@ -408,7 +418,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Event-owned reset preflight materializes capacity evidence before selecting new proof.
     pub async fn materialize_capacity_quota_blocks(
         &self,
-        model: &str,
+        model: &ModelId,
         class: CodexQuotaClass,
         now: i64,
     ) -> Result<bool, GatewayError> {
@@ -433,33 +443,35 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 }
                 let Some(reset) = observation
                     .windows
-                    .first()
+                    .primary
+                    .as_ref()
                     .and_then(|window| window.reset_at_ms)
                     .filter(|reset| *reset > now)
                 else {
                     continue;
                 };
-                let prior = view.state.slots[slot].quota_blocks.get(class_name(class));
-                if prior.is_some_and(|block| {
+                let prior = view.state.slots[slot].quota_block_for(class);
+                if prior.as_ref().is_some_and(|block| {
                     block.blocked_until_ms > now
-                        || block.observed_at_ms >= observation.snapshot_at_ms
+                        || block
+                            .observed_at_ms
+                            .is_some_and(|at| at >= observation.snapshot_at_ms)
                 }) {
                     continue;
                 }
-                view.state.slots[slot].quota_blocks.insert(
-                    class_name(class).to_owned(),
-                    QuotaBlock {
-                        blocked_until_ms: reset,
-                        source: QuotaBlockSource::HeaderRetryAfter,
-                        observed_at_ms: observation.snapshot_at_ms,
-                        reset_at_ms: Some(reset),
-                        reset_is_stable: true,
-                        reset_ambiguous: false,
-                        recovery_pending: false,
-                    },
-                );
-                view.state.slots[slot].generation =
-                    next_generation(view.state.slots[slot].generation)?;
+                let current = &mut view.state.slots[slot];
+                let foreign_probe = current.probe_lease.as_ref().is_some_and(|lease| {
+                    lease.circuit == ProbeCircuit::Quota
+                        && lease.quota_class.is_some_and(|c| c != class)
+                });
+                if current.probe_lease.is_some() && !foreign_probe {
+                    continue;
+                }
+                let block = current.capacity_quota_block(class, reset, now);
+                current.insert_quota_block(class, block);
+                if !foreign_probe {
+                    current.generation = next_generation(current.generation)?;
+                }
                 changed = true;
             }
             if changed {
@@ -477,15 +489,135 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     }
     pub async fn select_account(
         &self,
-        model: &str,
+        model: &ModelId,
         class: CodexQuotaClass,
         now: i64,
     ) -> Result<RouteSelection, GatewayError> {
-        text(model)?;
+        if gateway_schema::reasoning::js_trim_source(model.as_js_string())
+            .as_units()
+            .is_empty()
+        {
+            return Err(invalid("Missing or oversized authority identity."));
+        }
+        self.select_account_source(model, class, now).await
+    }
+
+    /// Live preserves the source optional model and never mints an inference/quota/paid proof.
+    pub async fn select_live_account(
+        &self,
+        model: Option<&gateway_core::js_string::JsString16>,
+        now: i64,
+    ) -> Result<LiveRouteSelection, GatewayError> {
+        let lexical = model
+            .cloned()
+            .map(ModelId::from_source)
+            .unwrap_or_else(|| ModelId::from_scalar(""));
+        let class = model_quota_class(&lexical);
+        Ok(
+            match self.select_account_source(&lexical, class, now).await? {
+                RouteSelection::Eligible(a) => LiveRouteSelection::Eligible(LiveAccountSelection {
+                    binding: a.binding,
+                    active_generation: a.active_generation,
+                    quota_class: class,
+                    probe_required: a.probe_required,
+                    model: model.cloned(),
+                }),
+                RouteSelection::QuotaBlocked { retry_at_ms, .. } => {
+                    LiveRouteSelection::QuotaBlocked { retry_at_ms }
+                }
+                RouteSelection::CredentialsInvalid { .. } => LiveRouteSelection::CredentialsInvalid,
+                RouteSelection::ModelUnavailable { detail, .. } => {
+                    LiveRouteSelection::ModelUnavailable { detail }
+                }
+                RouteSelection::RoutingUnavailable => LiveRouteSelection::RoutingUnavailable,
+            },
+        )
+    }
+
+    pub async fn ensure_live_account_current(
+        &self,
+        selection: &LiveAccountSelection,
+        now: i64,
+    ) -> Result<(), GatewayError> {
+        validate_binding(&selection.binding)?;
+        for _ in 0..3 {
+            let mut tx = self.transaction(now)?;
+            let view = read_view(&mut tx).await?;
+            let slot = usize::try_from(selection.binding.slot)
+                .map_err(|_| invalid("Invalid live slot."))?;
+            if !view.current_binding(&selection.binding)
+                || view.active.as_ref().is_none_or(|active| {
+                    active.binding != selection.binding
+                        || active.generation != selection.active_generation
+                })
+                || view.state.slots[slot].invalid_credential_version.as_ref()
+                    == Some(&selection.binding.credential_version)
+            {
+                return Err(unavailable(
+                    "codex_routing_unavailable",
+                    "Live selection changed.",
+                ));
+            }
+            if tx.commit().await? {
+                return Ok(());
+            }
+        }
+        Err(unavailable(
+            "codex_routing_unavailable",
+            "Live selection changed concurrently.",
+        ))
+    }
+
+    pub async fn mark_live_credential_invalid(
+        &self,
+        selection: &LiveAccountSelection,
+        now: i64,
+    ) -> Result<bool, GatewayError> {
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
             let mut view = read_view(&mut tx).await?;
-            let prior: Option<RoutingState> = tx.read(&keys::routing()).await?;
+            if !view.current_binding(&selection.binding) {
+                return Ok(false);
+            }
+            let slot = &mut view.state.slots[selection.binding.slot as usize];
+            slot.invalid_credential_version = Some(selection.binding.credential_version.clone());
+            slot.upstream_timeout_blocked_until_ms = None;
+            slot.quota_signal_observed_at_ms = Some(now);
+            slot.retained_reset_at_ms = slot
+                .quota_blocks
+                .values()
+                .filter_map(|block| block.reset_at_ms)
+                .max()
+                .or(slot.retained_reset_at_ms);
+            slot.clear_quota_blocks();
+            slot.probe_lease = None;
+            tx.put(&keys::routing(), &view.state, None)?;
+            if tx.commit().await? {
+                return Ok(true);
+            }
+        }
+        Err(unavailable(
+            "codex_routing_unavailable",
+            "Live credential changed concurrently.",
+        ))
+    }
+
+    async fn select_account_source(
+        &self,
+        model: &ModelId,
+        class: CodexQuotaClass,
+        now: i64,
+    ) -> Result<RouteSelection, GatewayError> {
+        self.reconcile_capacity_for_model(model, now).await?;
+        for _ in 0..3 {
+            let mut tx = self.transaction(now)?;
+            let mut view = read_view(&mut tx).await?;
+            let prior = tx
+                .read::<serde_json::Value>(&keys::routing())
+                .await?
+                .as_ref()
+                .map(parse_routing_state)
+                .transpose()?;
             let evaluated: Vec<_> = view
                 .pool
                 .accounts
@@ -500,7 +632,10 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                         == active.binding.account_id_hash
                 })
             });
-            if prior.as_ref() != Some(&view.state) {
+            if prior.as_ref().is_none_or(|p| {
+                p.slots != view.state.slots
+                    || p.legacy_identity_unresolved != view.state.legacy_identity_unresolved
+            }) {
                 view.state.updated_at_ms = now;
                 tx.put(&keys::routing(), &view.state, None)?;
             }
@@ -633,6 +768,17 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     "Codex admission is stale.",
                 ));
             }
+            if let Some(probe) = &admission.probe {
+                let slot = &view.state.slots[admission.binding.slot as usize];
+                if slot.probe_lease.as_ref() != Some(probe)
+                    || probe.expires_at_ms <= self.fresh_time(now)?
+                {
+                    return Err(unavailable(
+                        "codex_routing_unavailable",
+                        "Codex probe lease is stale.",
+                    ));
+                }
+            }
             if tx.commit().await? {
                 return Ok(());
             }
@@ -649,27 +795,48 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         block: QuotaBlock,
         now: i64,
     ) -> Result<bool, GatewayError> {
+        self.record_bound_quota_block(
+            &admission.binding,
+            admission.quota_class,
+            admission.probe.as_ref(),
+            block,
+            now,
+        )
+        .await
+    }
+
+    /// Shared source writer; non-inference callers retain their own sealed physical dispatch.
+    pub(crate) async fn record_bound_quota_block(
+        &self,
+        binding: &AccountBinding,
+        class: CodexQuotaClass,
+        probe: Option<&ProbeLease>,
+        block: QuotaBlock,
+        now: i64,
+    ) -> Result<bool, GatewayError> {
         nonnegative(block.blocked_until_ms)?;
-        nonnegative(block.observed_at_ms)?;
+        if let Some(at) = block.observed_at_ms {
+            nonnegative(at)?;
+        }
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
-            let mut view = read_view(&mut tx).await?;
-            let slot_index = admission.binding.slot as usize;
+            let mut view = read_pinned_view(&mut tx).await?;
+            let slot_index = binding.slot as usize;
             let foreign_probe = view.state.slots.get(slot_index).is_some_and(|slot| {
-                slot.account_id_hash == admission.binding.account_id_hash
-                    && slot.credential_version == admission.binding.credential_version
-                    && view.pool.pool_versionstamp == admission.binding.pool_versionstamp
+                slot.account_id_hash.as_ref() == Some(&binding.account_id_hash)
+                    && slot.credential_version == binding.credential_version
+                    && view.pool.pool_versionstamp == binding.pool_versionstamp
                     && slot
                         .probe_lease
                         .as_ref()
-                        .is_some_and(|lease| lease.quota_class != admission.quota_class)
-                    && admission.probe.is_none()
+                        .is_some_and(|lease| lease.quota_class.is_some_and(|c| c != class))
+                    && probe.is_none()
             });
-            if !view.current_binding(&admission.binding) && !foreign_probe {
+            if !view.current_binding(binding) && !foreign_probe {
                 return Ok(false);
             }
-            let slot = &mut view.state.slots[admission.binding.slot as usize];
-            let prior = slot.quota_blocks.get(class_name(admission.quota_class));
+            let slot = &mut view.state.slots[binding.slot as usize];
+            let prior = slot.quota_blocks.get(class_name(class));
             if prior.is_some_and(|prior| prior.observed_at_ms > block.observed_at_ms) {
                 return Ok(false);
             }
@@ -679,8 +846,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 next.reset_ambiguous |= prior.reset_ambiguous
                     || (prior.reset_is_stable && prior.reset_at_ms != next.reset_at_ms);
             }
-            slot.quota_blocks
-                .insert(class_name(admission.quota_class).to_owned(), next);
+            slot.insert_quota_block(class, next);
             if !foreign_probe {
                 slot.probe_lease = None;
                 slot.generation = next_generation(slot.generation)?;
@@ -710,13 +876,15 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }
             let slot = &mut view.state.slots[admission.binding.slot as usize];
             slot.invalid_credential_version = Some(admission.binding.credential_version.clone());
+            slot.upstream_timeout_blocked_until_ms = None;
+            slot.quota_signal_observed_at_ms = Some(now);
             slot.retained_reset_at_ms = slot
                 .quota_blocks
                 .values()
                 .filter_map(|block| block.reset_at_ms)
                 .max()
                 .or(slot.retained_reset_at_ms);
-            slot.quota_blocks.clear();
+            slot.clear_quota_blocks();
             slot.probe_lease = None;
             tx.put(&keys::routing(), &view.state, None)?;
             if tx.commit().await? {
@@ -732,14 +900,11 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     pub async fn learn_model_unavailable(
         &self,
         admission: &AdmittedAccount,
-        detail: &str,
+        detail: &JsString16,
         now: i64,
     ) -> Result<bool, GatewayError> {
-        let expected = format!(
-            "The '{}' model is not supported when using Codex with a ChatGPT account.",
-            admission.requested_model
-        );
-        if detail != expected {
+        let expected = crate::source_models::unsupported_detail(&admission.requested_model);
+        if detail != &expected {
             return Ok(false);
         }
         for _ in 0..3 {
@@ -757,8 +922,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 id,
                 &admission.requested_model,
                 now,
+                self.source_string_collator(),
             )?;
-            tx.put(&keys::models(), &models, None)?;
+            tx.put_source_control(&keys::models(), &models, None)?;
             if tx.commit().await? {
                 return Ok(true);
             }

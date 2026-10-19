@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/gateway-core",
+  "crates/gateway-compaction",
   "crates/gateway-schema",
   "crates/gateway-providers",
   "crates/gateway-authority",
@@ -10,11 +11,16 @@ members = [
   "crates/gateway-admin",
   "crates/gateway-admin-data",
   "crates/gateway-admin-runtime",
+  "crates/gateway-migration",
+  "crates/gateway-claude-runtime",
+  "crates/gateway-observability",
   "crates/gateway-routing-runtime",
   "crates/gateway-extras-runtime",
   "crates/gateway-publication",
   "crates/gateway-native",
+  "crates/gateway-live-runtime",
   "crates/gateway-worker",
+  "crates/gateway-worker-fixture",
 ]
 exclude = ["vendor/webauthn-rs-core-0.6.1-dev"]
 resolver = "3"
@@ -31,6 +37,7 @@ serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 worker = "=0.8.7"
 wasm-bindgen = "=0.2.129"
 gateway-core = { path = "crates/gateway-core" }
+gateway-compaction = { path = "crates/gateway-compaction" }
 gateway-schema = { path = "crates/gateway-schema" }
 gateway-providers = { path = "crates/gateway-providers" }
 gateway-authority = { path = "crates/gateway-authority" }
@@ -40,10 +47,14 @@ gateway-auth = { path = "crates/gateway-auth" }
 gateway-admin = { path = "crates/gateway-admin" }
 gateway-admin-data = { path = "crates/gateway-admin-data" }
 gateway-admin-runtime = { path = "crates/gateway-admin-runtime" }
+gateway-migration = { path = "crates/gateway-migration" }
+gateway-claude-runtime = { path = "crates/gateway-claude-runtime" }
+gateway-observability = { path = "crates/gateway-observability" }
 gateway-routing-runtime = { path = "crates/gateway-routing-runtime" }
 gateway-extras-runtime = { path = "crates/gateway-extras-runtime" }
 gateway-publication = { path = "crates/gateway-publication" }
 gateway-native = { path = "crates/gateway-native" }
+gateway-live-runtime = { path = "crates/gateway-live-runtime" }
 
 [profile.release]
 lto = true

@@ -1,0 +1,114 @@
+{
+  "schema": "native-import-source-oracle-provenance-v1",
+  "claim": "Observed original Bun source outcomes with existing synthetic fixtures, not native/Rust gateway conformance",
+  "source": "5ac0ac0dbf574272afcfd682374ca58899ac02c5",
+  "source_tree": "7df1107257e1b20d184f83f71ea60a8e8b9a573a",
+  "capture_fixture_tree": "b3c63f06b8a563d5647bb33b5710f050e846de6d",
+  "runtime": {
+    "name": "Bun",
+    "version": "1.4.0",
+    "binary_sha256": "539598c775882420b9d8deb7dc14d845f20f7d26f5600c50ab067dde6ac3f3bf"
+  },
+  "source_archive_sha256": "3df8aa4172871aad34bc69be681078f77e05138f77745aac2e171f7c21d3d640",
+  "bun_lock_sha256": "f59f2e4a7c02583579a772e46c35b30eaed2346f54bcb1f4a05627f3ac63bbb8",
+  "source_files_sha256": {
+    "src/request.ts": "01e4281f713f7549cd5fe032a983582e9bbd596908da197c9cb1ed03f01e99f1",
+    "src/admin/codex.ts": "e94f5396aaf8394d067ebf2c65f8ac37b7dc7c963d7ad9d2a0d5f923efa08086",
+    "src/admin/defaults.ts": "4126f339b975d73eb234233400495a1bce6221d4e4d043ccdfc8febfd7e11a77",
+    "src/codex/auth.ts": "8cf6a85fb8480b2eb37382a92c9c6a7409874457c4b7826e82643add4d919d52",
+    "src/models/codex-models-fetch.ts": "eb18d8a89340714533cf4eb04c6f50eed486cfca71b1e95e4a22bd43b008479a",
+    "src/cache/kv-migration.ts": "87f0b6bd395a7643b24e47a5b2a1975ae51a9f3dadfc691b01cb4d9b4aba14c1",
+    "tests/helpers/admin-auth-harness.ts": "b7916aa9bc3d953090d875e333d50e0aa16b64d9f3b69c150f48ed9560120d44",
+    "tests/admin-codex-coverage.test.ts": "4a99cdba1a2aca7e1c03fab4d69327f8b385169af1a2b6b39341515911caac2a",
+    "tests/admin-auth-part1.test.ts": "508ee5985c9c6df9ffc0cf279218e515bb7ad289a50c90441b11e34a56ee179c"
+  },
+  "case_count": 49,
+  "captured_inputs_sha256": "4b4cd949d2a3ae7a3e1ca6c8f1e540179c3339f4f0b0e9e2ff3a855f4695037a",
+  "captured_outcomes_sha256": "df0a278d07e9de88eca452377ed42efb1bb726918b64a1596b1eac2a06e66949",
+  "oracle_script_at_capture_sha256": "1510e8471a2834ae14cb23de25dcf534da14d39b90c9ffffdebdeedb9ef504f5",
+  "capture": {
+    "reference": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/7113ac40-2cfa-4d89-9d83-3276b2f0e233",
+    "receipt": "/tmp/ai-rust-wasm-20261018/native-import-conformance-1823/oracle-raw-control-b3c63f06b8a5-receipt.json",
+    "exit": 0,
+    "argv": [
+      "/usr/bin/sandbox-exec",
+      "-f",
+      "/tmp/ai-rust-wasm-20261018/native-import-conformance-1823/oracle-raw-control-b3c63f06b8a5.sb",
+      "/usr/bin/env",
+      "-i",
+      "HOME=/tmp/ai-rust-wasm-20261018/native-import-conformance-1823/empty-home",
+      "PATH=/usr/bin:/bin:/usr/sbin:/sbin",
+      "TMPDIR=/tmp/ai-rust-wasm-20261018/native-import-conformance-1823",
+      "BUN_RUNTIME_TRANSPILER_CACHE_PATH=0",
+      "/Users/nv/repos/ubiquity/ai.ubq.fi/.data/runtimes/bun/bin/bun",
+      "--no-env-file",
+      "--no-install",
+      "/tmp/ai-rust-wasm-20261018/native-import-conformance-1823/oracle-raw-control-b3c63f06b8a5-snapshot/rust/crates/gateway-native/tests/fixtures/native-import-source/oracle.mjs",
+      "/tmp/ai-rust-wasm-20261018/native-import-conformance-1823/oracle-raw-control-b3c63f06b8a5-snapshot",
+      "/tmp/ai-rust-wasm-20261018/native-import-conformance-1823/oracle-raw-control-b3c63f06b8a5-snapshot/rust/crates/gateway-native/tests/fixtures/native-import-source/vectors.json",
+      "/tmp/ai-rust-wasm-20261018/native-import-conformance-1823/oracle-raw-control-b3c63f06b8a5-outcomes.json",
+      "/tmp/ai-rust-wasm-20261018/native-import-conformance-1823/denied/.env"
+    ],
+    "environment_sensitive_presence": false,
+    "dotenv": false,
+    "auto_install": false,
+    "network": "OS deny network*, same-profile raw socket connect_ex returned errno1; Bun1.4 reports ECONNREFUSED for the denied attempt",
+    "synthetic_env_read_error": "EPERM",
+    "os_network_control": {
+      "argv": [
+        "/usr/bin/sandbox-exec",
+        "-f",
+        "/tmp/ai-rust-wasm-20261018/native-import-conformance-1823/oracle-raw-control-b3c63f06b8a5.sb",
+        "/usr/bin/env",
+        "-i",
+        "HOME=/tmp/ai-rust-wasm-20261018/native-import-conformance-1823/empty-home",
+        "PATH=/usr/bin:/bin",
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        "-c",
+        "import socket,json; s=socket.socket(); e=s.connect_ex((\"127.0.0.1\",1)); s.close(); print(json.dumps({\"connect_errno\":e})); assert e==1"
+      ],
+      "exit": 0,
+      "stdout": "{\"connect_errno\": 1}\n",
+      "stderr": ""
+    },
+    "sandbox_sha256": "ea2381f1a2cd2b49b549864fa3e3f60aab83bd773449550e32e7a2dfd8d38686",
+    "host": "m1.local Darwin arm64"
+  },
+  "fixtures": {
+    "kv": "Existing tests/helpers/admin-auth-harness.ts resetHarness/kvStub, not a live DB",
+    "catalog": "Exact existing controlled200 fixture in tests/admin-codex-coverage.test.ts: admin codex auth stores the upstream catalog and reports catalog seeding",
+    "partial_profile": "Exact existing stringEntryLine default/model row plus malformed line in tests/admin-auth-part1.test.ts: admin KV migration import reports partial writes with HTTP422",
+    "clock_ms": 1767225600000,
+    "uuids": "Deterministic synthetic sequence; not live identity",
+    "large_input_generation": "Compact padded/repeat-byte descriptors; large byte arrays are temporary and zeroed after capture"
+  },
+  "observed_order": [
+    "KV unavailable is checked before body parsing/options",
+    "AUTH canonical safe-decimal Content-Length and bounded raw read precede auth shape; invalid/empty/over32MiB maps to route400",
+    "PROFILE profile selector is checked before body",
+    "PROFILE declared or UTF8-reencoded5MiB guard and req.text finish before write/dry_run conflict",
+    "PROFILE valid row can be applied before aggregate422; dry_run=false without write stays dry"
+  ],
+  "unproved": [
+    "No native route/MAC/action admission, source-currentness, cancellation, credential mutation or operational import",
+    "No remote401/429/refresh/catalog behavior; only the existing synthetic200 catalog fixture is invoked",
+    "No real persistence/SQLite/DB custody or profile inverse; partial row effect is observed against existing in-memory KV fixture",
+    "Exact32MiB AUTH case proves JSON boundary acceptance for an empty object, not a successful32MiB credential document",
+    "No Rust gateway or final candidate acceptance"
+  ],
+  "retained_failed_measurements": [
+    {
+      "reference": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/61f6a5c8-f7ff-49d6-98c4-43bd6815d82f",
+      "reason": "Initial control incorrectly expected Bun to expose EPERM; actual Bun errno was ECONNREFUSED. No source case ran."
+    },
+    {
+      "reference": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/0376f3ba-29e6-4280-b2cb-7a79ccedc604",
+      "reason": "Raw OS probe used /usr/bin/python3 launcher; its Xcode lookup could not fork under the profile. Corrected to the already-executing real Python executable. No source case ran."
+    }
+  ],
+  "derived_committed_expected": {
+    "sha256": "8bb354a798e991f04dc8c4d345ac277f189f02e4f278074fa0e76469ea924719",
+    "transformation": "Prettier whitespace only; JSON-value equality independently checked against immutable captured_outcomes_sha256",
+    "capture_input_or_value_changed": false
+  }
+}

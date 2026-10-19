@@ -225,3 +225,117 @@ fn closed_secrets_cross_records_but_unclosed_values_do_not() {
     let masked = gateway_native::redaction::redact_parts(&parts);
     assert_eq!(masked[1].text, "Working on refresh");
 }
+
+#[test]
+fn capped_follow_entries_remain_eligible_until_their_revision_is_emitted() {
+    let items: Vec<_> = (0..121).map(|index| json!({"type":"agentMessage","id":index.to_string(),"text":format!("visible {index}")})).collect();
+    let items = serde_json::Value::Array(items);
+    let mut revisions = std::collections::BTreeMap::new();
+    let first = select_follow_updates(extract_follow("turn", &items), -1, &mut revisions);
+    assert_eq!(first.len(), 120);
+    assert!(!revisions.contains_key("turn:0"));
+    let next = select_follow_updates(extract_follow("turn", &items), 120, &mut revisions);
+    assert_eq!(next.len(), 1);
+    assert_eq!(next[0].key, "turn:0");
+    let blank = json!([{"type":"agentMessage","id":"0","text":""}]);
+    let previous = revisions["turn:0"].clone();
+    assert!(select_follow_updates(extract_follow("turn", &blank), 120, &mut revisions).is_empty());
+    assert_eq!(revisions["turn:0"], previous);
+}
+
+#[cfg(unix)]
+struct FollowFixture {
+    replies: std::collections::VecDeque<Result<serde_json::Value, gateway_auth::GatewayError>>,
+    closed: bool,
+}
+#[cfg(unix)]
+impl SupervisorTransport for FollowFixture {
+    async fn call(
+        &mut self,
+        method: SupervisorMethod,
+        _: serde_json::Value,
+    ) -> Result<serde_json::Value, gateway_auth::GatewayError> {
+        assert_eq!(method, SupervisorMethod::ThreadTurnsList);
+        self.replies.pop_front().unwrap()
+    }
+    async fn close(&mut self) -> Result<(), gateway_auth::GatewayError> {
+        self.closed = true;
+        Ok(())
+    }
+}
+#[cfg(unix)]
+fn follow_thread() -> KnownThread {
+    InventoryScope {
+        generation: "fixture-generation".into(),
+        source: SourceId::parse("fixture").unwrap(),
+        available: true,
+        thread_ids: BTreeSet::from(["thread".into()]),
+    }
+    .select("thread")
+    .unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn follow_masks_full_fields_before_clipping_and_retains_the_raw_source_revision() {
+    let text = format!("{}password=\"fixture-hidden-value\"", "x".repeat(3990));
+    let items = json!([{"type":"commandExecution","id":"command","command":"password=\"fixture-cross-left","aggregatedOutput":"fixture-cross-right\" done"},{"type":"agentMessage","id":"message","text":text}]);
+    let raw_revisions: std::collections::BTreeMap<_, _> = extract_follow("turn", &items)
+        .into_iter()
+        .map(|entry| (entry.key, entry.revision))
+        .collect();
+    let mut transport = FollowFixture {
+        replies: std::collections::VecDeque::from([Ok(
+            json!({"data":[{"id":"turn","status":"inProgress","items":items}]}),
+        )]),
+        closed: false,
+    };
+    let update = futures_executor::block_on(follow_update(
+        &mut transport,
+        &follow_thread(),
+        "",
+        &mut std::collections::BTreeMap::new(),
+    ))
+    .unwrap();
+    assert!(transport.closed);
+    assert_eq!(update.entries.len(), 2);
+    for entry in &update.entries {
+        assert_eq!(entry.revision, raw_revisions[&entry.key]);
+        assert!(!entry.text.contains("fixture-hidden"));
+        assert!(!entry.text.contains("fixture-cross"));
+        assert!(
+            entry
+                .command
+                .as_ref()
+                .is_none_or(|command| !command.contains("fixture-cross"))
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_full_follow_read_keeps_the_cursor_of_the_last_recorded_summary_item() {
+    let summary = json!({"data":[{"id":"turn","items":[{"type":"agentMessage","id":"visible","text":"visible"},{"type":"agentMessage","id":"blank","text":""}]}]});
+    let mut transport = FollowFixture {
+        replies: std::collections::VecDeque::from([
+            Ok(summary),
+            Err(gateway_auth::GatewayError::unavailable(
+                "Fixture full view unavailable",
+                "fixture_unavailable",
+            )),
+        ]),
+        closed: false,
+    };
+    let mut revisions = std::collections::BTreeMap::new();
+    let update = futures_executor::block_on(follow_update(
+        &mut transport,
+        &follow_thread(),
+        "",
+        &mut revisions,
+    ))
+    .unwrap();
+    assert!(transport.closed);
+    assert_eq!(update.cursor, "turn:1");
+    assert_eq!(update.entries.len(), 1);
+    assert!(!revisions.contains_key("turn:blank"));
+}

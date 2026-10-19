@@ -3,12 +3,13 @@ use crate::{
     capabilities::{Context, RuntimeCapabilities},
     store,
 };
-use gateway_admin::{AdminInput, AdminOperation};
+use gateway_admin::{AdminInput, AdminOperation, source_input as source_body};
 use gateway_auth::{
     AuthHost, AuthResponse, conflict, invalid,
     store::{check, commit, put},
 };
 use gateway_core::{GatewayError, query::QueryStore};
+use gateway_core::{js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -67,47 +68,11 @@ fn selection(value: Option<&Value>) -> Option<Value> {
     Some(json!({"provider_ids":normalize_ids(&ids),"updated_at_ms":time}))
 }
 
-fn principal_ids(value: &Value) -> Result<Vec<String>, GatewayError> {
-    let values = value
-        .as_array()
-        .filter(|v| v.len() <= 1000)
-        .ok_or_else(|| invalid("allowed_key_ids must be an explicit array of principal IDs"))?;
-    let mut ids = BTreeSet::new();
-    for value in values {
-        let id = value
-            .as_str()
-            .filter(|s| {
-                !s.trim_matches(gateway_schema::util::js_whitespace)
-                    .is_empty()
-                    && s.encode_utf16().count() <= 256
-                    && !s.chars().any(|c| {
-                        gateway_schema::util::js_whitespace(c)
-                            || c == ','
-                            || (c as u32) < 32
-                            || c == '\x7f'
-                    })
-            })
-            .ok_or_else(|| invalid("allowed_key_ids must be an explicit array of principal IDs"))?;
-        ids.insert(id.to_owned());
-    }
-    Ok(ids.into_iter().collect())
-}
-
 impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
-    fn sorted_principals(&self, value: &Value) -> Result<Vec<String>, GatewayError> {
-        let mut ids = principal_ids(value)?;
-        let mut error = None;
-        ids.sort_by(|a, b| match self.capabilities.compare_admin_labels(a, b) {
-            Ok(order) => order,
-            Err(failure) => {
-                error = Some(failure);
-                std::cmp::Ordering::Equal
-            }
-        });
-        if let Some(error) = error {
-            return Err(error);
-        }
-        Ok(ids)
+    fn sorted_principals(&self, value: &SourceJson) -> Result<Vec<JsString16>, GatewayError> {
+        crate::claude_access::parse_source_ids(value, &|a, b| {
+            self.capabilities.compare_admin_labels(a, b)
+        })
     }
     pub(crate) async fn debug(
         &self,
@@ -156,19 +121,15 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             return Ok(AuthResponse::json(200, json!({"routing":value})));
         }
         let (scenario, duration) = if operation == AdminOperation::DebugDelete {
-            ("normal", 0)
+            (JsString16::from_utf8("normal"), 0)
         } else {
-            let scenario = input
-                .body
-                .get("scenario")
-                .and_then(Value::as_str)
-                .map(gateway_schema::util::js_trim)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| invalid("scenario is required"))?;
-            let duration = match input.body.get("duration_ms") {
+            let scenario =
+                crate::parse::source_text(source_body::member(&input.body, "scenario").as_ref())
+                    .ok_or_else(|| invalid("scenario is required"))?;
+            let duration = match source_body::member(&input.body, "duration_ms") {
                 None => 900000,
                 Some(value) => {
-                    let n = gateway_admin_data::profile::js_number(value);
+                    let n = crate::parse::source_coerced_number(&value);
                     if !n.is_finite() || n.fract() != 0.0 || !(0.0..=3600000.0).contains(&n) {
                         return Err(invalid("duration_ms must be between 0 and 3600000"));
                     }
@@ -177,9 +138,16 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             };
             (scenario, duration)
         };
-        if !SCENARIOS.contains(&scenario) {
-            return Err(invalid("Unknown debug routing scenario"));
-        }
+        let scenario = SCENARIOS
+            .into_iter()
+            .find(|candidate| {
+                scenario
+                    .as_units()
+                    .iter()
+                    .copied()
+                    .eq(candidate.encode_utf16())
+            })
+            .ok_or_else(|| invalid("Unknown debug routing scenario"))?;
         let value = json!({"scenario":scenario,"expires_at_ms":if scenario=="normal"||duration==0 {None}else{Some(input.now_ms+duration)},"updated_at_ms":input.now_ms});
         let row = self.store.read(&key).await?;
         if !commit(
@@ -228,33 +196,51 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             data["selection"] = selected;
             return Ok(AuthResponse::json(200, json!({"data":data})));
         }
-        let raw = input
-            .body
-            .get("provider_ids")
-            .and_then(Value::as_array)
+        let raw = source_body::member(&input.body, "provider_ids")
+            .and_then(|value| value.array_items().ok())
             .ok_or_else(|| invalid("provider_ids must be an array"))?;
-        let ids: Vec<String> = raw
+        let ids = raw
             .iter()
-            .map(|v| {
-                v.as_str()
-                    .map(|s| {
-                        s.trim_matches(gateway_schema::util::js_whitespace)
-                            .to_owned()
-                    })
+            .map(|value| {
+                source_body::text(value)
+                    .map(|text| source_body::trim(&text))
                     .ok_or_else(|| invalid("provider_ids must contain only strings"))
             })
-            .collect::<Result<_, _>>()?;
-        let unknown: Vec<_> = ids
+            .collect::<Result<Vec<_>, _>>()?;
+        let unknown = ids
             .iter()
-            .filter(|id| !provider_id(id))
-            .map(String::as_str)
-            .collect();
+            .filter(|id| id.try_utf8().ok().is_none_or(|text| !provider_id(&text)))
+            .collect::<Vec<_>>();
         if !unknown.is_empty() {
-            return Err(invalid(&format!(
-                "unknown provider ids: {}",
-                unknown.join(", ")
-            )));
+            let mut units = "unknown provider ids: ".encode_utf16().collect::<Vec<_>>();
+            for (index, id) in unknown.iter().enumerate() {
+                if index > 0 {
+                    units.extend(", ".encode_utf16());
+                }
+                units.extend_from_slice(id.as_units());
+            }
+            let message = JsString16::from_units(units);
+            if let Ok(message) = message.try_utf8() {
+                return Err(invalid(&message));
+            }
+            let error = gateway_schema::source_request::SourceRequestError::new(
+                400,
+                message,
+                "invalid_request_error",
+                Some("invalid_request_error"),
+                None,
+            );
+            return Ok(AuthResponse::source_json(
+                error.status,
+                error.body().clone(),
+            ));
         }
+        // Every accepted provider label has the independently closed ASCII
+        // roster/hash grammar above; only that proven field becomes scalar.
+        let ids = ids
+            .iter()
+            .map(|id| id.try_utf8().expect("validated closed provider label"))
+            .collect::<Vec<_>>();
         let ids = normalize_ids(&ids);
         let selected = json!({"provider_ids":ids,"updated_at_ms":input.now_ms});
         let row = self.store.read(&key).await?;
@@ -279,20 +265,28 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
     ) -> Result<AuthResponse, GatewayError> {
         let key = store::key(json!(["uos_ai", "claude_code_access", "v1"]));
         let policy = if operation == AdminOperation::ClaudeAccessSet {
-            let ids =
-                self.sorted_principals(input.body.get("allowed_key_ids").unwrap_or(&Value::Null))?;
-            let policy =
-                json!({"v":1,"source":"kv","allowed_key_ids":ids,"updated_at_ms":input.now_ms});
+            let ids = self.sorted_principals(
+                &source_body::member(&input.body, "allowed_key_ids")
+                    .unwrap_or_else(|| source_body::json(&())),
+            )?;
+            let policy = crate::claude_access::ClaudeAccessPolicy {
+                v: 1,
+                source: crate::claude_access::PolicySource::Kv,
+                allowed_key_ids: ids,
+                updated_at_ms: input.now_ms,
+            };
             let row = self.store.read(&key).await?;
             if !commit(
                 self.store,
                 vec![check(&key, row.as_ref())],
-                vec![put(
-                    key.clone(),
-                    &policy,
-                    None,
-                    &store::revision(self.host)?,
-                )?],
+                vec![gateway_core::state::RecordMutation::Put {
+                    key: key.clone(),
+                    record: crate::claude_access::encode_policy_record(
+                        &store::revision(self.host)?,
+                        &policy,
+                        None,
+                    )?,
+                }],
             )
             .await?
             {
@@ -300,57 +294,28 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             }
             policy
         } else {
-            let mut found = None;
-            for _ in 0..8 {
-                let row = self.store.read(&key).await?;
-                if let Some(value) = store::value(row.as_ref(), input.now_ms)? {
-                    if value.get("v") != Some(&json!(1))
-                        || ![Some("env"), Some("kv")]
-                            .contains(&value.get("source").and_then(Value::as_str))
-                        || value
-                            .get("updated_at_ms")
-                            .and_then(Value::as_i64)
-                            .is_none_or(|n| n <= 0)
-                    {
-                        return Err(store::corrupt(
-                            "Claude principal policy is invalid; refusing environment fallback",
-                        ));
-                    }
-                    let ids = self
-                        .sorted_principals(value.get("allowed_key_ids").unwrap_or(&Value::Null))
-                        .map_err(|_| {
-                            store::corrupt(
-                                "Claude principal policy is invalid; refusing environment fallback",
-                            )
-                        })?;
-                    found = Some(
-                        json!({"v":1,"source":value["source"],"allowed_key_ids":ids,"updated_at_ms":value["updated_at_ms"]}),
-                    );
-                    break;
-                }
-                let ids = self.sorted_principals(&json!(self.config.claude_allowed_key_ids))?;
-                let policy = json!({"v":1,"source":"env","allowed_key_ids":ids,"updated_at_ms":input.now_ms});
-                if commit(
-                    self.store,
-                    vec![check(&key, row.as_ref())],
-                    vec![put(
-                        key.clone(),
-                        &policy,
-                        None,
-                        &store::revision(self.host)?,
-                    )?],
-                )
-                .await?
-                {
-                    found = Some(policy);
-                    break;
-                }
-            }
-            found.ok_or_else(|| conflict("Claude principal policy changed repeatedly"))?
+            crate::claude_access::load_policy(
+                self.store,
+                self.host,
+                &self.config.claude_allowed_key_ids,
+                &|a, b| self.capabilities.compare_admin_labels(a, b),
+            )
+            .await?
+            .policy
         };
-        Ok(AuthResponse::json(
+        Ok(AuthResponse::source_json(
             200,
-            json!({"data":{"source":policy["source"],"allowed_key_ids":policy["allowed_key_ids"],"updated_at_ms":policy["updated_at_ms"]}}),
+            source_body::object(vec![(
+                "data",
+                source_body::object(vec![
+                    ("source", source_body::json(&policy.source)),
+                    (
+                        "allowed_key_ids",
+                        source_body::json(&policy.allowed_key_ids),
+                    ),
+                    ("updated_at_ms", source_body::json(&policy.updated_at_ms)),
+                ]),
+            )]),
         ))
     }
 }

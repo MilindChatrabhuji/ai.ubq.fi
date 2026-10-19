@@ -1,17 +1,22 @@
 //! Source administrative runtime over the common authority. External effects are finite injected capabilities.
+pub mod brief;
 pub mod capabilities;
 pub mod claude;
+pub mod claude_access;
 pub mod claude_generation;
 mod defaults;
 mod errors;
 mod kernel;
+mod kernel_data;
 mod paid;
 pub mod parse;
 mod state;
 mod store;
 
 use capabilities::*;
-use gateway_admin::{AdminHost, AdminInput, AdminOperation, PaidKeyFields};
+use gateway_admin::{
+    AdminHost, AdminInput, AdminOperation, PaidKeyFields, source_input as source_body,
+};
 use gateway_auth::{AuthHost, AuthResponse, invalid};
 use gateway_core::{GatewayError, query::QueryStore, state::RevisionCheck};
 use serde_json::{Value, json};
@@ -112,18 +117,41 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     .codex(CodexRequest::ResetSettings, context)
                     .await
             }
+            CodexResetConsume => {
+                let fields = gateway_core::source_serialization::entries(&input.body)
+                    .ok_or_else(|| invalid("Only account_id_hash is accepted."))?;
+                let hash = source_body::member(&input.body, "account_id_hash")
+                    .as_ref()
+                    .and_then(source_body::text)
+                    .filter(|hash| {
+                        hash.as_units().len() == 64
+                            && hash
+                                .as_units()
+                                .iter()
+                                .all(|unit| (48..=57).contains(unit) || (97..=102).contains(unit))
+                    })
+                    .filter(|_| fields.len() == 1)
+                    .ok_or_else(|| invalid("Only account_id_hash is accepted."))?;
+                let account_id_hash = String::from_utf16(hash.as_units())
+                    .expect("closed lowercase ASCII account hash");
+                self.capabilities
+                    .codex(CodexRequest::ConsumeReset { account_id_hash }, context)
+                    .await
+            }
             CodexResetUpdate | CodexOverageUpdate => {
                 let name = if operation == CodexResetUpdate {
                     "enabled"
                 } else {
                     "allow"
                 };
-                if input
-                    .body
-                    .get("account_id_hash")
-                    .and_then(Value::as_str)
+                if source_body::member(&input.body, "account_id_hash")
+                    .as_ref()
+                    .and_then(source_body::text)
                     .is_none()
-                    || input.body.get(name).and_then(Value::as_bool).is_none()
+                    || source_body::member(&input.body, name)
+                        .as_ref()
+                        .and_then(source_body::boolean)
+                        .is_none()
                 {
                     return Err(invalid(&format!(
                         "account_id_hash and boolean {name} are required"
@@ -169,7 +197,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     .await
             }
             CacheExperimentSet => {
-                let body = input.body.as_str().ok_or_else(|| {
+                let body: String = input.body.deserialize().map_err(|_| {
                     GatewayError::unavailable(
                         "Scope experiment requires its original raw body",
                         "admin_raw_body_unavailable",
@@ -235,7 +263,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
             ClaudeAuthSet => {
                 self.capabilities
                     .claude(
-                        ClaudeRequest::SetCredential(parse::claude(&input.body)?),
+                        ClaudeRequest::SetCredential(parse::claude_source(&input.body)?),
                         context,
                     )
                     .await
@@ -244,46 +272,34 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 self.capabilities
                     .claude(
                         ClaudeRequest::DeleteAccount {
-                            account_id: parse::first(&input.query, "account_id").map(str::to_owned),
+                            account_id: parse::first(&input.query, "account_id")
+                                .map(gateway_core::js_string::JsString16::from_utf8),
                         },
                         context,
                     )
                     .await
             }
             ClaudeAccountSelect => {
-                let id = input
-                    .body
-                    .get("account_id")
-                    .and_then(Value::as_str)
+                let id = source_body::member(&input.body, "account_id")
+                    .as_ref()
+                    .and_then(source_body::text)
                     .ok_or_else(|| invalid("account_id is required"))?;
                 self.capabilities
-                    .claude(
-                        ClaudeRequest::SelectAccount {
-                            account_id: id.into(),
-                        },
-                        context,
-                    )
+                    .claude(ClaudeRequest::SelectAccount { account_id: id }, context)
                     .await
             }
             ClaudeQuotaClear => {
-                if input.body.get("account_id").is_some_and(|v| !v.is_string()) {
+                let account_value = source_body::member(&input.body, "account_id");
+                if account_value
+                    .as_ref()
+                    .is_some_and(|value| source_body::text(value).is_none())
+                {
                     return Err(invalid("account_id must be a string"));
                 }
-                let account_id = input
-                    .body
-                    .get("account_id")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                let cohort_id = input
-                    .body
-                    .get("account_cohort_id")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                if account_id.as_ref().is_some_and(|id| !id.is_empty()) && cohort_id.is_none() {
-                    return Err(invalid(
-                        "account_cohort_id is required for a targeted clear",
-                    ));
-                }
+                let account_id = account_value.as_ref().and_then(source_body::text);
+                let cohort_id = source_body::member(&input.body, "account_cohort_id");
+                // Account lookup and the targeted-cohort check belong to the
+                // actual owner in this source order; no early UUID/scalar gate.
                 self.capabilities
                     .claude(
                         ClaudeRequest::ClearQuota {
@@ -399,8 +415,18 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     )
                 } else {
                     (
-                        parse::text(input.body.get("source")).unwrap_or_default(),
-                        parse::text(input.body.get("id")).unwrap_or_default(),
+                        source_body::member(&input.body, "source")
+                            .as_ref()
+                            .and_then(source_body::text)
+                            .map(|value| source_body::trim(&value))
+                            .and_then(|value| value.try_utf8().ok())
+                            .unwrap_or_default(),
+                        source_body::member(&input.body, "id")
+                            .as_ref()
+                            .and_then(source_body::text)
+                            .map(|value| source_body::trim(&value))
+                            .and_then(|value| value.try_utf8().ok())
+                            .unwrap_or_default(),
                     )
                 };
                 if source_id.is_empty()
@@ -468,7 +494,10 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
     ) -> Result<(), GatewayError> {
         self.abort_deletion(key_id, prepared_checks).await
     }
-    async fn paid_key_policy(&self, body: &Value) -> Result<PaidKeyFields, GatewayError> {
+    async fn paid_key_policy(
+        &self,
+        body: &gateway_core::source_json::SourceJson,
+    ) -> Result<PaidKeyFields, GatewayError> {
         self.paid_policy(body).await
     }
 }
@@ -496,7 +525,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         if response.status >= 400 && response.stream.is_none() {
             return Ok(response);
         }
-        let body = &response.body;
+        let body = response.body.as_json().ok_or_else(|| {
+            GatewayError::unavailable(
+                "Supervisor brief capability did not return the final public source response",
+                "supervisor_brief_invalid_response",
+            )
+        })?;
         let fields = [
             "sourceId",
             "threadId",
@@ -572,7 +606,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         NativeRpcResponse {
             v: NATIVE_WIRE_VERSION,
             status: response.status,
-            body: response.body.clone(),
+            body: response.body.as_json().cloned().ok_or_else(|| {
+                GatewayError::unavailable(
+                    "Native protocol response is invalid",
+                    "native_protocol_invalid",
+                )
+            })?,
             stream: response.stream.clone(),
         }
         .validate_for(&envelope)?;

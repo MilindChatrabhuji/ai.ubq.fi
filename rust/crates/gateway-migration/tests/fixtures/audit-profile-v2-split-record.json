@@ -1,0 +1,133 @@
+{
+  "source_sha": "0b740dfafdf32fd14706533c9c3816805c759611",
+  "key": "tuple-v1:02756f735f616900026170695f6b65797300026368616e67650021c33ffe5ce7a3afff0230303030303030302d303030302d343030302d383030302d30303030303030303030303100",
+  "record": {
+    "schema_version": 1,
+    "value_encoding": "profile-v2",
+    "revision": "revision",
+    "value": {
+      "type": "object",
+      "value": [
+        [
+          "id",
+          {
+            "type": "string",
+            "value": "00000000-0000-4000-8000-000000000001"
+          }
+        ],
+        [
+          "at_ms",
+          {
+            "type": "number_bits",
+            "value": "427a3185c5000000"
+          }
+        ],
+        [
+          "action",
+          {
+            "type": "string",
+            "value": "create"
+          }
+        ],
+        [
+          "actor",
+          {
+            "type": "object",
+            "value": [
+              [
+                "kind",
+                {
+                  "type": "string",
+                  "value": "unknown"
+                }
+              ],
+              [
+                "principal_id",
+                {
+                  "type": "null"
+                }
+              ],
+              [
+                "principal_label",
+                {
+                  "type": "null"
+                }
+              ],
+              [
+                "is_super_admin",
+                {
+                  "type": "boolean",
+                  "value": false
+                }
+              ]
+            ]
+          }
+        ],
+        [
+          "target_key_id",
+          {
+            "type": "string",
+            "value": "key"
+          }
+        ],
+        [
+          "target_key_name",
+          {
+            "type": "string_utf16",
+            "value": [
+              97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+              97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+              97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+              97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+              97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+              97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+              97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+              97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 55357
+            ]
+          }
+        ],
+        [
+          "changed",
+          {
+            "type": "object",
+            "value": [
+              [
+                "name",
+                {
+                  "type": "string_utf16",
+                  "value": [
+                    97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+                    97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+                    97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+                    97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+                    97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+                    97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+                    97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+                    97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97,
+                    55357
+                  ]
+                }
+              ]
+            ]
+          }
+        ],
+        [
+          "request_id",
+          {
+            "type": "string",
+            "value": "request"
+          }
+        ],
+        [
+          "release",
+          {
+            "type": "string",
+            "value": "synthetic-release"
+          }
+        ]
+      ]
+    },
+    "expires_at_ms": 1807776000000
+  },
+  "expected_source_json": "{\"id\":\"00000000-0000-4000-8000-000000000001\",\"at_ms\":1800000000000,\"action\":\"create\",\"actor\":{\"kind\":\"unknown\",\"principal_id\":null,\"principal_label\":null,\"is_super_admin\":false},\"target_key_id\":\"key\",\"target_key_name\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\ud83d\",\"changed\":{\"name\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\ud83d\"},\"request_id\":\"request\",\"release\":\"synthetic-release\"}"
+}

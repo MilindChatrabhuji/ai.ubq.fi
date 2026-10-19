@@ -2,10 +2,20 @@
 //! The store must atomically commit every check and mutation, durably, before returning.
 //! Independent records preserve history without a bounded whole-ledger snapshot.
 
+pub mod cache_experiment;
+pub mod capacity;
+mod capacity_rules;
 pub mod claude;
+pub mod full_pool_reset;
 mod kernel;
 pub mod keys;
+pub mod local_api_release;
+pub mod local_completion;
+pub mod manual_reset;
+pub mod native_control;
+pub mod native_live;
 pub mod paid;
+pub mod paid_backfill;
 pub mod paid_control;
 mod paid_types;
 mod probes;
@@ -14,10 +24,13 @@ pub mod reset;
 mod reset_recovery;
 mod reset_types;
 pub mod routing;
+mod routing_codec;
+mod routing_rules;
 mod routing_types;
 mod source_models;
 mod store;
 
+pub use paid_types::model_map as source_model_map;
 pub use store::{Authority, AuthorityClock, TokenSource};
 
 use gateway_core::GatewayError;

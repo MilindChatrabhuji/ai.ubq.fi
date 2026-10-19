@@ -7,6 +7,7 @@ pub mod operations;
 pub mod reads;
 pub mod routes;
 pub mod service;
+pub mod source_input;
 
 pub use operations::*;
 pub use routes::*;

@@ -1,16 +1,25 @@
+use crate::kernel_data::{
+    SourcePolicy, SourceWindow, canonical, data_put, data_read, data_value, decode_policy, expiry,
+    identity_fields, limit, new_window, part, physical_labels, positive, source_truth, summary,
+    summary_document, target, validate_window, window_document,
+};
 use crate::{AdminRuntime, capabilities::RuntimeCapabilities, parse, store};
-use gateway_admin::{AdminInput, AdminOperation};
+use gateway_admin::{AdminInput, AdminOperation, source_input as body};
 use gateway_auth::{
     AuthHost, AuthResponse, conflict, invalid,
     store::{check, commit, put},
 };
 use gateway_authority::{
     keys,
-    quota::{KernelDefaults, KernelPolicy, KernelReservation, KernelTerminal, KernelWindow},
+    quota::{KernelDefaults, KernelReservation, KernelTerminal},
 };
 use gateway_core::{
     GatewayError,
+    js_string::JsString16,
     query::QueryStore,
+    source_control::decode_source_control_record,
+    source_json::SourceJson,
+    source_serialization as source,
     state::{RecordKey, RecordMutation, StoredRecord},
 };
 use serde_json::{Value, json};
@@ -23,94 +32,6 @@ pub(crate) fn default_limit_key() -> RecordKey {
 pub(crate) fn default_window_key() -> RecordKey {
     store::key(json!(["default", "kernel_policy_window_ms"]))
 }
-fn part(value: Option<&Value>) -> Option<String> {
-    parse::text(value).filter(|s| {
-        s.encode_utf16().count() <= 100
-            && !s.chars().any(gateway_schema::util::js_whitespace)
-            && !s.contains('/')
-    })
-}
-fn scope(value: Option<&Value>) -> bool {
-    value.and_then(Value::as_str).is_some_and(|s| {
-        s.trim_matches(gateway_schema::util::js_whitespace)
-            .eq_ignore_ascii_case("org")
-    })
-}
-fn target(value: &Value) -> Result<(String, Option<String>), GatewayError> {
-    let owner = part(value.get("owner")).ok_or_else(|| invalid("owner is required"))?;
-    let repo = part(value.get("repo"));
-    let org = if value.get("scope").is_some() {
-        scope(value.get("scope"))
-    } else {
-        repo.is_none()
-    };
-    if org && repo.is_some() {
-        return Err(invalid("repo must be omitted for scope=org"));
-    }
-    if !org && repo.is_none() {
-        return Err(invalid("repo is required for scope=repo"));
-    }
-    Ok((owner, repo))
-}
-fn decode_policy(
-    value: Value,
-    owner: &str,
-    repo: Option<&str>,
-) -> Result<KernelPolicy, GatewayError> {
-    let policy: KernelPolicy = serde_json::from_value(value)
-        .map_err(|_| store::corrupt("Kernel quota policy is malformed"))?;
-    if policy.v != 2
-        || policy.owner != owner
-        || policy.repo.as_deref() != repo
-        || policy.usage_limit_requests < -1
-        || policy.window_ms <= 0
-        || policy.expires_at_ms < -1
-    {
-        return Err(store::corrupt("Kernel quota policy is malformed"));
-    }
-    Ok(policy)
-}
-fn validate_window(
-    value: Value,
-    owner: &str,
-    repo: Option<&str>,
-) -> Result<KernelWindow, GatewayError> {
-    let window: KernelWindow = serde_json::from_value(value)
-        .map_err(|_| store::corrupt("Kernel quota window is malformed"))?;
-    if window.v != 2
-        || window.owner != owner
-        || window.repo.as_deref() != repo
-        || window.reserved_requests != window.reservations.len() as i64
-        || window.usage_requests < 0
-        || window.applied_window_ms <= 0
-        || window.usage_reset_at_ms <= window.created_at_ms
-    {
-        return Err(store::corrupt("Kernel quota window is malformed"));
-    }
-    Ok(window)
-}
-fn new_window(owner: &str, repo: Option<&str>, window_ms: i64, now: i64) -> KernelWindow {
-    KernelWindow {
-        v: 2,
-        owner: owner.into(),
-        repo: repo.map(str::to_owned),
-        usage_requests: 0,
-        reserved_requests: 0,
-        created_at_ms: now,
-        usage_reset_at_ms: now + window_ms,
-        applied_window_ms: window_ms,
-        updated_at_ms: now,
-        reservations: BTreeMap::new(),
-    }
-}
-fn summary(policy: &KernelPolicy, window: &KernelWindow, now: i64) -> Value {
-    let mut row = json!({"owner":policy.owner,"usage_limit_requests":policy.usage_limit_requests,"usage_requests":window.usage_requests,"usage_reset_at_ms":window.usage_reset_at_ms,"window_ms":policy.window_ms,"expires_at_ms":policy.expires_at_ms,"created_at_ms":if window.created_at_ms==0{now}else{window.created_at_ms},"updated_at_ms":window.updated_at_ms.max(now)});
-    if let Some(repo) = &policy.repo {
-        row["repo"] = json!(repo)
-    }
-    row
-}
-
 impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
     pub(crate) async fn kernel_defaults(&self, now: i64) -> Result<KernelDefaults, GatewayError> {
         let combined = store::read(self.store, &keys::kernel_defaults(), now).await?;
@@ -135,14 +56,14 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
     /// Reconcile only this common authority window and its exact durable reservation rows.
     pub(crate) async fn kernel_window(
         &self,
-        owner: &str,
-        repo: Option<&str>,
+        owner: &JsString16,
+        repo: Option<&JsString16>,
         now: i64,
-    ) -> Result<Option<KernelWindow>, GatewayError> {
-        let key = keys::kernel_window(owner, repo);
+    ) -> Result<Option<SourceWindow>, GatewayError> {
+        let key = keys::kernel_window_source(owner, repo)?;
         for _ in 0..3 {
             let row = self.store.read(&key).await?;
-            let Some(value) = store::value(row.as_ref(), now)? else {
+            let Some(value) = data_value(row.as_ref(), now)? else {
                 return Ok(None);
             };
             let mut window = validate_window(value, owner, repo)?;
@@ -150,7 +71,14 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             let mut writes = Vec::new();
             let mut retained = BTreeMap::new();
             for (id, expiry) in &window.reservations {
-                let rk = keys::kernel_request(owner, repo, window.created_at_ms, id);
+                let scalar_owner = owner.try_utf8()?;
+                let scalar_repo = repo.map(JsString16::try_utf8).transpose()?;
+                let rk = keys::kernel_request(
+                    &scalar_owner,
+                    scalar_repo.as_deref(),
+                    window.created_at_ms,
+                    id,
+                );
                 let rr = self.store.read(&rk).await?;
                 let mut reservation: KernelReservation = store::value(rr.as_ref(), now)?
                     .map(|v| {
@@ -160,8 +88,13 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     .transpose()?
                     .ok_or_else(|| store::corrupt("Kernel reservation is missing"))?;
                 reservation.validate()?;
-                if reservation.owner != owner
-                    || reservation.repo.as_deref() != repo
+                if JsString16::from_utf8(&reservation.owner) != *owner
+                    || reservation
+                        .repo
+                        .as_ref()
+                        .map(|v| JsString16::from_utf8(v))
+                        .as_ref()
+                        != repo
                     || reservation.request_id.0 != *id
                     || reservation.window_created_at_ms != window.created_at_ms
                     || reservation.window_reset_at_ms != window.usage_reset_at_ms
@@ -205,9 +138,9 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             window.reservations = retained;
             window.reserved_requests = window.reservations.len() as i64;
             window.updated_at_ms = now;
-            writes.push(put(
+            writes.push(data_put(
                 key.clone(),
-                &window,
+                &window_document(&window),
                 Some(window.usage_reset_at_ms + WEEK),
                 &store::revision(self.host)?,
             )?);
@@ -221,32 +154,36 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         for (name, repo_scope) in [("repo_window", true), ("org_window", false)] {
             let prefix = store::key(json!(["uos_ai", "kernel_quota", "v2", name]));
             for entry in store::scan(self.store, prefix, false, now).await? {
-                let value = entry.record.json_value()?;
-                let owner = value
-                    .get("owner")
-                    .and_then(Value::as_str)
+                let raw = decode_source_control_record(&entry.record)?;
+                let owner = body::member(&raw, "owner")
+                    .as_ref()
+                    .and_then(body::text)
                     .ok_or_else(|| store::corrupt("Kernel window owner is missing"))?;
                 let repo = if repo_scope {
                     Some(
-                        value
-                            .get("repo")
-                            .and_then(Value::as_str)
+                        body::member(&raw, "repo")
+                            .as_ref()
+                            .and_then(body::text)
                             .ok_or_else(|| store::corrupt("Kernel window repo is missing"))?,
                     )
                 } else {
                     None
                 };
-                if entry.key != keys::kernel_window(owner, repo) {
+                if entry.key != keys::kernel_window_source(&owner, repo.as_ref())? {
                     return Err(store::corrupt("Kernel window key identity is malformed"));
                 }
-                if let Some(value) =
-                    store::read(self.store, &keys::kernel_policy(owner, repo), now).await?
+                if let Some(value) = data_read(
+                    self.store,
+                    &keys::kernel_policy_source(&owner, repo.as_ref())?,
+                    now,
+                )
+                .await?
                 {
-                    decode_policy(value, owner, repo)?;
+                    decode_policy(value, &owner, repo.as_ref())?;
                     continue;
                 }
                 if self
-                    .kernel_window(owner, repo, now)
+                    .kernel_window(&owner, repo.as_ref(), now)
                     .await?
                     .is_some_and(|w| w.reserved_requests > 0)
                 {
@@ -258,30 +195,70 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
     }
     async fn policy_summary(
         &self,
-        owner: &str,
-        repo: Option<&str>,
+        owner: &JsString16,
+        repo: Option<&JsString16>,
         now: i64,
-    ) -> Result<Value, GatewayError> {
+    ) -> Result<SourceJson, GatewayError> {
         let defaults = self.kernel_defaults(now).await?;
-        let explicit = store::read(self.store, &keys::kernel_policy(owner, repo), now).await?;
-        let source = if explicit.is_some() { "kv" } else { "default" };
+        let explicit =
+            data_read(self.store, &keys::kernel_policy_source(owner, repo)?, now).await?;
+        let selected = if explicit.is_some() { "kv" } else { "default" };
         let policy = explicit
             .map(|v| decode_policy(v, owner, repo))
             .transpose()?
-            .unwrap_or(KernelPolicy {
+            .unwrap_or(SourcePolicy {
                 v: 2,
-                owner: owner.into(),
-                repo: repo.map(str::to_owned),
+                owner: owner.clone(),
+                repo: repo.cloned(),
                 usage_limit_requests: defaults.usage_limit_requests,
                 window_ms: defaults.window_ms,
-                expires_at_ms: -1,
+                expires_at_ms: -1.0,
             });
-        let existing = self.kernel_window(owner, repo, now).await?;
-        let window = existing
-            .filter(|w| w.applied_window_ms == policy.window_ms && w.usage_reset_at_ms > now)
-            .unwrap_or_else(|| new_window(owner, repo, policy.window_ms, now));
-        let mut result = summary(&policy, &window, now);
-        result["source"] = json!(source);
+        self.summary_for_policy(&policy, selected, now).await
+    }
+    async fn summary_for_policy(
+        &self,
+        policy: &SourcePolicy,
+        selected: &str,
+        now: i64,
+    ) -> Result<SourceJson, GatewayError> {
+        let raw = data_read(
+            self.store,
+            &keys::kernel_window_source(&policy.owner, policy.repo.as_ref())?,
+            now,
+        )
+        .await?;
+        let window = raw
+            .as_ref()
+            .and_then(|v| {
+                if body::member(v, "scope").is_some() {
+                    SourceWindow::normalize_source_document(v, &policy.owner, policy.repo.as_ref())
+                } else {
+                    validate_window(v.clone(), &policy.owner, policy.repo.as_ref())
+                        .ok()
+                        .map(|w| window_document(&w))
+                }
+            })
+            .filter(|w| {
+                body::member(w, "applied_window_ms")
+                    .as_ref()
+                    .and_then(body::number)
+                    == Some(policy.window_ms as f64)
+                    && body::member(w, "usage_reset_at_ms")
+                        .as_ref()
+                        .and_then(body::number)
+                        .is_some_and(|v| v > now as f64)
+            })
+            .unwrap_or_else(|| {
+                window_document(&new_window(
+                    &policy.owner,
+                    policy.repo.as_ref(),
+                    policy.window_ms,
+                    now,
+                ))
+            });
+        let mut result = summary_document(policy, &window, now);
+        body::set(&mut result, "source", body::json(selected));
         Ok(result)
     }
     pub(crate) async fn kernel(
@@ -291,81 +268,125 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
     ) -> Result<AuthResponse, GatewayError> {
         let now = input.now_ms;
         if op == AdminOperation::KernelQueue {
-            let queue = store::read(
+            let raw = data_read(
                 self.store,
                 &store::key(json!(["uos_ai", "kernel_policy_queue"])),
                 now,
             )
-            .await?
-            .unwrap_or_else(|| json!([]));
+            .await?;
+            let rows = raw
+                .as_ref()
+                .and_then(|v| v.array_items().ok())
+                .unwrap_or_default();
             let mut pending = Vec::new();
-            for row in queue
-                .as_array()
-                .ok_or_else(|| store::corrupt("Kernel policy queue is malformed"))?
-            {
-                let (Some(owner), Some(repo)) = (part(row.get("owner")), part(row.get("repo")))
-                else {
+            for row in rows {
+                let label = |name| {
+                    body::member(&row, name)
+                        .as_ref()
+                        .and_then(body::text)
+                        .map(|s| body::trim(&s))
+                        .filter(|s| !s.as_units().is_empty())
+                };
+                let (Some(owner), Some(repo)) = (label("owner"), label("repo")) else {
                     continue;
                 };
-                if store::read(self.store, &keys::kernel_policy(&owner, None), now)
+                let org =
+                    data_read(self.store, &keys::kernel_policy_source(&owner, None)?, now).await?;
+                let explicit = if org.as_ref().is_some_and(source_truth) {
+                    None
+                } else {
+                    data_read(
+                        self.store,
+                        &keys::kernel_policy_source(&owner, Some(&repo))?,
+                        now,
+                    )
                     .await?
-                    .is_none()
-                    && store::read(self.store, &keys::kernel_policy(&owner, Some(&repo)), now)
-                        .await?
-                        .is_none()
+                };
+                if org.as_ref().is_some_and(source_truth)
+                    || explicit.as_ref().is_some_and(source_truth)
                 {
-                    pending.push(row.clone())
+                    continue;
                 }
+                let number = |name, fallback| {
+                    body::member(&row, name)
+                        .as_ref()
+                        .and_then(body::number)
+                        .filter(|n| n.is_finite())
+                        .map(f64::trunc)
+                        .unwrap_or(fallback)
+                };
+                let last = number("last_seen_at_ms", now as f64);
+                pending.push((
+                    last,
+                    body::object(vec![
+                        ("owner", body::json(&owner)),
+                        ("repo", body::json(&repo)),
+                        (
+                            "request_count",
+                            body::json(&number("request_count", 0.0).max(0.0)),
+                        ),
+                        (
+                            "first_seen_at_ms",
+                            body::json(&number("first_seen_at_ms", now as f64)),
+                        ),
+                        ("last_seen_at_ms", body::json(&last)),
+                        (
+                            "last_route",
+                            label("last_route")
+                                .as_ref()
+                                .map_or_else(|| body::json(&Value::Null), body::json),
+                        ),
+                    ]),
+                ));
             }
-            pending.sort_by_key(|row| {
-                std::cmp::Reverse(
-                    row.get("last_seen_at_ms")
-                        .and_then(Value::as_i64)
-                        .unwrap_or(now),
-                )
+            pending.sort_by(|a, b| {
+                b.0.partial_cmp(&a.0)
+                    .expect("normalized finite queue times")
             });
-            return Ok(AuthResponse::json(200, json!({"data":pending})));
+            let data =
+                source::json_array(&pending.into_iter().map(|(_, v)| v).collect::<Vec<_>>())?;
+            return Ok(AuthResponse::source_json(
+                200,
+                canonical(body::object(vec![("data", data)])),
+            ));
         }
         if op == AdminOperation::KernelUsageGet {
             return self.kernel_get(input).await;
         }
         let (owner, repo) = target(&input.body)?;
-        let key = keys::kernel_policy(&owner, repo.as_deref());
-        let window_key = keys::kernel_window(&owner, repo.as_deref());
+        let key = keys::kernel_policy_source(&owner, repo.as_ref())?;
+        let window_key = keys::kernel_window_source(&owner, repo.as_ref())?;
         let limit = if op == AdminOperation::KernelUsageSet {
-            Some(input.body.get("usage_limit_requests").and_then(parse::limit).ok_or_else(||invalid("usage_limit_requests must be a non-negative number, -1, or 'unlimited'"))?)
+            Some(body::member(&input.body,"usage_limit_requests").as_ref().and_then(limit).ok_or_else(||invalid("usage_limit_requests must be a non-negative number, -1, or 'unlimited'"))?)
         } else {
             None
         };
-        let window = input
-            .body
-            .get("window_ms")
+        let window = body::member(&input.body, "window_ms")
+            .map(|v| positive(&v).ok_or_else(|| invalid("window_ms must be a positive number")))
+            .transpose()?;
+        let expires = body::member(&input.body, "expires_at_ms")
             .map(|v| {
-                parse::positive(v).ok_or_else(|| invalid("window_ms must be a positive number"))
+                expiry(&v, now).ok_or_else(|| {
+                    invalid("expires_at_ms must be a Unix epoch ms timestamp in the future, or -1")
+                })
             })
             .transpose()?;
-        let expiry = input
-            .body
-            .get("expires_at_ms")
-            .map(|v| {
-                parse::integer(v)
-                    .filter(|n| *n == -1 || *n > now)
-                    .ok_or_else(|| {
-                        invalid(
-                            "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1",
-                        )
-                    })
-            })
-            .transpose()?;
-        if input
-            .body
-            .get("reset_usage")
-            .is_some_and(|v| !v.is_boolean())
-        {
+        if body::member(&input.body, "reset_usage").is_some_and(|v| body::boolean(&v).is_none()) {
             return Err(invalid("reset_usage must be a boolean"));
         }
         for _ in 0..3 {
-            self.kernel_window(&owner, repo.as_deref(), now).await?;
+            if op == AdminOperation::KernelUsageDelete
+                && data_read(self.store, &key, now).await?.is_none()
+            {
+                return Err(GatewayError::new(
+                    404,
+                    "Kernel usage limit not found",
+                    Some("not_found"),
+                ));
+            }
+            self.kernel_window(&owner, repo.as_ref(), now)
+                .await
+                .map_err(|_| conflict("Concurrent modification; retry"))?;
             let defaults = self.kernel_defaults(now).await?;
             let row = self.store.read(&key).await?;
             let window_row = self.store.read(&window_key).await?;
@@ -374,7 +395,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             if store::value(cutover.as_ref(), now)?.is_some() {
                 return Err(conflict("Kernel default-window cutover is in progress"));
             }
-            let explicit = store::value(row.as_ref(), now)?;
+            let explicit = data_value(row.as_ref(), now)?;
             if explicit.is_none() && op == AdminOperation::KernelUsageDelete {
                 return Err(GatewayError::new(
                     404,
@@ -383,11 +404,13 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 ));
             }
             let old = explicit
-                .map(|v| decode_policy(v, &owner, repo.as_deref()))
-                .transpose()?;
-            let current_window = store::value(window_row.as_ref(), now)?
-                .map(|v| validate_window(v, &owner, repo.as_deref()))
-                .transpose()?;
+                .map(|v| decode_policy(v, &owner, repo.as_ref()))
+                .transpose()
+                .map_err(|_| conflict("Concurrent modification; retry"))?;
+            let current_window = data_value(window_row.as_ref(), now)?
+                .map(|v| validate_window(v, &owner, repo.as_ref()))
+                .transpose()
+                .map_err(|_| conflict("Concurrent modification; retry"))?;
             let current_ms = old
                 .as_ref()
                 .map(|p| p.window_ms)
@@ -397,8 +420,11 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             } else {
                 defaults.window_ms
             };
-            let reset =
-                input.body.get("reset_usage") == Some(&Value::Bool(true)) || current_ms != next_ms;
+            let reset = body::member(&input.body, "reset_usage")
+                .as_ref()
+                .and_then(body::boolean)
+                == Some(true)
+                || current_ms != next_ms;
             if current_window
                 .as_ref()
                 .is_some_and(|w| w.reserved_requests > 0)
@@ -408,13 +434,13 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     "Active Kernel quota reservations must settle before changing this policy",
                 ));
             }
-            let org_key = keys::kernel_policy(&owner, None);
+            let org_key = keys::kernel_policy_source(&owner, None)?;
             let org_row = if repo.is_some() && row.is_none() {
                 self.store.read(&org_key).await?
             } else {
                 None
             };
-            let org_window_key = keys::kernel_window(&owner, None);
+            let org_window_key = keys::kernel_window_source(&owner, None)?;
             let org_window_row = if repo.is_some() && row.is_none() {
                 self.store.read(&org_window_key).await?
             } else {
@@ -451,54 +477,78 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             let mut next_window = if !reset {
                 current_window
                     .filter(|w| w.applied_window_ms == next_ms && w.usage_reset_at_ms > now)
-                    .unwrap_or_else(|| new_window(&owner, repo.as_deref(), next_ms, now))
+                    .unwrap_or_else(|| new_window(&owner, repo.as_ref(), next_ms, now))
             } else {
-                new_window(&owner, repo.as_deref(), next_ms, now)
+                new_window(&owner, repo.as_ref(), next_ms, now)
             };
             next_window.updated_at_ms = now;
             let revision = store::revision(self.host)?;
-            let mut writes = vec![put(
+            let mut writes = vec![data_put(
                 window_key.clone(),
-                &next_window,
-                Some(next_window.usage_reset_at_ms + WEEK),
+                &window_document(&next_window),
+                None,
                 &revision,
             )?];
-            let mut response = json!({"scope":if repo.is_some(){"repo"}else{"org"}});
-            response[if repo.is_some() { "repo" } else { "org" }] = if let Some(repo) = &repo {
-                json!({"owner":owner,"repo":repo})
-            } else {
-                json!({"owner":owner})
-            };
+            let mut response = body::object(vec![
+                ("ok", body::json(&true)),
+                (
+                    "scope",
+                    body::json(if repo.is_some() { "repo" } else { "org" }),
+                ),
+                (
+                    if repo.is_some() { "repo" } else { "org" },
+                    body::object(identity_fields(&owner, repo.as_ref())),
+                ),
+            ]);
             if let Some(limit) = limit {
-                let policy = KernelPolicy {
+                let policy = SourcePolicy {
                     v: 2,
                     owner: owner.clone(),
                     repo: repo.clone(),
                     usage_limit_requests: limit,
                     window_ms: next_ms,
-                    expires_at_ms: expiry
-                        .unwrap_or(old.as_ref().map(|p| p.expires_at_ms).unwrap_or(-1)),
+                    expires_at_ms: expires
+                        .unwrap_or(old.as_ref().map(|p| p.expires_at_ms).unwrap_or(-1.0)),
                 };
-                let mut wire = serde_json::to_value(&policy)
-                    .map_err(|_| store::corrupt("Kernel policy cannot be encoded"))?;
-                wire["scope"] = json!(if repo.is_some() { "repo" } else { "org" });
-                wire["created_at_ms"] = json!(
-                    row.as_ref()
-                        .and_then(|r| r.json_value().ok())
-                        .and_then(|v| v.get("created_at_ms"))
-                        .and_then(Value::as_i64)
-                        .unwrap_or(now)
-                );
-                wire["updated_at_ms"] = json!(now);
-                writes.push(put(key.clone(), &wire, None, &revision)?);
-                response["limit"] = summary(&policy, &next_window, now);
-                response["limit"]["source"] = json!("kv");
+                let mut fields = vec![
+                    ("v", body::json(&2)),
+                    (
+                        "scope",
+                        body::json(if repo.is_some() { "repo" } else { "org" }),
+                    ),
+                ];
+                fields.extend(identity_fields(&owner, repo.as_ref()));
+                fields.extend([
+                    (
+                        "usage_limit_requests",
+                        body::json(&policy.usage_limit_requests),
+                    ),
+                    ("window_ms", body::json(&policy.window_ms)),
+                    ("expires_at_ms", body::json(&policy.expires_at_ms)),
+                    (
+                        "created_at_ms",
+                        data_value(row.as_ref(), now)?
+                            .as_ref()
+                            .and_then(|v| body::member(v, "created_at_ms"))
+                            .unwrap_or_else(|| body::json(&now)),
+                    ),
+                    ("updated_at_ms", body::json(&now)),
+                ]);
+                writes.push(data_put(
+                    key.clone(),
+                    &canonical(body::object(fields)),
+                    None,
+                    &revision,
+                )?);
+                let mut limit = summary(&policy, &next_window, now);
+                body::set(&mut limit, "source", body::json("kv"));
+                body::set(&mut response, "limit", limit);
             } else {
                 writes.push(RecordMutation::Delete { key: key.clone() });
-                response["deleted"] = json!(true);
+                body::set(&mut response, "deleted", body::json(&true));
             }
             if commit(self.store, checks, writes).await? {
-                return Ok(AuthResponse::json(200, response));
+                return Ok(AuthResponse::source_json(200, canonical(response)));
             }
         }
         Err(conflict("Concurrent modification; retry"))
@@ -511,17 +561,9 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         let include = parse::truth(parse::first(&input.query, "include_usage"));
         let inventory = parse::truth(parse::first(&input.query, "inventory"));
         let list = parse::truth(parse::first(&input.query, "list"));
-        if inventory || list {
-            let family = if inventory {
-                if org { "org_usage" } else { "usage" }
-            } else {
-                if org { "org_policy" } else { "repo_policy" }
-            };
-            let prefix = if inventory {
-                store::key(json!(["ubq_ai", "kernel_auth", family]))
-            } else {
-                store::key(json!(["uos_ai", "kernel_quota", "v2", family]))
-            };
+        if inventory {
+            let family = if org { "org_usage" } else { "usage" };
+            let prefix = store::key(json!(["ubq_ai", "kernel_auth", family]));
             let mut records = Vec::new();
             for entry in store::scan(self.store, prefix, false, input.now_ms).await? {
                 let raw = entry.record.json_value()?;
@@ -538,74 +580,139 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                             .ok_or_else(|| store::corrupt("Kernel inventory repo is malformed"))?,
                     )
                 };
-                let mut row = if inventory {
-                    self.usage_record(owner, repo, input.now_ms, true).await?
-                } else {
-                    self.policy_summary(owner, repo, input.now_ms).await?
-                };
-                if !inventory && include {
-                    row["usage"] = self.usage_record(owner, repo, input.now_ms, true).await?;
-                }
-                if let Some(obj) = row.as_object_mut() {
-                    obj.remove("source");
-                }
-                records.push(row);
+                records.push(self.usage_record(owner, repo, input.now_ms, true).await?);
             }
-            let mut order_error = None;
-            records.sort_by(|left, right| {
-                for field in ["owner", "repo"] {
-                    match self.capabilities.compare_admin_labels(
-                        left[field].as_str().unwrap_or(""),
-                        right[field].as_str().unwrap_or(""),
-                    ) {
-                        Ok(std::cmp::Ordering::Equal) => {}
-                        Ok(order) => return order,
-                        Err(error) => {
-                            order_error = Some(error);
-                            return std::cmp::Ordering::Equal;
+            let records =
+                gateway_schema::aliases::sort_source(records, &|a: &Value, b: &Value| {
+                    for field in ["owner", "repo"] {
+                        let order = self.capabilities.compare_admin_labels(
+                            &JsString16::from_utf8(a[field].as_str().unwrap_or("")),
+                            &JsString16::from_utf8(b[field].as_str().unwrap_or("")),
+                        )?;
+                        if order != std::cmp::Ordering::Equal {
+                            return Ok(order);
                         }
                     }
-                }
-                std::cmp::Ordering::Equal
-            });
-            if let Some(error) = order_error {
-                return Err(error);
-            }
-            let mut body = json!({"scope":if org{"org"}else{"repo"}});
-            body[if inventory { "usage" } else { "limits" }] = json!(records);
-            return Ok(AuthResponse::json(200, body));
+                    Ok(std::cmp::Ordering::Equal)
+                })?;
+            return Ok(AuthResponse::json(
+                200,
+                json!({"ok":true,"scope":if org{"org"}else{"repo"},"usage":records}),
+            ));
         }
-        let owner = part(
-            parse::first(&input.query, "owner")
-                .map(|s| json!(s))
-                .as_ref(),
-        )
-        .ok_or_else(|| invalid("owner query parameter is required"))?;
+        if list {
+            let prefix = store::key(json!([
+                "uos_ai",
+                "kernel_quota",
+                "v2",
+                if org { "org_policy" } else { "repo_policy" }
+            ]));
+            let mut records = Vec::new();
+            for entry in store::scan(self.store, prefix, false, input.now_ms).await? {
+                let Some((owner, repo)) = physical_labels(&entry.key, org)? else {
+                    continue;
+                };
+                let raw = decode_source_control_record(&entry.record)?;
+                let Some(normalized) =
+                    SourcePolicy::normalize_source_document(&raw, &owner, repo.as_ref())
+                else {
+                    continue;
+                };
+                let policy: SourcePolicy = normalized.deserialize()?;
+                let mut row = self.summary_for_policy(&policy, "kv", input.now_ms).await?;
+                let fields = source::entries(&row)
+                    .expect("constructed source summary")
+                    .into_iter()
+                    .filter(|(k, _)| *k != JsString16::from_utf8("source"))
+                    .collect();
+                row = source::object_keys(fields)?;
+                if include {
+                    let scalar_owner = owner.try_utf8()?;
+                    let scalar_repo = repo.as_ref().map(JsString16::try_utf8).transpose()?;
+                    let usage = self
+                        .usage_record(&scalar_owner, scalar_repo.as_deref(), input.now_ms, true)
+                        .await?;
+                    body::set(&mut row, "usage", body::json(&usage));
+                }
+                records.push((owner, repo, row));
+            }
+            let records = gateway_schema::aliases::sort_source(records, &|a: &(
+                JsString16,
+                Option<JsString16>,
+                SourceJson,
+            ),
+                                                                          b: &(
+                JsString16,
+                Option<JsString16>,
+                SourceJson,
+            )| {
+                let owner = self.capabilities.compare_admin_labels(&a.0, &b.0)?;
+                if owner != std::cmp::Ordering::Equal {
+                    return Ok(owner);
+                }
+                match (&a.1, &b.1) {
+                    (Some(a), Some(b)) => self.capabilities.compare_admin_labels(a, b),
+                    _ => Ok(std::cmp::Ordering::Equal),
+                }
+            })?;
+            let rows = source::json_array(
+                &records
+                    .into_iter()
+                    .map(|(_, _, row)| row)
+                    .collect::<Vec<_>>(),
+            )?;
+            return Ok(AuthResponse::source_json(
+                200,
+                canonical(body::object(vec![
+                    ("ok", body::json(&true)),
+                    ("scope", body::json(if org { "org" } else { "repo" })),
+                    ("limits", rows),
+                ])),
+            ));
+        }
+        // Query strings already have the source URL/USVString boundary; raw JSON
+        // selectors alone may carry lone units. Never repair stored logical labels.
+        let owner = part(parse::first(&input.query, "owner").map(body::json).as_ref())
+            .ok_or_else(|| invalid("owner query parameter is required"))?;
         let repo = if org {
             None
         } else {
             Some(
-                part(
-                    parse::first(&input.query, "repo")
-                        .map(|s| json!(s))
-                        .as_ref(),
-                )
-                .ok_or_else(|| invalid("repo query parameter is required"))?,
+                part(parse::first(&input.query, "repo").map(body::json).as_ref())
+                    .ok_or_else(|| invalid("repo query parameter is required"))?,
             )
         };
         let limit = self
-            .policy_summary(&owner, repo.as_deref(), input.now_ms)
-            .await?;
+            .policy_summary(&owner, repo.as_ref(), input.now_ms)
+            .await
+            .map_err(|_| {
+                GatewayError::new(
+                    500,
+                    if org {
+                        "Failed to load kernel org usage limit"
+                    } else {
+                        "Failed to load kernel usage limit"
+                    },
+                    Some("server_error"),
+                )
+            })?;
+        let scalar_owner = owner.try_utf8()?;
+        let scalar_repo = repo.as_ref().map(JsString16::try_utf8).transpose()?;
         let usage = self
-            .usage_record(&owner, repo.as_deref(), input.now_ms, include)
+            .usage_record(&scalar_owner, scalar_repo.as_deref(), input.now_ms, include)
             .await?;
-        let mut body = json!({"limit":limit,"usage":usage});
-        body[if org { "org" } else { "repo" }] = if let Some(repo) = repo {
-            json!({"owner":owner,"repo":repo})
-        } else {
-            json!({"owner":owner})
-        };
-        Ok(AuthResponse::json(200, body))
+        Ok(AuthResponse::source_json(
+            200,
+            canonical(body::object(vec![
+                ("ok", body::json(&true)),
+                (
+                    if org { "org" } else { "repo" },
+                    body::object(identity_fields(&owner, repo.as_ref())),
+                ),
+                ("limit", limit),
+                ("usage", body::json(&usage)),
+            ])),
+        ))
     }
     async fn usage_record(
         &self,

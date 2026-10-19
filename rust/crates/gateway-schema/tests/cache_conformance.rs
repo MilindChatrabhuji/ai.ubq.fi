@@ -1,4 +1,12 @@
-use gateway_core::{GatewayError, query::*, state::*, tuple_key::TupleKey};
+use gateway_core::{
+    GatewayError,
+    query::*,
+    source_control::{decode_source_control_record, encode_source_control_record},
+    source_json::SourceJson,
+    source_serialization as source,
+    state::*,
+    tuple_key::TupleKey,
+};
 use gateway_schema::{
     catalog::CatalogInput, catalog_cache::*, catalog_store::*, metadata::MetadataHint,
     selection::ProviderSelection,
@@ -281,13 +289,13 @@ fn normalized_publication_never_downgrades_version_or_replaces_operator_defaults
     let store = Store::default();
     store.seed_generation("auth");
     let source =
-        json!({"models":[{"slug":"a","supported_reasoning_levels":["low","custom"]},{"slug":"b"}]});
+        SourceJson::from_serializable(&json!({"models":[{"slug":"a","supported_reasoning_levels":["low","custom"]},{"slug":"b"}]})).unwrap();
     let first = run(publish_normalized_snapshot(
         &store, &source, "0.2.0", "auth", "r1", 1000,
     ))
     .unwrap()
     .unwrap();
-    assert_eq!(first["default_model"], "a");
+    assert_eq!(first.deserialize::<Value>().unwrap()["default_model"], "a");
     let mut runtime = store
         .records
         .borrow()
@@ -306,8 +314,11 @@ fn normalized_publication_never_downgrades_version_or_replaces_operator_defaults
     ))
     .unwrap()
     .unwrap();
-    assert_eq!(next["default_model"], "b");
-    assert_eq!(next["default_reasoning_effort"], "custom");
+    assert_eq!(next.deserialize::<Value>().unwrap()["default_model"], "b");
+    assert_eq!(
+        next.deserialize::<Value>().unwrap()["default_reasoning_effort"],
+        "custom"
+    );
     assert!(
         run(publish_normalized_snapshot(
             &store, &source, "0.1.0", "auth", "old", 3000
@@ -433,5 +444,104 @@ fn catalog_json_reads_reject_valid_typed_profile_records_instead_of_treating_the
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("incompatible_value_encoding")
+    );
+}
+
+#[test]
+fn normalized_source_publication_retains_model_effort_codecs_and_generation_fences() {
+    let store = Store::default();
+    store.seed_generation("auth");
+    let input=SourceJson::parse(r#"{"models":[{"slug":"\ud800","default_reasoning_level":"\udc00","supported_reasoning_levels":["\udc00"]}]}"#).unwrap();
+    let original = input.clone();
+    let first = run(publish_normalized_snapshot(
+        &store,
+        &input,
+        "0.2.0",
+        "auth",
+        "source-r1",
+        1000,
+    ))
+    .unwrap()
+    .unwrap();
+    let model = source::member(&first, "default_model").unwrap();
+    assert_eq!(source::string(&model).unwrap().as_units(), &[0xd800]);
+    for key in [codex_snapshot_key(), runtime_config_key()] {
+        let record = store.records.borrow().get(&key.0).unwrap().clone();
+        assert_eq!(record.revision, "source-r1");
+        assert_eq!(record.expires_at_ms, None);
+        assert_eq!(
+            record.value_encoding,
+            gateway_core::value::ValueEncoding::ProfileV2
+        );
+        assert!(
+            decode_source_control_record(&record)
+                .unwrap()
+                .as_str()
+                .contains(r"\ud800")
+        );
+    }
+    let mut fields = source::entries(&first).unwrap();
+    for (key, value) in &mut fields {
+        if key
+            .as_units()
+            .iter()
+            .copied()
+            .eq("default_reasoning_effort".encode_utf16())
+        {
+            *value = SourceJson::parse(r#""\udc00""#).unwrap();
+        }
+    }
+    let operator = source::object_keys(fields).unwrap();
+    store.records.borrow_mut().insert(
+        runtime_config_key().0,
+        encode_source_control_record("operator", &operator, None).unwrap(),
+    );
+    let next = run(publish_normalized_snapshot(
+        &store,
+        &input,
+        "0.3.0",
+        "auth",
+        "source-r2",
+        2000,
+    ))
+    .unwrap()
+    .unwrap();
+    assert_eq!(source::member(&next, "default_model"), Some(model));
+    assert_eq!(
+        source::member(&next, "default_reasoning_effort"),
+        Some(SourceJson::parse(r#""\udc00""#).unwrap())
+    );
+    let before = store.records.borrow().clone();
+    store.seed_generation("changed");
+    let generation = store
+        .records
+        .borrow()
+        .get(&auth_generation_key().0)
+        .unwrap()
+        .clone();
+    assert!(
+        run(publish_normalized_snapshot(
+            &store, &input, "0.4.0", "auth", "stale", 3000
+        ))
+        .unwrap()
+        .is_none()
+    );
+    let mut expected = before;
+    expected.insert(auth_generation_key().0, generation);
+    assert_eq!(*store.records.borrow(), expected);
+    assert_eq!(input, original);
+    println!(
+        "M42_NORMALIZED_WRITER_FIXTURE={}",
+        serde_json::to_string(
+            &store
+                .records
+                .borrow()
+                .iter()
+                .filter(
+                    |(key, _)| **key == codex_snapshot_key().0 || **key == runtime_config_key().0
+                )
+                .collect::<Vec<_>>()
+        )
+        .unwrap()
     );
 }

@@ -1,7 +1,9 @@
 use crate::{store::*, types::*};
 use futures_util::future::join_all;
 use gateway_core::GatewayError;
+use gateway_core::{source_json::SourceJson, source_serialization as source};
 use gateway_providers::extras;
+use gateway_schema::source_request::source_value::Value as SourceValue;
 use serde_json::{Value, json};
 use std::{cell::Cell, rc::Rc};
 const INPUT_BYTES: usize = 50 * 1024 * 1024;
@@ -90,7 +92,7 @@ pub(crate) async fn images<H: ExtrasHost>(
             Some("image"),
         )));
     }
-    if request.body.is_null()
+    if request.body.as_str() == "null"
         || request.raw_body_bytes
             > if kind == ImageKind::Edits {
                 JSON_BYTES
@@ -108,13 +110,13 @@ pub(crate) async fn images<H: ExtrasHost>(
         )));
     }
     let parsed = if let Some(files) = &request.multipart {
-        extras::parse_multipart_image(&request.body, files)
+        extras::parse_source_multipart_image(&request.body, files)
     } else {
-        extras::parse_image(&request.body, kind == ImageKind::Edits)
+        extras::parse_source_image(&request.body, kind == ImageKind::Edits)
     };
     let parsed = match parsed {
         Ok(p) => p,
-        Err(e) => return Ok(ExtrasResponse::error(e)),
+        Err(e) => return Ok(ExtrasResponse::source_error(e)),
     };
     let Some(model) = host.image_base_model().await? else {
         return Ok(ExtrasResponse::error(GatewayError::new(
@@ -208,9 +210,9 @@ pub(crate) async fn images<H: ExtrasHost>(
                 }
             };
             let payload = if result.body.is_empty() {
-                Value::Null
+                SourceValue::Null
             } else {
-                match serde_json::from_slice::<Value>(&result.body) {
+                match SourceJson::parse_bytes(&result.body).map(SourceValue::from_source) {
                     Ok(v) => v,
                     Err(_) => {
                         let mut r = ExtrasResponse::error(GatewayError::new(
@@ -225,12 +227,17 @@ pub(crate) async fn images<H: ExtrasHost>(
                 }
             };
             if !(200..300).contains(&result.status) {
-                let mut r = ExtrasResponse::json(result.status, payload);
+                let mut r = ExtrasResponse::source_json(
+                    result.status,
+                    payload.source().expect("actual source image response"),
+                );
                 r.headers.extend(headers(&[result]));
                 failure = Some(r);
                 break;
             }
-            let generated = extras::extract_images(&payload);
+            let generated = extras::extract_source_images(
+                &payload.source().expect("actual source image payload"),
+            );
             let Some(image) = generated.first() else {
                 let mut r = ExtrasResponse::error(GatewayError::new(
                     502,
@@ -247,7 +254,7 @@ pub(crate) async fn images<H: ExtrasHost>(
                 .into_iter()
                 .flatten()
                 .find(|v| {
-                    v["type"] == "image_generation_call"
+                    v["type"].as_str() == Some("image_generation_call")
                         && v["result"].as_str().is_some_and(|s| !s.is_empty())
                 })
                 .and_then(|v| v["output_format"].as_str())
@@ -270,11 +277,23 @@ pub(crate) async fn images<H: ExtrasHost>(
         if let Some(r) = failure {
             r
         } else {
-            let mut body = json!({"created":created.unwrap_or_else(||(host.now_ms()/1000) as f64),"data":images});
-            if consistent && let Some(format) = format {
-                body["output_format"] = json!(format);
+            #[derive(serde::Serialize)]
+            struct Body {
+                created: f64,
+                data: Vec<SourceJson>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                output_format: Option<String>,
             }
-            let mut r = ExtrasResponse::json(200, body);
+            let body = SourceJson::from_serializable(&Body {
+                created: created.unwrap_or_else(|| (host.now_ms() / 1000) as f64),
+                data: images,
+                output_format: if consistent { format } else { None },
+            })
+            .expect("source generated image response");
+            let mut r = ExtrasResponse::source_json(
+                200,
+                source::canonical(&body).expect("source image serialization"),
+            );
             r.headers.extend(headers(&successful));
             r
         }

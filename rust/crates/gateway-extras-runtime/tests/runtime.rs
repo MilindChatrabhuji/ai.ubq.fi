@@ -237,7 +237,7 @@ impl ExtrasHost for Host {
             ..Default::default()
         }))
     }
-    async fn image_base_model(&self) -> Result<Option<String>, GatewayError> {
+    async fn image_base_model(&self) -> Result<Option<gateway_core::model::ModelId>, GatewayError> {
         Ok(Some("gpt-fixture-host".into()))
     }
     async fn dispatch(
@@ -245,11 +245,27 @@ impl ExtrasHost for Host {
         operation: ExtrasDispatch,
     ) -> Result<UpstreamResponse, DispatchFailure> {
         let (label, body) = match &operation {
-            ExtrasDispatch::Voyage(c) => ("voyage".into(), c.prepared().body.clone()),
-            ExtrasDispatch::SystemOne(c) => ("systemone".into(), c.prepared().body.clone()),
+            ExtrasDispatch::Voyage(c) => (
+                "voyage".into(),
+                c.prepared()
+                    .body
+                    .deserialize::<Value>()
+                    .expect("Generated scalar fixture request"),
+            ),
+            ExtrasDispatch::SystemOne(c) => (
+                "systemone".into(),
+                c.prepared()
+                    .body
+                    .deserialize::<Value>()
+                    .expect("Generated scalar fixture request"),
+            ),
             ExtrasDispatch::ImageChild {
                 request_id, body, ..
-            } => (request_id.clone(), body.clone()),
+            } => (
+                request_id.clone(),
+                body.deserialize::<Value>()
+                    .expect("actual scalar fixture child body"),
+            ),
         };
         self.0.calls.borrow_mut().push((label, body.clone()));
         if self.0.pending.get() {
@@ -366,7 +382,7 @@ fn request<'a>(
 ) -> ExtrasRequest<'a> {
     ExtrasRequest {
         route,
-        body,
+        body: gateway_core::source_json::SourceJson::from_serializable(&body).unwrap(),
         multipart: None,
         raw_body_bytes: 1,
         idempotency_key: None,
@@ -400,12 +416,12 @@ fn sync_deduplicates_orders_cache_hits_and_measures_only_actual_voyage_usage() {
     .unwrap();
     assert_eq!(r.status, 200);
     assert_eq!(
-        r.body["data"][0]["embedding"],
-        r.body["data"][1]["embedding"]
+        scalar_source(&r.body)["data"][0]["embedding"],
+        scalar_source(&r.body)["data"][1]["embedding"]
     );
     assert_eq!(host.count(), 1);
     assert_eq!(host.0.calls.borrow()[0].1["input"], json!(["a", "b"]));
-    assert_eq!(r.body["usage"]["total_tokens"], 2);
+    assert_eq!(scalar_source(&r.body)["usage"]["total_tokens"], 2);
     let cached = run(rt.handle(request(
         ExtrasRoute::Embeddings,
         embedding(json!(["b", "a"])),
@@ -414,7 +430,7 @@ fn sync_deduplicates_orders_cache_hits_and_measures_only_actual_voyage_usage() {
     )))
     .unwrap();
     assert_eq!(host.count(), 1);
-    assert_eq!(cached.body["usage"]["total_tokens"], 0);
+    assert_eq!(scalar_source(&cached.body)["usage"]["total_tokens"], 0);
     assert!(cached.usage.is_none());
     assert_eq!(cached.kernel, KernelDisposition::Completed);
 }
@@ -441,7 +457,7 @@ fn idempotency_replays_without_credentials_and_conflict_never_redispatches() {
     let conflict = run(rt.handle(q)).unwrap();
     assert_eq!(conflict.status, 409);
     assert_eq!(
-        conflict.body["error"]["code"],
+        scalar_source(&conflict.body)["error"]["code"],
         "embedding_idempotency_conflict"
     );
     assert_eq!(host.count(), 1);
@@ -460,7 +476,7 @@ fn dispatched_expired_idempotency_is_indeterminate_and_cannot_steal_the_lease() 
     q.idempotency_key = Some("key".into());
     let busy = run(rt.handle(q)).unwrap();
     assert_eq!(
-        busy.body["error"]["code"],
+        scalar_source(&busy.body)["error"]["code"],
         "embedding_idempotency_in_progress"
     );
     host.0.clock.set(host.now_ms() + 60_001);
@@ -468,7 +484,7 @@ fn dispatched_expired_idempotency_is_indeterminate_and_cannot_steal_the_lease() 
     q.idempotency_key = Some("key".into());
     let retired = run(rt.handle(q)).unwrap();
     assert_eq!(
-        retired.body["error"]["code"],
+        scalar_source(&retired.body)["error"]["code"],
         "embedding_idempotency_indeterminate"
     );
     assert_eq!(host.count(), 1);
@@ -495,7 +511,7 @@ fn explicit_failure_releases_idempotency_but_unknown_transport_never_retries() {
     q.idempotency_key = Some("unknown".into());
     let r = run(rt.handle(q)).unwrap();
     assert_eq!(
-        r.body["error"]["code"],
+        scalar_source(&r.body)["error"]["code"],
         "embedding_idempotency_indeterminate"
     );
     assert_eq!(host.count(), 3);
@@ -518,7 +534,7 @@ fn partial_chunk_success_is_not_replayed_after_global_token_budget_exhaustion() 
     q.idempotency_key = Some("partial".into());
     let r = run(rt.handle(q)).unwrap();
     assert_eq!(
-        r.body["error"]["code"],
+        scalar_source(&r.body)["error"]["code"],
         "embedding_idempotency_indeterminate"
     );
     assert_eq!(host.count(), 1);
@@ -637,7 +653,10 @@ fn queued_job(
     let r = run(rt.handle(request(ExtrasRoute::JobCreate, body, auth, ctx))).unwrap();
     assert_eq!(r.status, 202);
     assert_eq!(r.kernel, KernelDisposition::Completed);
-    (rt, r.body["id"].as_str().unwrap().to_owned())
+    (
+        rt,
+        scalar_source(&r.body)["id"].as_str().unwrap().to_owned(),
+    )
 }
 #[test]
 fn retained_jobs_encrypt_inputs_and_owner_survives_bearer_rotation() {
@@ -673,7 +692,7 @@ fn retained_jobs_encrypt_inputs_and_owner_survives_bearer_rotation() {
     host.0.clock.set(host.now_ms() + 60_001);
     let r = run(rt.handle(request(ExtrasRoute::JobGet(id), Value::Null, &auth, &ctx))).unwrap();
     assert_eq!(r.status, 200);
-    assert_eq!(r.body["status"], "succeeded");
+    assert_eq!(scalar_source(&r.body)["status"], "succeeded");
     assert_eq!(
         r.kernel,
         KernelDisposition::Incomplete("embedding_job_read_not_counted")
@@ -697,9 +716,9 @@ fn real_aes_gcm_tamper_is_a_failed_job_without_upstream_dispatch() {
     host.0.clock.set(host.now_ms() + 60_001);
     let r = run(rt.handle(request(ExtrasRoute::JobGet(id), Value::Null, &auth, &ctx))).unwrap();
     assert_eq!(r.status, 200);
-    assert_eq!(r.body["status"], "failed");
+    assert_eq!(scalar_source(&r.body)["status"], "failed");
     assert_eq!(
-        r.body["error"]["code"],
+        scalar_source(&r.body)["error"]["code"],
         "embeddings_job_input_decrypt_failed"
     );
     assert_eq!(r.semantic_terminal, Some(SemanticTerminal::Error));
@@ -746,7 +765,10 @@ fn expired_input_fails_after_a_poll_extended_only_the_job_and_lookup_ttls() {
     );
     host.0.clock.set(host.now_ms() + 2000);
     let r = run(rt.handle(request(ExtrasRoute::JobGet(id), Value::Null, &auth, &ctx))).unwrap();
-    assert_eq!(r.body["error"]["code"], "embeddings_job_input_missing");
+    assert_eq!(
+        scalar_source(&r.body)["error"]["code"],
+        "embeddings_job_input_missing"
+    );
     assert_eq!(host.count(), 0);
 }
 
@@ -763,7 +785,7 @@ fn systemone_uses_authoritative_provider_selection_and_normalizes_actual_usage()
     let disabled =
         run(rt.handle(request(ExtrasRoute::SystemOne, body.clone(), &auth, &ctx))).unwrap();
     assert_eq!(
-        disabled.body["error"]["code"],
+        scalar_source(&disabled.body)["error"]["code"],
         "systemone_provider_disabled"
     );
     assert_eq!(host.count(), 0);
@@ -773,7 +795,7 @@ fn systemone_uses_authoritative_provider_selection_and_normalizes_actual_usage()
         None,
     );
     let r = run(rt.handle(request(ExtrasRoute::SystemOne, body, &auth, &ctx))).unwrap();
-    assert_eq!(r.body["answers"]["go"], true);
+    assert_eq!(scalar_source(&r.body)["answers"]["go"], true);
     assert_eq!(r.usage.unwrap()["input_tokens_details"]["cached_tokens"], 0);
     assert_eq!(r.health[0].kind, HealthKind::Success);
 }
@@ -793,7 +815,7 @@ fn systemone_maps_actual_upstream_errors_and_does_not_echo_private_bodies() {
     assert_eq!(r.status, 502);
     assert_eq!(r.health[0].kind, HealthKind::AuthInvalid);
     assert_eq!(r.health[0].upstream_status, Some(401));
-    assert!(!r.body.to_string().contains("never_echo"));
+    assert!(!r.body.as_str().contains("never_echo"));
     assert!(!r.upstream_errors.is_empty());
 }
 
@@ -810,8 +832,8 @@ fn image_fanout_uses_one_original_scope_exact_child_ids_and_common_output_metada
     q.idempotency_key = Some("outer-not-forwarded".into());
     let r = run(rt.handle(q)).unwrap();
     assert_eq!(r.status, 200);
-    assert_eq!(r.body["data"].as_array().unwrap().len(), 3);
-    assert_eq!(r.body["output_format"], "png");
+    assert_eq!(scalar_source(&r.body)["data"].as_array().unwrap().len(), 3);
+    assert_eq!(scalar_source(&r.body)["output_format"], "png");
     assert_eq!(r.semantic_terminal, Some(SemanticTerminal::Completed));
     assert_eq!(host.0.begins.get(), 1);
     assert_eq!(host.0.finished.get(), 1);
@@ -857,7 +879,10 @@ fn image_failure_aborts_siblings_but_settles_every_logical_child_once() {
     )))
     .unwrap();
     assert_eq!(r.status, 429);
-    assert_eq!(r.body["error"]["code"], "codex_quota_blocked");
+    assert_eq!(
+        scalar_source(&r.body)["error"]["code"],
+        "codex_quota_blocked"
+    );
     assert!(r.semantic_terminal.is_none());
     assert!(host.0.aborted.get());
     assert_eq!(host.0.children.borrow().len(), 3);
@@ -894,9 +919,12 @@ fn job_retry_is_poll_driven_and_does_not_schedule_a_hidden_request() {
     assert_eq!(queued.headers["Retry-After"], "60");
     assert_eq!(host.count(), 1);
     assert!(host.0.sleeps.borrow().is_empty());
-    let id = queued.body["id"].as_str().unwrap().to_owned();
+    let id = scalar_source(&queued.body)["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let r = run(rt.handle(request(ExtrasRoute::JobGet(id), Value::Null, &auth, &ctx))).unwrap();
-    assert_eq!(r.body["status"], "succeeded");
+    assert_eq!(scalar_source(&r.body)["status"], "succeeded");
     assert_eq!(host.count(), 2);
 }
 
@@ -909,7 +937,11 @@ fn base64_vectors_use_source_little_endian_float32_output_without_forwarding_the
     body["encoding_format"] = json!("base64");
     let r = run(rt.handle(request(ExtrasRoute::Embeddings, body, &auth, &ctx))).unwrap();
     let bytes = base64::engine::general_purpose::STANDARD
-        .decode(r.body["data"][0]["embedding"].as_str().unwrap())
+        .decode(
+            scalar_source(&r.body)["data"][0]["embedding"]
+                .as_str()
+                .unwrap(),
+        )
         .unwrap();
     assert_eq!(bytes.len(), 256 * 4);
     assert_eq!(&bytes[..4], &1.0f32.to_le_bytes());
@@ -941,7 +973,7 @@ fn provider_configuration_and_invalid_vector_statuses_stay_distinct() {
     .unwrap();
     assert_eq!(malformed.status, 502);
     assert_eq!(
-        malformed.body["error"]["code"],
+        scalar_source(&malformed.body)["error"]["code"],
         "upstream_dimension_mismatch"
     );
 }
@@ -1014,4 +1046,76 @@ fn cache_timestamp_projection_preserves_source_negative_zero_key_identity() {
         panic!("timestamp")
     };
     assert_eq!(at.to_bits(), (-0.0f64).to_bits());
+}
+
+#[test]
+fn gateway_origin_preserves_admission_and_started_ledger_failures_without_provider_health() {
+    for before_transport in [true, false] {
+        let (store, host, auth, ctx) = setup();
+        let mut failure = DispatchFailure::gateway(
+            GatewayError::unavailable("ledger unavailable", "ledger_unavailable"),
+            before_transport,
+        );
+        failure.headers.insert("Retry-After".into(), "3".into());
+        host.0.replies.borrow_mut().push_back(Err(failure));
+        let result = run(ExtrasRuntime::new(store, host).handle(request(
+            ExtrasRoute::SystemOne,
+            json!({"state":{},"questions":{"go":{"type":"noul"}}}),
+            &auth,
+            &ctx,
+        )))
+        .unwrap();
+        assert_eq!(result.status, 503);
+        assert_eq!(result.headers["Retry-After"], "3");
+        assert!(result.health.is_empty());
+        assert_eq!(
+            result.upstream_errors[0].origin,
+            DispatchFailureOrigin::Gateway
+        );
+        assert_eq!(result.upstream_errors[0].before_transport, before_transport);
+        assert!(!result.upstream_errors[0].quota_refusal);
+    }
+}
+
+#[test]
+fn actual_local_quota_transport_fault_and_upstream_refusal_keep_separate_origins() {
+    let (store, host, auth, ctx) = setup();
+    let mut quota = DispatchFailure::gateway(
+        GatewayError::new(429, "quota", Some("api_key_quota_exceeded")),
+        true,
+    );
+    quota.quota_refusal = true;
+    host.0.replies.borrow_mut().push_back(Err(quota));
+    let result = run(ExtrasRuntime::new(store, host).handle(request(
+        ExtrasRoute::SystemOne,
+        json!({"state":{},"questions":{"go":{"type":"noul"}}}),
+        &auth,
+        &ctx,
+    )))
+    .unwrap();
+    assert_eq!(result.status, 429);
+    assert!(result.health.is_empty());
+    assert!(result.upstream_errors[0].quota_refusal);
+    let (store, host, auth, ctx) = setup();
+    host.0
+        .replies
+        .borrow_mut()
+        .push_back(Err(DispatchFailure::transport(error("network"))));
+    let result = run(ExtrasRuntime::new(store, host).handle(request(
+        ExtrasRoute::SystemOne,
+        json!({"state":{},"questions":{"go":{"type":"noul"}}}),
+        &auth,
+        &ctx,
+    )))
+    .unwrap();
+    assert_eq!(result.status, 502);
+    assert_eq!(result.health[0].kind, HealthKind::UpstreamError);
+    assert_eq!(
+        result.upstream_errors[0].origin,
+        DispatchFailureOrigin::Transport
+    );
+}
+
+fn scalar_source(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+    value.deserialize().expect("actual scalar fixture output")
 }

@@ -1,5 +1,5 @@
 //! The owner publishes references, never bearer tokens, into this catalog boundary.
-use gateway_core::{GatewayError, state::RevisionCheck};
+use gateway_core::{GatewayError, js_string::JsString16, state::RevisionCheck};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, future::Future};
 
@@ -96,6 +96,8 @@ impl CredentialPublication {
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CatalogFetch {
+    /// Fixed public Surplus model discovery. Never resolves a spend credential.
+    AnonymousSurplus,
     /// Resolve the configured Codex base's /models endpoint; append this exact version
     /// iff that base ends in /codex. Use source originator/user-agent and manual redirects.
     Codex {
@@ -107,7 +109,7 @@ pub enum CatalogFetch {
         provider: CatalogProvider,
         binding: ProviderBinding,
         /// Claude-only after_id cursor. Other sources must reject this field.
-        after_id: Option<String>,
+        after_id: Option<JsString16>,
         /// One absolute deadline for the whole Claude pagination sequence.
         deadline_ms: Option<i64>,
     },
@@ -129,6 +131,7 @@ impl CatalogFetch {
     pub fn timeout_ms(&self) -> Option<u32> {
         match self {
             Self::Codex { .. } => None,
+            Self::AnonymousSurplus => Some(10_000),
             Self::Provider {
                 provider: CatalogProvider::ClaudeCode,
                 ..
@@ -218,6 +221,10 @@ pub enum CatalogMaintenance {
 /// Implementations own cancellation and actual response bounds. Fetches must bind the
 /// exact current reference before sending; a different credential may not be substituted.
 pub trait CatalogHost {
+    /// Same trusted constructor-owned source ordering used by routing/authority; never request data.
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>;
     fn now_ms(&self) -> i64;
     fn unique_id(&self) -> String;
     fn wait(&self, milliseconds: u32) -> impl Future<Output = Result<(), GatewayError>>;

@@ -1,5 +1,9 @@
 //! Profile NDJSON conversion; never loads a VM-specific value codec or executes JavaScript.
 use crate::migration::NormalizedEntry;
+pub use crate::profile_source::{
+    SourceNormalizedEntry, from_source_profile, from_source_profile_with_host,
+    normalize_source_import_line_with_host, to_source_profile,
+};
 use crate::{error, json_number};
 use chrono::{DateTime, NaiveDate};
 use gateway_core::{
@@ -199,7 +203,7 @@ pub fn encode_base64(value: &[u8]) -> String {
     }
     out
 }
-fn binary_alignment(kind: &str) -> Option<usize> {
+pub(crate) fn binary_alignment(kind: &str) -> Option<usize> {
     match kind {
         "ArrayBuffer" | "DataView" | "Int8Array" | "Uint8Array" | "Uint8ClampedArray" => Some(1),
         "Int16Array" | "Uint16Array" => Some(2),
@@ -258,7 +262,7 @@ fn date(value: Option<&Value>) -> Result<Option<i64>, GatewayError> {
         "Noncanonical Date input requires explicit source-compatible date normalization; no timezone is guessed.",
     ))
 }
-fn regexp(raw: &str) -> Result<(String, String), GatewayError> {
+pub(crate) fn regexp(raw: &str) -> Result<(String, String), GatewayError> {
     let split = raw.rfind('/');
     let flags = split.map(|p| &raw[p + 1..]).unwrap_or(raw);
     let source = if let Some(p) = split {
@@ -311,7 +315,7 @@ fn regexp(raw: &str) -> Result<(String, String), GatewayError> {
     let flags = "dgimsuvy".chars().filter(|f| seen.contains(f)).collect();
     Ok((canonical, flags))
 }
-fn same_primitive(a: &PortableValue, b: &PortableValue) -> bool {
+pub(crate) fn same_primitive(a: &PortableValue, b: &PortableValue) -> bool {
     match (a, b) {
         (PortableValue::Undefined, PortableValue::Undefined)
         | (PortableValue::Null, PortableValue::Null) => true,
@@ -325,7 +329,7 @@ fn same_primitive(a: &PortableValue, b: &PortableValue) -> bool {
         _ => false,
     }
 }
-fn collection_key(value: PortableValue) -> PortableValue {
+pub(crate) fn collection_key(value: PortableValue) -> PortableValue {
     if value.number_value() == Some(0.0) {
         PortableValue::number(0.0)
     } else {
@@ -333,7 +337,43 @@ fn collection_key(value: PortableValue) -> PortableValue {
     }
 }
 
+/// Exact source Date constructor semantics supplied by the trusted execution realm.
+/// Inputs are data, never JavaScript code, a timezone guess or an arbitrary evaluation capability.
+pub trait SourceDateHost {
+    fn date_value(&self, input: Option<&Value>) -> Result<Option<i64>, GatewayError>;
+    /// Raw source Date inputs require a host realm capable of parsing their original JSON.
+    fn source_date_value(
+        &self,
+        input: Option<&gateway_core::source_json::SourceJson>,
+    ) -> Result<Option<i64>, GatewayError> {
+        let input = input
+            .map(|value| {
+                value.deserialize::<Value>().map_err(|_| {
+                    GatewayError::unavailable(
+                        "Raw source Date input requires its source-compatible realm",
+                        "source_date_host_missing",
+                    )
+                })
+            })
+            .transpose()?;
+        self.date_value(input.as_ref())
+    }
+}
+/// Retains the existing deterministic codec for canonical inputs; noncanonical inputs fail closed.
+pub struct CanonicalDates;
+impl SourceDateHost for CanonicalDates {
+    fn date_value(&self, input: Option<&Value>) -> Result<Option<i64>, GatewayError> {
+        date(input)
+    }
+}
 pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
+    from_profile_with_host(input, &CanonicalDates)
+}
+
+pub fn from_profile_with_host(
+    input: &Value,
+    host: &dyn SourceDateHost,
+) -> Result<PortableValue, GatewayError> {
     let kind = input
         .get("type")
         .and_then(Value::as_str)
@@ -360,7 +400,7 @@ pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
             }
         }
         "Date" => PortableValue::Date {
-            epoch_ms: date(value)?,
+            epoch_ms: host.date_value(value)?,
         },
         "RegExp" => {
             let (source, flags) =
@@ -371,7 +411,7 @@ pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
             raw.as_array()
                 .ok_or_else(|| error("Malformed profile Array."))?
                 .iter()
-                .map(from_profile)
+                .map(|item| from_profile_with_host(item, host))
                 .collect::<Result<_, _>>()?,
         ),
         "object" => {
@@ -393,7 +433,7 @@ pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
             PortableValue::Object(
                 fields
                     .into_iter()
-                    .map(|(k, v)| Ok((k, from_profile(&v)?)))
+                    .map(|(k, v)| Ok((k, from_profile_with_host(&v, host)?)))
                     .collect::<Result<_, GatewayError>>()?,
             )
         }
@@ -407,8 +447,8 @@ pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
                     .as_array()
                     .filter(|v| v.len() >= 2)
                     .ok_or_else(|| error("Malformed profile Map entry."))?;
-                let key = collection_key(from_profile(&pair[0])?);
-                let item = from_profile(&pair[1])?;
+                let key = collection_key(from_profile_with_host(&pair[0], host)?);
+                let item = from_profile_with_host(&pair[1], host)?;
                 if let Some(existing) = entries.iter_mut().find(|(k, _)| same_primitive(k, &key)) {
                     existing.1 = item;
                 } else {
@@ -423,7 +463,7 @@ pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
                 .as_array()
                 .ok_or_else(|| error("Malformed profile Set."))?
             {
-                let item = collection_key(from_profile(item)?);
+                let item = collection_key(from_profile_with_host(item, host)?);
                 if !entries.iter().any(|v| same_primitive(v, &item)) {
                     entries.push(item);
                 }
@@ -449,7 +489,7 @@ pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
             let cause = raw
                 .get("cause")
                 .filter(|v| !v.is_null() && **v != false && **v != 0 && **v != "")
-                .map(from_profile)
+                .map(|item| from_profile_with_host(item, host))
                 .transpose()?
                 .map(Box::new);
             PortableValue::Error {
@@ -541,6 +581,14 @@ pub fn to_profile(value: &PortableValue) -> Result<Value, GatewayError> {
                     .collect::<Result<_, GatewayError>>()?,
             ),
         ),
+        PortableValue::StringUtf16(_)
+        | PortableValue::ObjectUtf16(_)
+        | PortableValue::RegExpUtf16 { .. }
+        | PortableValue::ErrorUtf16 { .. } => {
+            return Err(error(
+                "ProfileV2 strings require the raw source-profile writer; Value cannot preserve them.",
+            ));
+        }
         PortableValue::Error {
             kind,
             message,
@@ -561,6 +609,13 @@ pub fn to_profile(value: &PortableValue) -> Result<Value, GatewayError> {
 }
 
 pub fn normalize_import_line(line: &str) -> Result<Option<NormalizedEntry>, GatewayError> {
+    normalize_import_line_with_host(line, &CanonicalDates)
+}
+
+pub fn normalize_import_line_with_host(
+    line: &str,
+    host: &dyn SourceDateHost,
+) -> Result<Option<NormalizedEntry>, GatewayError> {
     if line.trim().is_empty() {
         return Ok(None);
     }
@@ -579,7 +634,7 @@ pub fn normalize_import_line(line: &str) -> Result<Option<NormalizedEntry>, Gate
         ) {
             return Err(error("Unsupported profile key type."));
         }
-        let decoded = from_profile(part)?;
+        let decoded = from_profile_with_host(part, host)?;
         let key = match decoded {
             PortableValue::String(v) => {
                 logical.push(json!(v));
@@ -611,9 +666,10 @@ pub fn normalize_import_line(line: &str) -> Result<Option<NormalizedEntry>, Gate
     }
     let tuple = TupleKey::from_parts(&parts)?;
     tuple.validate_stored_key()?;
-    let value = from_profile(
+    let value = from_profile_with_host(
         raw.get("value")
             .ok_or_else(|| error("Missing profile value."))?,
+        host,
     )?;
     Ok(Some(NormalizedEntry {
         key: tuple.to_record_key(),

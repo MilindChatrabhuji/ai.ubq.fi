@@ -101,6 +101,33 @@ fn real_hmac_authentication_mints_only_fresh_scoped_owner_proof() {
         proof
             .require_body(NativeCapability::ConfigurationPublish, b"{}", now)
             .unwrap();
+        proof
+            .require_request(
+                NativeCapability::ConfigurationPublish,
+                NATIVE_RPC_PATH,
+                b"{}",
+                now,
+            )
+            .unwrap();
+        assert_eq!(
+            proof
+                .require_request(
+                    NativeCapability::ConfigurationPublish,
+                    NATIVE_CONTROL_PATH,
+                    b"{}",
+                    now
+                )
+                .unwrap_err()
+                .status,
+            403
+        );
+        assert_eq!(
+            proof
+                .require_request(NativeCapability::OwnerRenewal, NATIVE_RPC_PATH, b"{}", now)
+                .unwrap_err()
+                .status,
+            403
+        );
         assert_eq!(
             proof
                 .require_body(NativeCapability::ConfigurationPublish, b"{ }", now)

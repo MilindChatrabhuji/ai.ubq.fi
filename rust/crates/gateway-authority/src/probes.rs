@@ -12,6 +12,79 @@ use gateway_core::identity::RoutingAccountHash;
 use gateway_core::state::AuthorityStore;
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    /// Administrative R-only half-open transition, not provider reset proof or an election.
+    pub async fn recheck_codex_slot(
+        &self,
+        actor: &crate::native_control::actor::NativeRenewalActor,
+        config: &gateway_auth::AuthConfig,
+        slot_number: u8,
+    ) -> Result<bool, GatewayError> {
+        if !(1..=2).contains(&slot_number) {
+            return Ok(false);
+        }
+        for _ in 0..3 {
+            let now = self.fresh_time(0)?;
+            let mut tx = self.transaction(now)?;
+            if crate::native_control::actor::read_current(&mut tx, actor.stored(), config)
+                .await?
+                .scope
+                != crate::native_control::actor::NativeActorScope::Admin
+            {
+                return Err(unavailable(
+                    "admin_auth_required",
+                    "Administrative authentication is required.",
+                ));
+            }
+            let Some(raw) = tx.read::<serde_json::Value>(&keys::routing()).await? else {
+                return Ok(false);
+            };
+            let mut state = crate::routing::parse_routing_state(&raw)?;
+            let Some(slot) = state.slots.get_mut(usize::from(slot_number - 1)) else {
+                return Ok(false);
+            };
+            if slot.quota_blocked_until_ms.is_some_and(|v| v != 0) {
+                let prior_stable =
+                    slot.retained_reset_at_ms.is_some() && slot.reset_identity_stable;
+                if slot.quota_blocks.is_empty() {
+                    slot.quota_blocked_until_ms = Some(now);
+                } else {
+                    for block in slot.quota_blocks.values_mut() {
+                        block.blocked_until_ms = now;
+                        block.observed_at_ms = Some(now);
+                        block.reset_ambiguous = true;
+                    }
+                    let first = slot
+                        .quota_blocked_classes
+                        .iter()
+                        .find_map(|class| slot.quota_blocks.get(class))
+                        .or_else(|| slot.quota_blocks.values().next())
+                        .cloned();
+                    if let Some(block) = first {
+                        slot.quota_blocked_until_ms = Some(now);
+                        slot.quota_block_source = Some(block.source);
+                        slot.retained_reset_at_ms = block.reset_at_ms.or(slot.retained_reset_at_ms);
+                        slot.reset_identity_stable = block.reset_is_stable;
+                    }
+                }
+                slot.reset_identity_ambiguous |=
+                    slot.quota_blocked_until_ms.is_some() || prior_stable;
+                slot.quota_signal_observed_at_ms = Some(now);
+                slot.generation = next_generation(slot.generation)?;
+                slot.probe_lease = None;
+                state.updated_at_ms = now;
+                tx.put(&keys::routing(), &state, None)?;
+            }
+            crate::native_control::actor::validate_current_time(
+                actor.stored(),
+                self.fresh_time(now)?,
+            )?;
+            if tx.commit().await? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Called only by the bounded probe/overage route; permission is strongly checked here.
     pub async fn claim_probe(
         &self,
@@ -61,18 +134,16 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             {
                 return Ok(None);
             }
-            let next_generation = next_generation(slot.generation)?;
             let lease = ProbeLease {
                 token: self.tokens.next_token()?,
-                generation: next_generation,
-                quota_class: admission.quota_class,
+                generation: slot.generation as i64,
+                circuit: crate::routing::ProbeCircuit::Quota,
+                quota_class: Some(admission.quota_class),
                 expires_at_ms: add(now, PROBE_LEASE_MS)?,
             };
             text(&lease.token)?;
-            slot.generation = next_generation;
             slot.probe_lease = Some(lease.clone());
             let mut admitted = admission.clone();
-            admitted.binding.routing_generation = next_generation;
             admitted.probe = Some(lease);
             admitted.probe_required = false;
             let mut active = view
@@ -113,10 +184,12 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }
             slot.probe_lease = None;
             if recovered {
-                slot.quota_blocks.remove(class_name(admission.quota_class));
+                slot.remove_quota_class(admission.quota_class);
                 if slot.quota_blocks.is_empty() {
                     slot.retained_reset_at_ms = None;
                     slot.reset_identity_ambiguous = false;
+                    slot.reset_identity_stable = false;
+                    slot.recovery_pending = false;
                 }
             }
             tx.put(&keys::routing(), &view.state, None)?;
@@ -199,8 +272,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             slot.generation = next_generation(slot.generation)?;
             let lease = ProbeLease {
                 token: self.tokens.next_token()?,
-                generation: slot.generation,
-                quota_class: proof.quota_class,
+                generation: slot.generation as i64,
+                circuit: crate::routing::ProbeCircuit::Quota,
+                quota_class: Some(proof.quota_class),
                 expires_at_ms: add(now, PROBE_LEASE_MS)?,
             };
             text(&lease.token)?;
@@ -291,7 +365,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         now: i64,
     ) -> Result<bool, GatewayError> {
         nonnegative(block.blocked_until_ms)?;
-        nonnegative(block.observed_at_ms)?;
+        if let Some(at) = block.observed_at_ms {
+            nonnegative(at)?;
+        }
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
             let mut view = read_view(&mut tx).await?;
@@ -302,8 +378,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 return Ok(false);
             }
             let row = &mut view.state.slots[slot];
-            row.quota_blocks
-                .insert(class_name(probe.quota_class).to_owned(), block.clone());
+            row.insert_quota_block(probe.quota_class, block.clone());
             row.probe_lease = None;
             row.generation = next_generation(row.generation)?;
             view.state.updated_at_ms = now;

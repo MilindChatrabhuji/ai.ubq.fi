@@ -67,9 +67,6 @@ struct Socket {
     failed: bool,
 }
 impl Socket {
-    fn open(path: &Path, max_payload: usize, call_timeout: Duration) -> Result<Self, GatewayError> {
-        Self::open_until(path, max_payload, call_timeout, None)
-    }
     fn open_until(
         path: &Path,
         max_payload: usize,
@@ -229,14 +226,32 @@ impl NativeOwnerLocation {
 pub struct UnixOwnerTransport {
     locations: BTreeMap<String, PathBuf>,
     sockets: RefCell<BTreeMap<String, Socket>>,
+    deadline: Option<Instant>,
 }
 impl UnixOwnerTransport {
     pub fn new(locations: Vec<NativeOwnerLocation>) -> Result<Self, GatewayError> {
-        if locations.len() > 2 {
+        Self::configured(locations, None)
+    }
+    /// The control receiver supplies its original absolute 45-second lease.
+    /// Handshakes and individual RPCs retain their smaller source deadlines.
+    pub fn until(
+        locations: Vec<NativeOwnerLocation>,
+        deadline: Instant,
+    ) -> Result<Self, GatewayError> {
+        Self::configured(locations, Some(deadline))
+    }
+    fn configured(
+        locations: Vec<NativeOwnerLocation>,
+        deadline: Option<Instant>,
+    ) -> Result<Self, GatewayError> {
+        if !(1..=2).contains(&locations.len()) {
             return Err(owner_unavailable());
         }
         let mut homes = BTreeMap::new();
         for location in locations {
+            if homes.values().any(|home| home == &location.home) {
+                return Err(owner_unavailable());
+            }
             if homes.insert(location.owner.0, location.home).is_some() {
                 return Err(owner_unavailable());
             }
@@ -244,9 +259,16 @@ impl UnixOwnerTransport {
         Ok(Self {
             locations: homes,
             sockets: RefCell::new(BTreeMap::new()),
+            deadline,
         })
     }
     fn home(&self, owner: &NativeOwnerId) -> Result<&PathBuf, GatewayError> {
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(owner_unavailable());
+        }
         self.locations.get(&owner.0).ok_or_else(owner_unavailable)
     }
 }
@@ -277,10 +299,11 @@ impl NativeOwnerTransport for UnixOwnerTransport {
             if let Some(mut old) = sockets.remove(&owner.0) {
                 old.close();
             }
-            let socket = Socket::open(
+            let socket = Socket::open_until(
                 &home.join("app-server-control/app-server-control.sock"),
                 RENEWAL_FRAME_LIMIT,
                 Duration::from_secs(12),
+                self.deadline,
             )?;
             sockets.insert(owner.0.clone(), socket);
         }

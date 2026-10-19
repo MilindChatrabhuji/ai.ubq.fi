@@ -1,0 +1,19 @@
+{
+  "source_sha": "6d4d4790a7c06514b92938ff677dbfd52764461d",
+  "runtime_sha256": "539598c775882420b9d8deb7dc14d845f20f7d26f5600c50ab067dde6ac3f3bf",
+  "source_files": {
+    "src/utils.ts": "600174311bb74dda4729a26ee2fb34811d118db4ce882ed3d99ab10868317b7f",
+    "src/defaults.ts": "db545c64d5e4a33afa7e783f6542fd0ef3605c8573a5b0e1258b1cef29c37e17",
+    "src/models/codex-models.ts": "1a76d75218af5dec23221e85a76cfbc10939ee1215408504203bdf4b5ab1c18a",
+    "src/runtime-config.ts": "0043c79570a0f83c35e8333b6139b5b41dd74955906c9f4ba07695bac2f8396f",
+    "src/models/codex-models-whitelist.ts": "6e23bd0100c048b38daead7efbc773a33af6ddfcdaea432851c0a7078740a863",
+    "src/deepseek/waterfall.ts": "f4debf2db532f8923eb8173316e52dda4e63bea9c8e19247ccc21f0dba276cb9",
+    "src/admin/codex.ts": "e94f5396aaf8394d067ebf2c65f8ac37b7dc7c963d7ad9d2a0d5f923efa08086",
+    "src/models/codex-models-fetch.ts": "eb18d8a89340714533cf4eb04c6f50eed486cfca71b1e95e4a22bd43b008479a",
+    "src/admin/api-keys.ts": "6f9ccecc69e81aa7934b99cf014c93c951e2213ad26add262754d87564f6c589"
+  },
+  "receipt": "/tmp/ai-rust-wasm-20261018/m24-oracle-v3/receipt.json",
+  "operation_cases": 22,
+  "live_requests": 0,
+  "locale_cases": 6
+}

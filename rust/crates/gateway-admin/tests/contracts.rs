@@ -5,14 +5,18 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use gateway_admin::{
-    audit::{self, KeyChange},
-    keys::*,
-    *,
-};
+use gateway_admin::{audit, keys::*, *};
 use gateway_auth::{crypto::Secret, upstream::*, *};
-use gateway_core::state::*;
+use gateway_core::{source_json::SourceJson, state::*};
+
+fn source(value: &Value) -> SourceJson {
+    SourceJson::from_serializable(value).unwrap()
+}
 use serde_json::{Value, json};
+
+fn wire_json(body: &AuthResponseBody) -> Value {
+    serde_json::from_slice(&body.to_bytes().unwrap()).unwrap()
+}
 
 fn run<F: Future>(future: F) -> F::Output {
     let mut context = Context::from_waker(Waker::noop());
@@ -137,7 +141,7 @@ impl AdminHost for Capabilities {
             Ok(Vec::new())
         }
     }
-    async fn paid_key_policy(&self, _: &Value) -> Result<PaidKeyFields, GatewayError> {
+    async fn paid_key_policy(&self, _: &SourceJson) -> Result<PaidKeyFields, GatewayError> {
         Err(GatewayError::unavailable(
             "No pricing fixture",
             "paid_fallback_pricing_unavailable",
@@ -307,13 +311,15 @@ impl AdminHost for CaptureBody {
         input: AdminInput,
     ) -> Result<AuthResponse, GatewayError> {
         assert!(input.actor.is_admin);
-        self.seen.borrow_mut().push((operation, input.body));
+        self.seen
+            .borrow_mut()
+            .push((operation, input.body.deserialize()?));
         Ok(AuthResponse::json(200, json!({"received":true})))
     }
     async fn prepare_key_deletion(&self, _: &str) -> Result<Vec<RevisionCheck>, GatewayError> {
         Err(missing_capability(AdminOperation::ApiKeysDelete))
     }
-    async fn paid_key_policy(&self, _: &Value) -> Result<PaidKeyFields, GatewayError> {
+    async fn paid_key_policy(&self, _: &SourceJson) -> Result<PaidKeyFields, GatewayError> {
         Err(missing_capability(AdminOperation::ApiKeysUpdate))
     }
 }
@@ -455,7 +461,8 @@ impl AdminHost for Pricing {
     async fn prepare_key_deletion(&self, _: &str) -> Result<Vec<RevisionCheck>, GatewayError> {
         Err(missing_capability(AdminOperation::ApiKeysDelete))
     }
-    async fn paid_key_policy(&self, raw: &Value) -> Result<PaidKeyFields, GatewayError> {
+    async fn paid_key_policy(&self, raw: &SourceJson) -> Result<PaidKeyFields, GatewayError> {
+        let raw: Value = raw.deserialize()?;
         self.inputs.borrow_mut().push(raw.clone());
         assert_eq!(raw["paid_fallback_enabled"], true);
         let limit = raw["paid_fallback_limit_credits"].as_f64().unwrap();
@@ -490,18 +497,19 @@ fn paid_limit_updates_and_disabling_preserve_source_pricing_without_provider_rei
         };
         let created = service
             .create(
-                &json!({"name":"Pricing","paid_fallback_limit_credits":1}),
+                &source(&json!({"name":"Pricing","paid_fallback_limit_credits":1})),
                 &actor(),
                 "create",
             )
             .await
             .unwrap();
-        let id = created.body["id"].as_str().unwrap();
+        let created_body = wire_json(&created.body);
+        let id = created_body["id"].as_str().unwrap();
         assert!(caps.inputs.borrow().is_empty());
         service
             .mutate(
                 AdminOperation::ApiKeysUpdate,
-                &json!({"id":id,"paid_fallback_enabled":true}),
+                &source(&json!({"id":id,"paid_fallback_enabled":true})),
                 &actor(),
                 "enable",
             )
@@ -516,7 +524,12 @@ fn paid_limit_updates_and_disabling_preserve_source_pricing_without_provider_rei
             json!({"id":id,"paid_fallback_limit_credits":3}),
         ] {
             service
-                .mutate(AdminOperation::ApiKeysUpdate, &patch, &actor(), "patch")
+                .mutate(
+                    AdminOperation::ApiKeysUpdate,
+                    &source(&patch),
+                    &actor(),
+                    "patch",
+                )
                 .await
                 .unwrap();
             assert_eq!(caps.inputs.borrow().len(), 1);
@@ -525,21 +538,23 @@ fn paid_limit_updates_and_disabling_preserve_source_pricing_without_provider_rei
                 .await
                 .unwrap()
                 .unwrap();
-            let record: ApiKeyRecord = gateway_auth::store::decode(Some(&row), 1_000_000)
-                .unwrap()
-                .unwrap();
-            assert_eq!(record.paid_fallback_model_ids, ["paid-model"]);
+            let record: ApiKeyRecord = decode_record(&row).unwrap();
+            assert_eq!(
+                record.paid_fallback_model_ids,
+                [gateway_core::model::ModelId::from_scalar("paid-model")]
+            );
             assert_eq!(record.paid_fallback_quota_per_credit, 1_000_000);
             assert_eq!(record.paid_fallback_pricing_checked_at_ms, Some(1_000_000));
             assert_eq!(
-                record.paid_fallback_max_exposure_microcredits["paid-model"],
+                record.paid_fallback_max_exposure_microcredits
+                    [&gateway_core::model::ModelId::from_scalar("paid-model")],
                 1000
             );
         }
         service
             .mutate(
                 AdminOperation::ApiKeysUpdate,
-                &json!({"id":id,"paid_fallback_enabled":true}),
+                &source(&json!({"id":id,"paid_fallback_enabled":true})),
                 &actor(),
                 "reenable",
             )
@@ -562,7 +577,7 @@ impl AdminHost for ClaimedDeletion<'_> {
     ) -> Result<AuthResponse, GatewayError> {
         Err(missing_capability(operation))
     }
-    async fn paid_key_policy(&self, _: &Value) -> Result<PaidKeyFields, GatewayError> {
+    async fn paid_key_policy(&self, _: &SourceJson) -> Result<PaidKeyFields, GatewayError> {
         Err(missing_capability(AdminOperation::ApiKeysUpdate))
     }
     async fn prepare_key_deletion(&self, id: &str) -> Result<Vec<RevisionCheck>, GatewayError> {
@@ -636,7 +651,7 @@ impl AdminHost for ClaimedDeletion<'_> {
             .read(&gateway_auth::api_keys::id_key(id))
             .await?
             .unwrap();
-        let record: ApiKeyRecord = gateway_auth::store::decode(Some(&row), 1_000_000)?.unwrap();
+        let record: ApiKeyRecord = decode_record(&row)?;
         assert!(record.policy.revoked_at_ms.is_some());
         assert!(prepared.iter().any(|check| check.key == deletion_key(id)));
         // Source ordinary guards persist; this fixture never claims the special local key.
@@ -659,7 +674,7 @@ impl AdminHost for DeletionHooks<'_> {
     ) -> Result<AuthResponse, GatewayError> {
         Err(missing_capability(operation))
     }
-    async fn paid_key_policy(&self, _: &Value) -> Result<PaidKeyFields, GatewayError> {
+    async fn paid_key_policy(&self, _: &SourceJson) -> Result<PaidKeyFields, GatewayError> {
         Err(missing_capability(AdminOperation::ApiKeysUpdate))
     }
     async fn prepare_key_deletion(&self, id: &str) -> Result<Vec<RevisionCheck>, GatewayError> {
@@ -720,14 +735,15 @@ fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() 
                 release: "fixture",
             };
             let created = service
-                .create(&json!({"name":"Cleanup"}), &actor(), "create")
+                .create(&source(&json!({"name":"Cleanup"})), &actor(), "create")
                 .await
                 .unwrap();
-            let id = created.body["id"].as_str().unwrap();
+            let created_body = wire_json(&created.body);
+            let id = created_body["id"].as_str().unwrap();
             service
                 .mutate(
                     AdminOperation::ApiKeysRevoke,
-                    &json!({"id":id}),
+                    &source(&json!({"id":id})),
                     &actor(),
                     "revoke",
                 )
@@ -752,7 +768,7 @@ fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() 
             let result = service
                 .mutate(
                     AdminOperation::ApiKeysDelete,
-                    &json!({"id":id}),
+                    &source(&json!({"id":id})),
                     &actor(),
                     "delete",
                 )
@@ -794,7 +810,7 @@ fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() 
                     service
                         .mutate(
                             AdminOperation::ApiKeysDelete,
-                            &json!({"id":id}),
+                            &source(&json!({"id":id})),
                             &actor(),
                             "retry"
                         )
@@ -804,7 +820,7 @@ fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() 
                     404
                 );
             } else {
-                assert_eq!(result.unwrap().body, json!({"id":id}));
+                assert_eq!(wire_json(&result.unwrap().body), json!({"id":id}));
             }
             let checks = vec![RevisionCheck {
                 key: deletion_key(id),
@@ -891,6 +907,7 @@ async fn prepare_paid_fixture_custody(store: &Store, host: &Host) {
     let inputs = ConfiguredPaidInputs::new(
         Some(Secret::new("fixture-surplus-key".into())),
         None,
+        None,
         json!({}),
     )
     .unwrap();
@@ -919,9 +936,9 @@ async fn prepare_paid_fixture_custody(store: &Store, host: &Host) {
         observed_at_ms: host.now_ms(),
         source_valid_until_ms: None,
         stale: false,
-        models: vec![
-            json!({"id":"paid-model","supported_endpoint_types":["openai-response"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002}),
-        ],
+        models: vec![source(
+            &json!({"id":"paid-model","supported_endpoint_types":["openai-response"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002}),
+        )],
         source_checks: Vec::new(),
     };
     store.rows.borrow_mut().insert(
@@ -991,7 +1008,7 @@ impl AuthorityStore for PaidRaceStore<'_> {
             service
                 .mutate(
                     AdminOperation::ApiKeysRevoke,
-                    &json!({"id":self.key_id}),
+                    &source(&json!({"id":self.key_id})),
                     &actor(),
                     "race-revoke",
                 )
@@ -1000,7 +1017,7 @@ impl AuthorityStore for PaidRaceStore<'_> {
                 service
                     .mutate(
                         AdminOperation::ApiKeysDelete,
-                        &json!({"id":self.key_id}),
+                        &source(&json!({"id":self.key_id})),
                         &actor(),
                         "race-delete"
                     )
@@ -1036,13 +1053,13 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
             release: "fixture",
         }
         .create(
-            &json!({"name":"Race","paid_fallback_enabled":true,"paid_fallback_limit_credits":1}),
+            &source(&json!({"name":"Race","paid_fallback_enabled":true,"paid_fallback_limit_credits":1})),
             &actor(),
             "create",
         )
         .await
         .unwrap();
-        let id = key.body["id"].as_str().unwrap().to_owned();
+        let id = wire_json(&key.body)["id"].as_str().unwrap().to_owned();
         prepare_paid_fixture_custody(&store, &host).await;
         let raced = PaidRaceStore {
             store: &store,
@@ -1068,12 +1085,56 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
                 &request,
                 &PaidRequestContext {
                     original_model: request.model.clone(),
-                    body: json!({"model":request.model,"stream":false}),
+                    body: source(&json!({"model":request.model,"stream":false})),
                     surface: gateway_providers::ClientSurface::Responses,
                     synthetic_hop: None,
                 },
                 1_000_000,
             )
+            .await
+            .unwrap();
+        // Controlled authority regression: use the canonical finite original
+        // fixture chain, not a route-only receipt or a Worker-runtime claim.
+        let original = gateway_core::identity::RequestContext {
+            request_id: request.request_id.clone(),
+            principal: gateway_core::identity::PrincipalId("fixture-original-principal".into()),
+            key_id: Some(request.key_id.clone()),
+            route: request.route.clone(),
+            started_at_ms: request.created_at_ms,
+        };
+        let api = authority
+            .reserve_api_key(
+                &request.key_id,
+                &request.request_id,
+                &request.route,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+        let journal_key = gateway_auth::store::key(json!([
+            "uos_ai",
+            "routing_runtime",
+            "v1",
+            "session",
+            request.request_id.0
+        ]));
+        store.rows.borrow_mut().insert(
+            journal_key.0,
+            StoredRecord::json(
+                "fixture-original-journal",
+                json!({
+                    "v":1,"context":original,"input_digest":gateway_auth::crypto::sha256_hex(b"fixture-original-input"),
+                    "api":api,"kernel":null,"cursor":0,"attempts":[],"active":null,
+                    "model_sibling_retries":0,"refreshed_versions":[],"recovery_attempted":false,"claude_unavailable":false,
+                    "semantic_committed":false,"terminal_intent":null,"finished":false,"recovering":false,
+                    "lease_expires_at_ms":1_000_000+gateway_authority::REQUEST_LEASE_MS,"updated_at_ms":1_000_000,"extras_family":null,
+                    "extras_child_count":null,"extras_dispatch":null,"children":[],"kernel_override":null
+                }),
+                None,
+            ),
+        );
+        let receipt = authority
+            .bind_paid_original_request(&receipt, &original, 1_000_000)
             .await
             .unwrap();
         assert!(
@@ -1156,7 +1217,10 @@ fn every_source_admin_endpoint_is_accounted_for() {
 #[test]
 fn audit_never_persists_credential_material() {
     let raw = json!({"name":"key","usage_limit_requests":50,"token":"private-token","hash":"private-hash","authorization":"Bearer private","prompt":"private"});
-    let sanitized = audit::safe_changed(&raw);
+    let sanitized = audit::safe_changed(&raw)
+        .unwrap()
+        .deserialize::<Value>()
+        .unwrap();
     assert_eq!(sanitized, json!({"name":"key","usage_limit_requests":50}));
     let shared = audit::actor(&actor());
     assert_eq!(shared.kind, "shared_admin_credential");
@@ -1177,15 +1241,16 @@ fn key_creation_commits_identity_policy_window_and_audit_together() {
         };
         let result = service
             .create(
-                &json!({"name":"Fixture key","usage_limit_requests":0}),
+                &source(&json!({"name":"Fixture key","usage_limit_requests":0})),
                 &actor(),
                 "request",
             )
             .await
             .unwrap();
         assert_eq!(result.status, 200);
-        let id = result.body["id"].as_str().unwrap();
-        let token = result.body["token"].as_str().unwrap();
+        let result_body = wire_json(&result.body);
+        let id = result_body["id"].as_str().unwrap();
+        let token = result_body["token"].as_str().unwrap();
         assert!(gateway_auth::api_keys::api_key_shape(token));
         assert!(
             store
@@ -1216,13 +1281,11 @@ fn key_creation_commits_identity_policy_window_and_audit_together() {
             .rows
             .borrow()
             .values()
-            .find_map(|row| {
-                serde_json::from_value::<KeyChange>(row.json_value().unwrap().clone()).ok()
-            })
+            .find_map(|row| audit::decode_event(row).ok())
             .unwrap();
         assert_eq!(audit.action, "create");
         assert!(!serde_json::to_string(&audit).unwrap().contains(token));
-        assert!(result.body.get("hash").is_none());
+        assert!(result_body.get("hash").is_none());
     });
 }
 
@@ -1241,7 +1304,7 @@ fn conflicting_creation_writes_nothing() {
         };
         assert_eq!(
             service
-                .create(&json!({"name":"Fixture"}), &actor(), "request")
+                .create(&source(&json!({"name":"Fixture"})), &actor(), "request")
                 .await
                 .unwrap_err()
                 .status,
@@ -1271,7 +1334,7 @@ fn malformed_or_unpriced_paid_key_never_writes_state() {
         ] {
             assert_eq!(
                 service
-                    .create(&body, &actor(), "request")
+                    .create(&source(&body), &actor(), "request")
                     .await
                     .unwrap_err()
                     .status,
@@ -1279,7 +1342,7 @@ fn malformed_or_unpriced_paid_key_never_writes_state() {
             );
             assert!(store.rows.borrow().is_empty());
         }
-        assert_eq!(service.create(&json!({"name":"key","paid_fallback_enabled":true,"paid_fallback_limit_credits":1}),&actor(),"request").await.unwrap_err().status,503);
+        assert_eq!(service.create(&source(&json!({"name":"key","paid_fallback_enabled":true,"paid_fallback_limit_credits":1})),&actor(),"request").await.unwrap_err().status,503);
         assert!(store.rows.borrow().is_empty());
     });
 }
@@ -1297,15 +1360,16 @@ fn revoked_deletion_never_discards_pending_billing() {
             release: "fixture",
         };
         let created = service
-            .create(&json!({"name":"Fixture"}), &actor(), "create")
+            .create(&source(&json!({"name":"Fixture"})), &actor(), "create")
             .await
             .unwrap();
-        let id = created.body["id"].as_str().unwrap();
+        let created_body = wire_json(&created.body);
+        let id = created_body["id"].as_str().unwrap();
         assert_eq!(
             service
                 .mutate(
                     AdminOperation::ApiKeysDelete,
-                    &json!({"id":id}),
+                    &source(&json!({"id":id})),
                     &actor(),
                     "delete"
                 )
@@ -1317,7 +1381,7 @@ fn revoked_deletion_never_discards_pending_billing() {
         service
             .mutate(
                 AdminOperation::ApiKeysRevoke,
-                &json!({"id":id}),
+                &source(&json!({"id":id})),
                 &actor(),
                 "revoke",
             )
@@ -1328,7 +1392,7 @@ fn revoked_deletion_never_discards_pending_billing() {
             service
                 .mutate(
                     AdminOperation::ApiKeysDelete,
-                    &json!({"id":id}),
+                    &source(&json!({"id":id})),
                     &actor(),
                     "delete"
                 )

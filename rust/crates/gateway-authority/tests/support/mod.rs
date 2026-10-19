@@ -66,6 +66,9 @@ impl MemoryStore {
     pub fn row(&self, key: &RecordKey) -> Option<StoredRecord> {
         self.rows.lock().unwrap().get(&key.0).cloned()
     }
+    pub fn seed_record(&self, key: RecordKey, record: StoredRecord) {
+        self.rows.lock().unwrap().insert(key.0, record);
+    }
     pub fn clock(&self, now: i64) {
         self.now.store(now, Ordering::SeqCst);
     }
@@ -186,8 +189,20 @@ impl TokenSource for Tokens {
     }
 }
 pub type TestAuthority = Authority<MemoryStore, Tokens>;
+struct FixtureCollator;
+impl gateway_schema::aliases::SourceStringCollator for FixtureCollator {
+    fn compare(
+        &self,
+        left: &gateway_core::js_string::JsString16,
+        right: &gateway_core::js_string::JsString16,
+    ) -> Result<std::cmp::Ordering, GatewayError> {
+        // Fixed test input ordering only; pinned locale-equivalence survivors are tested separately.
+        Ok(left.as_units().cmp(right.as_units()))
+    }
+}
 pub fn authority(store: &MemoryStore) -> TestAuthority {
     Authority::with_clock(store.clone(), Tokens::default(), store.clone())
+        .with_source_string_collator(Arc::new(FixtureCollator))
 }
 
 pub fn run<F: Future>(future: F) -> F::Output {
@@ -286,15 +301,16 @@ pub fn policy() -> ApiKeyPolicy {
         paid_fallback_limit_microcredits: 10_000,
         paid_fallback_quota_per_credit: 1_000_000,
         paid_fallback_pricing_checked_at_ms: NOW,
-        paid_fallback_models: vec!["gpt-test".to_owned(), "paid-model".to_owned()],
+        paid_fallback_models: vec!["gpt-test".into(), "paid-model".into()],
         paid_fallback_max_exposure_microcredits: BTreeMap::from([
-            ("gpt-test".to_owned(), 1_000),
-            ("paid-model".to_owned(), 1_000),
+            ("gpt-test".into(), 1_000),
+            ("paid-model".into(), 1_000),
         ]),
     }
 }
 pub fn admitted(authority: &TestAuthority) -> AdmittedAccount {
-    match run(authority.select_account("gpt-test", CodexQuotaClass::Standard, NOW)).unwrap() {
+    match run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap()
+    {
         RouteSelection::Eligible(account) => account,
         _ => panic!("expected eligible account"),
     }
@@ -303,7 +319,8 @@ pub fn block() -> QuotaBlock {
     QuotaBlock {
         blocked_until_ms: NOW + 60_000,
         source: QuotaBlockSource::BodyResetsAt,
-        observed_at_ms: NOW,
+        observed_at_ms: Some(NOW),
+        legacy_fallback: false,
         reset_at_ms: Some(NOW + 60_000),
         reset_is_stable: true,
         reset_ambiguous: false,

@@ -1,6 +1,7 @@
 //! Fixed authenticated native publication shared by native and Worker receivers.
 pub mod access_publication;
 pub mod control_publication;
+pub mod managed;
 pub mod transport;
 mod wire;
 
@@ -10,4 +11,10 @@ pub use access_publication::{
 pub use control_publication::{
     ConfiguredPaidInputs, PreparedConfigurationPublication, configured_paid_binding,
 };
-pub use wire::{PreparedPublicationCommand, PublicationDisposition, PublicationReceipt};
+pub use managed::{
+    ExpectedManagedAccessPublication, ManagedPublicationReceipt, PreparedManagedAccessCommand,
+};
+pub use wire::{
+    ExpectedAccessPublication, PreparedPublicationCommand, PublicationDisposition,
+    PublicationReceipt,
+};

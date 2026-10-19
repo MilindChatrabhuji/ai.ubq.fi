@@ -10,6 +10,8 @@
     "ops/**/*.ts",
     "tools/cloudflare/generate-types.ts",
     "tools/cloudflare/storage-conformance.ts",
+    "tools/cloudflare/runtime-conformance.ts",
+    "tools/cloudflare/verify-build-identity.ts",
     "lib/jev_compaction/**/*.ts"
   ]
 }

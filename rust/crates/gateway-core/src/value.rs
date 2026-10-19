@@ -1,5 +1,5 @@
 //! Explicit tree value codec. Type metadata belongs to the record, never to guessed JSON shapes.
-use crate::GatewayError;
+use crate::{GatewayError, js_string::JsString16};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -10,6 +10,10 @@ pub enum ValueEncoding {
     Json,
     #[serde(rename = "profile-v1")]
     ProfileV1,
+    #[serde(rename = "profile-v2")]
+    ProfileV2,
+    #[serde(rename = "source-graph-v1")]
+    SourceGraphV1,
 }
 
 /// Number bits and integer decimal strings avoid JSON numeric coercion.
@@ -26,6 +30,7 @@ pub enum PortableValue {
     Null,
     Boolean(bool),
     String(String),
+    StringUtf16(#[serde(with = "crate::js_string::units")] JsString16),
     NumberBits(String),
     BigInt(String),
     KvU64(String),
@@ -44,6 +49,7 @@ pub enum PortableValue {
     },
     Array(Vec<Self>),
     Object(Vec<(String, Self)>),
+    ObjectUtf16(#[serde(with = "utf16_object")] Vec<(JsString16, Self)>),
     Map(Vec<(Self, Self)>),
     Set(Vec<Self>),
     Error {
@@ -52,9 +58,35 @@ pub enum PortableValue {
         stack: Option<String>,
         cause: Option<Box<Self>>,
     },
+    RegExpUtf16 {
+        #[serde(with = "crate::js_string::units")]
+        source: JsString16,
+        flags: String,
+    },
+    ErrorUtf16 {
+        kind: String,
+        #[serde(with = "crate::js_string::units")]
+        message: JsString16,
+        #[serde(with = "crate::js_string::optional_units")]
+        stack: Option<JsString16>,
+        cause: Option<Box<Self>>,
+    },
 }
 
 impl PortableValue {
+    pub fn string_utf16(units: Vec<u16>) -> Self {
+        Self::StringUtf16(JsString16::from_units(units))
+    }
+    pub fn as_string_utf16(&self) -> Option<&JsString16> {
+        if let Self::StringUtf16(value) = self {
+            Some(value)
+        } else {
+            None
+        }
+    }
+    pub fn to_source_json(&self) -> Result<crate::source_json::SourceJson, GatewayError> {
+        crate::source_json::SourceJson::from_portable_json(self)
+    }
     pub fn number(value: f64) -> Self {
         Self::NumberBits(format!("{:016x}", value.to_bits()))
     }
@@ -90,6 +122,7 @@ impl PortableValue {
             Self::Null => Some(Value::Null),
             Self::Boolean(v) => Some(json!(v)),
             Self::String(v) => Some(json!(v)),
+            Self::StringUtf16(v) => v.try_utf8().ok().map(Value::String),
             Self::NumberBits(_) => self
                 .number_value()
                 .filter(|v| v.is_finite() && !(*v == 0.0 && v.is_sign_negative()))
@@ -110,6 +143,19 @@ impl PortableValue {
                 .map(|(k, v)| Some((k.clone(), v.to_json_lossless()?)))
                 .collect::<Option<serde_json::Map<_, _>>>()
                 .map(Value::Object),
+            Self::ObjectUtf16(items) => {
+                let mut seen = std::collections::BTreeSet::new();
+                items
+                    .iter()
+                    .map(|(k, v)| {
+                        if !seen.insert(k) {
+                            return None;
+                        }
+                        Some((k.try_utf8().ok()?, v.to_json_lossless()?))
+                    })
+                    .collect::<Option<serde_json::Map<_, _>>>()
+                    .map(Value::Object)
+            }
             _ => None,
         }
     }
@@ -167,7 +213,7 @@ impl PortableValue {
             Self::Date { epoch_ms: Some(v) } if v.unsigned_abs() > 8_640_000_000_000_000 => {
                 return Err(bad());
             }
-            Self::RegExp { flags, .. } => {
+            Self::RegExp { flags, .. } | Self::RegExpUtf16 { flags, .. } => {
                 let mut seen = std::collections::BTreeSet::new();
                 for flag in flags.chars() {
                     if !"dgimsuvy".contains(flag) || !seen.insert(flag) {
@@ -192,13 +238,22 @@ impl PortableValue {
                     item.validate()?;
                 }
             }
+            Self::ObjectUtf16(items) => {
+                let mut seen = std::collections::BTreeSet::new();
+                for (key, item) in items {
+                    if !seen.insert(key) {
+                        return Err(bad());
+                    }
+                    item.validate()?;
+                }
+            }
             Self::Map(items) => {
                 for (key, value) in items {
                     key.validate()?;
                     value.validate()?;
                 }
             }
-            Self::Error { kind, cause, .. } => {
+            Self::Error { kind, cause, .. } | Self::ErrorUtf16 { kind, cause, .. } => {
                 if ![
                     "Error",
                     "EvalError",
@@ -222,9 +277,29 @@ impl PortableValue {
     }
     /// Source Bun storage refuses Error.cause anywhere in the graph.
     pub fn validate_for_storage(&self) -> Result<(), GatewayError> {
+        self.validate_storage(false)
+    }
+    pub fn validate_for_storage_v2(&self) -> Result<(), GatewayError> {
+        self.validate_storage(true)
+    }
+    fn validate_storage(&self, v2: bool) -> Result<(), GatewayError> {
         self.validate()?;
+        if !v2
+            && matches!(
+                self,
+                Self::StringUtf16(_)
+                    | Self::ObjectUtf16(_)
+                    | Self::RegExpUtf16 { .. }
+                    | Self::ErrorUtf16 { .. }
+            )
+        {
+            return Err(GatewayError::unavailable(
+                "ProfileV2 string nodes are not valid ProfileV1 payloads",
+                "incompatible_value_encoding",
+            ));
+        }
         match self {
-            Self::Error { cause: Some(_), .. } => {
+            Self::Error { cause: Some(_), .. } | Self::ErrorUtf16 { cause: Some(_), .. } => {
                 return Err(GatewayError::unavailable(
                     "Bun KV cannot preserve Error.cause; persist an explicit error record instead",
                     "portable_value_cause_unsupported",
@@ -232,22 +307,51 @@ impl PortableValue {
             }
             Self::Array(v) | Self::Set(v) => {
                 for item in v {
-                    item.validate_for_storage()?;
+                    item.validate_storage(v2)?;
                 }
             }
             Self::Object(v) => {
                 for (_, item) in v {
-                    item.validate_for_storage()?;
+                    item.validate_storage(v2)?;
+                }
+            }
+            Self::ObjectUtf16(v) => {
+                for (_, item) in v {
+                    item.validate_storage(v2)?;
                 }
             }
             Self::Map(v) => {
                 for (key, item) in v {
-                    key.validate_for_storage()?;
-                    item.validate_for_storage()?;
+                    key.validate_storage(v2)?;
+                    item.validate_storage(v2)?;
                 }
             }
             _ => {}
         }
         Ok(())
+    }
+}
+
+mod utf16_object {
+    use super::*;
+    use serde::{Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(
+        values: &[(JsString16, PortableValue)],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        values
+            .iter()
+            .map(|(k, v)| (k.as_units(), v))
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<(JsString16, PortableValue)>, D::Error> {
+        Vec::<(Vec<u16>, PortableValue)>::deserialize(deserializer).map(|v| {
+            v.into_iter()
+                .map(|(key, value)| (JsString16::from_units(key), value))
+                .collect()
+        })
     }
 }

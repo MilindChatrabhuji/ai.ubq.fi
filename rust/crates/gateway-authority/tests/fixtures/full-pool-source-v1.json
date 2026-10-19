@@ -1,0 +1,300 @@
+{
+  "v": 1,
+  "bun_version": "1.4.0",
+  "now": 1792329600000,
+  "credential_environment_present": false,
+  "gets": 10,
+  "consumes": 5,
+  "inventory_cases": [
+    {
+      "name": "lone-high",
+      "payload": {
+        "available_count": 1,
+        "credits": [
+          {
+            "id": "\ud800",
+            "status": "available",
+            "reset_type": "codex_rate_limits",
+            "expires_at": null
+          }
+        ],
+        "operator": "\udfff"
+      },
+      "accepted": true,
+      "available_count": 1,
+      "observed_at_ms": 1792329600000,
+      "credits": [
+        {
+          "id": "\ud800",
+          "status": "available",
+          "resetType": "codex_rate_limits",
+          "expiresAtMs": null
+        }
+      ]
+    },
+    {
+      "name": "astral",
+      "payload": {
+        "available_count": 1,
+        "credits": [
+          {
+            "id": "\ud83d\ude00",
+            "status": "available",
+            "reset_type": "codex_rate_limits",
+            "expires_at": null
+          }
+        ]
+      },
+      "accepted": true,
+      "available_count": 1,
+      "observed_at_ms": 1792329600000,
+      "credits": [
+        {
+          "id": "\ud83d\ude00",
+          "status": "available",
+          "resetType": "codex_rate_limits",
+          "expiresAtMs": null
+        }
+      ]
+    },
+    {
+      "name": "offset-date",
+      "payload": {
+        "available_count": 1,
+        "credits": [
+          {
+            "id": "offset",
+            "status": "available",
+            "reset_type": "codex_rate_limits",
+            "expires_at": "2026-10-19T01:00:00-04:00"
+          }
+        ]
+      },
+      "accepted": true,
+      "available_count": 1,
+      "observed_at_ms": 1792329600000,
+      "credits": [
+        {
+          "id": "offset",
+          "status": "available",
+          "resetType": "codex_rate_limits",
+          "expiresAtMs": 1792386000000
+        }
+      ]
+    },
+    {
+      "name": "source-noncanonical-date",
+      "payload": {
+        "available_count": 1,
+        "credits": [
+          {
+            "id": "date",
+            "status": "available",
+            "reset_type": "codex_rate_limits",
+            "expires_at": "Mon, 19 Oct 2026 05:00:00 GMT"
+          }
+        ]
+      },
+      "accepted": true,
+      "available_count": 1,
+      "observed_at_ms": 1792329600000,
+      "credits": [
+        {
+          "id": "date",
+          "status": "available",
+          "resetType": "codex_rate_limits",
+          "expiresAtMs": 1792386000000
+        }
+      ]
+    },
+    {
+      "name": "null-expiry",
+      "payload": {
+        "available_count": 1,
+        "credits": [
+          {
+            "id": "fixture",
+            "status": "available",
+            "reset_type": "codex_rate_limits",
+            "expires_at": null
+          }
+        ]
+      },
+      "accepted": true,
+      "available_count": 1,
+      "observed_at_ms": 1792329600000,
+      "credits": [
+        {
+          "id": "fixture",
+          "status": "available",
+          "resetType": "codex_rate_limits",
+          "expiresAtMs": null
+        }
+      ]
+    },
+    {
+      "name": "capped-summary",
+      "payload": {
+        "available_count": 2,
+        "credits": [
+          {
+            "id": "fixture",
+            "status": "available",
+            "reset_type": "codex_rate_limits",
+            "expires_at": null
+          }
+        ]
+      },
+      "accepted": false
+    },
+    {
+      "name": "duplicate-id",
+      "payload": {
+        "available_count": 2,
+        "credits": [
+          {
+            "id": "fixture",
+            "status": "available",
+            "reset_type": "codex_rate_limits",
+            "expires_at": null
+          },
+          {
+            "id": "fixture",
+            "status": "available",
+            "reset_type": "codex_rate_limits",
+            "expires_at": null
+          }
+        ]
+      },
+      "accepted": false
+    },
+    {
+      "name": "blank-id",
+      "payload": {
+        "available_count": 1,
+        "credits": [
+          {
+            "id": "\ufeff",
+            "status": "available",
+            "reset_type": "codex_rate_limits",
+            "expires_at": null
+          }
+        ]
+      },
+      "accepted": false
+    },
+    {
+      "name": "invalid-expiry",
+      "payload": {
+        "available_count": 1,
+        "credits": [
+          {
+            "id": "fixture",
+            "status": "available",
+            "reset_type": "codex_rate_limits",
+            "expires_at": false
+          }
+        ]
+      },
+      "accepted": false
+    },
+    {
+      "name": "invalid-date",
+      "payload": {
+        "available_count": 1,
+        "credits": [
+          {
+            "id": "fixture",
+            "status": "available",
+            "reset_type": "codex_rate_limits",
+            "expires_at": "\ud800"
+          }
+        ]
+      },
+      "accepted": false
+    }
+  ],
+  "collation_cases": [
+    {
+      "ids": [[90], [97]],
+      "comparison": -1,
+      "selected": [97]
+    },
+    {
+      "ids": [[228], [122]],
+      "comparison": 1,
+      "selected": [228]
+    },
+    {
+      "ids": [[55357, 56832], [55296]],
+      "comparison": 1,
+      "selected": [55357, 56832]
+    },
+    {
+      "ids": [[57343], [55296]],
+      "comparison": -1,
+      "selected": [55296]
+    },
+    {
+      "ids": [[101, 769], [233]],
+      "comparison": 0,
+      "selected": [101, 769]
+    }
+  ],
+  "consume_cases": [
+    {
+      "code": "reset",
+      "result": {
+        "kind": "completed",
+        "providerReceiptId": "upstream-reset"
+      },
+      "wire": "{\"redeem_request_id\":\"fixture-redeem\",\"credit_id\":\"\\ud800\"}",
+      "roundtrip_credit_units": [55296]
+    },
+    {
+      "code": "already_redeemed",
+      "result": {
+        "kind": "already_redeemed",
+        "providerReceiptId": "upstream-already-redeemed"
+      },
+      "wire": "{\"redeem_request_id\":\"fixture-redeem\",\"credit_id\":\"\\ud800\"}",
+      "roundtrip_credit_units": [55296]
+    },
+    {
+      "code": "nothing_to_reset",
+      "result": {
+        "kind": "rejected",
+        "reason": "nothing_to_reset"
+      },
+      "wire": "{\"redeem_request_id\":\"fixture-redeem\",\"credit_id\":\"\\ud800\"}",
+      "roundtrip_credit_units": [55296]
+    },
+    {
+      "code": "no_credit",
+      "result": {
+        "kind": "rejected",
+        "reason": "no_credit"
+      },
+      "wire": "{\"redeem_request_id\":\"fixture-redeem\",\"credit_id\":\"\\ud800\"}",
+      "roundtrip_credit_units": [55296]
+    },
+    {
+      "code": "other",
+      "result": {
+        "kind": "unknown",
+        "providerReceiptId": null
+      },
+      "wire": "{\"redeem_request_id\":\"fixture-redeem\",\"credit_id\":\"\\ud800\"}",
+      "roundtrip_credit_units": [55296]
+    }
+  ],
+  "source_provenance": {
+    "source_sha": "1066643c026ec077d3c22ae2a43b15fd6fccfa8c",
+    "result_reference": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/c3c87372-9a0d-43f3-bbd6-65e1bf96a9f1",
+    "source_files": {
+      "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-m12-admin-runtime-ad1649fc51b/src/codex/banked-reset-provider.ts": "bacf4a7a5995eeec7d6c969f57a48c4e79442f1ce3ab261c96aa297fb5e50137",
+      "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-m12-admin-runtime-ad1649fc51b/src/codex/banked-reset-claim.ts": "19d6c9e5ed407633767c5b18299648343cf6f8c9ec36d14feba8ccc9ab6a9746"
+    },
+    "scope": "Actual source functions; synthetic fetch only; OS network denied; Bun 1.4.0 --no-env-file --no-install"
+  }
+}

@@ -1,9 +1,17 @@
+#[path = "../../gateway-authority/tests/paid_control_cases/original.rs"]
+mod original_request_fixture;
+#[path = "../../gateway-schema/tests/support/source_catalog.rs"]
+mod source_catalog;
+type MemoryStore = Store;
+type TestAuthority = gateway_authority::Authority<Store, Tokens>;
 use gateway_authority::{keys, paid_control::*};
 use gateway_catalog_runtime::{state, *};
 use gateway_core::{
     GatewayError,
     provider::PaidProvider,
     query::{QueryPage, QueryRequest, QueryStore},
+    source_control::decode_source_control_record,
+    source_json::SourceJson,
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
     },
@@ -17,6 +25,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     future::{Future, poll_fn},
     rc::Rc,
+    sync::Arc,
     task::{Context, Poll, Waker},
 };
 fn run<T>(future: impl Future<Output = T>) -> T {
@@ -60,12 +69,13 @@ impl Store {
             keys::paid_control_config(),
             revision,
             json!(PaidControlConfig {
-                v: 1,
+                v: PAID_CONTROL_CONFIG_VERSION,
                 owner_id: "fixture-owner".into(),
                 owner_epoch: "epoch-1".into(),
                 generation: generation.into(),
                 configuration_fingerprint: format!("configuration-{generation}"),
                 surplus_binding: surplus.then(|| "surplus-credential".into()),
+                openlux_discovery_binding: openlux.then(|| "openlux-discovery-credential".into()),
                 openlux_binding: openlux.then(|| "openlux-credential".into()),
                 source_checks: Vec::new()
             }),
@@ -84,9 +94,9 @@ impl Store {
         );
         self.config("generation-1", "config-rev", surplus, openlux);
         let snapshot = ModelSnapshot {
-            models: vec![
-                json!({"slug":"gpt-known","context_window":128000,"supported_reasoning_levels":[{"effort":null},{"effort":"custom-tier"}]}),
-            ],
+            models: vec![source_catalog::json(
+                &json!({"slug":"gpt-known","context_window":128000,"supported_reasoning_levels":[{"effort":null},{"effort":"custom-tier"}]}),
+            )],
             source: "chatgpt_codex".into(),
             updated_at_ms: self.now.get(),
             client_version: Some("0.163.0".into()),
@@ -94,7 +104,10 @@ impl Store {
         self.put(
             catalog_store::runtime_config_key(),
             "runtime-rev",
-            build_runtime_config(&snapshot, None, None, self.now.get()).unwrap(),
+            build_runtime_config(&snapshot, None, None, self.now.get())
+                .unwrap()
+                .deserialize::<Value>()
+                .unwrap(),
         );
         self.put(
             catalog_store::codex_snapshot_key(),
@@ -107,8 +120,19 @@ impl Store {
             json!("catalog-generation"),
         );
     }
+    // Reuse the established authority fixture's full journal writer and actual
+    // reserve_api_key/bind_paid_original_request flow; do not clone its DTO.
+    fn row(&self, key: &RecordKey) -> Option<StoredRecord> {
+        self.get(key)
+    }
+    fn seed(&self, key: RecordKey, value: &Value) {
+        self.put(key, "original-fixture", value.clone());
+    }
     fn projection(&self) -> PaidRoutingProjection {
-        serde_json::from_value(self.get(&keys::paid_routing()).unwrap().value).unwrap()
+        decode_source_control_record(&self.get(&keys::paid_routing()).unwrap())
+            .unwrap()
+            .deserialize()
+            .unwrap()
     }
 }
 impl AuthorityStore for Store {
@@ -153,7 +177,7 @@ impl QueryStore for Store {
     }
 }
 struct Fetch {
-    body: Value,
+    body: SourceJson,
     status: u16,
     ticks: u32,
     after: Option<Callback>,
@@ -180,7 +204,7 @@ impl Host {
             providers.insert(
                 CatalogProvider::Openlux,
                 ProviderBinding {
-                    identity: "openlux-credential".into(),
+                    identity: "openlux-discovery-credential".into(),
                 },
             );
         }
@@ -196,6 +220,9 @@ impl Host {
         }
     }
     fn queue(&self, body: Value) {
+        self.queue_source(source_catalog::json(&body));
+    }
+    fn queue_source(&self, body: SourceJson) {
         self.responses.borrow_mut().push_back(Fetch {
             body,
             status: 200,
@@ -205,6 +232,9 @@ impl Host {
     }
 }
 impl CatalogHost for Host {
+    fn source_string_collator(&self) -> Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        Arc::new(source_catalog::Collator::captured())
+    }
     fn now_ms(&self) -> i64 {
         self.store.now.get()
     }
@@ -245,7 +275,7 @@ impl CatalogHost for Host {
         }
         Ok(CatalogFetchResponse::json(
             response.status,
-            response.body.to_string(),
+            response.body.as_str().to_owned(),
         ))
     }
 }
@@ -274,6 +304,37 @@ fn missing_authenticated_control_owner_refuses_without_fetch_or_policy_write() {
     assert!(store.get(&keys::paid_routing()).is_none());
 }
 #[test]
+fn openlux_spend_identity_cannot_substitute_for_discovery_identity() {
+    let store = Store::new();
+    store.install(false, true);
+    let host = Host::new(&store, false, true);
+    host.publication
+        .borrow_mut()
+        .providers
+        .get_mut(&CatalogProvider::Openlux)
+        .unwrap()
+        .identity = "openlux-credential".into();
+    assert!(run(CatalogRuntime::new().publish_paid_routing(&store, &host)).is_err());
+    assert!(host.requests.borrow().is_empty());
+    assert!(store.get(&keys::paid_routing()).is_none());
+}
+#[test]
+fn one_fact_legacy_configuration_is_rejected_before_discovery() {
+    let store = Store::new();
+    store.install(false, true);
+    let mut record = store.get(&keys::paid_control_config()).unwrap();
+    record.value["v"] = json!(1);
+    record
+        .value
+        .as_object_mut()
+        .unwrap()
+        .remove("openlux_discovery_binding");
+    store.put(keys::paid_control_config(), "legacy-config", record.value);
+    let host = Host::new(&store, false, true);
+    assert!(run(CatalogRuntime::new().publish_paid_routing(&store, &host)).is_err());
+    assert!(host.requests.borrow().is_empty());
+}
+#[test]
 fn real_fixed_publisher_captures_provider_facts_and_all_six_source_fences() {
     let store = Store::new();
     store.install(true, true);
@@ -285,7 +346,7 @@ fn real_fixed_publisher_captures_provider_facts_and_all_six_source_fences() {
     let policy = store.projection();
     assert_eq!(policy.policy.v, 2);
     assert_eq!(
-        policy.policy.models["gpt-known"],
+        policy.policy.models[&"gpt-known".into()],
         vec![PaidProvider::Surplus, PaidProvider::Metered]
     );
     assert_eq!(
@@ -301,16 +362,32 @@ fn real_fixed_publisher_captures_provider_facts_and_all_six_source_fences() {
             .expires_at_ms
             .is_none()
     );
-    let observation: PaidProviderObservation = serde_json::from_value(
-        store
+    let observation: PaidProviderObservation = decode_source_control_record(
+        &store
             .get(&keys::paid_control_observation(PaidProvider::Surplus))
-            .unwrap()
-            .value,
+            .unwrap(),
     )
+    .unwrap()
+    .deserialize()
     .unwrap();
-    assert_eq!(observation.models[0]["input_price_per_token"], 0.001);
-    assert_eq!(observation.models[0]["supports_tools"], true);
+    assert_eq!(
+        observation.models[0].deserialize::<Value>().unwrap()["input_price_per_token"],
+        0.001
+    );
+    assert_eq!(
+        observation.models[0].deserialize::<Value>().unwrap()["supports_tools"],
+        true
+    );
     assert!(observation.source_checks.is_empty());
+    let openlux: PaidProviderObservation = decode_source_control_record(
+        &store
+            .get(&keys::paid_control_observation(PaidProvider::Metered))
+            .unwrap(),
+    )
+    .unwrap()
+    .deserialize()
+    .unwrap();
+    assert_eq!(openlux.credential_binding, "openlux-discovery-credential");
 }
 #[test]
 fn retained_stale_catalog_is_usable_without_invented_refresh_expiry() {
@@ -325,7 +402,7 @@ fn retained_stale_catalog_is_usable_without_invented_refresh_expiry() {
     run(runtime.publish_paid_routing(&store, &host)).unwrap();
     assert_eq!(host.requests.borrow().len(), count);
     assert_eq!(
-        store.projection().policy.models["paid-only"],
+        store.projection().policy.models[&"paid-only".into()],
         vec![PaidProvider::Surplus]
     );
     assert!(
@@ -343,7 +420,7 @@ fn failed_openlux_discovery_preserves_explicit_known_codex_missing_catalog_fallb
     let host = Host::new(&store, false, true);
     let runtime = CatalogRuntime::new();
     host.responses.borrow_mut().push_back(Fetch {
-        body: json!({}),
+        body: source_catalog::json(&json!({})),
         status: 503,
         ticks: 0,
         after: None,
@@ -351,7 +428,7 @@ fn failed_openlux_discovery_preserves_explicit_known_codex_missing_catalog_fallb
     run(runtime.publish_paid_routing(&store, &host)).unwrap();
     let projection = store.projection();
     assert_eq!(
-        projection.policy.models["gpt-known"],
+        projection.policy.models[&"gpt-known".into()],
         vec![PaidProvider::Metered]
     );
     assert!(projection.provenance.openlux_observation_revision.is_none());
@@ -368,7 +445,7 @@ fn failed_surplus_discovery_cannot_manufacture_a_priced_route() {
     let host = Host::new(&store, true, false);
     let runtime = CatalogRuntime::new();
     host.responses.borrow_mut().push_back(Fetch {
-        body: json!({}),
+        body: source_catalog::json(&json!({})),
         status: 500,
         ticks: 0,
         after: None,
@@ -401,7 +478,7 @@ fn superseded_configuration_during_fetch_cannot_publish_an_observation() {
     let runtime = CatalogRuntime::new();
     let other = store.clone();
     host.responses.borrow_mut().push_back(Fetch {
-        body: surplus("old"),
+        body: source_catalog::json(&surplus("old")),
         status: 200,
         ticks: 0,
         after: Some(Rc::new(move || {
@@ -425,7 +502,7 @@ fn source_selection_change_across_await_fails_the_original_projection_cas() {
     let runtime = CatalogRuntime::new();
     let other = store.clone();
     host.responses.borrow_mut().push_back(Fetch {
-        body: surplus("old"),
+        body: source_catalog::json(&surplus("old")),
         status: 200,
         ticks: 0,
         after: Some(Rc::new(move || {
@@ -468,7 +545,7 @@ fn newer_observation_wins_and_older_awaited_producer_cannot_roll_it_back() {
     let host = Host::new(&store, true, false);
     let runtime = CatalogRuntime::new();
     host.responses.borrow_mut().push_back(Fetch {
-        body: surplus("older"),
+        body: source_catalog::json(&surplus("older")),
         status: 200,
         ticks: 1,
         after: None,
@@ -507,14 +584,14 @@ fn publication_replaces_full_model_map_and_never_retains_removed_permissions() {
             .projection()
             .policy
             .models
-            .contains_key("old-paid-model")
+            .contains_key(&"old-paid-model".into())
     );
     assert!(
         store
             .projection()
             .policy
             .models
-            .contains_key("new-paid-model")
+            .contains_key(&"new-paid-model".into())
     );
 }
 #[test]
@@ -562,7 +639,13 @@ fn advertised_whitelist_does_not_become_an_extra_paid_runtime_allowlist() {
     let runtime = CatalogRuntime::new();
     host.queue(surplus("paid-only"));
     run(runtime.publish_paid_routing(&store, &host)).unwrap();
-    assert!(store.projection().policy.models.contains_key("paid-only"));
+    assert!(
+        store
+            .projection()
+            .policy
+            .models
+            .contains_key(&"paid-only".into())
+    );
 }
 #[test]
 fn synthetic_possible_index_does_not_change_ordinary_provider_selection() {
@@ -578,7 +661,7 @@ fn synthetic_possible_index_does_not_change_ordinary_provider_selection() {
     host.queue(surplus("deepseek-v4.1-flash"));
     run(runtime.publish_paid_routing(&store, &host)).unwrap();
     assert_eq!(
-        store.projection().policy.models["deepseek-v4.1-flash"],
+        store.projection().policy.models[&"deepseek-v4.1-flash".into()],
         vec![PaidProvider::Surplus]
     );
     assert!(!store.projection().policy.codex_enabled);
@@ -619,12 +702,13 @@ fn only_actual_source_deadlines_constrain_a_projection() {
         store.projection().provenance.source_valid_until_ms,
         Some(until)
     );
-    let observation: PaidProviderObservation = serde_json::from_value(
-        store
+    let observation: PaidProviderObservation = decode_source_control_record(
+        &store
             .get(&keys::paid_control_observation(PaidProvider::Surplus))
-            .unwrap()
-            .value,
+            .unwrap(),
     )
+    .unwrap()
+    .deserialize()
     .unwrap();
     assert_eq!(observation.source_valid_until_ms, Some(until));
     store.now.set(until + 1);
@@ -668,7 +752,10 @@ fn custody_metadata_contains_only_the_observed_routing_fields() {
     let cached = runtime
         .cached_provider(&host.publication.borrow(), CatalogProvider::Surplus)
         .unwrap();
-    assert_eq!(cached.models[0]["description"], "unrelated provider prose");
+    assert_eq!(
+        cached.models[0].deserialize::<Value>().unwrap()["description"],
+        "unrelated provider prose"
+    );
 }
 
 struct Tokens(Cell<u64>);
@@ -704,10 +791,23 @@ fn paid_request(
         created_at_ms: store.now.get(),
     }
 }
+fn set_source_field(body: &mut SourceJson, key: &str, value: SourceJson) {
+    let mut fields = gateway_core::source_serialization::entries(body).unwrap();
+    let key = gateway_core::js_string::JsString16::from_utf8(key);
+    if let Some((_, old)) = fields.iter_mut().find(|(name, _)| name == &key) {
+        *old = value;
+    } else {
+        fields.push((key, value));
+    }
+    *body = gateway_core::source_serialization::object_keys(fields).unwrap();
+}
 fn context(model: &str) -> PaidRequestContext {
     PaidRequestContext {
         original_model: model.into(),
-        body: json!({"model":model,"input":"controlled fixture","stream":false,"tools":[]}),
+        body: SourceJson::from_serializable(
+            &json!({"model":model,"input":"controlled fixture","stream":false,"tools":[]}),
+        )
+        .unwrap(),
         surface: gateway_providers::ClientSurface::Responses,
         synthetic_hop: None,
     }
@@ -747,9 +847,13 @@ fn actual_publisher_receipt_and_reservation_share_one_authority_and_reject_stale
     );
     let authority =
         Authority::with_clock(store.clone(), Tokens(Cell::new(0)), Clock(store.now.get()));
-    let receipt =
-        run(authority.authorize_paid_route(&request, &context("paid-only"), store.now.get()))
-            .unwrap();
+    let receipt = run(original_request_fixture::authorize(
+        &authority,
+        &request,
+        &context("paid-only"),
+        store.now.get(),
+    ))
+    .unwrap();
     assert!(matches!(
         run(authority.reserve_paid(
             &request,
@@ -803,7 +907,13 @@ fn coarse_union_never_authorizes_the_wrong_client_endpoint() {
     let runtime = CatalogRuntime::new();
     host.queue(json!({"data":[{"id":"paid-only","supported_endpoint_types":["openai"]}]}));
     run(runtime.publish_paid_routing(&store, &host)).unwrap();
-    assert!(store.projection().policy.models.contains_key("paid-only"));
+    assert!(
+        store
+            .projection()
+            .policy
+            .models
+            .contains_key(&"paid-only".into())
+    );
     let request = paid_request(&store, PaidProvider::Metered, "paid-only");
     let authority =
         Authority::with_clock(store.clone(), Tokens(Cell::new(0)), Clock(store.now.get()));
@@ -824,12 +934,22 @@ fn ordinary_tool_request_cannot_use_a_coarse_non_tool_surplus_permission() {
     response["data"][0]["supported_features"] = json!([]);
     host.queue(response);
     run(runtime.publish_paid_routing(&store, &host)).unwrap();
-    assert!(store.projection().policy.models.contains_key("paid-only"));
+    assert!(
+        store
+            .projection()
+            .policy
+            .models
+            .contains_key(&"paid-only".into())
+    );
     let request = paid_request(&store, PaidProvider::Surplus, "paid-only");
     let authority =
         Authority::with_clock(store.clone(), Tokens(Cell::new(0)), Clock(store.now.get()));
     let mut context = context("paid-only");
-    context.body["tools"] = json!([{"type":"function","name":"actual-tool"}]);
+    set_source_field(
+        &mut context.body,
+        "tools",
+        source_catalog::json(&json!([{"type":"function","name":"actual-tool"}])),
+    );
     assert!(run(authority.authorize_paid_route(&request, &context, store.now.get())).is_err());
 }
 
@@ -851,7 +971,11 @@ fn synthetic_override_requires_the_server_owned_hop_not_a_body_shortcut() {
     let authority =
         Authority::with_clock(store.clone(), Tokens(Cell::new(0)), Clock(store.now.get()));
     let mut ordinary = context("deepseek-v4.1-flash");
-    ordinary.body["synthetic_hop"] = json!("surplus");
+    set_source_field(
+        &mut ordinary.body,
+        "synthetic_hop",
+        source_catalog::json("surplus"),
+    );
     assert!(run(authority.authorize_paid_route(&request, &ordinary, store.now.get())).is_err());
     let mut synthetic = context("ubiquity/deepseek-flash");
     synthetic.synthetic_hop = Some(PaidSyntheticHop::Surplus);
@@ -981,6 +1105,7 @@ mod native_configuration {
             let inputs = ConfiguredPaidInputs::new(
                 Some(Secret::new("fixture-actual-surplus-secret".into())),
                 None,
+                None,
                 json!({"candidate":"controlled-fixture"}),
             )
             .unwrap();
@@ -1013,13 +1138,14 @@ mod native_configuration {
             host.queue(surplus("actual-owned-model"));
             runtime.publish_paid_routing(&store, &host).await.unwrap();
             assert_eq!(
-                store.projection().policy.models["actual-owned-model"],
+                store.projection().policy.models[&"actual-owned-model".into()],
                 vec![PaidProvider::Surplus]
             );
             let retained = serde_json::to_string(&*store.rows.borrow()).unwrap();
             assert!(!retained.contains("fixture-actual-surplus-secret"));
             let next = ConfiguredPaidInputs::new(
                 Some(Secret::new("fixture-rotated-surplus-secret".into())),
+                None,
                 None,
                 json!({"candidate":"controlled-fixture"}),
             )
@@ -1051,21 +1177,61 @@ mod native_configuration {
                 },
             );
             host.queue(surplus("new-owned-model"));
+            // Surplus discovery is public and shares its TTL cache across key changes.
+            // A configuration rotation changes spend custody; an explicit metadata refresh
+            // is the source operation that replaces a still-fresh public model snapshot.
+            runtime
+                .publish_paid_observation(&store, &host, PaidProvider::Surplus, true)
+                .await
+                .unwrap();
             runtime.publish_paid_routing(&store, &host).await.unwrap();
             assert!(
                 !store
                     .projection()
                     .policy
                     .models
-                    .contains_key("actual-owned-model")
+                    .contains_key(&"actual-owned-model".into())
             );
             assert!(
                 store
                     .projection()
                     .policy
                     .models
-                    .contains_key("new-owned-model")
+                    .contains_key(&"new-owned-model".into())
             );
         });
     }
+}
+
+#[test]
+fn source_paid_observation_and_projection_preserve_opaque_models_without_new_authority() {
+    use gateway_core::{js_string::JsString16, model::ModelId, value::ValueEncoding};
+    let store = Store::new();
+    store.install(true, false);
+    let host = Host::new(&store, true, false);
+    let runtime = CatalogRuntime::new();
+    let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));
+    host.queue_source(SourceJson::parse(r#"{"data":[{"id":"\ud800","supported_parameters":["tools","tool_choice"],"supported_features":["tools"],"pricing":{"prompt":"0.001","completion":"0.002"}}]}"#).unwrap());
+    run(runtime.publish_paid_routing(&store, &host)).unwrap();
+    let observation = store
+        .get(&keys::paid_control_observation(PaidProvider::Surplus))
+        .unwrap();
+    assert_eq!(observation.value_encoding, ValueEncoding::ProfileV2);
+    assert_eq!(
+        store.projection().policy.models.get(&model),
+        Some(&vec![PaidProvider::Surplus])
+    );
+    assert!(
+        !store
+            .projection()
+            .policy
+            .models
+            .contains_key(&ModelId::from_scalar(r"\ud800"))
+    );
+    let row = store.get(&keys::paid_routing()).unwrap();
+    assert_eq!(row.value_encoding, ValueEncoding::ProfileV2);
+    println!(
+        "M42_PAID_PROJECTION_WRITER_FIXTURE={}",
+        serde_json::to_string(&(keys::paid_routing().0, row)).unwrap()
+    );
 }

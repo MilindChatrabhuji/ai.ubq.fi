@@ -1,9 +1,13 @@
 use gateway_auth::AuthPrincipal;
-use gateway_core::{GatewayError, identity::RequestContext, lifecycle::SemanticTerminal};
+use gateway_core::{
+    GatewayError, identity::RequestContext, lifecycle::SemanticTerminal, model::ModelId,
+    source_json::SourceJson,
+};
 use gateway_providers::{
     extras::MultipartFile,
     types::{PrepareOptions, PreparedRequest},
 };
+use gateway_schema::source_request::SourceRequestError;
 use serde_json::Value;
 use std::{collections::BTreeMap, future::Future};
 
@@ -45,7 +49,7 @@ impl ExtrasRoute {
 /// preserves scalar fields as JSON and file metadata/bytes separately; no URL proxy.
 pub struct ExtrasRequest<'a> {
     pub route: ExtrasRoute,
-    pub body: Value,
+    pub body: SourceJson,
     pub multipart: Option<Vec<MultipartFile>>,
     pub raw_body_bytes: usize,
     pub idempotency_key: Option<String>,
@@ -79,7 +83,7 @@ pub enum ExtrasDispatch {
         index: usize,
         kind: ImageKind,
         request_id: String,
-        body: Value,
+        body: SourceJson,
     },
 }
 #[derive(Clone, Debug)]
@@ -93,6 +97,7 @@ pub struct UpstreamResponse {
 }
 #[derive(Clone, Debug)]
 pub struct DispatchFailure {
+    pub origin: DispatchFailureOrigin,
     pub error: Box<GatewayError>,
     pub headers: Headers,
     /// Quota failure is independent of upstream rejection or transport failure.
@@ -102,15 +107,34 @@ pub struct DispatchFailure {
     pub before_transport: bool,
     pub raw_error_body: Option<Vec<u8>>,
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DispatchFailureOrigin {
+    Gateway,
+    Transport,
+    Upstream,
+}
 impl DispatchFailure {
     pub fn transport(error: GatewayError) -> Self {
         Self {
+            origin: DispatchFailureOrigin::Transport,
             error: Box::new(error),
             headers: Headers::new(),
             quota_refusal: false,
             upstream_status: None,
             retry_after_ms: None,
             before_transport: false,
+            raw_error_body: None,
+        }
+    }
+    pub fn gateway(error: GatewayError, before_transport: bool) -> Self {
+        Self {
+            origin: DispatchFailureOrigin::Gateway,
+            error: Box::new(error),
+            headers: Headers::new(),
+            quota_refusal: false,
+            upstream_status: None,
+            retry_after_ms: None,
+            before_transport,
             raw_error_body: None,
         }
     }
@@ -139,7 +163,7 @@ pub struct HealthObservation {
 pub struct ExtrasResponse {
     pub status: u16,
     pub headers: Headers,
-    pub body: Value,
+    pub body: SourceJson,
     pub semantic_terminal: Option<SemanticTerminal>,
     pub usage: Option<Value>,
     pub kernel: KernelDisposition,
@@ -150,6 +174,15 @@ pub struct ExtrasResponse {
 }
 impl ExtrasResponse {
     pub fn json(status: u16, body: Value) -> Self {
+        Self::source_json(
+            status,
+            SourceJson::from_serializable(&body).expect("actual scalar response"),
+        )
+    }
+    pub fn source_error(error: SourceRequestError) -> Self {
+        Self::source_json(error.status, error.body().clone())
+    }
+    pub fn source_json(status: u16, body: SourceJson) -> Self {
         Self {
             status,
             body,
@@ -189,7 +222,7 @@ pub trait ExtrasHost {
         &self,
         provider: ExtrasProvider,
     ) -> impl Future<Output = Result<Option<PrepareOptions>, GatewayError>>;
-    fn image_base_model(&self) -> impl Future<Output = Result<Option<String>, GatewayError>>;
+    fn image_base_model(&self) -> impl Future<Output = Result<Option<ModelId>, GatewayError>>;
     fn dispatch(
         &self,
         operation: ExtrasDispatch,

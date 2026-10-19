@@ -6,6 +6,57 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Rust audit text preserves source UTF-16 truncation - 2026-10-19
+
+API-key audit fields and target names preserve the source `slice(0, 200)` contract, including a lone surrogate when the cut splits a pair. Audit writes retain ordinary Json records when lossless and use the existing ProfileV2 encoding only when ordinary JSON values cannot represent the event. The audit-only read projection uses validated SourceJson and retains existing Json compatibility, scalar-field selection, timestamp-only visibility and event ordering. This adds no storage family, general codec reinterpretation or live-state conversion.
+
+Reason: Unicode-scalar truncation changed the retained text, and ordinary Rust strings could not represent every source audit value. Source-golden persistence and read-page fixtures cover the exact code units. Migration and latest-state inverse must preserve the same existing ProfileV2 representation before operational acceptance.
+
+## TypeScript-only VPS releases reuse verified payloads - 2026-10-19
+
+The VPS deploy CLI reuses the selected immutable release's `node_modules` and `.native/kv` payload when the root lockfile
+and native input manifest match exactly. A mismatch falls back to the existing fresh install/build path. This avoids
+recompiling the unchanged native KV addon for routing and client-only changes.
+
+Reason: repeated Cargo builds delayed small TypeScript releases and kept the service on stale behavior longer than
+necessary. Reuse is bound to the selected release's verified provenance and the current tracked native inputs.
+
+Reversal risk: reusing across a changed lockfile or native input would violate the immutable release identity, so either
+mismatch must continue to rebuild and verify from source.
+
+## Client Retry-After is bounded independently of quota deadlines - 2026-10-19
+
+Gateway routing errors retain their durable quota or reset deadline, but the client-facing `Retry-After` hint is capped
+at 60 seconds. A weekly Codex quota block previously emitted the full remaining duration, such as 561,000 seconds, and
+clients slept for days instead of retrying or entering an available failover.
+
+Reason: routing availability can change through paid failover, reset recovery, or operator action long before the
+upstream subscription window resets. The upstream deadline is still enforced internally and is not shortened.
+
+Reversal risk: removing the cap restores multi-day client sleeps on ordinary weekly exhaustion. Emitting no header
+would instead invite tight retry loops.
+
+## Shadow banked-reset decisions do not suppress enabled overage - 2026-10-19
+
+In banked-reset shadow mode, `shadow_selected` and `already_would_spend_once` prove that no reset credit was
+redeemed: shadow persists a decision but never consumes it. Both outcomes now qualify for the existing single bounded
+overage probe when the account's `Allow overage spending` setting is on. The per-account allow setting remains a hard
+gate; `live_armed`, a completed live redemption, and fence or configuration failures still never fall back.
+
+A durable reset record stuck at local `claimed` without a provider submission likewise returns
+`unsubmitted_transaction`. Reconciliation cannot advance that record and no external reset was consumed, so the same
+bounded overage probe may proceed. In-progress, live-armed, submitted, unknown, and ambiguous states remain ineligible.
+
+Enabled overage is a serving path, not a single-flight reset recovery probe. It does not claim the reset probe lease, so
+concurrent client requests may use the account directly; each request still performs at most one bounded upstream
+attempt.
+
+Reason: an exhausted account with overage enabled remained stuck behind an existing shadow decision and fell through to
+paid routing, even though shadow mode could not spend the reset it observed.
+
+Reversal risk: removing these reasons restores that dead-end. Adding live-arming or completed-redemption reasons would
+risk spending both a banked reset and overage for one episode.
+
 ## Explicit manual banked reset verifies and promotes one account - 2026-10-18
 
 An authenticated admin may use one banked reset for a selected Codex account through `POST /admin/providers/codex/banked-resets/consume`. This explicit manual action works independently of the Automatic resets switch and automatic shadow arming; global `enabled=false` and `mode=disabled` still make zero provider calls. Manual and automatic redemptions share the existing one-per-account-per-UTC-day submission budget, account/window idempotency, exact credential and quota fences, and unknown-consumption refusal. An uncertain consume is never replayed.
@@ -2195,6 +2246,10 @@ Requests authenticate with a dedicated constructor-supplied transport identity u
 
 The isolated real-runtime fixture uses a dedicated ephemeral transport identity and task-owned immutable source/owner registry, with real OS filesystem/network/process confinement. Provider, admin and synchronized account credentials are not reused for this channel. Access publication remains a separate fixed-owner/account/workspace, monotonic generation/native-refresh contract; a supervisor read capability cannot become arbitrary JSON-RPC or credential mutation. No live binding, secret, default endpoint, host listener, data adoption or production activation is authorized by this decision. The exact candidate carrier route, host placement and dedicated credential residence require a concrete reversible deployment patch and the controller's final activation reconciliation; source and fixture implementation proceed independently.
 
+## Native source graphs preserve identity separately from ordinary profile export - 2026-10-18
+
+The explicit `source-graph-v1` record encoding preserves native-source shared object and backing-buffer identity, sparse arrays, and source-supported Object/Array/Map/Set cycles. Its closed data-only graph keeps Buffer brand, validates reference kinds and view coordinates, and refuses unknown executable/accessor/class nodes and Error.cause. Json/ProfileV1/ProfileV2 remain separate unchanged contracts; ordinary profile export still refuses cycles and is not complete native capture. Identity-free tree projection is explicit and refuses to duplicate shared references. Migration, native-counter transport, source graph JSON/inverse adapters, runtime schema binding and live adoption retain their existing owners and acceptance gates.
+
 ## Rust WebAuthn retains the pinned source certificate-path policy - 2026-10-18
 
 The Rust port preserves SimpleWebAuthn server 13.2.2 certificate-path early termination after a provided self-signed issuer verifies, including an issuer that differs from the appended configured anchor. An accepted path therefore does not establish configured-anchor membership. Source-derived fixtures retain the positive unconfigured-root SafetyNet case and the negative issuer-omitted case in `rust/crates/gateway-auth/tests/fixtures/webauthn-source-golden.json`; the maintained verifier compatibility notes record the pinned source and its extension. A stricter terminal-anchor policy is a separately scoped owner decision, not an implicit change in this port.
@@ -2214,3 +2269,39 @@ Reversal risk: removing the header returns request-level enablement to the provi
 CI run `39168411070` passed 33 of the 45 deployment/recovery cases and began the next controlled launcher before the existing ten-minute per-file cap stopped it. The complete `tests/vps-deploy-guards.test.ts` file receives a bounded twenty-minute default; every other file keeps ten minutes, individual Bun test deadlines stay five minutes, and an explicit `--file-timeout-ms` remains capped at ten minutes and overrides the default. No case, assertion, fixture isolation or process-group settlement rule is removed.
 
 Knip treats `cloudflare.config.ts`, `wrangler.config.ts` and `tools/cloudflare/generate-types.ts` as actual external-tool entry points. The configured CLI consumes the two default config exports; `cf` and `wrangler` remain pinned dependencies. Prettier excludes vendored Rust bytes and continues to own the supported first-party formats.
+
+## Rust continuation builds on the Mac and preserves source controls losslessly - 2026-10-19
+
+The owner moved all remaining Rust/WASM implementation, compilation, testing and candidate preparation to the private Mac after VPS resource failures. The one-time evidence import is complete; do not use the VPS as a build or execution fallback. Hosted GitHub CI remains a required merge gate. Keep one serialized Mac compiler lock and the recorded pinned toolchain; this changes neither production hosting nor deployment authority.
+
+Model identifiers and reasoning controls are source UTF16 data, not necessarily Rust Unicode scalar strings. The shared data-only `ModelId` and `JsString16` carriers retain source-permitted code units through routing, provider preparation, policy, observations and named stored control records. Ordinary wire values remain JSON strings. No replacement character, escape-text identifier, synthetic hash, fallback model or new refusal may stand in for an otherwise valid source value. Reasoning metadata does not become an incoming tier-membership allowlist.
+
+Named record adapters opt into one finite `SourceJson` to `PortableValue` codec. Scalar-compatible records retain `Json`; exact UTF16 strings or object keys use the existing explicit `ProfileV2` encoding. The codec preserves revision and absolute expiry without adding family policy, accepts no executable or non-JSON graph nodes, and does not reinterpret generic transaction reads or writes. Each family still validates its complete key, logical version, shape, currentness and original atomic revision fences. Private codecs, imported rows and phase data never reconstruct live authorization.
+
+Fresh ordinary routing journals use logical version 3 and bind the canonical original request using the existing source-request-binding version-2 domain. They have no local-work extension. Legacy ordinary/extras version 1 and local-work version 2 keep their original interpretations; one shared lossless phase parser serves writers, guards and custody readers. No stored request-body transcript, new ledger, key family or lifetime is added.
+
+The source tuple encoder intentionally gives some distinct UTF16 model strings the same physical key bytes. Paid rollup settlement retains the first stored logical label and adds usage, while each attempt retains its own model. Do not invent collision-safe keys or recover logical model labels from replacement-decoded tuple components. Named forward and latest-state inverse validators must preserve those source semantics, original raw keys, revisions and expiries.
+
+These are source-compatibility and execution-location decisions, not final runtime acceptance. Exact combined Mac/WASM/workerd tests, hosted CI, ancestry-preserving integration and candidate evidence remain required. No native networking exception, credential import adaptation, service activation, live-state adoption, provider-credit spend or production hostname cutover is authorized by this entry.
+
+## Native gateway private runtime and request phases, revision 3 - 2026-10-19
+
+The source-only native gateway runtime uses private constructor-bound verification and expiring current-epoch grants to bind an authenticated native identity to durable request lifetimes. API-key and independently verified kernel scopes are separately nullable; GitHub, passkey, allowlist/admin/deploy and policy-free local authentication retain their source principal identities without fabricated API keys or repositories. Permanent constructor-seeded inference capabilities are retired for migrated consumers.
+
+Private binding and SQLite schema revision 3 accept only the new closed DTO phases within their configured authority epoch: open requestId/route/path after authentication and process permission without accounting or body metadata; reserve the applicable API and kernel families; bind immutable validated model/stream/literal reasoning once at the existing parser boundary; bind request-specific routing through a private source port before dispatch or paid exposure. API-free requests acquire no paid entitlement, and a static key policy cannot grant global unrostered/direct-hop permission. Old v2 admission DTOs and existing schema revisions fail closed; no mixed-version overload, generic remote KV, local ledger fallback or live store migration is introduced.
+
+Current grant/context/intent/expiry and applicable raw H/scope checks remain atomic with new effects and historical permission acknowledgments. Existing request-owned terminal, kernel, billing and definite-no-fetch cleanup preserve their native meaning after key revocation; ambiguous transport start and lost acknowledgments never recreate compensation rights. Existing API/kernel/Codex/paid reducers and all legacy/private-control fixture assertions remain required.
+
+This decision authorizes only the coherent source and synthetic fixture foundation. Real native handler/parser/provider and Worker data-plane adoption, owner selection, credentials, publication, state/scheduler migration, real renewal/spend and production/standby activation remain outside this stage. Exact-source Linux mixed acceptance and integrated CI/artifact receipts must follow the local source-ready handback before delivery.
+
+For the private v3 incomplete-migration vector, current-H authentication retains the existing resolver's 503 `server_error` before any request/admission/paid effect. The old synthetic cold-capability `unauthorized` vector moves to that authentication phase; admin no-op/revocation and public gateway HTTP mapping are unchanged. The exact source-bound assertion amendment is retained with the foundation evidence.
+
+A separate constructor-private retained-history verifier permits only API no-fetch release, paid no-fetch release, paid lifecycle observations without fetch/dispatch-start mutation, verified paid billing, paid deferral, and reconciliation claim/finish for existing durable original binding/principal/key/request handles. Current epoch, namespace, expiring grant, private context, intent and target scope are rechecked before effects and replay; cursors and leases also retain the exact grant and handles. It creates no principal or request lifetime and cannot authorize admission, exposure, routing, dispatch or administration. Synthetic restoration of accepted distinct historical principals preserves the all-principal key-deletion invariant while fresh same-key identities remain `api-key:<keyid>`.
+
+## Scoped native connector and native-direct imports approved - 2026-10-19
+
+The owner explicitly approved the isolated Mac connector and native-direct credential/profile import adaptation in this goal session. The connector may use a separate credential-free process whose OS sandbox permits outbound TCP 443 while its code fixes the provider destination to api.openai.com; this is not a claim of OS-enforced hostname restriction. The main companion retains its separate confinement and credential custody. Safe descriptor ownership, cancellation, process settlement and actual enforcement checks remain required.
+
+Credential and refresh-bearing profile documents go directly to the trusted native receiver through the scoped admin-client adaptation, not through Cloudflare. This approval does not select an account or authorize unrelated credential rotation, bulk replacement, live database adoption or a production native service launch. Exact native/reverse-authority origin, identity residence and operational activation still require their concrete scoped reconciliation.
+
+The owner reaffirmed Cloudflare as the Rust/WASM candidate deployment target. Implementation, compilation and local acceptance remain on this Mac; the existing exact-source CI and candidate acceptance gates still apply. Production hostname traffic cutover remains excluded. The current staged-Claude/Worker integration and defined acceptance packet precede these separately approved native implementation changes.

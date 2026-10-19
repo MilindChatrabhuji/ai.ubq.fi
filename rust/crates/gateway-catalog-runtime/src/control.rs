@@ -5,8 +5,12 @@ use gateway_authority::{keys, paid::PaidRoutingPolicy, paid_control::*};
 use gateway_core::{
     GatewayError,
     identity::MAX_SAFE_INTEGER,
+    model::ModelId,
     provider::PaidProvider,
     query::QueryStore,
+    source_control::{decode_source_control_record, encode_source_control_record},
+    source_json::SourceJson,
+    source_serialization as source,
     state::{
         AtomicTransition, CommitOutcome, RecordKey, RecordMutation, RevisionCheck, StoredRecord,
     },
@@ -16,10 +20,10 @@ use gateway_providers::policy::{DeepseekHop, PaidRoutingInput, paid_order, resol
 use gateway_schema::{
     catalog::{CatalogInput, ProviderCatalog},
     catalog_store,
+    reasoning::js_trim_source,
     runtime_config::normalize_runtime_config,
     selection::ProviderSelection,
     snapshot::ModelSnapshot,
-    util::identifier,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -94,15 +98,36 @@ fn configured(config: &PaidControlConfig, provider: PaidProvider) -> Option<&str
         PaidProvider::Metered => config.openlux_binding.as_deref(),
     }
 }
+fn discovery_binding(config: &PaidControlConfig, provider: PaidProvider) -> Option<&str> {
+    match provider {
+        PaidProvider::Surplus => config.surplus_binding.as_deref(),
+        PaidProvider::Metered => config.openlux_discovery_binding.as_deref(),
+    }
+}
 fn decode<T: DeserializeOwned>(record: &StoredRecord) -> Result<T, GatewayError> {
-    serde_json::from_value(record.json_value()?.clone())
+    decode_source_control_record(record)?
+        .deserialize()
         .map_err(|_| missing("Paid control record is malformed"))
 }
 async fn read_record<S: QueryStore>(
     store: &S,
     key: &RecordKey,
 ) -> Result<Option<StoredRecord>, GatewayError> {
-    let record = state::read_json(store, key).await?;
+    // Only these named model-bearing families opt into the source codec.
+    let source_row = key == &keys::paid_routing()
+        || key == &catalog_store::codex_snapshot_key()
+        || key == &catalog_store::runtime_config_key()
+        || [PaidProvider::Surplus, PaidProvider::Metered]
+            .iter()
+            .any(|p| key == &keys::paid_control_observation(*p));
+    let record = if source_row {
+        store.read(key).await?
+    } else {
+        state::read_json(store, key).await?
+    };
+    if let Some(row) = record.as_ref().filter(|_| source_row) {
+        decode_source_control_record(row)?;
+    }
     if let Some(record) = &record {
         text(&record.revision)?;
         if let Some(until) = record.expires_at_ms {
@@ -231,7 +256,7 @@ impl Controls {
         let owner: PaidControlOwner = decode(&owner_record)?;
         let config: PaidControlConfig = decode(&config_record)?;
         if owner.v != 1
-            || config.v != 1
+            || config.v != PAID_CONTROL_CONFIG_VERSION
             || owner.owner_id != config.owner_id
             || owner.owner_epoch != config.owner_epoch
         {
@@ -248,9 +273,13 @@ impl Controls {
         ] {
             text(value)?;
         }
-        for binding in [&config.surplus_binding, &config.openlux_binding]
-            .into_iter()
-            .flatten()
+        for binding in [
+            &config.surplus_binding,
+            &config.openlux_discovery_binding,
+            &config.openlux_binding,
+        ]
+        .into_iter()
+        .flatten()
         {
             text(binding)?;
         }
@@ -275,7 +304,7 @@ impl Controls {
                 .providers
                 .get(&catalog_provider(provider))
                 .map(|binding| binding.identity.as_str())
-                != configured(&self.config, provider)
+                != discovery_binding(&self.config, provider)
             {
                 return Err(missing(
                     "Catalog credentials do not match the authenticated configuration owner publication",
@@ -291,7 +320,7 @@ impl Controls {
         now: i64,
     ) -> Result<PaidProviderObservation, GatewayError> {
         let observation: PaidProviderObservation = decode(record)?;
-        let binding = configured(&self.config, provider).ok_or_else(stale)?;
+        let binding = discovery_binding(&self.config, provider).ok_or_else(stale)?;
         if expired(record, now)
             || observation.v != 1
             || observation.provider != provider
@@ -312,11 +341,11 @@ impl Controls {
             time(until)?;
         }
         if observation.models.iter().any(|row| {
-            !row.is_object()
-                || row
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .is_none_or(|id| id.trim().is_empty())
+            !row.as_str().starts_with('{')
+                || source::member(row, "id")
+                    .as_ref()
+                    .and_then(source::string)
+                    .is_none_or(|id| js_trim_source(&id).as_units().is_empty())
         }) {
             return Err(missing(
                 "Provider observation contains malformed model rows",
@@ -371,7 +400,7 @@ impl CatalogRuntime {
             source.source(&old.source_checks)?;
         }
         let source_until = source_deadline(store, &source, started).await?;
-        let snapshot = if configured(&control.config, provider).is_some() {
+        let snapshot = if discovery_binding(&control.config, provider).is_some() {
             self.refresh_provider(store, host, catalog_provider(provider), force)
                 .await?
         } else {
@@ -420,12 +449,12 @@ impl CatalogRuntime {
         let mutations = if let (Some(next), Some(revision)) = (next, revision.as_ref()) {
             vec![RecordMutation::Put {
                 key,
-                record: StoredRecord::json(
+                record: encode_source_control_record(
                     revision,
-                    serde_json::to_value(next)
+                    &SourceJson::from_serializable(&next)
                         .map_err(|_| missing("Provider observation serialization failed"))?,
                     source_until,
-                ),
+                )?,
             }]
         } else {
             Vec::new()
@@ -511,7 +540,7 @@ impl CatalogRuntime {
                     ProviderCatalog {
                         models: observation.models,
                         updated_at_ms: Some(observation.observed_at_ms),
-                        configured: true,
+                        configured: binding.is_some(),
                         available: true,
                         stale: observation.stale,
                     },
@@ -579,12 +608,12 @@ impl CatalogRuntime {
                 checks: checks.list(),
                 mutations: vec![RecordMutation::Put {
                     key: keys::paid_routing(),
-                    record: StoredRecord::json(
+                    record: encode_source_control_record(
                         &revision,
-                        serde_json::to_value(projection)
+                        &SourceJson::from_serializable(&projection)
                             .map_err(|_| missing("Paid projection serialization failed"))?,
                         source_valid_until,
-                    ),
+                    )?,
                 }],
             })
             .await?
@@ -599,31 +628,38 @@ impl CatalogRuntime {
         })
     }
 }
-fn routing_rows(models: Vec<Value>) -> Vec<Value> {
+fn routing_rows(models: Vec<SourceJson>) -> Vec<SourceJson> {
     models
         .into_iter()
         .map(|row| {
-            let mut result = serde_json::Map::new();
-            for key in [
-                "id",
-                "created",
-                "supported_endpoint_types",
-                "supports_tools",
-                "supports_parallel_tool_calls",
-                "input_price_per_token",
-                "output_price_per_token",
-                "cache_read_price_per_token",
-                "cache_write_price_per_token",
-                "max_output_tokens",
-            ] {
-                if let Some(value) = row.get(key) {
-                    result.insert(key.into(), value.clone());
-                }
-            }
-            Value::Object(result)
+            source::object(
+                [
+                    "id",
+                    "created",
+                    "supported_endpoint_types",
+                    "supports_tools",
+                    "supports_parallel_tool_calls",
+                    "input_price_per_token",
+                    "output_price_per_token",
+                    "cache_read_price_per_token",
+                    "cache_write_price_per_token",
+                    "max_output_tokens",
+                ]
+                .iter()
+                .filter_map(|&key| source::member(&row, key).map(|value| (key, value)))
+                .collect(),
+            )
+            .expect("paid observation source fields")
         })
         .collect()
 }
+fn identifier(row: &SourceJson) -> Option<ModelId> {
+    ["slug", "id", "model", "name"]
+        .iter()
+        .find_map(|key| source::member(row, key).as_ref().and_then(source::string))
+        .map(ModelId::from_source)
+}
+
 fn configured_binding(
     publication: &CredentialPublication,
     provider: PaidProvider,
@@ -660,7 +696,7 @@ impl CapturedSource {
                 }
                 expiries.push(record.expires_at_ms);
                 if matches!(name, "runtime" | "full" | "selection" | "generation") {
-                    values.insert(name, record.value);
+                    values.insert(name, decode_source_control_record(&record)?);
                 }
             }
         }
@@ -672,23 +708,23 @@ impl CapturedSource {
             })
             .transpose()?
             .as_ref()
-            .and_then(|runtime| runtime.get("codex_models"))
+            .and_then(|runtime| source::member(runtime, "codex_models"))
             .map(|raw| {
-                serde_json::from_value::<ModelSnapshot>(raw.clone())
+                raw.deserialize::<ModelSnapshot>()
                     .map_err(|_| missing("Compact model source is malformed"))
             })
             .transpose()?;
         let full_snapshot = values
             .get("full")
             .map(|raw| {
-                serde_json::from_value::<ModelSnapshot>(raw.clone())
+                raw.deserialize::<ModelSnapshot>()
                     .map_err(|_| missing("Full model source is malformed"))
             })
             .transpose()?;
         if full_snapshot.as_ref().is_some_and(|s| {
             s.models.is_empty()
-                || s.models.iter().any(|row| !row.is_object())
-                || s.source.trim().is_empty()
+                || s.models.iter().any(|row| !row.as_str().starts_with('{'))
+                || js_trim_source(&s.source).as_units().is_empty()
                 || s.updated_at_ms <= 0
         }) {
             return Err(missing("Full model source is malformed"));
@@ -696,13 +732,13 @@ impl CapturedSource {
         let selection = values
             .get("selection")
             .map(|raw| {
-                ProviderSelection::normalize(raw)
+                ProviderSelection::normalize(&raw.deserialize::<Value>()?)
                     .ok_or_else(|| missing("Provider selection source is malformed"))
             })
             .transpose()?;
         if values
             .get("generation")
-            .is_some_and(|v| v.as_str().is_none_or(|s| s.is_empty()))
+            .is_some_and(|v| source::string(v).is_none_or(|s| s.as_units().is_empty()))
         {
             return Err(missing("Catalog generation source is malformed"));
         }
@@ -725,10 +761,12 @@ fn coarse_policy(input: &CatalogInput) -> PaidRoutingPolicy {
         .into_iter()
         .flat_map(|snapshot| snapshot.models.iter())
         .filter_map(identifier)
-        .map(str::to_owned)
         .collect::<Vec<_>>();
     // Owner-authorized Codex transport ID; this is routing classification, not an invented catalog row.
-    if !codex_models.iter().any(|id| id == "gpt-reserve") {
+    if !codex_models
+        .iter()
+        .any(|id| id.matches_scalar("gpt-reserve"))
+    {
         codex_models.push("gpt-reserve".into());
     }
     let mut models = codex_models
@@ -740,19 +778,22 @@ fn coarse_policy(input: &CatalogInput) -> PaidRoutingPolicy {
                 .as_ref()
                 .into_iter()
                 .flat_map(|snapshot| snapshot.models.iter())
-                .filter_map(identifier)
-                .map(str::to_owned),
+                .filter_map(identifier),
         )
         .chain(
             input
                 .rows("surplus")
                 .iter()
                 .chain(input.rows("openlux"))
-                .filter_map(|row| row.get("id").and_then(Value::as_str))
-                .map(str::to_owned),
+                .filter_map(|row| {
+                    source::member(row, "id")
+                        .as_ref()
+                        .and_then(source::string)
+                        .map(ModelId::from_source)
+                }),
         )
         .collect::<BTreeSet<_>>();
-    models.retain(|model| !model.trim().is_empty());
+    models.retain(|model| !js_trim_source(model.as_js_string()).as_units().is_empty());
     let mut result = BTreeMap::new();
     for model in models {
         let mut allowed = Vec::new();

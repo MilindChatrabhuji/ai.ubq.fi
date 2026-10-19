@@ -96,3 +96,11 @@ pub(crate) fn cancelled() -> GatewayError {
 pub(crate) fn js_whitespace(c: char) -> bool {
     matches!(c,'\u{0009}'..='\u{000d}'|' '|'\u{00a0}'|'\u{1680}'|'\u{2000}'..='\u{200a}'|'\u{2028}'|'\u{2029}'|'\u{202f}'|'\u{205f}'|'\u{3000}'|'\u{feff}')
 }
+
+/// Existing source TextEncoder boundary for hashes/encrypted embedding input, not a payload projection.
+pub(crate) fn source_utf8(text: &gateway_core::js_string::JsString16) -> String {
+    String::from_utf16_lossy(text.as_units())
+}
+pub(crate) fn hash_source(text: &gateway_core::js_string::JsString16) -> String {
+    hash(&source_utf8(text))
+}

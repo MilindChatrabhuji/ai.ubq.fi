@@ -8,6 +8,12 @@ use gateway_core::{
     },
     tuple_key::{ScalarKeyPart, TupleKey},
 };
+use gateway_core::{
+    model::ModelId,
+    source_control::{decode_source_control_record, encode_source_control_record},
+    source_json::SourceJson,
+    source_serialization as source,
+};
 use gateway_schema::{
     catalog::{CatalogInput, ProviderCatalog},
     catalog_cache::{PreparedCatalog, REFRESH_LEASE_MS},
@@ -22,7 +28,7 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug)]
 pub struct CatalogState {
     pub input: CatalogInput,
-    pub runtime: Option<Value>,
+    pub runtime: Option<SourceJson>,
     /// The adapter may schedule these through its existing request-owned wait_until.
     /// No cron, alarm, detached task or timer is created by this crate.
     pub refresh_due: Vec<CatalogProvider>,
@@ -55,6 +61,60 @@ pub async fn read_json<S: AuthorityStore>(
     }
     Ok(record)
 }
+/// Validate the stored full snapshot without normalizing its model records.
+/// Callers that need source Get semantics retain their original raw value/revision.
+pub fn parse_full_snapshot(value: &SourceJson) -> Option<ModelSnapshot> {
+    let models = source::member(value, "models")
+        .as_ref()
+        .and_then(source::array)?;
+    let source_name = source::member(value, "source")
+        .as_ref()
+        .and_then(source::string)?;
+    let updated = source::member(value, "updated_at_ms")
+        .as_ref()
+        .and_then(source::number)?;
+    if models.is_empty()
+        || !models
+            .iter()
+            .all(|v| v.as_str().starts_with('{') || v.as_str().starts_with('['))
+        || gateway_schema::reasoning::js_trim_source(&source_name)
+            .as_units()
+            .is_empty()
+        || !updated.is_finite()
+        || updated.fract() != 0.0
+        || updated <= 0.0
+        || updated > gateway_core::identity::MAX_SAFE_INTEGER as f64
+    {
+        return None;
+    }
+    Some(ModelSnapshot {
+        models,
+        source: source_name,
+        updated_at_ms: updated as i64,
+        client_version: source::member(value, "client_version")
+            .as_ref()
+            .and_then(source::string)
+            .and_then(|s| s.try_utf8().ok()),
+    })
+}
+/// Explicit opt-in for named model/default/whitelist records; generic read_json is unchanged.
+pub(crate) struct SourceControlRow {
+    pub record: StoredRecord,
+    pub document: SourceJson,
+}
+pub(crate) async fn read_source_control<S: AuthorityStore>(
+    store: &S,
+    key: &RecordKey,
+) -> Result<Option<SourceControlRow>, GatewayError> {
+    store
+        .read(key)
+        .await?
+        .map(|record| {
+            let document = decode_source_control_record(&record)?;
+            Ok(SourceControlRow { record, document })
+        })
+        .transpose()
+}
 pub(crate) async fn load_exact_catalog<S: AuthorityStore>(
     store: &S,
     version: &str,
@@ -84,6 +144,17 @@ fn mutation(key: RecordKey, value: Value, revision: &str, expires: Option<i64>) 
         record: StoredRecord::json(revision, value, expires),
     }
 }
+fn source_mutation(
+    key: RecordKey,
+    value: &SourceJson,
+    revision: &str,
+    expires: Option<i64>,
+) -> Result<RecordMutation, GatewayError> {
+    Ok(RecordMutation::Put {
+        key,
+        record: encode_source_control_record(revision, value, expires)?,
+    })
+}
 pub async fn checks_current<S: AuthorityStore>(
     store: &S,
     checks: &[RevisionCheck],
@@ -112,33 +183,32 @@ pub(crate) async fn load_state<S: QueryStore>(
     publication: &CredentialPublication,
     observations: BTreeMap<CatalogProvider, ProviderCatalog>,
     now: i64,
+    public: bool,
 ) -> Result<CatalogState, GatewayError> {
     publication.validate()?;
-    let runtime = read_json(store, &catalog_store::runtime_config_key())
+    let runtime = read_source_control(store, &catalog_store::runtime_config_key())
         .await?
         .as_ref()
-        .and_then(|r| normalize_runtime_config(&r.value));
+        .and_then(|r| normalize_runtime_config(&r.document));
     let snapshot = runtime
         .as_ref()
-        .and_then(|r| r.get("codex_models"))
-        .and_then(|v| serde_json::from_value::<ModelSnapshot>(v.clone()).ok());
-    let full_snapshot = read_json(store, &catalog_store::codex_snapshot_key())
-        .await?
-        .and_then(|r| serde_json::from_value::<ModelSnapshot>(r.value).ok())
-        .filter(|s| {
-            !s.models.is_empty()
-                && s.models.iter().all(Value::is_object)
-                && !s.source.trim().is_empty()
-                && s.updated_at_ms > 0
-        });
+        .and_then(|r| source::member(r, "codex_models"))
+        .as_ref()
+        .and_then(|v| v.deserialize::<ModelSnapshot>().ok());
+    let full_snapshot = read_source_control(store, &catalog_store::codex_snapshot_key())
+        // Source loadFullCodexModelsSnapshot catches this optional read only.
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| parse_full_snapshot(&r.document));
     let selection = read_json(store, &selection_key())
         .await?
         .as_ref()
         .and_then(|r| ProviderSelection::normalize(&r.value));
-    let whitelist = read_json(store, &whitelist_key())
+    let whitelist = read_source_control(store, &whitelist_key())
         .await?
         .as_ref()
-        .and_then(|r| ModelWhitelist::normalize(&r.value));
+        .and_then(|r| ModelWhitelist::normalize(&r.document));
     let mut input = CatalogInput {
         snapshot,
         full_snapshot,
@@ -159,11 +229,16 @@ pub(crate) async fn load_state<S: QueryStore>(
         let configured = publication.providers.contains_key(&provider);
         let mut observation = observations.get(&provider).cloned().unwrap_or_default();
         observation.configured = configured;
-        if provider != CatalogProvider::Openrouter && !configured {
+        if provider != CatalogProvider::Openrouter
+            && !configured
+            && !(public && provider == CatalogProvider::Surplus)
+        {
             observation = ProviderCatalog::default();
         }
         if provider.discovery()
-            && (configured || provider == CatalogProvider::Openrouter)
+            && (configured
+                || provider == CatalogProvider::Openrouter
+                || public && provider == CatalogProvider::Surplus)
             && observation
                 .updated_at_ms
                 .is_none_or(|at| now.saturating_sub(at) >= 300_000)
@@ -178,14 +253,18 @@ pub(crate) async fn load_state<S: QueryStore>(
         .values()
         .flat_map(|p| p.models.iter())
         .chain(input.codex().into_iter().flat_map(|s| s.models.iter()))
-        .filter_map(gateway_schema::util::identifier)
-        .map(str::to_owned)
+        .filter_map(|row| {
+            ["slug", "id", "model", "name"]
+                .iter()
+                .find_map(|key| source::member(row, key).as_ref().and_then(source::string))
+        })
+        .map(ModelId::from_source)
         .collect::<Vec<_>>();
     for provider in ["deepseek", "lithos", "cerebras", "ubiquity"] {
         ids.extend(
             gateway_schema::provider_catalog::provider_ids(provider)
                 .iter()
-                .map(|id| (*id).to_owned()),
+                .map(|id| ModelId::from_scalar(id)),
         );
     }
     let openrouter = input.rows("openrouter").to_vec();
@@ -310,7 +389,7 @@ pub(crate) async fn current_lease_matches<S: AuthorityStore>(
 }
 pub(crate) async fn publish_account_models<S: AuthorityStore>(
     store: &S,
-    entries: &[(String, Vec<String>)],
+    entries: &[(String, Vec<ModelId>)],
     context: &PublicationContext<'_>,
 ) -> Result<(), GatewayError> {
     if entries.is_empty() {
@@ -328,10 +407,10 @@ pub(crate) async fn publish_account_models<S: AuthorityStore>(
         if auth.as_ref().and_then(|r| r.value.as_str()) != Some(*generation) {
             return Ok(());
         }
-        let old = read_json(store, &account_models_key()).await?;
+        let old = read_source_control(store, &account_models_key()).await?;
         let data = old
             .as_ref()
-            .and_then(|r| AccountModelsStore::parse(&r.value))
+            .and_then(|r| AccountModelsStore::parse(&r.document))
             .unwrap_or_default();
         let entries = entries
             .iter()
@@ -350,12 +429,17 @@ pub(crate) async fn publish_account_models<S: AuthorityStore>(
         let mut checks = publication.source_checks.clone();
         checks.extend([
             check(catalog_store::auth_generation_key(), auth.as_ref()),
-            check(account_models_key(), old.as_ref()),
+            check(account_models_key(), old.as_ref().map(|r| &r.record)),
         ]);
         if store
             .commit(AtomicTransition {
                 checks,
-                mutations: vec![mutation(account_models_key(), json!(next), revision, None)],
+                mutations: vec![source_mutation(
+                    account_models_key(),
+                    &next.to_source_json(),
+                    revision,
+                    None,
+                )?],
             })
             .await?
             == CommitOutcome::Committed
@@ -368,7 +452,7 @@ pub(crate) async fn publish_account_models<S: AuthorityStore>(
 
 pub(crate) async fn publish_snapshot<S: AuthorityStore>(
     store: &S,
-    parsed: &Value,
+    parsed: &SourceJson,
     context: &PublicationContext<'_>,
 ) -> Result<(), GatewayError> {
     let PublicationContext {
@@ -383,12 +467,13 @@ pub(crate) async fn publish_snapshot<S: AuthorityStore>(
         if auth.as_ref().and_then(|r| r.value.as_str()) != Some(*generation) {
             return Ok(());
         }
-        let snapshot = read_json(store, &catalog_store::codex_snapshot_key()).await?;
-        let runtime = read_json(store, &catalog_store::runtime_config_key()).await?;
+        let snapshot = read_source_control(store, &catalog_store::codex_snapshot_key()).await?;
+        let runtime = read_source_control(store, &catalog_store::runtime_config_key()).await?;
         let current = snapshot
             .as_ref()
             .map(|r| {
-                serde_json::from_value::<ModelSnapshot>(r.value.clone())
+                r.document
+                    .deserialize::<ModelSnapshot>()
                     .map_err(|_| unavailable("Stored Codex model snapshot is corrupt"))
             })
             .transpose()?;
@@ -396,7 +481,10 @@ pub(crate) async fn publish_snapshot<S: AuthorityStore>(
             parsed,
             version,
             current.as_ref(),
-            runtime.as_ref().map(|r| &r.value).unwrap_or(&Value::Null),
+            runtime
+                .as_ref()
+                .map(|r| &r.document)
+                .unwrap_or(&SourceJson::parse("null").expect("fixed null")),
             *now,
         ) else {
             return Ok(());
@@ -404,25 +492,31 @@ pub(crate) async fn publish_snapshot<S: AuthorityStore>(
         let mut checks = publication.source_checks.clone();
         checks.extend([
             check(catalog_store::auth_generation_key(), auth.as_ref()),
-            check(catalog_store::codex_snapshot_key(), snapshot.as_ref()),
-            check(catalog_store::runtime_config_key(), runtime.as_ref()),
+            check(
+                catalog_store::codex_snapshot_key(),
+                snapshot.as_ref().map(|r| &r.record),
+            ),
+            check(
+                catalog_store::runtime_config_key(),
+                runtime.as_ref().map(|r| &r.record),
+            ),
         ]);
         if store
             .commit(AtomicTransition {
                 checks,
                 mutations: vec![
-                    mutation(
+                    source_mutation(
                         catalog_store::codex_snapshot_key(),
-                        json!(next),
+                        &SourceJson::from_serializable(&next)?,
                         revision,
                         None,
-                    ),
-                    mutation(
+                    )?,
+                    source_mutation(
                         catalog_store::runtime_config_key(),
-                        next_runtime,
+                        &next_runtime,
                         revision,
                         None,
-                    ),
+                    )?,
                 ],
             })
             .await?

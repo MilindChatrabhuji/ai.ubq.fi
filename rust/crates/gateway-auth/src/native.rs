@@ -11,6 +11,8 @@ use crate::{
 pub const NATIVE_WIRE_VERSION: u8 = 1;
 pub const NATIVE_RPC_PATH: &str = "/v1/native/rpc";
 pub const NATIVE_FOLLOW_PATH: &str = "/v1/native/follow";
+pub const NATIVE_CONTROL_PATH: &str = "/v1/native/control";
+pub const NATIVE_RENEWAL_AUTHORITY_PATH: &str = "/uos/native/renewal-authority";
 pub const NATIVE_PUBLICATION_PATH: &str = "/uos/native/publication";
 pub const NATIVE_RESPONSE_MAC_HEADER: &str = "x-uos-native-response-mac";
 pub const NATIVE_MAX_BODY_BYTES: usize = 1_048_576;
@@ -164,7 +166,11 @@ pub fn signature_input(
 ) -> Result<Vec<u8>, GatewayError> {
     if !matches!(
         path,
-        NATIVE_RPC_PATH | NATIVE_FOLLOW_PATH | NATIVE_PUBLICATION_PATH
+        NATIVE_RPC_PATH
+            | NATIVE_FOLLOW_PATH
+            | NATIVE_PUBLICATION_PATH
+            | NATIVE_CONTROL_PATH
+            | NATIVE_RENEWAL_AUTHORITY_PATH
     ) || key_id.is_empty()
         || key_id.len() > 64
         || !key_id
@@ -172,6 +178,10 @@ pub fn signature_input(
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
         || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&time_ms)
         || body.len() > NATIVE_MAX_BODY_BYTES
+        || path == NATIVE_CONTROL_PATH
+            && body.len() > crate::native_control::NATIVE_CONTROL_MAX_BYTES
+        || path == NATIVE_RENEWAL_AUTHORITY_PATH
+            && body.len() > crate::native_control::NATIVE_AUTHORITY_MAX_BYTES
     {
         return Err(invalid("Invalid native authentication frame"));
     }

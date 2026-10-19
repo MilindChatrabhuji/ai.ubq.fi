@@ -2,6 +2,9 @@
 use crate::claude::ClaudeCohortProof;
 use crate::routing::CohortProof;
 use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
+use gateway_core::{js_string::JsString16, model::ModelId};
+#[path = "paid_model_map.rs"]
+pub mod model_map;
 use gateway_core::lifecycle::{BillingState, DispatchState, PaidTerminalState};
 use gateway_core::provider::PaidProvider;
 use serde::{Deserialize, Serialize};
@@ -11,8 +14,9 @@ use std::collections::BTreeMap;
 pub struct PaidRoutingPolicy {
     pub v: u32,
     pub codex_enabled: bool,
-    pub codex_models: Vec<String>,
-    pub models: BTreeMap<String, Vec<PaidProvider>>,
+    pub codex_models: Vec<ModelId>,
+    #[serde(with = "model_map")]
+    pub models: BTreeMap<ModelId, Vec<PaidProvider>>,
 }
 
 #[derive(Clone, Debug)]
@@ -45,11 +49,11 @@ pub struct PaidRequest {
     pub request_id: RequestId,
     pub attempt_id: PaidAttemptId,
     pub provider: PaidProvider,
-    pub model: String,
+    pub model: ModelId,
     pub route: String,
     pub path: String,
     pub stream: bool,
-    pub reasoning: Option<String>,
+    pub reasoning: Option<JsString16>,
     pub created_at_ms: i64,
 }
 
@@ -58,11 +62,11 @@ pub struct PaidAttempt {
     pub v: u32,
     pub reservation: PaidReservation,
     pub policy_version: String,
-    pub model: String,
+    pub model: ModelId,
     pub route: String,
     pub path: String,
     pub stream: bool,
-    pub reasoning: Option<String>,
+    pub reasoning: Option<JsString16>,
     pub quota_per_credit: i64,
     pub provider_request_id: Option<String>,
     pub dispatch_state: DispatchState,
@@ -121,14 +125,19 @@ pub struct ReconciliationLease {
 pub struct PaidRollup {
     pub v: u32,
     pub bucket_start_at_ms: i64,
-    pub model: String,
+    pub model: ModelId,
     pub provider: PaidProvider,
     pub request_count: i64,
+    #[serde(rename = "quota_sum")]
     pub provider_quota: f64,
     pub input_tokens: i64,
     pub cached_input_tokens: i64,
     pub output_tokens: i64,
-    pub spend_microcredits: i64,
+    #[serde(
+        serialize_with = "serialize_rollup_spend",
+        deserialize_with = "deserialize_rollup_spend"
+    )]
+    pub spend_microcredits: f64,
     pub first_request_at_ms: i64,
     pub last_request_at_ms: i64,
     pub updated_at_ms: i64,
@@ -150,4 +159,29 @@ pub enum PaidCorrelation {
         attempt_id: PaidAttemptId,
         buyer_cost_micro: Option<i64>,
     },
+}
+
+// Source rollup spend is finite/nonnegative, unlike exact integer request/window billing.
+fn deserialize_rollup_spend<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<f64, D::Error> {
+    let value = f64::deserialize(deserializer)?;
+    if value.is_finite() && value >= 0.0 {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom("Invalid source aggregate spend"))
+    }
+}
+fn serialize_rollup_spend<S: serde::Serializer>(
+    value: &f64,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    if !value.is_finite() || *value < 0.0 {
+        return Err(serde::ser::Error::custom("Invalid source aggregate spend"));
+    }
+    if value.fract() == 0.0 && *value <= gateway_core::identity::MAX_SAFE_INTEGER as f64 {
+        serializer.serialize_i64(*value as i64)
+    } else {
+        serializer.serialize_f64(*value)
+    }
 }

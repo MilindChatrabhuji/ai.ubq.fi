@@ -21,7 +21,7 @@ impl<
     H: RoutingHost,
 > RoutingSession<S, I, C, H>
 {
-    async fn observed_attempt(
+    pub(crate) async fn observed_attempt(
         &self,
         attempt: &PreparedAttempt,
     ) -> Result<(Journal, AttemptRecord), GatewayError> {
@@ -32,7 +32,7 @@ impl<
             .iter()
             .find(|a| {
                 a.id == attempt.id
-                    && a.provider == attempt.request.provider
+                    && a.provider == attempt.request.provider()
                     && a.fence == attempt.credential
                     && a.paid == attempt.paid
             })
@@ -89,17 +89,23 @@ impl<
                     "/v1/responses"
                 }
                 .into(),
-                stream: self.input.raw["stream"] == true,
-                reasoning: self.input.raw["reasoning"]["effort"]
-                    .as_str()
-                    .or_else(|| self.input.raw["reasoning_effort"].as_str())
-                    .map(str::to_owned),
+                stream: self.input.streamed(),
+                reasoning: self.input.requested_reasoning(),
                 created_at_ms: self.input.context.started_at_ms,
             };
-            let context = self.paid_context(reservation.provider, synthetic);
+            let context = self.paid_context(reservation.provider, synthetic)?;
             let receipt = self
                 .authority()
                 .authorize_paid_route(&input, &context, self.now()?)
+                .await?;
+            let receipt = self
+                .authority()
+                .bind_paid_original_dispatch(
+                    &receipt,
+                    &self.input.context,
+                    reservation,
+                    self.now()?,
+                )
                 .await?;
             Self::check_paid_credential(&record.fence, &receipt)?;
             let authorization = if synthetic {
@@ -135,6 +141,7 @@ impl<
                 .dispatch_api_key(reservation, record.provider, self.now()?)
                 .await?;
         }
+        self.admission.capture_resolved_api(api.as_ref())?;
         let checks = match &record.fence {
             CredentialFence::Codex {
                 source_key,
@@ -214,21 +221,7 @@ impl<
         Ok(())
     }
     pub async fn renew(&self) -> RoutingResult<()> {
-        let (_, row) = journal::load(&self.store, self.id()).await?;
-        settlement::ensure_active(&row)?;
-        if let Some(kernel) = &row.kernel {
-            self.authority().renew_kernel(kernel, self.now()?).await?;
-        }
-        let expiry = self
-            .now()?
-            .checked_add(gateway_authority::REQUEST_LEASE_MS)
-            .ok_or_else(|| journal::unavailable("Lease overflow."))?;
-        self.change(|j| {
-            settlement::ensure_active(j)?;
-            j.lease_expires_at_ms = expiry;
-            Ok(())
-        })
-        .await?;
+        self.currentness().renew_kernel().await?;
         Ok(())
     }
     pub async fn observe_terminal(
@@ -305,6 +298,14 @@ impl<
         failure: AttemptFailure,
     ) -> RoutingResult<RefusalDecision> {
         let (row, record) = self.observed_attempt(attempt).await?;
+        if matches!(record.fence, CredentialFence::Claude { .. })
+            && failure.origin == FailureOrigin::Provider
+        {
+            return Err(journal::unavailable(
+                "Claude refusals require the consumed actual response-head capability.",
+            )
+            .into());
+        }
         if failure.transport == TransportState::NotStarted && record.transport_started {
             return Err(journal::unavailable(
                 "NotStarted report conflicts with durable transport intent.",
@@ -325,12 +326,19 @@ impl<
         } else if !record.transport_started {
             self.transport_started(attempt).await?;
         }
-        if failure.cancelled
-            || self.host.cancelled()
-            || matches!(
-                failure.failure,
-                HopFailure::Cancelled | HopFailure::Deadline
-            )
+        if failure.cancelled || self.host.cancelled() || failure.failure == HopFailure::Cancelled {
+            return Ok(
+                if failure.origin == FailureOrigin::Provider && failure.status.is_some() {
+                    RefusalDecision::Return
+                } else {
+                    RefusalDecision::Abort
+                },
+            );
+        }
+        if failure.origin == FailureOrigin::Gateway
+            || failure.origin == FailureOrigin::GatewayDeadline
+            || (failure.origin != FailureOrigin::Provider
+                && failure.failure == HopFailure::Deadline)
         {
             return Ok(RefusalDecision::Abort);
         }
@@ -348,7 +356,9 @@ impl<
                 HopDecision::Abort => RefusalDecision::Abort,
                 HopDecision::Deliver => RefusalDecision::Return,
             };
-        } else if let CredentialFence::Codex { admission, .. } = &record.fence {
+        } else if let CredentialFence::Codex { admission, .. } = &record.fence
+            && failure.origin == FailureOrigin::Provider
+        {
             if let Some(block) = classify::codex_quota(
                 failure.status,
                 &failure.headers,
@@ -407,26 +417,10 @@ impl<
                     .await?;
                     decision = RefusalDecision::Continue;
                 } else {
-                    return Err(GatewayError::new(
-                        404,
-                        format!(
-                            "The model '{}' is not available for these subscriptions.",
-                            record.model
-                        ),
-                        Some("model_not_found"),
-                    )
-                    .into());
+                    return Err(classify::model_unavailable_error(&record.model).into());
                 }
             }
-        } else if matches!(record.fence, CredentialFence::Claude { .. }) {
-            if self
-                .host
-                .record_claude_refusal(&record.fence, &record.model, &failure)
-                .await?
-            {
-                decision = RefusalDecision::Continue;
-            }
-        } else if record.paid.is_some() {
+        } else if record.paid.is_some() && failure.origin == FailureOrigin::Provider {
             if gateway_providers::policy::paid_should_advance(
                 failure.status,
                 self.plan.hops.get(cursor + 1).is_some(),
@@ -435,6 +429,7 @@ impl<
                 decision = RefusalDecision::Continue;
             }
         } else if record.provider == UpstreamProvider::Lithos
+            && failure.origin == FailureOrigin::Provider
             && failure.status == Some(429)
             && let Some(wait) = classify::retry_after_millis(&failure.headers, self.now()?)
         {
@@ -444,7 +439,16 @@ impl<
                 .claim(wait, self.input.retry_prohibited);
             if allowed {
                 self.renew().await?;
-                self.host.wait(wait).await?;
+                let outcome = self.host.wait(wait).await;
+                if !(0..=9_007_199_254_740_991).contains(&outcome.elapsed_ms) {
+                    return Err(journal::unavailable("The host wait duration is invalid.").into());
+                }
+                self.elapsed_wait_ms.set(
+                    self.elapsed_wait_ms
+                        .get()
+                        .saturating_add(outcome.elapsed_ms),
+                );
+                outcome.result?;
                 if self.host.cancelled() {
                     return Ok(RefusalDecision::Abort);
                 }

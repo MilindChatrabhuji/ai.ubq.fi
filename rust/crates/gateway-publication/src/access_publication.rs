@@ -33,7 +33,8 @@ impl RegisteredAccessOwner {
         &self.id
     }
     pub fn configured(id: NativeOwnerId, home: String) -> Result<Self, GatewayError> {
-        if id.0.trim().is_empty() || !std::path::Path::new(&home).is_absolute() {
+        // This declares the native Unix home; it is not a path on the Worker host.
+        if id.0.trim().is_empty() || !home.starts_with('/') {
             return Err(unavailable(
                 "Native access owner configuration is invalid",
                 "native_access_owner_unavailable",
@@ -42,6 +43,10 @@ impl RegisteredAccessOwner {
         Ok(Self { id, home })
     }
 }
+
+#[cfg(test)]
+#[path = "access_owner_registration_tests.rs"]
+mod registration_tests;
 
 pub trait AccessCredentialSource {
     fn read_current_access(
@@ -165,6 +170,14 @@ impl PreparedAccessPublication {
             external_user_id: native.external_user_id.clone(),
         };
         let unchanged = old.same_credentials(&observed);
+        if !unchanged
+            && (snapshot.revision == revision
+                || normalized_row
+                    .as_ref()
+                    .is_some_and(|row| row.revision == revision))
+        {
+            return Err(conflict());
+        }
         if unchanged {
             if observed
                 .access_expires_at_ms()
@@ -184,6 +197,7 @@ impl PreparedAccessPublication {
                     generation_hash: observed.generation_hash(),
                     native_refreshed_at: observed.native_refreshed_at.clone(),
                     external_user_id: observed.external_user_id.clone(),
+                    managed_source: None,
                 }),
             };
             raw.updated_at_ms = now_ms as f64;

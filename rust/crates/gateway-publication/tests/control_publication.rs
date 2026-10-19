@@ -25,7 +25,6 @@ use gateway_core::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
     },
 };
-use gateway_publication::PublicationDisposition;
 use gateway_publication::access_publication::{
     AccessCredentialSource, PreparedAccessPublication, RegisteredAccessOwner,
 };
@@ -34,6 +33,7 @@ use gateway_publication::transport::{
     NativePublicationSender, PublicationCarrier, PublicationReceiver, PublicationRequest,
     PublicationResponse,
 };
+use gateway_publication::{PreparedPublicationCommand, PublicationDisposition};
 use serde_json::{Value, json};
 
 struct AccessRead(NativeCredentials);
@@ -72,6 +72,7 @@ fn seed_access(store: &Memory, old: &NativeCredentials) {
         refresh_token: old.refresh_token.clone(),
         updated_at_ms: 1.0,
         native_owner: Some(CodexNativeOwner {
+            managed_source: None,
             codex_home: "/tmp/uos-native-fixture".into(),
             generation_hash: old.generation_hash(),
             native_refreshed_at: old.native_refreshed_at.clone(),
@@ -206,6 +207,7 @@ fn inputs(secret: &str) -> ConfiguredPaidInputs {
     ConfiguredPaidInputs::new(
         Some(Secret::new(secret.into())),
         Some(Secret::new("fixture-openlux-key".into())),
+        Some(Secret::new("fixture-openlux-key".into())),
         json!({"overage_enabled":true}),
     )
     .unwrap()
@@ -255,6 +257,11 @@ fn real_authenticated_constructor_publishes_only_derived_fixed_control_facts() {
             configured.openlux_binding,
             inputs.binding(PaidProvider::Metered)
         );
+        assert_eq!(configured.v, 2);
+        assert_eq!(
+            configured.openlux_discovery_binding,
+            inputs.discovery_binding(PaidProvider::Metered)
+        );
         assert_eq!(configured.source_checks.len(), 1);
         assert_eq!(configured.source_checks[0].key, runtime_config_key().0);
         assert_eq!(configured.source_checks[0].expected_revision, None);
@@ -263,6 +270,228 @@ fn real_authenticated_constructor_publishes_only_derived_fixed_control_facts() {
         assert!(!persisted.contains("fixture-surplus-key"));
         assert!(!persisted.contains("fixture-openlux-key"));
         assert_eq!(rows.len(), 2);
+    });
+}
+
+#[test]
+fn explicit_discovery_and_spend_roles_have_independent_configuration_fingerprints() {
+    run(async {
+        let store = Memory::default();
+        let identity = make_identity(NativeCapability::ConfigurationPublish);
+        bootstrap(&store, &identity, now()).await;
+        let mut configurations = Vec::new();
+        for (discovery, spend) in [
+            (Some("fixture-discovery-a"), Some("fixture-spend-a")),
+            (Some("fixture-discovery-b"), Some("fixture-spend-a")),
+            (Some("fixture-discovery-a"), Some("fixture-spend-b")),
+            (None, Some("fixture-spend-a")),
+            (Some("fixture-discovery-a"), None),
+        ] {
+            let inputs = ConfiguredPaidInputs::new(
+                None,
+                discovery.map(|key| Secret::new(key.into())),
+                spend.map(|key| Secret::new(key.into())),
+                json!({"overage_enabled":true}),
+            )
+            .unwrap();
+            let prepared =
+                PreparedConfigurationPublication::capture(&store, &identity, &inputs, "g1", now())
+                    .await
+                    .unwrap();
+            let config = prepared.configuration().clone();
+            assert_eq!(
+                config.openlux_discovery_binding,
+                inputs.discovery_binding(PaidProvider::Metered)
+            );
+            assert_eq!(
+                config.openlux_binding,
+                inputs.binding(PaidProvider::Metered)
+            );
+            configurations.push(config);
+        }
+        assert_eq!(
+            configurations[0].openlux_binding,
+            configurations[1].openlux_binding
+        );
+        assert_eq!(
+            configurations[0].openlux_discovery_binding,
+            configurations[2].openlux_discovery_binding
+        );
+        assert_ne!(
+            configurations[0].openlux_discovery_binding,
+            configurations[1].openlux_discovery_binding
+        );
+        assert_ne!(
+            configurations[0].openlux_binding,
+            configurations[2].openlux_binding
+        );
+        for config in &configurations[1..] {
+            assert_ne!(
+                configurations[0].configuration_fingerprint,
+                config.configuration_fingerprint
+            );
+        }
+        assert!(configurations[3].openlux_discovery_binding.is_none());
+        assert!(configurations[3].openlux_binding.is_some());
+        assert!(configurations[4].openlux_discovery_binding.is_some());
+        assert!(configurations[4].openlux_binding.is_none());
+        assert_eq!(
+            configurations[0].openlux_binding,
+            Some(configured_paid_binding(
+                PaidProvider::Metered,
+                &Secret::new("fixture-spend-a".into())
+            ))
+        );
+        let same = inputs("fixture-surplus-key");
+        assert_eq!(
+            same.binding(PaidProvider::Metered),
+            same.discovery_binding(PaidProvider::Metered)
+        );
+        for (discovery, spend) in [(Some(" "), Some("valid")), (Some("valid"), Some(""))] {
+            assert!(
+                ConfiguredPaidInputs::new(
+                    None,
+                    discovery.map(|key| Secret::new(key.into())),
+                    spend.map(|key| Secret::new(key.into())),
+                    json!({})
+                )
+                .is_err()
+            );
+        }
+        let encoded = serde_json::to_string(&configurations).unwrap();
+        for secret in [
+            "fixture-discovery-a",
+            "fixture-discovery-b",
+            "fixture-spend-a",
+            "fixture-spend-b",
+        ] {
+            assert!(!encoded.contains(secret));
+        }
+        let mut legacy = configurations[0].clone();
+        legacy.v = 1;
+        assert!(
+            PreparedPublicationCommand::configuration_from_expected(
+                legacy.clone(),
+                "owner-r1".into(),
+                None,
+                "config-r1".into()
+            )
+            .is_err()
+        );
+        set(
+            &store,
+            keys::paid_control_config(),
+            "legacy-config",
+            serde_json::to_value(&legacy).unwrap(),
+        );
+        assert!(
+            PreparedConfigurationPublication::capture(&store, &identity, &same, "g2", now())
+                .await
+                .is_err()
+        );
+        let mut missing = serde_json::to_value(&configurations[0]).unwrap();
+        missing
+            .as_object_mut()
+            .unwrap()
+            .remove("openlux_discovery_binding");
+        set(&store, keys::paid_control_config(), "missing-role", missing);
+        assert!(
+            PreparedConfigurationPublication::capture(&store, &identity, &same, "g2", now())
+                .await
+                .is_err()
+        );
+    });
+}
+
+#[test]
+fn discovery_only_change_invalidates_observations_and_old_authenticated_commands() {
+    run(async {
+        let store = Memory::default();
+        let identity = publication_identity();
+        bootstrap(&store, &identity, now()).await;
+        let initial = inputs("fixture-surplus-key");
+        let prepared =
+            PreparedConfigurationPublication::capture(&store, &identity, &initial, "g1", now())
+                .await
+                .unwrap();
+        let original = prepared.configuration().clone();
+        let signed = proof(&identity, prepared.statement(), now()).await;
+        prepared
+            .publish(&store, &signed, now(), "cfg1")
+            .await
+            .unwrap();
+        set(
+            &store,
+            keys::paid_control_observation(PaidProvider::Metered),
+            "old-observation",
+            json!({"obsolete":true}),
+        );
+        let next = ConfiguredPaidInputs::new(
+            Some(Secret::new("fixture-surplus-key".into())),
+            Some(Secret::new("fixture-next-discovery".into())),
+            Some(Secret::new("fixture-openlux-key".into())),
+            json!({"overage_enabled":true}),
+        )
+        .unwrap();
+        let old_command =
+            PreparedConfigurationPublication::capture(&store, &identity, &initial, "g2", now())
+                .await
+                .unwrap()
+                .command("cfg2")
+                .unwrap();
+        let prepared =
+            PreparedConfigurationPublication::capture(&store, &identity, &next, "g2", now())
+                .await
+                .unwrap();
+        assert_eq!(
+            prepared.configuration().openlux_binding,
+            original.openlux_binding
+        );
+        assert_ne!(
+            prepared.configuration().openlux_discovery_binding,
+            original.openlux_discovery_binding
+        );
+        let receiver =
+            PublicationReceiver::configured(identity.clone(), next, vec![], now).unwrap();
+        let carrier = LocalCarrier {
+            receiver: &receiver,
+            store: &store,
+            lose_response: std::cell::Cell::new(false),
+            tamper_response: false,
+        };
+        let sender = NativePublicationSender::configured(&identity, &carrier);
+        assert_eq!(
+            sender
+                .send(&old_command, [21; 32], now())
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        assert!(
+            store
+                .read(&keys::paid_control_observation(PaidProvider::Metered))
+                .await
+                .unwrap()
+                .is_some()
+        );
+        sender
+            .send(&prepared.command("cfg2").unwrap(), [22; 32], now())
+            .await
+            .unwrap();
+        assert!(
+            store
+                .read(&keys::paid_control_observation(PaidProvider::Metered))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let current = store
+            .read(&keys::paid_control_config())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.revision, "cfg2");
     });
 }
 

@@ -17,7 +17,7 @@ use std::{
     },
     task::{Context, Poll, Waker},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tungstenite::{
     Message, accept_hdr,
@@ -48,7 +48,7 @@ struct FixtureHome(PathBuf);
 impl FixtureHome {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let path = PathBuf::from("/tmp").join(format!(
+        let path = std::env::temp_dir().join(format!(
             "m6-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -76,6 +76,83 @@ fn document(refresh: &str, timestamp: &str) -> Value {
         )
     );
     json!({"auth_mode":"chatgpt","tokens":{"access_token":jwt,"id_token":jwt,"refresh_token":refresh,"account_id":"workspace"},"last_refresh":timestamp})
+}
+
+#[test]
+fn fixed_registry_requires_one_or_two_distinct_owners_and_homes() {
+    let first = FixtureHome::new();
+    let second = FixtureHome::new();
+    let third = FixtureHome::new();
+    let location = |id: &str, home: &FixtureHome| {
+        NativeOwnerLocation::configured(NativeOwnerId(id.into()), home.0.clone()).unwrap()
+    };
+    assert!(UnixOwnerTransport::new(Vec::new()).is_err());
+    assert!(UnixOwnerTransport::new(vec![location("first", &first)]).is_ok());
+    assert!(
+        UnixOwnerTransport::new(vec![location("first", &first), location("second", &second)])
+            .is_ok()
+    );
+    assert!(
+        UnixOwnerTransport::new(vec![
+            location("first", &first),
+            location("second", &second),
+            location("third", &third)
+        ])
+        .is_err()
+    );
+    assert!(
+        UnixOwnerTransport::new(vec![location("first", &first), location("first", &second)])
+            .is_err()
+    );
+    assert!(
+        UnixOwnerTransport::new(vec![location("first", &first), location("second", &first)])
+            .is_err()
+    );
+}
+
+#[test]
+fn second_registered_home_and_opaque_old_new_generations_stay_independent() {
+    let first = FixtureHome::new();
+    let second = FixtureHome::new();
+    let first_doc = document("opaque-refresh-old", "2026-10-18T12:00:00.000000001Z");
+    let mut second_doc = document("opaque-second-refresh", "2026-10-18T12:00:00.000000001Z");
+    second_doc["tokens"]["account_id"] = json!("workspace-secondary");
+    fs::write(
+        first.0.join("auth.json"),
+        serde_json::to_vec(&first_doc).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        second.0.join("auth.json"),
+        serde_json::to_vec(&second_doc).unwrap(),
+    )
+    .unwrap();
+    let first_owner = NativeOwnerId("first-owner".into());
+    let second_owner = NativeOwnerId("second-owner".into());
+    let transport = UnixOwnerTransport::new(vec![
+        NativeOwnerLocation::configured(first_owner.clone(), first.0.clone()).unwrap(),
+        NativeOwnerLocation::configured(second_owner.clone(), second.0.clone()).unwrap(),
+    ])
+    .unwrap();
+    let old = run(transport.read_credentials(&first_owner)).unwrap();
+    let second_before = run(transport.read_credentials(&second_owner)).unwrap();
+    assert_eq!(second_before.account_id, "workspace-secondary");
+    let new_doc = document("opaque-refresh-new", "2026-10-18T12:00:00.000000002Z");
+    fs::write(
+        first.0.join("auth.json"),
+        serde_json::to_vec(&new_doc).unwrap(),
+    )
+    .unwrap();
+    let new = run(transport.read_credentials(&first_owner)).unwrap();
+    assert_ne!(new.generation_hash(), old.generation_hash());
+    assert_eq!(new.refresh_token.expose(), "opaque-refresh-new");
+    assert_eq!(
+        run(transport.read_credentials(&second_owner))
+            .unwrap()
+            .generation_hash(),
+        second_before.generation_hash()
+    );
+    assert!(run(transport.read_credentials(&NativeOwnerId("unregistered-owner".into()))).is_err());
 }
 
 #[test]
@@ -128,8 +205,93 @@ fn actual_unix_supervisor_uses_localhost_header_and_read_only_method() {
     });
 }
 
+#[test]
+fn renewal_outer_deadline_bounds_an_actual_stalled_handshake() {
+    let home = FixtureHome::new();
+    let listener = UnixListener::bind(home.socket()).unwrap();
+    let server = thread::spawn(move || {
+        let (_stream, _) = listener.accept().unwrap();
+        thread::sleep(Duration::from_millis(400));
+    });
+    let owner = NativeOwnerId("fixture-deadline".into());
+    let start = Instant::now();
+    let transport = UnixOwnerTransport::until(
+        vec![NativeOwnerLocation::configured(owner.clone(), home.0.clone()).unwrap()],
+        start + Duration::from_millis(120),
+    )
+    .unwrap();
+    assert!(run(transport.request(&owner, RenewalStep::Initialize)).is_err());
+    assert!(start.elapsed() < Duration::from_millis(350));
+    server.join().unwrap();
+}
+
+#[test]
+fn expired_renewal_deadline_refuses_before_opening_registered_socket() {
+    let home = FixtureHome::new();
+    let listener = UnixListener::bind(home.socket()).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let owner = NativeOwnerId("fixture-expired".into());
+    let transport = UnixOwnerTransport::until(
+        vec![NativeOwnerLocation::configured(owner.clone(), home.0.clone()).unwrap()],
+        Instant::now(),
+    )
+    .unwrap();
+    assert!(run(transport.request(&owner, RenewalStep::Initialize)).is_err());
+    assert!(
+        matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+    );
+}
+
 fn renewal_fixture(
     persist_generation: bool,
+) -> Result<NativeGeneration, gateway_core::GatewayError> {
+    renewal_with_guard(persist_generation, GuardPolicy::Allow)
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum GuardPolicy {
+    Allow,
+    RefuseStart,
+    RevokeAfterIdentity,
+    AdoptDuringHandshake,
+}
+
+type ObservedRequests = Vec<(String, Option<Value>)>;
+
+struct FixtureGuard {
+    observed: Arc<Mutex<ObservedRequests>>,
+    policy: GuardPolicy,
+}
+impl gateway_native::owner_control::NativeRenewalGuard for FixtureGuard {
+    fn now_ms(&self) -> Result<i64, gateway_core::GatewayError> {
+        Ok(1_000_000)
+    }
+    async fn ensure_current(&self) -> Result<(), gateway_core::GatewayError> {
+        if self.policy == GuardPolicy::RevokeAfterIdentity
+            && self.observed.lock().unwrap().len() >= 3
+        {
+            return Err(gateway_core::GatewayError::new(
+                409,
+                "Synthetic current authority changed",
+                Some("native_owner_changed"),
+            ));
+        }
+        Ok(())
+    }
+    async fn start_refresh(&self) -> Result<(), gateway_core::GatewayError> {
+        if self.policy == GuardPolicy::RefuseStart {
+            return Err(gateway_core::GatewayError::unavailable(
+                "Synthetic original operation is already started",
+                "native_control_outcome_unknown",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn renewal_with_guard(
+    persist_generation: bool,
+    policy: GuardPolicy,
 ) -> Result<NativeGeneration, gateway_core::GatewayError> {
     run(async {
         let home = FixtureHome::new();
@@ -174,7 +336,10 @@ fn renewal_fixture(
                 let result = match method {
                     "initialize" => json!({"codexHome":server_home}),
                     "account/read" => {
-                        if value["params"]["refreshToken"] == true && persist_generation {
+                        if persist_generation
+                            && (value["params"]["refreshToken"] == true
+                                || policy == GuardPolicy::AdoptDuringHandshake)
+                        {
                             let next =
                                 document("fixture-refresh-b", "2026-10-18T12:00:00.000000002Z");
                             fs::write(
@@ -198,16 +363,53 @@ fn renewal_fixture(
             NativeOwnerLocation::configured(owner, home.0.clone()).unwrap(),
         ])
         .unwrap();
-        let result = renew_owned(&transport, fence, &current, 1_000_000).await;
+        let guard = FixtureGuard {
+            observed: observed.clone(),
+            policy,
+        };
+        let result = renew_owned_guarded(&transport, &guard, fence, &current).await;
         server.join().unwrap();
         let observed = observed.lock().unwrap();
-        assert_eq!(observed.len(), 4);
+        assert_eq!(
+            observed.len(),
+            if policy == GuardPolicy::Allow { 4 } else { 3 }
+        );
         assert_eq!(observed[0].0, "initialize");
         assert_eq!(observed[1].0, "initialized");
         assert_eq!(observed[2].1.as_ref().unwrap()["refreshToken"], false);
-        assert_eq!(observed[3].1.as_ref().unwrap()["refreshToken"], true);
+        if policy == GuardPolicy::Allow {
+            assert_eq!(observed[3].1.as_ref().unwrap()["refreshToken"], true);
+        }
         result
     })
+}
+
+#[test]
+fn current_authority_replacement_or_replayed_start_prevents_actual_refresh_rpc() {
+    assert_eq!(
+        renewal_with_guard(true, GuardPolicy::RevokeAfterIdentity)
+            .unwrap_err()
+            .status,
+        409
+    );
+    assert_eq!(
+        renewal_with_guard(true, GuardPolicy::RefuseStart)
+            .unwrap_err()
+            .envelope
+            .error
+            .code
+            .as_deref(),
+        Some("native_control_outcome_unknown")
+    );
+}
+
+#[test]
+fn newer_fixed_file_during_identity_handshake_is_adopted_without_refresh_rpc() {
+    let result = renewal_with_guard(true, GuardPolicy::AdoptDuringHandshake).unwrap();
+    assert_eq!(
+        result.credentials.refresh_token.expose(),
+        "fixture-refresh-b"
+    );
 }
 
 #[test]

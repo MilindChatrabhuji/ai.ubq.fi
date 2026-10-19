@@ -6,6 +6,7 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use gateway_core::{GatewayError, lifecycle::SemanticTerminal, query::QueryStore};
+use gateway_core::{js_string::JsString16, source_json::SourceJson};
 use gateway_providers::{
     extras::{self, EmbeddingsProfile},
     types::PrepareOptions,
@@ -43,12 +44,30 @@ pub(crate) fn retryable(status: u16) -> bool {
 pub(crate) async fn fetch_chunk<H: ExtrasHost>(
     host: &H,
     profile: &EmbeddingsProfile,
-    inputs: &[String],
+    inputs: &[JsString16],
     options: &PrepareOptions,
     deadline: i64,
 ) -> Result<(Vec<Vec<f64>>, Option<u64>), DispatchFailure> {
-    let raw = json!({"model":profile.model,"input":inputs,"input_type":profile.input_type,"dimensions":profile.dimensions,"encoding_format":"float","truncation":profile.truncation});
-    let prepared = extras::prepare_embeddings(&raw, options).map_err(DispatchFailure::transport)?;
+    #[derive(serde::Serialize)]
+    struct Chunk<'a> {
+        model: &'a str,
+        input: &'a [JsString16],
+        input_type: &'a str,
+        dimensions: u64,
+        encoding_format: &'a str,
+        truncation: bool,
+    }
+    let raw = SourceJson::from_serializable(&Chunk {
+        model: &profile.model,
+        input: inputs,
+        input_type: &profile.input_type,
+        dimensions: profile.dimensions,
+        encoding_format: "float",
+        truncation: profile.truncation,
+    })
+    .map_err(DispatchFailure::transport)?;
+    let prepared = extras::prepare_source_embeddings(&raw, options)
+        .map_err(|error| DispatchFailure::transport(error.diagnostic().clone()))?;
     let response = host
         .dispatch(ExtrasDispatch::Voyage(PreparedCall {
             prepared,
@@ -57,6 +76,7 @@ pub(crate) async fn fetch_chunk<H: ExtrasHost>(
         .await?;
     if !(200..300).contains(&response.status) {
         return Err(DispatchFailure {
+            origin: DispatchFailureOrigin::Upstream,
             error: Box::new(server(
                 format!("Voyage embeddings failed ({}).", response.status),
                 "upstream_error",
@@ -187,11 +207,11 @@ pub(crate) async fn sync<S: QueryStore, H: ExtrasHost>(
     let owner = uuid(host)?;
     let started = now(host)?;
     let deadline = started + TIMEOUT_MS;
-    let profile = match extras::parse_embeddings(&request.body, false) {
+    let profile = match extras::parse_source_embeddings(&request.body, false) {
         Ok(p) => p,
-        Err(e) => return Ok(ExtrasResponse::error(e)),
+        Err(e) => return Ok(ExtrasResponse::source_error(e)),
     };
-    let hashes: Vec<_> = profile.inputs.iter().map(|t| hash(t)).collect();
+    let hashes: Vec<_> = profile.inputs.iter().map(hash_source).collect();
     let mut lease = SyncLease {
         lease: None,
         dispatched: false,
@@ -235,7 +255,7 @@ pub(crate) async fn sync<S: QueryStore, H: ExtrasHost>(
             .before_failure(store, host, ExtrasResponse::error(configured_error()))
             .await);
     };
-    let mut buckets: BTreeMap<String, (String, Vec<usize>)> = BTreeMap::new();
+    let mut buckets: BTreeMap<String, (JsString16, Vec<usize>)> = BTreeMap::new();
     let mut order = Vec::new();
     for (index, (text, hash)) in profile.inputs.iter().zip(&hashes).enumerate() {
         if !buckets.contains_key(hash) {
@@ -279,7 +299,7 @@ pub(crate) async fn sync<S: QueryStore, H: ExtrasHost>(
                 .await);
         }
         let texts: Vec<_> = chunk.iter().map(|(_, t)| t.clone()).collect();
-        let estimated = texts.iter().map(|s| estimate(s)).sum();
+        let estimated = texts.iter().map(estimate).sum();
         if let Some(wait) = reserve(store, host, estimated, Some(deadline)).await? {
             let seconds = retry_seconds(wait);
             let mut r = ExtrasResponse::error(

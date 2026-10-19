@@ -1,7 +1,10 @@
 use gateway_admin::{AdminHost, AdminInput, AdminOperation};
 use gateway_admin_runtime::{AdminRuntime, RuntimeConfig, capabilities::*};
 use gateway_auth::{upstream::*, webauthn::*, *};
-use gateway_core::{GatewayError, query::*, state::*};
+use gateway_core::{
+    GatewayError, js_string::JsString16, model::ModelId, query::*,
+    source_control::encode_source_control_record, source_json::SourceJson, state::*,
+};
 use gateway_schema::{
     catalog_store::*, runtime_config::build_runtime_config, snapshot::ModelSnapshot,
 };
@@ -12,6 +15,19 @@ use std::{
     future::Future,
     task::{Context as TaskContext, Poll, Waker},
 };
+
+#[path = "contract_cases/manual_reset.rs"]
+mod manual_reset;
+
+// Assertions inspect the actual JSON wire of either explicit response arm.
+trait WireBody {
+    fn wire_json(&self) -> Value;
+}
+impl WireBody for AuthResponseBody {
+    fn wire_json(&self) -> Value {
+        serde_json::from_slice(&self.to_bytes().unwrap()).unwrap()
+    }
+}
 
 fn run<F: Future>(future: F) -> F::Output {
     let mut cx = TaskContext::from_waker(Waker::noop());
@@ -164,10 +180,18 @@ struct Capabilities;
 impl RuntimeCapabilities for Capabilities {
     fn compare_admin_labels(
         &self,
-        left: &str,
-        right: &str,
+        left: &JsString16,
+        right: &JsString16,
     ) -> Result<std::cmp::Ordering, GatewayError> {
-        Ok(left.cmp(right))
+        // These legacy cases contain only empty/singleton lists. Unequal source
+        // ordering requires the exact locale fixtures in source_controls.rs.
+        if left == right {
+            return Ok(std::cmp::Ordering::Equal);
+        }
+        Err(GatewayError::unavailable(
+            "Uncovered legacy fixture comparison",
+            "fixture_collation_missing",
+        ))
     }
     async fn metered_diagnostics(&self) -> Result<Value, GatewayError> {
         Ok(json!({"state":"unavailable"}))
@@ -181,7 +205,7 @@ impl RuntimeCapabilities for Capabilities {
             log_files: json!({"scope":"host_text_logs","total_bytes":null}),
         })
     }
-    async fn pricing(&self, _: &[String]) -> Result<PricingSnapshot, GatewayError> {
+    async fn pricing(&self, _: &[ModelId]) -> Result<PricingSnapshot, GatewayError> {
         Ok(PricingSnapshot {
             eligible_model_ids: vec!["gpt-source".into()],
             quota_per_credit: 1000,
@@ -194,7 +218,7 @@ fn input(body: Value) -> AdminInput {
     AdminInput {
         parameter: None,
         query: BTreeMap::new(),
-        body,
+        body: SourceJson::from_serializable(&body).unwrap(),
         actor: AuthPrincipal {
             token: None,
             method: AuthMethod::AdminAllowlist,
@@ -207,11 +231,11 @@ fn input(body: Value) -> AdminInput {
 }
 fn snapshot(context: bool) -> ModelSnapshot {
     ModelSnapshot {
-        models: vec![if context {
+        models: vec![SourceJson::from_serializable(&if context {
             json!({"slug":"gpt-source","context_window":10000,"default_reasoning_level":null,"supported_reasoning_levels":[null,"future-tier"]})
         } else {
             json!({"slug":"gpt-source","default_reasoning_level":null,"supported_reasoning_levels":[null,"future-tier"]})
-        }],
+        }).unwrap()],
         source: "chatgpt_codex".into(),
         updated_at_ms: 900000,
         client_version: None,
@@ -225,11 +249,18 @@ fn seed_catalog(store: &Store, context: bool) {
     );
     store.rows.borrow_mut().insert(
         runtime_config_key().0,
-        StoredRecord::json(
+        encode_source_control_record(
             "runtime",
-            build_runtime_config(&snapshot, Some("gpt-source"), Some("medium"), 900000).unwrap(),
+            &build_runtime_config(
+                &snapshot,
+                Some(&ModelId::from_scalar("gpt-source")),
+                Some(&JsString16::from_utf8("medium")),
+                900000,
+            )
+            .unwrap(),
             None,
-        ),
+        )
+        .unwrap(),
     );
 }
 fn runtime<'a>(
@@ -281,14 +312,15 @@ fn debug_expiry_and_unknown_scenarios_follow_source() {
         input(json!({"scenario":"codex_503","duration_ms":10})),
     ))
     .unwrap();
-    assert_eq!(before.body["routing"]["expires_at_ms"], 1000010);
+    assert_eq!(before.body.wire_json()["routing"]["expires_at_ms"], 1000010);
     host.now.set(1000020);
     let mut request = input(Value::Null);
     request.now_ms = 1000020;
     assert_eq!(
         run(service.execute(AdminOperation::DebugGet, request))
             .unwrap()
-            .body["routing"]["scenario"],
+            .body
+            .wire_json()["routing"]["scenario"],
         "normal"
     );
     assert_eq!(
@@ -314,7 +346,7 @@ fn provider_selection_is_ordered_and_codex_absorbs_subscriptions() {
     ))
     .unwrap();
     assert_eq!(
-        response.body["provider_ids"],
+        response.body.wire_json()["provider_ids"],
         json!(["codex", "surplus", "openlux"])
     );
     assert_eq!(
@@ -349,7 +381,8 @@ fn claude_empty_access_is_authoritative_and_corruption_never_seeds() {
     assert_eq!(
         run(service.execute(AdminOperation::ClaudeAccessGet, input(Value::Null)))
             .unwrap()
-            .body["data"]["allowed_key_ids"],
+            .body
+            .wire_json()["data"]["allowed_key_ids"],
         json!([])
     );
     store.put(
@@ -371,7 +404,10 @@ fn defaults_keep_advertised_custom_reasoning_and_atomic_late_validation() {
     seed_catalog(&store, true);
     let service = runtime(&store, &host, &config);
     let response=run(service.execute(AdminOperation::DefaultsSet,input(json!({"model":"gpt-source","reasoning_effort":"future-tier","kernel_policy_limit_requests":25})))).unwrap();
-    assert_eq!(response.body["defaults"]["reasoning_effort"], "future-tier");
+    assert_eq!(
+        response.body.wire_json()["defaults"]["reasoning_effort"],
+        "future-tier"
+    );
     assert_eq!(
         store
             .get(json!(["uos_ai", "authority", "v1", "kernel_defaults"]))
@@ -395,7 +431,8 @@ fn defaults_keep_advertised_custom_reasoning_and_atomic_late_validation() {
             input(json!({"model":"gpt-source"}))
         ))
         .unwrap()
-        .body["defaults"]["reasoning_effort"],
+        .body
+        .wire_json()["defaults"]["reasoning_effort"],
         "none"
     );
 }
@@ -467,15 +504,18 @@ fn paid_policy_uses_full_context_exposure_and_never_compact_fallback() {
     let service = runtime(&store, &host, &config);
     seed_catalog(&store, true);
     let fields = run(service.paid_key_policy(
-        &json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":2.25}),
+        &input(json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":2.25})).body,
     ))
     .unwrap();
     assert_eq!(fields.limit_microcredits, 2250000);
-    assert_eq!(fields.max_exposure_microcredits["gpt-source"], 15000000);
+    assert_eq!(
+        fields.max_exposure_microcredits[&ModelId::from_scalar("gpt-source")],
+        15000000
+    );
     seed_catalog(&store, false);
     assert_eq!(
         run(service.paid_key_policy(
-            &json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":-1})
+            &input(json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":-1})).body
         ))
         .unwrap_err()
         .status,
@@ -490,7 +530,7 @@ fn deletion_refuses_pending_markers_and_returns_actual_guard_fences() {
     let service = runtime(&store, &host, &config);
     store.put(
         json!(["ubq_ai", "api_keys", "id", "key"]),
-        json!({"revoked_at_ms":900000}),
+        json!({"id":"key","name":"deletion fixture","prefix":"u_0000000000","hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","created_at_ms":800000,"expires_at_ms":-1,"revoked_at_ms":900000,"usage_limit_requests":-1,"usage_requests":0,"usage_reset_at_ms":2000000,"window_ms":604800000,"usage_quota_version":3,"paid_fallback_enabled":false,"paid_fallback_limit_microcredits":0,"paid_fallback_spent_microcredits":0,"paid_fallback_reserved_microcredits":0,"paid_fallback_reservation_request_id":null,"paid_fallback_model_ids":[],"paid_fallback_quota_per_credit":0,"paid_fallback_max_exposure_microcredits":{},"paid_fallback_pricing_checked_at_ms":null}),
     );
     store.put(
         json!(["uos_ai", "paid_fallback", "v3", "pending", "key", "attempt"]),
@@ -619,8 +659,14 @@ fn errors_limit_does_not_truncate_five_xx_buckets() {
     let mut request = input(Value::Null);
     request.query.insert("limit".into(), vec!["1".into()]);
     let response = run(service.execute(AdminOperation::Errors, request)).unwrap();
-    assert_eq!(response.body["data"].as_array().unwrap().len(), 1);
-    assert_eq!(response.body["five_xx_buckets"][0]["count"], 205);
+    assert_eq!(
+        response.body.wire_json()["data"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        response.body.wire_json()["five_xx_buckets"][0]["count"],
+        205
+    );
 }
 
 #[test]
@@ -672,7 +718,9 @@ fn claude_roster_rotation_preserves_identity_and_fences_prior_generations() {
     assert_eq!(first.account_cohort_id, same.account_cohort_id);
     assert_eq!(first.evidence_generation, same.evidence_generation);
     let mut rotated = credential;
-    rotated.secret = gateway_auth::crypto::Secret::new("sk-ant-api-rotated-secret".into());
+    rotated.secret = std::sync::Arc::new(ClaudeSourceSecret::from_source(
+        "sk-ant-api-rotated-secret".into(),
+    ));
     let next = run(update_account(
         &store,
         &host,
@@ -714,9 +762,10 @@ fn claude_tombstone_refuses_legacy_or_environment_resurrection() {
         "kv",
     )
     .unwrap();
-    store.put(
-        json!(["ubq_ai", "claude_code_auth"]),
-        serde_json::to_value(&credential).unwrap(),
+    store.rows.borrow_mut().insert(
+        gateway_auth::store::key(json!(["ubq_ai", "claude_code_auth"])).0,
+        gateway_admin_runtime::claude::encode_credential_record("fixture", &credential, None)
+            .unwrap(),
     );
     let seed = Bootstrap {
         credential: Some(credential),
@@ -785,10 +834,11 @@ fn kernel_usage_daily_series_uses_source_thirty_day_utc_window() {
         .query
         .insert("include_usage".into(), vec!["true".into()]);
     let result = run(service.execute(AdminOperation::KernelUsageGet, request)).unwrap();
-    let series = result.body["usage"]["daily_requests"].as_array().unwrap();
+    let body = result.body.wire_json();
+    let series = body["usage"]["daily_requests"].as_array().unwrap();
     assert_eq!(series.len(), 30);
     assert_eq!(series[29], 5);
-    assert_eq!(result.body["usage"]["input_tokens"], 0);
+    assert_eq!(result.body.wire_json()["usage"]["input_tokens"], 0);
 }
 
 #[test]
@@ -858,10 +908,10 @@ fn defaults_work_from_runtime_catalog_without_optional_full_snapshot() {
         input(json!({"model":"gpt-source","reasoning_effort":"future-tier"})),
     ))
     .unwrap();
-    assert_eq!(response.body["defaults"]["model"], "gpt-source");
+    assert_eq!(response.body.wire_json()["defaults"]["model"], "gpt-source");
     assert_eq!(
         run(service.paid_key_policy(
-            &json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":1})
+            &input(json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":1})).body
         ))
         .unwrap_err()
         .status,
@@ -877,7 +927,7 @@ fn deletion_cleans_settled_state_then_owned_history_and_retains_ordinary_guard()
     let service = runtime(&store, &host, &config);
     store.put(
         json!(["ubq_ai", "api_keys", "id", "key"]),
-        json!({"revoked_at_ms":900000}),
+        json!({"id":"key","name":"deletion fixture","prefix":"u_0000000000","hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","created_at_ms":800000,"expires_at_ms":-1,"revoked_at_ms":900000,"usage_limit_requests":-1,"usage_requests":0,"usage_reset_at_ms":2000000,"window_ms":604800000,"usage_quota_version":3,"paid_fallback_enabled":false,"paid_fallback_limit_microcredits":0,"paid_fallback_spent_microcredits":0,"paid_fallback_reserved_microcredits":0,"paid_fallback_reservation_request_id":null,"paid_fallback_model_ids":[],"paid_fallback_quota_per_credit":0,"paid_fallback_max_exposure_microcredits":{},"paid_fallback_pricing_checked_at_ms":null}),
     );
     store.put(json!(["uos_ai","paid_fallback","v3","request","key","attempt"]),json!({"v":3,"reservation":{"key_id":"key","request_id":"original","attempt_id":"attempt","provider":"metered","window_reset_at_ms":2000000,"created_at_ms":900000,"reserved_microcredits":20},"policy_version":"v3:week","model":"gpt-source","route":"responses","path":"/v1/responses","stream":true,"reasoning":null,"quota_per_credit":1000,"provider_request_id":"provider-request","dispatch_state":"dispatched","terminal_state":"completed","billing_state":"settled","provider_quota":1.0,"input_tokens":10,"cached_input_tokens":null,"output_tokens":1,"spend_microcredits":10,"transport_started":true,"reconciliation_attempts":0,"last_reconciliation_at_ms":null,"dispatched_at_ms":900000,"terminal_at_ms":900100,"settled_at_ms":900200,"updated_at_ms":900200,"usage_rollup_at_ms":900200}));
     store.put(json!(["uos_ai","paid_fallback","v3","window","key",2000000]),json!({"v":3,"key_id":"key","policy_version":"v3:week","window_reset_at_ms":2000000,"limit_microcredits":100,"settled_microcredits":10,"reserved_microcredits":0,"pending_count":0,"updated_at_ms":900200}));
@@ -1019,7 +1069,7 @@ fn local_development_deletion_releases_only_owner_marker_and_completes_after_abs
     let id = "local-development";
     store.put(
         json!(["ubq_ai", "api_keys", "id", id]),
-        json!({"revoked_at_ms":900000}),
+        json!({"id":id,"name":"deletion fixture","prefix":"u_0000000000","hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","created_at_ms":800000,"expires_at_ms":-1,"revoked_at_ms":900000,"usage_limit_requests":-1,"usage_requests":0,"usage_reset_at_ms":2000000,"window_ms":604800000,"usage_quota_version":3,"paid_fallback_enabled":false,"paid_fallback_limit_microcredits":0,"paid_fallback_spent_microcredits":0,"paid_fallback_reserved_microcredits":0,"paid_fallback_reservation_request_id":null,"paid_fallback_model_ids":[],"paid_fallback_quota_per_credit":0,"paid_fallback_max_exposure_microcredits":{},"paid_fallback_pricing_checked_at_ms":null}),
     );
     store.put(
         json!(["uos_ai", "paid_fallback", "v3", "pending", id, "attempt"]),
@@ -1099,7 +1149,7 @@ fn authenticated_admin_service_uses_runtime_deletion_completion_hooks() {
     let created = run(admin.handle_route(&request, "create-key"))
         .unwrap()
         .unwrap();
-    let id = created.body["id"].as_str().unwrap().to_owned();
+    let id = created.body.wire_json()["id"].as_str().unwrap().to_owned();
     assert_eq!(created.status, 200);
     request.url = "https://ai.ubq.fi/admin/api-keys/revoke".into();
     request.body = serde_json::to_vec(&json!({"id":id})).unwrap();
@@ -1237,14 +1287,17 @@ fn admin_inputs_use_source_number_coercion_and_ecmascript_whitespace() {
         input(json!({"scenario":"\u{feff}codex_429\u{feff}","duration_ms":["16"]})),
     ))
     .unwrap();
-    assert_eq!(response.body["routing"]["expires_at_ms"], 1000016);
+    assert_eq!(
+        response.body.wire_json()["routing"]["expires_at_ms"],
+        1000016
+    );
     let response = run(service.execute(
         AdminOperation::ClaudeAccessSet,
         input(json!({"allowed_key_ids":["\u{0085}key\u{0085}"]})),
     ))
     .unwrap();
     assert_eq!(
-        response.body["data"]["allowed_key_ids"],
+        response.body.wire_json()["data"]["allowed_key_ids"],
         json!(["\u{0085}key\u{0085}"])
     );
     let mut request = input(Value::Null);
@@ -1316,8 +1369,121 @@ fn public_supervisor_brief_uses_final_operation_and_never_leaks_native_context()
         } else {
             let response = response.unwrap();
             assert_eq!(response.status, 200);
-            assert_eq!(response.body["model"], Value::Null);
-            assert!(response.body.get("turns").is_none());
+            assert_eq!(response.body.wire_json()["model"], Value::Null);
+            assert!(response.body.wire_json().get("turns").is_none());
         }
     }
+}
+
+#[test]
+fn shared_claude_access_loader_returns_exact_fence_and_does_not_reseed_explicit_deny() {
+    use gateway_admin_runtime::claude_access::*;
+    let store = Store::default();
+    let host = Host::default();
+    store.conflicts.set(2);
+    let loaded = run(load_policy(
+        &store,
+        &host,
+        &["trusted-seed".into()],
+        &|a, b| Ok(a.cmp(b)),
+    ))
+    .unwrap();
+    assert_eq!(loaded.policy.source, PolicySource::Env);
+    assert_eq!(
+        loaded.policy.allowed_key_ids,
+        vec![JsString16::from_utf8("trusted-seed")]
+    );
+    let actual = run(store.read(&policy_key())).unwrap().unwrap();
+    assert_eq!(loaded.check.expected_revision, Some(actual.revision));
+    store.put(
+        json!(["uos_ai", "claude_code_access", "v1"]),
+        json!({"v":1,"source":"kv","allowed_key_ids":[],"updated_at_ms":100}),
+    );
+    let denied = run(load_policy(
+        &store,
+        &host,
+        &["must-not-resurrect".into()],
+        &|a, b| Ok(a.cmp(b)),
+    ))
+    .unwrap();
+    assert!(denied.policy.allowed_key_ids.is_empty());
+    assert_eq!(denied.policy.source, PolicySource::Kv);
+    assert_eq!(
+        run(store.commit(AtomicTransition {
+            checks: vec![loaded.check],
+            mutations: vec![]
+        }))
+        .unwrap(),
+        CommitOutcome::Conflict
+    );
+    store.put(
+        json!(["uos_ai", "claude_code_access", "v1"]),
+        json!({"v":1,"source":"kv","allowed_key_ids":null,"updated_at_ms":100}),
+    );
+    assert!(
+        run(load_policy(
+            &store,
+            &host,
+            &["forbidden-fallback".into()],
+            &|a, b| Ok(a.cmp(b))
+        ))
+        .is_err()
+    );
+}
+#[test]
+fn shared_claude_access_parser_preserves_stable_locale_ties_and_missing_host_refuses() {
+    use gateway_admin_runtime::claude_access::*;
+    let ids = parse_ids(&json!(["é", "e\u{0301}", "é"]), &|_, _| {
+        Ok(std::cmp::Ordering::Equal)
+    })
+    .unwrap();
+    assert_eq!(
+        ids,
+        vec![
+            JsString16::from_utf8("é"),
+            JsString16::from_utf8("e\u{0301}")
+        ]
+    );
+    assert!(
+        parse_policy(
+            &json!({"v":1,"source":"kv","allowed_key_ids":[],"updated_at_ms":9007199254740992_i64}),
+            &|a, b| Ok(a.cmp(b))
+        )
+        .is_err()
+    );
+    let store = Store::default();
+    let host = Host::default();
+    let error = run(load_policy(
+        &store,
+        &host,
+        &["a".into(), "b".into()],
+        &|_, _| {
+            Err(GatewayError::unavailable(
+                "locale host missing",
+                "source_collation_unavailable",
+            ))
+        },
+    ))
+    .unwrap_err();
+    assert_eq!(
+        error.envelope.error.code.as_deref(),
+        Some("source_collation_unavailable")
+    );
+    assert!(
+        store
+            .get(json!(["uos_ai", "claude_code_access", "v1"]))
+            .is_none()
+    );
+    store.conflicts.set(8);
+    assert_eq!(
+        run(load_policy(&store, &host, &[], &|a, b| Ok(a.cmp(b))))
+            .unwrap_err()
+            .status,
+        409
+    );
+    assert!(
+        store
+            .get(json!(["uos_ai", "claude_code_access", "v1"]))
+            .is_none()
+    );
 }

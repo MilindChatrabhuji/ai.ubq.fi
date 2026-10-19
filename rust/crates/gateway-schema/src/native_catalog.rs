@@ -1,37 +1,55 @@
 //! Rich exact-client-version Codex catalog. Never substitute the official model-list envelope.
-use crate::{catalog::*, metadata::*, provider_catalog::*, util::*};
-use serde_json::{Value, json};
-fn description(effort: &str) -> String {
-    if effort == "none" {
+use crate::{catalog::*, metadata::*, model_control as c, provider_catalog::*};
+use gateway_core::{js_string::JsString16, model::ModelId, source_json::SourceJson};
+fn description(effort: &JsString16) -> JsString16 {
+    if c::matches(effort, "none") {
         "No reasoning".into()
     } else {
-        format!("Reasoning effort: {effort}")
+        c::concat(&[&"Reasoning effort: ".into(), effort])
     }
 }
-fn common_fields(row: &mut Value, priority: i64, forwarding: bool) {
+fn common_fields(row: &mut SourceJson, priority: i64, forwarding: bool) {
     for (key, value) in [
-        ("shell_type", json!("shell_command")),
-        ("visibility", json!("list")),
-        ("supported_in_api", json!(true)),
-        ("priority", json!(priority)),
-        ("availability_nux", Value::Null),
-        ("upgrade", Value::Null),
-        ("base_instructions", json!("")),
-        ("support_verbosity", json!(false)),
-        ("default_verbosity", Value::Null),
-        ("apply_patch_tool_type", Value::Null),
-        ("web_search_tool_type", json!("text")),
-        ("truncation_policy", json!({"mode":"tokens","limit":10000})),
+        ("shell_type", c::json("shell_command")),
+        ("visibility", c::json("list")),
+        ("supported_in_api", c::json(&true)),
+        ("priority", c::json(&priority)),
+        ("availability_nux", c::json(&())),
+        ("upgrade", c::json(&())),
+        ("base_instructions", c::json("")),
+        ("support_verbosity", c::json(&false)),
+        ("default_verbosity", c::json(&())),
+        ("apply_patch_tool_type", c::json(&())),
+        ("web_search_tool_type", c::json("text")),
+        (
+            "truncation_policy",
+            c::object(vec![
+                ("mode", c::json("tokens")),
+                ("limit", c::json(&10000)),
+            ]),
+        ),
     ] {
-        row[key] = value;
+        c::set(row, key, value);
     }
     if forwarding {
-        row["forwarding_policy"] = json!({"version":"deepseek-forwarded-payload/v1","mode":"bytes","per_message_limit":65_536});
+        c::set(
+            row,
+            "forwarding_policy",
+            c::object(vec![
+                ("version", c::json("deepseek-forwarded-payload/v1")),
+                ("mode", c::json("bytes")),
+                ("per_message_limit", c::json(&65_536)),
+            ]),
+        );
     }
-    row["supports_parallel_tool_calls"] = json!(false);
-    row["experimental_supported_tools"] = json!([]);
+    c::set(row, "supports_parallel_tool_calls", c::json(&false));
+    c::set(
+        row,
+        "experimental_supported_tools",
+        c::json(&Vec::<SourceJson>::new()),
+    );
 }
-fn reasoning_fields(row: &mut Value, resolved: &ResolvedMetadata, external: bool) {
+fn reasoning_fields(row: &mut SourceJson, resolved: &ResolvedMetadata, external: bool) {
     let levels = resolved.supported_reasoning_levels.as_ref().map(|levels| {
         if external {
             ascending_external_levels(levels)
@@ -39,53 +57,102 @@ fn reasoning_fields(row: &mut Value, resolved: &ResolvedMetadata, external: bool
             levels.clone()
         }
     });
-    row["supported_reasoning_levels"] = json!(
-        levels
-            .as_ref()
-            .filter(|l| !l.is_empty())
-            .cloned()
-            .unwrap_or_else(|| vec!["none".into()])
-            .iter()
-            .map(|e| json!({"effort":e,"description":description(e)}))
-            .collect::<Vec<_>>()
+    let levels = levels
+        .filter(|l| !l.is_empty())
+        .unwrap_or_else(|| vec!["none".into()]);
+    c::set(
+        row,
+        "supported_reasoning_levels",
+        c::json(
+            &levels
+                .iter()
+                .map(|e| {
+                    c::object(vec![
+                        ("effort", c::json(e)),
+                        ("description", c::json(&description(e))),
+                    ])
+                })
+                .collect::<Vec<_>>(),
+        ),
     );
     if let Some(default) = &resolved.default_reasoning_effort {
-        row["default_reasoning_level"] = json!(default);
+        c::set(row, "default_reasoning_level", c::json(default));
     } else if resolved.supported_reasoning_levels.is_none() {
-        row["default_reasoning_level"] = json!("none");
+        c::set(row, "default_reasoning_level", c::json("none"));
     }
 }
-pub fn paid_native_record(model: &Value, input: &CatalogInput) -> Value {
-    let id = model["id"].as_str().unwrap_or("");
-    let codex = input.codex().and_then(|s| s.find(id));
-    let resolved = input.metadata(id, codex, None, codex.is_some());
-    let mut row = json!({"slug":id,"display_name":id});
-    if let Some(description) = model.get("description") {
-        row["description"] = description.clone();
+pub fn paid_native_record(model: &SourceJson, input: &CatalogInput) -> SourceJson {
+    let id = ModelId::from_source(
+        c::get(model, "id")
+            .as_ref()
+            .and_then(c::string)
+            .unwrap_or_default(),
+    );
+    let codex = input.codex().and_then(|s| s.find(&id));
+    let resolved = input.metadata(&id, codex, None, codex.is_some());
+    let mut row = c::object(vec![("slug", c::json(&id)), ("display_name", c::json(&id))]);
+    if let Some(description) = c::get(model, "description") {
+        c::set(&mut row, "description", description);
     }
-    row["owned_by"] = model["owned_by"].clone();
-    row["supported_endpoint_types"] = model["supported_endpoint_types"].clone();
+    for key in ["owned_by", "supported_endpoint_types"] {
+        c::set(
+            &mut row,
+            key,
+            c::get(model, key).unwrap_or_else(|| c::json(&())),
+        );
+    }
     reasoning_fields(&mut row, &resolved, codex.is_none());
     apply_resolved_fields(&mut row, &resolved, true, false);
     common_fields(&mut row, 1000, false);
     row
 }
-pub fn claude_native_record(model: &Value) -> Value {
-    let mut row = json!({"slug":model["id"],"display_name":model.get("display_name").unwrap_or(&model["id"]),"owned_by":"anthropic","supported_endpoint_types":["openai-response","openai"],"supported_reasoning_levels":claude_levels(model).iter().map(|e|json!({"effort":e,"description":if e=="none"{"No reasoning"}else{e.as_str()}})).collect::<Vec<_>>()});
-    if model.get("supports_disabled_thinking") == Some(&Value::Bool(true)) {
-        row["default_reasoning_level"] = json!("none");
+pub fn claude_native_record(model: &SourceJson) -> SourceJson {
+    let id = c::get(model, "id").unwrap_or_else(|| c::json(&()));
+    let levels = claude_levels(model);
+    let mut row = c::object(vec![
+        ("slug", id.clone()),
+        ("display_name", c::get(model, "display_name").unwrap_or(id)),
+        ("owned_by", c::json("anthropic")),
+        (
+            "supported_endpoint_types",
+            c::json(&["openai-response", "openai"]),
+        ),
+        (
+            "supported_reasoning_levels",
+            c::json(
+                &levels
+                    .iter()
+                    .map(|e| {
+                        c::object(vec![
+                            ("effort", c::json(e)),
+                            (
+                                "description",
+                                c::json(&if c::matches(e, "none") {
+                                    JsString16::from_utf8("No reasoning")
+                                } else {
+                                    e.clone()
+                                }),
+                            ),
+                        ])
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        ),
+    ]);
+    if c::get(model, "supports_disabled_thinking").is_some_and(|v| v.as_str() == "true") {
+        c::set(&mut row, "default_reasoning_level", c::json("none"));
     }
-    if let Some(window) = positive_integer(model.get("context_window_tokens")) {
-        row["context_window"] = json!(window);
-        row["max_context_window"] = json!(window);
+    if let Some(window) = c::positive(c::get(model, "context_window_tokens").as_ref()) {
+        c::set(&mut row, "context_window", c::json(&window));
+        c::set(&mut row, "max_context_window", c::json(&window));
     }
-    if let Some(max) = positive_integer(model.get("max_output_tokens")) {
-        row["max_output_tokens"] = json!(max);
+    if let Some(max) = c::positive(c::get(model, "max_output_tokens").as_ref()) {
+        c::set(&mut row, "max_output_tokens", c::json(&max));
     }
     common_fields(&mut row, 1000, false);
     row
 }
-pub fn configured_native_records(input: &CatalogInput, provider: &str) -> Vec<Value> {
+pub fn configured_native_records(input: &CatalogInput, provider: &str) -> Vec<SourceJson> {
     if !input.enabled(provider)
         || (provider == "ubiquity" && !input.synthetic_configured())
         || (provider != "ubiquity" && !input.configured(provider))
@@ -93,45 +160,49 @@ pub fn configured_native_records(input: &CatalogInput, provider: &str) -> Vec<Va
         return Vec::new();
     }
     provider_ids(provider).iter().map(|id|{
-        let mut row=json!({"slug":id,"display_name":display_name(provider,id)});
-        row["description"]=json!(match provider{"deepseek"=>"DeepSeek official API (deepseek-flash) served by this gateway.","lithos"=>"LithosAI API (Chat Completions) served by this gateway.","cerebras"=>"Cerebras API (Chat Completions) served by this gateway.",_=>"Latest DeepSeek Flash waterfall: official DeepSeek, OpenRouter, LithosAI, Surplus, and OpenLux. Each hop uses the provider's latest alias and falls back only on infrastructure or serving failures."});
-        row["owned_by"]=json!(provider);row["supported_endpoint_types"]=if provider=="ubiquity"{json!(["openai-response"])}else{json!(["openai-response","openai-chat"])};
-        let hint=provider_hint(provider,id);let resolved=if provider=="cerebras"||provider=="ubiquity"{resolve_metadata(&MetadataSources{provider:Some(hint.clone()),..MetadataSources::default()})}else{input.metadata(id,None,Some(hint.clone()),false)};
-        let levels=hint.supported_reasoning_levels.as_deref().unwrap_or(&[]);row["supported_reasoning_levels"]=json!(levels.iter().filter_map(Value::as_str).map(|e|{let label=if provider=="deepseek"{match e{"none"=>"Disable thinking mode".to_owned(),"low"=>"Thinking effort: low".into(),"high"=>"Thinking effort: high".into(),_=>"Thinking effort: maximum".into()}}else{description(e)};json!({"effort":e,"description":label})}).collect::<Vec<_>>());row["default_reasoning_level"]=json!(hint.default_reasoning_effort);apply_resolved_fields(&mut row,&resolved,true,false);common_fields(&mut row,if provider=="ubiquity"{0}else{1},provider!="ubiquity");row
+        let id=ModelId::from_scalar(id);let mut row=c::object(vec![("slug",c::json(&id)),("display_name",c::json(&display_name(provider,&id)))]);
+        c::set(&mut row,"description",c::json(match provider{"deepseek"=>"DeepSeek official API (deepseek-flash) served by this gateway.","lithos"=>"LithosAI API (Chat Completions) served by this gateway.","cerebras"=>"Cerebras API (Chat Completions) served by this gateway.",_=>"Latest DeepSeek Flash waterfall: official DeepSeek, OpenRouter, LithosAI, Surplus, and OpenLux. Each hop uses the provider's latest alias and falls back only on infrastructure or serving failures."}));
+        c::set(&mut row,"owned_by",c::json(provider));c::set(&mut row,"supported_endpoint_types",c::json(&if provider=="ubiquity"{vec!["openai-response"]}else{vec!["openai-response","openai-chat"]}));
+        let hint=provider_hint(provider,&id);let resolved=if provider=="cerebras"||provider=="ubiquity"{resolve_metadata(&MetadataSources{provider:Some(hint.clone()),..MetadataSources::default()})}else{input.metadata(&id,None,Some(hint.clone()),false)};
+        let levels=hint.supported_reasoning_levels.as_deref().unwrap_or(&[]);let levels=levels.iter().filter_map(c::string).map(|e|{
+            let label=if provider=="deepseek"{JsString16::from_utf8(if c::matches(&e,"none"){"Disable thinking mode"}else if c::matches(&e,"low"){"Thinking effort: low"}else if c::matches(&e,"high"){"Thinking effort: high"}else{"Thinking effort: maximum"})}else{description(&e)};
+            c::object(vec![("effort",c::json(&e)),("description",c::json(&label))])
+        }).collect::<Vec<_>>();
+        c::set(&mut row,"supported_reasoning_levels",c::json(&levels));c::set(&mut row,"default_reasoning_level",c::json(&hint.default_reasoning_effort));apply_resolved_fields(&mut row,&resolved,true,false);common_fields(&mut row,if provider=="ubiquity"{0}else{1},provider!="ubiquity");row
     }).collect()
 }
-fn openrouter_native(input: &CatalogInput) -> Vec<Value> {
+fn openrouter_native(input: &CatalogInput) -> Vec<SourceJson> {
     if !input.enabled("openrouter") || !input.configured("openrouter") {
         return Vec::new();
     }
-    input.rows("openrouter").iter().filter_map(|model|{let id=model.get("id")?.as_str()?;let resolved=input.metadata(id,None,None,false);let mut row=json!({"slug":id,"display_name":id,"description":"OpenRouter upstream (Chat Completions and Responses) served by this gateway.","owned_by":id.split('/').next().filter(|s|!s.is_empty()).unwrap_or("openrouter"),"supported_endpoint_types":["openai-response","openai-chat"]});reasoning_fields(&mut row,&resolved,true);apply_resolved_fields(&mut row,&resolved,true,false);common_fields(&mut row,1000,false);Some(row)}).collect()
+    input.rows("openrouter").iter().filter_map(|model|{
+        let id=ModelId::from_source(c::get(model,"id").as_ref().and_then(c::string)?);let resolved=input.metadata(&id,None,None,false);
+        let mut row=c::object(vec![("slug",c::json(&id)),("display_name",c::json(&id)),("description",c::json("OpenRouter upstream (Chat Completions and Responses) served by this gateway.")),("owned_by",c::json(&openrouter_owner(&id))),("supported_endpoint_types",c::json(&["openai-response","openai-chat"]))]);
+        reasoning_fields(&mut row,&resolved,true);apply_resolved_fields(&mut row,&resolved,true,false);common_fields(&mut row,1000,false);Some(row)
+    }).collect()
 }
-fn append_native(rows: &mut Vec<Value>, entries: impl IntoIterator<Item = Value>) {
+fn append_native(rows: &mut Vec<SourceJson>, entries: impl IntoIterator<Item = SourceJson>) {
     for record in entries {
-        let id = identifier(&record).unwrap_or("");
-        if !rows.iter().any(|r| {
-            identifier(r).is_some_and(|s| {
-                s.trim_matches(crate::util::js_whitespace)
-                    == id.trim_matches(crate::util::js_whitespace)
-            })
-        }) {
+        let id = c::identifier(&record).unwrap_or_default();
+        if !rows
+            .iter()
+            .any(|r| c::identifier(r).is_some_and(|s| c::trim(&s) == c::trim(&id)))
+        {
             rows.push(record);
         }
     }
 }
-fn native_id(row: &Value) -> &str {
-    row.get("slug")
-        .and_then(Value::as_str)
-        .map(crate::util::js_trim)
-        .filter(|id| !id.is_empty())
+fn native_id(row: &SourceJson) -> JsString16 {
+    c::normalized(c::get(row, "slug").as_ref())
         .or_else(|| {
-            row.get("id")
-                .and_then(Value::as_str)
-                .map(crate::util::js_trim)
+            c::get(row, "id")
+                .as_ref()
+                .and_then(c::string)
+                .map(|id| c::trim(&id))
         })
-        .unwrap_or("")
+        .unwrap_or_default()
 }
-fn merge_configured_native(rows: &mut Vec<Value>, input: &CatalogInput, provider: &str) {
+fn merge_configured_native(rows: &mut Vec<SourceJson>, input: &CatalogInput, provider: &str) {
     let configured = configured_native_records(input, provider);
     if provider == "deepseek" {
         for row in rows.iter_mut() {
@@ -145,12 +216,15 @@ fn merge_configured_native(rows: &mut Vec<Value>, input: &CatalogInput, provider
     }
     append_native(rows, configured);
 }
-fn unique_paid(input: &CatalogInput) -> Vec<Value> {
+fn unique_paid(input: &CatalogInput) -> Vec<SourceJson> {
     let mut rows = Vec::new();
     for provider in ["openlux", "surplus"] {
         for record in input.available_rows(provider) {
             if endpoint_supports(record, "openai-response")
-                && !rows.iter().any(|r: &Value| r["id"] == record["id"])
+                && !rows.iter().any(|r| {
+                    c::get(r, "id").as_ref().and_then(c::string)
+                        == c::get(record, "id").as_ref().and_then(c::string)
+                })
             {
                 rows.push(record.clone());
             }
@@ -158,16 +232,16 @@ fn unique_paid(input: &CatalogInput) -> Vec<Value> {
     }
     rows
 }
-pub fn native_catalog(stored: Option<&Value>, input: &CatalogInput) -> Value {
+pub fn native_catalog(stored: Option<&SourceJson>, input: &CatalogInput) -> SourceJson {
     let mut envelope = stored
-        .filter(|v| v.is_object())
+        .filter(|v| c::is_object(v))
         .cloned()
-        .unwrap_or_else(|| json!({"models":[]}));
+        .unwrap_or_else(|| c::object(vec![("models", c::json(&Vec::<SourceJson>::new()))]));
     let mut rows = if input.enabled("codex") {
         stored
-            .and_then(|v| v.get("models"))
-            .and_then(Value::as_array)
-            .cloned()
+            .and_then(|v| c::get(v, "models"))
+            .as_ref()
+            .and_then(c::array)
             .unwrap_or_default()
     } else {
         Vec::new()
@@ -189,10 +263,14 @@ pub fn native_catalog(stored: Option<&Value>, input: &CatalogInput) -> Value {
         merge_configured_native(&mut rows, input, provider);
     }
     append_native(&mut rows, openrouter_native(input));
-    envelope["models"] = json!(filter_whitelist(rows, input.whitelist.as_ref(), true));
+    c::set(
+        &mut envelope,
+        "models",
+        c::json(&filter_whitelist(rows, input.whitelist.as_ref(), true)),
+    );
     envelope
 }
-pub fn native_catalog_fallback(input: &CatalogInput) -> Option<Value> {
+pub fn native_catalog_fallback(input: &CatalogInput) -> Option<SourceJson> {
     let paid = unique_paid(input);
     let mut rows = Vec::new();
     append_native(
@@ -210,6 +288,9 @@ pub fn native_catalog_fallback(input: &CatalogInput) -> Option<Value> {
     if rows.is_empty() {
         None
     } else {
-        Some(json!({"models":filter_whitelist(rows,input.whitelist.as_ref(),true)}))
+        Some(c::object(vec![(
+            "models",
+            c::json(&filter_whitelist(rows, input.whitelist.as_ref(), true)),
+        )]))
     }
 }
