@@ -6,6 +6,7 @@ use worker::event;
 use worker::{Context, Env, Method, Request, Response, Result};
 
 mod admin_host;
+mod admin_support_host;
 mod admission;
 mod agent_messages;
 mod assets;
@@ -13,6 +14,7 @@ pub mod authority;
 mod catalog;
 mod catalog_host;
 mod claude_host;
+mod codex_admin_host;
 mod cors;
 mod extras;
 mod extras_host;
