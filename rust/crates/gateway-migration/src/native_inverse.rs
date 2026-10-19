@@ -17,8 +17,9 @@ fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeValue, Gateway
         .as_ref()
         .map(|m| m.transform)
         .unwrap_or(crate::inverse::transform_for_new(&parts(&row.key)?));
-    let value = crate::inverse::inverse_value(
+    let value = crate::inverse::inverse_value_for_key(
         transform,
+        &row.key,
         &row.record,
         row.mapping.as_ref().map(|m| &m.source),
     )?;

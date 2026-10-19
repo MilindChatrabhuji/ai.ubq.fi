@@ -13,6 +13,7 @@ mod native_inverse;
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 pub mod native_operator;
 pub mod operational;
+mod paid_controls;
 mod profile_bindings;
 mod profile_coupling;
 mod profile_reset;
