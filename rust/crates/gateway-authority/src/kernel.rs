@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct KernelPolicy {
+pub struct KernelPolicy<L = String> {
     pub v: u32,
-    pub owner: String,
-    pub repo: Option<String>,
+    pub owner: L,
+    pub repo: Option<L>,
     pub usage_limit_requests: i64,
     pub window_ms: i64,
     pub expires_at_ms: i64,
@@ -60,10 +60,10 @@ pub struct KernelReservation {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct KernelWindow {
+pub struct KernelWindow<L = String> {
     pub v: u32,
-    pub owner: String,
-    pub repo: Option<String>,
+    pub owner: L,
+    pub repo: Option<L>,
     pub usage_requests: i64,
     pub reserved_requests: i64,
     pub created_at_ms: i64,
