@@ -1,7 +1,10 @@
 use gateway_admin::{AdminHost, AdminInput, AdminOperation};
 use gateway_admin_runtime::{AdminRuntime, RuntimeConfig, capabilities::*};
 use gateway_auth::{upstream::*, webauthn::*, *};
-use gateway_core::{GatewayError, query::*, state::*};
+use gateway_core::{
+    GatewayError, js_string::JsString16, model::ModelId, query::*,
+    source_control::encode_source_control_record, source_json::SourceJson, state::*,
+};
 use gateway_schema::{
     catalog_store::*, runtime_config::build_runtime_config, snapshot::ModelSnapshot,
 };
@@ -177,10 +180,18 @@ struct Capabilities;
 impl RuntimeCapabilities for Capabilities {
     fn compare_admin_labels(
         &self,
-        left: &str,
-        right: &str,
+        left: &JsString16,
+        right: &JsString16,
     ) -> Result<std::cmp::Ordering, GatewayError> {
-        Ok(left.cmp(right))
+        // These legacy cases contain only empty/singleton lists. Unequal source
+        // ordering requires the exact locale fixtures in source_controls.rs.
+        if left == right {
+            return Ok(std::cmp::Ordering::Equal);
+        }
+        Err(GatewayError::unavailable(
+            "Uncovered legacy fixture comparison",
+            "fixture_collation_missing",
+        ))
     }
     async fn metered_diagnostics(&self) -> Result<Value, GatewayError> {
         Ok(json!({"state":"unavailable"}))
@@ -194,7 +205,7 @@ impl RuntimeCapabilities for Capabilities {
             log_files: json!({"scope":"host_text_logs","total_bytes":null}),
         })
     }
-    async fn pricing(&self, _: &[String]) -> Result<PricingSnapshot, GatewayError> {
+    async fn pricing(&self, _: &[ModelId]) -> Result<PricingSnapshot, GatewayError> {
         Ok(PricingSnapshot {
             eligible_model_ids: vec!["gpt-source".into()],
             quota_per_credit: 1000,
@@ -207,7 +218,7 @@ fn input(body: Value) -> AdminInput {
     AdminInput {
         parameter: None,
         query: BTreeMap::new(),
-        body,
+        body: SourceJson::from_serializable(&body).unwrap(),
         actor: AuthPrincipal {
             token: None,
             method: AuthMethod::AdminAllowlist,
@@ -220,11 +231,11 @@ fn input(body: Value) -> AdminInput {
 }
 fn snapshot(context: bool) -> ModelSnapshot {
     ModelSnapshot {
-        models: vec![if context {
+        models: vec![SourceJson::from_serializable(&if context {
             json!({"slug":"gpt-source","context_window":10000,"default_reasoning_level":null,"supported_reasoning_levels":[null,"future-tier"]})
         } else {
             json!({"slug":"gpt-source","default_reasoning_level":null,"supported_reasoning_levels":[null,"future-tier"]})
-        }],
+        }).unwrap()],
         source: "chatgpt_codex".into(),
         updated_at_ms: 900000,
         client_version: None,
@@ -238,11 +249,18 @@ fn seed_catalog(store: &Store, context: bool) {
     );
     store.rows.borrow_mut().insert(
         runtime_config_key().0,
-        StoredRecord::json(
+        encode_source_control_record(
             "runtime",
-            build_runtime_config(&snapshot, Some("gpt-source"), Some("medium"), 900000).unwrap(),
+            &build_runtime_config(
+                &snapshot,
+                Some(&ModelId::from_scalar("gpt-source")),
+                Some(&JsString16::from_utf8("medium")),
+                900000,
+            )
+            .unwrap(),
             None,
-        ),
+        )
+        .unwrap(),
     );
 }
 fn runtime<'a>(
@@ -486,15 +504,18 @@ fn paid_policy_uses_full_context_exposure_and_never_compact_fallback() {
     let service = runtime(&store, &host, &config);
     seed_catalog(&store, true);
     let fields = run(service.paid_key_policy(
-        &json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":2.25}),
+        &input(json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":2.25})).body,
     ))
     .unwrap();
     assert_eq!(fields.limit_microcredits, 2250000);
-    assert_eq!(fields.max_exposure_microcredits["gpt-source"], 15000000);
+    assert_eq!(
+        fields.max_exposure_microcredits[&ModelId::from_scalar("gpt-source")],
+        15000000
+    );
     seed_catalog(&store, false);
     assert_eq!(
         run(service.paid_key_policy(
-            &json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":-1})
+            &input(json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":-1})).body
         ))
         .unwrap_err()
         .status,
@@ -739,9 +760,10 @@ fn claude_tombstone_refuses_legacy_or_environment_resurrection() {
         "kv",
     )
     .unwrap();
-    store.put(
-        json!(["ubq_ai", "claude_code_auth"]),
-        serde_json::to_value(&credential).unwrap(),
+    store.rows.borrow_mut().insert(
+        gateway_admin_runtime::claude::legacy_auth_key().0,
+        gateway_admin_runtime::claude::encode_credential_record("fixture", &credential, None)
+            .unwrap(),
     );
     let seed = Bootstrap {
         credential: Some(credential),
@@ -887,7 +909,7 @@ fn defaults_work_from_runtime_catalog_without_optional_full_snapshot() {
     assert_eq!(response.body.wire_json()["defaults"]["model"], "gpt-source");
     assert_eq!(
         run(service.paid_key_policy(
-            &json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":1})
+            &input(json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":1})).body
         ))
         .unwrap_err()
         .status,
@@ -1410,7 +1432,13 @@ fn shared_claude_access_parser_preserves_stable_locale_ties_and_missing_host_ref
         Ok(std::cmp::Ordering::Equal)
     })
     .unwrap();
-    assert_eq!(ids, vec!["é", "e\u{0301}"]);
+    assert_eq!(
+        ids,
+        vec![
+            JsString16::from_utf8("é"),
+            JsString16::from_utf8("e\u{0301}")
+        ]
+    );
     assert!(
         parse_policy(
             &json!({"v":1,"source":"kv","allowed_key_ids":[],"updated_at_ms":9007199254740992_i64}),

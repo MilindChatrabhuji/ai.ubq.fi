@@ -512,6 +512,43 @@ fn scalar_key_record_retains_json_and_revision_fenced_updates() {
 }
 
 #[test]
+fn scalar_kernel_public_key_uses_actual_json_writer_and_public_pem_projection() {
+    run(async {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../gateway-auth/tests/fixtures/kernel-source-public.json"
+        ))
+        .unwrap();
+        let pem = fixture["pem"].as_str().unwrap();
+        let store = Store::default();
+        let host = Host::default();
+        let body = input::json(&json!({"app_id":123,"pem":pem,"owner":"fixture"}));
+        let created = kernel_keys::create(&store, &host, &body).await.unwrap();
+        assert_eq!(created.status, 200);
+        let row = store.read(&kernel_keys::key()).await.unwrap().unwrap();
+        assert_eq!(row.value_encoding, ValueEncoding::Json);
+        assert_eq!(row.expires_at_ms, None);
+        let records = kernel_keys::decode_records(&row).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].added_at_ms, NOW);
+        assert_eq!(records[0].pem, JsString16::from_utf8(pem));
+        assert_eq!(records[0].owner, JsString16::from_utf8("fixture"));
+        assert_eq!(
+            kernel_keys::public_pems(&store, NOW).await.unwrap(),
+            vec![pem]
+        );
+        let listed = kernel_keys::list(&store, NOW).await.unwrap();
+        let data = input::member(&response_source(&listed), "data").unwrap();
+        assert_eq!(
+            data.deserialize::<Vec<kernel_keys::KernelPublicKey>>()
+                .unwrap(),
+            records
+        );
+        assert_eq!(store.read(&kernel_keys::key()).await.unwrap(), Some(row));
+        export_writer_records(&store, "scalar-kernel-public-keys", &[kernel_keys::key()]);
+    });
+}
+
+#[test]
 fn kernel_public_source_row_stays_listable_before_crypto_projection() {
     run(async {
         let store = Store::default();
