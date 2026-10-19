@@ -1,6 +1,8 @@
 use super::*;
 #[path = "actor_tests/live_manual.rs"]
 mod live_manual;
+#[path = "actor_tests/renewal_v2.rs"]
+mod renewal_v2;
 use gateway_auth::{
     crypto::{Secret, sha256_base64url},
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},

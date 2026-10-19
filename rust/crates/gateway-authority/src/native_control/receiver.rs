@@ -72,23 +72,21 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         row: &ActionRow,
     ) -> Result<facts::Facts, GatewayError> {
         let now = self.time(row.created_at_ms)?;
-        if row.v != 1
+        if row.v != 2
             || now >= row.deadline_ms
             || row.deadline_ms > add(row.created_at_ms, OWNER_RENEWAL_MAX_MS)?
         {
             return Err(fail());
         }
         tx.now = now;
-        let current = facts::read(
-            tx,
-            &row.actor,
-            &row.fence.original_request_id,
-            Some(&row.attempt_id),
-            self.identity,
-            self.current_config,
-            self.registered,
-        )
-        .await?;
+        let current = self
+            .read_context(
+                tx,
+                &row.actor,
+                &row.fence.original_request_id,
+                &row.fence.context,
+            )
+            .await?;
         tx.now = self.time(tx.now)?;
         super::actor::validate_current_time(&row.actor, tx.now)?;
         if tx.now >= row.deadline_ms
@@ -109,7 +107,10 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             .read(&rows::key("action", reference))
             .await?
             .ok_or_else(fail)?;
-        if action.action_ref != reference {
+        if action.action_ref != reference
+            || action.v != 2
+            || action.fence.v != super::NATIVE_RENEWAL_FENCE_VERSION
+        {
             return Err(fail());
         }
         Ok(action)
@@ -282,9 +283,9 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 return Err(fail());
             }
             let reference = facts::digest(&(
-                "uos-native-renewal-action-v1",
+                "uos-native-renewal-action-v2",
                 request_id,
-                &current.attempt_id,
+                &current.fence.context,
                 &current.fence.source_native_generation,
             ))?;
             let key = rows::key("action", &reference);
@@ -299,10 +300,9 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 row
             } else {
                 let row = ActionRow {
-                    v: 1,
+                    v: 2,
                     action_ref: reference.clone(),
                     actor: actor.stored().clone(),
-                    attempt_id: current.attempt_id,
                     created_at_ms: now,
                     deadline_ms: add(now, OWNER_RENEWAL_MAX_MS)?,
                     fence: current.fence,
