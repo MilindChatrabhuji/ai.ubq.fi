@@ -6,6 +6,8 @@ import { lookup } from "node:dns/promises";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { liveCases } from "./fixtures/live-conformance.ts";
+import { runProviderMatrixCases, type MatrixContext, type MatrixScenario } from "./runtime-matrix/index.ts";
 import { testNetworkArgv } from "../../scripts/test-network.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -109,7 +111,13 @@ async function deniedEgress(host: string, port: number): Promise<void> {
   });
 }
 
-async function fixtureConfig(workspace: string): Promise<string> {
+async function fixtureConfig(workspace: string, scenario?: MatrixScenario): Promise<string> {
+  const application = join(root, "rust/crates", scenario ? "gateway-worker-fixture" : "gateway-worker", "build");
+  const scenarioBinding = scenario ? `, (name = "UOS_MATRIX_SCENARIO", text = ${JSON.stringify(scenario)})` : "";
+  const paidBindings =
+    scenario === "paid"
+      ? ', (name = "SURPLUS_API_KEY", text = "fixture-matrix-surplus"), (name = "OPENLUX_API_KEY", text = "fixture-matrix-openlux-discovery"), (name = "METERED_API_KEY", text = "fixture-matrix-openlux-spend")'
+      : "";
   const path = join(workspace, "runtime.capnp");
   const quoted = (value: string): string => JSON.stringify(value);
   await mkdir(join(workspace, "state"), { recursive: true });
@@ -120,15 +128,15 @@ const config :Workerd.Config = (
     (name = "state", disk = (path = ${quoted(join(workspace, "state"))}, writable = true)),
     (name = "assets", disk = (path = ${quoted(join(root, "static"))})),
     (name = "gateway", worker = (
-      modules = [(name = "index.js", esModule = embed ${quoted(join(root, "rust/crates/gateway-worker/build/index.js"))}), (name = "index_bg.wasm", wasm = embed ${quoted(join(root, "rust/crates/gateway-worker/build/index_bg.wasm"))})],
+      modules = [(name = "index.js", esModule = embed ${quoted(join(application, "index.js"))}), (name = "index_bg.wasm", wasm = embed ${quoted(join(application, "index_bg.wasm"))})],
       compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal", "request_signal_passthrough"],
       globalOutbound = "driver",
-      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "ASSETS", service = "assets"), (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"), (name = "DEEPSEEK_API_KEY", text = "fixture-provider-secret"), (name = "CEREBRAS_API_KEY", text = "fixture-provider-secret"), (name = "OPENROUTER_API_KEY", text = "fixture-provider-secret"), (name = "VOYAGEAI_API_KEY", text = "fixture-provider-secret"), (name = "IMAGE_BASE_MODEL", text = "gpt-test")],
+      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "ASSETS", service = "assets"), (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"), (name = "LITHOSAI_API_KEY", text = "fixture-provider-secret"), (name = "DEEPSEEK_API_KEY", text = "fixture-provider-secret"), (name = "CEREBRAS_API_KEY", text = "fixture-provider-secret"), (name = "OPENROUTER_API_KEY", text = "fixture-provider-secret"), (name = "VOYAGEAI_API_KEY", text = "fixture-provider-secret"), (name = "IMAGE_BASE_MODEL", text = "gpt-matrix-test")${scenarioBinding}${paidBindings}],
       durableObjectNamespaces = [(className = "GatewayAuthority", uniqueKey = "uos-rust-runtime-conformance-v1", enableSql = true)],
       durableObjectStorage = (localDisk = "state")
     )),
     (name = "driver", worker = (
-      modules = [(name = "driver.mjs", esModule = embed ${quoted(join(root, "tools/cloudflare/fixtures/runtime-driver.mjs"))})],
+      modules = [(name = "driver.mjs", esModule = embed ${quoted(join(root, "tools/cloudflare/fixtures/runtime-driver.mjs"))}), (name = "provider-matrix.mjs", esModule = embed ${quoted(join(root, "tools/cloudflare/fixtures/provider-matrix.mjs"))})],
       compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal", "request_signal_passthrough"],
       bindings = [(name = "GATEWAY", service = "gateway"), (name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority", serviceName = "gateway")), (name = "CONTROL", durableObjectNamespace = (className = "FixtureControl"))],
       durableObjectNamespaces = [(className = "FixtureControl", uniqueKey = "uos-rust-runtime-control-v1", enableSql = true)],
@@ -308,6 +316,12 @@ async function staticRouteCases(url: (path: string) => string, cases: string[]):
     await served.arrayBuffer();
   }
   cases.push("source_root_media_negotiation");
+  for (const path of ["/health///", "/docs///"]) {
+    const normalized = await fetch(url(path));
+    assert.equal(normalized.status, 200);
+    await normalized.arrayBuffer();
+  }
+  cases.push("source_trailing_slash_normalization_for_health_and_assets");
 }
 
 async function agentMessageCases(url: (path: string) => string, cases: string[]): Promise<void> {
@@ -529,50 +543,11 @@ async function extrasCases(input: {
 async function imageCases(input: {
   url: (path: string) => string;
   post: (path: string, body: unknown) => Promise<Response>;
-  rpc: (body: unknown) => Promise<Record<string, unknown>>;
   lifecycle: (id: string) => Promise<Record<string, unknown>>;
   cases: string[];
 }): Promise<void> {
-  const { url, post, rpc, lifecycle, cases } = input;
-  const account = "fixture-image-account";
-  const access = "fixture-provider-secret";
-  const refresh = "fixture-image-refresh";
-  const revision = "fixture-image-source";
-  const sha256 = (value: string): string => createHash("sha256").update(value).digest("hex");
-  // These are the exact codex_credential_identity recipes from the committed
-  // gateway-auth/provider_credentials.rs factory, using synthetic secrets only.
-  const now = Date.now();
-  const model = { slug: "gpt-test", supported_reasoning_levels: [{ effort: "none" }], default_reasoning_level: "none" };
-  const records = [
-    [
-      tuple("ubq_ai", "codex_auth"),
-      revision,
-      { accounts: [{ account_id: account, access_token: access, refresh_token: refresh, updated_at_ms: now }], updated_at_ms: now },
-    ],
-    [
-      tuple("uos_ai", "authority", "v1", "codex_pool"),
-      "fixture-image-normalized",
-      {
-        v: 1,
-        pool_versionstamp: revision,
-        accounts: [
-          {
-            account_id_hash: sha256(`uos_ai\0codex_routing_account\0${account}`),
-            admin_account_hash: sha256(account),
-            credential_version: sha256(`${account}\0${access}\0${refresh}`),
-            enabled: true,
-          },
-        ],
-      },
-    ],
-    [tuple("ubq_ai", "codex_models"), "fixture-image-models", { models: [model], source: "controlled-runtime-fixture", updated_at_ms: now }],
-  ] as const;
-  const seeded = await rpc({
-    operation: "commit",
-    checks: records.map(([key]) => ({ key, expected_revision: null })),
-    mutations: records.map(([key, revision, value]) => ({ operation: "put", key, record: { schema_version: 1, revision, value, expires_at_ms: null } })),
-  });
-  assert.equal(seeded.committed, true);
+  const { url, post, lifecycle, cases } = input;
+  // The isolated Rust fixture constructor installs and validates this source.
   const generated = await post("/v1/images/generations", { prompt: "fixture:image-generated", n: 2 });
   assert.equal(generated.status, 200);
   const images = await objectBody(generated);
@@ -628,7 +603,7 @@ async function inner(): Promise<void> {
   assert(controlHost && Number.isInteger(controlPort) && controlPort > 0 && controlPort < 65536);
   await deniedEgress(controlHost, controlPort);
   const cases = ["os_external_tcp_denied"];
-  const config = await fixtureConfig(workspace);
+  let config = await fixtureConfig(workspace);
   let running = await start(config, workspace);
   const url = (path: string): string => `${running.publicOrigin}${path}`;
   const post = (path: string, body: unknown, token = "fixture-access", signal?: AbortSignal): Promise<Response> =>
@@ -665,6 +640,25 @@ async function inner(): Promise<void> {
     const value: unknown = await (await fetch(`${running.origin}/control`, { headers: { connection: "close" } })).json();
     assert(Array.isArray(value));
     return value;
+  };
+  const matrixContext: MatrixContext = { url, post, rpc, read, lifecycle, events, cases };
+  let scenarioNumber = 0;
+  const withScenario = async (kind: MatrixScenario, run: (context: MatrixContext) => Promise<void>): Promise<void> => {
+    const previousConfig = config;
+    await running.stop();
+    const scope = join(workspace, `scenario-${kind}-${++scenarioNumber}`);
+    await mkdir(scope, { recursive: true });
+    config = await fixtureConfig(scope, kind);
+    running = await start(config, scope);
+    try {
+      const health = await objectBody(await fetch(url("/health")));
+      assert(isObject(health.release) && health.release.git_sha === expectedSha, "Each fixture must execute the exact compiled product source.");
+      await run(matrixContext);
+    } finally {
+      await running.stop();
+      config = previousConfig;
+      running = await start(config, workspace);
+    }
   };
   try {
     const health = await fetch(url("/health"));
@@ -821,12 +815,31 @@ async function inner(): Promise<void> {
     assert.notEqual(cancelState.terminal_intent.semantic_terminal, "response.completed");
     await assertUpstreamCancelled(events, "fixture:abort-tcp");
     cases.push("actual_caller_abort_retains_non_successful_transport_state");
-    await imageCases({ url, post, rpc, lifecycle, cases });
+    await withScenario("codex", async (fixture) => {
+      await imageCases(fixture);
+      await liveCases({
+        url: (path) => fixture.url(path),
+        read: (key) => fixture.read(key),
+        tuple,
+        cases,
+        restart: async () => {
+          await running.stop();
+          running = await start(config, workspace);
+        },
+      });
+    });
+    await runProviderMatrixCases({ ...matrixContext, withScenario });
     console.log(
       JSON.stringify({
         sourceSha: expectedSha,
         wasmSha256: createHash("sha256")
           .update(await readFile(join(root, "rust/crates/gateway-worker/build/index_bg.wasm")))
+          .digest("hex"),
+        fixtureWasmSha256: createHash("sha256")
+          .update(await readFile(join(root, "rust/crates/gateway-worker-fixture/build/index_bg.wasm")))
+          .digest("hex"),
+        providerMatrixSha256: createHash("sha256")
+          .update(await readFile(join(root, "tools/cloudflare/fixtures/provider-matrix.mjs")))
           .digest("hex"),
         workerd: "1.20261012.1",
         platform: process.platform,
