@@ -7,6 +7,7 @@ pub mod claude_generation;
 mod defaults;
 mod errors;
 mod kernel;
+mod kernel_data;
 mod paid;
 pub mod parse;
 mod state;
