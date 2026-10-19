@@ -69,9 +69,7 @@ pub fn parse_full_snapshot(value: &SourceJson) -> Option<ModelSnapshot> {
         .and_then(source::array)?;
     let source_name = source::member(value, "source")
         .as_ref()
-        .and_then(source::string)?
-        .try_utf8()
-        .ok()?;
+        .and_then(source::string)?;
     let updated = source::member(value, "updated_at_ms")
         .as_ref()
         .and_then(source::number)?;
@@ -79,7 +77,9 @@ pub fn parse_full_snapshot(value: &SourceJson) -> Option<ModelSnapshot> {
         || !models
             .iter()
             .all(|v| v.as_str().starts_with('{') || v.as_str().starts_with('['))
-        || gateway_schema::util::js_trim(&source_name).is_empty()
+        || gateway_schema::reasoning::js_trim_source(&source_name)
+            .as_units()
+            .is_empty()
         || !updated.is_finite()
         || updated.fract() != 0.0
         || updated <= 0.0
