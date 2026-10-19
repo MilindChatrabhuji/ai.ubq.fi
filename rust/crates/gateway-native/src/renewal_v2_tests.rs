@@ -16,7 +16,7 @@ use gateway_core::identity::{
     AccountBinding, CredentialVersion, PoolVersionstamp, RoutingAccountHash,
 };
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::{
     collections::BTreeSet,
     io::{Read, Write},

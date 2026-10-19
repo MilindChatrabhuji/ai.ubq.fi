@@ -682,7 +682,7 @@ fn current_actual_actor_revocation_is_checked_before_the_auth_decoder() {
         {
             Err(error) => assert_eq!(
                 error.envelope.error.code.as_deref(),
-                Some("native_import_authority_unavailable")
+                Some("native_actor_unavailable")
             ),
             Ok(_) => panic!("stale actor"),
         }
