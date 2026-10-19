@@ -21,6 +21,7 @@ pub mod profile_runtime;
 mod profile_validate;
 mod projection;
 mod rollup_source;
+mod source_metadata;
 
 pub use capture::{PrivateCapture, SourceEntry};
 pub use engine::{AdoptionReceipt, PreparedAdoption, adopt_empty, prepare};
