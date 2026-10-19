@@ -123,12 +123,12 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }
             tx.now = self.fresh_time(now)?;
             if tx.commit().await? {
-                return Ok(FullPoolPreparation::Observe(FullPoolResetPlan {
+                return Ok(FullPoolPreparation::Observe(Box::new(FullPoolResetPlan {
                     facts,
                     audit_revision: revision,
                     audit_present: present,
                     prior,
-                }));
+                })));
             }
         }
         Ok(FullPoolPreparation::Declined {
@@ -239,7 +239,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 tx.now = self.fresh_time(at)?;
                 permit.check_deadline(tx.now)?;
                 if tx.commit().await? {
-                    return Ok(FullPoolEvaluation::Ready(permit));
+                    return Ok(FullPoolEvaluation::Ready(Box::new(permit)));
                 }
                 continue;
             }

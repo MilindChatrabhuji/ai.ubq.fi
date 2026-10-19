@@ -57,7 +57,7 @@ pub trait SourceCreditCollation {
 pub enum FullPoolPreparation {
     Declined { reason: String },
     Cached { decision: FullPoolShadowDecision },
-    Observe(FullPoolResetPlan),
+    Observe(Box<FullPoolResetPlan>),
 }
 pub enum FullPoolEvaluation {
     Declined {
@@ -67,7 +67,7 @@ pub enum FullPoolEvaluation {
         decision: FullPoolShadowDecision,
         duplicate: bool,
     },
-    Ready(AutomaticResetPermit),
+    Ready(Box<AutomaticResetPermit>),
 }
 #[derive(Clone)]
 pub(super) struct Member {

@@ -1,6 +1,7 @@
 //! Source inference orchestration. Network/body ownership remains in the Worker adapter.
 mod attempt;
 pub mod classify;
+pub mod custody;
 mod dispatch;
 pub mod extras;
 mod journal;

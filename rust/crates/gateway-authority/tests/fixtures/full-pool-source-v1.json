@@ -216,78 +216,29 @@
   ],
   "collation_cases": [
     {
-      "ids": [
-        [
-          90
-        ],
-        [
-          97
-        ]
-      ],
+      "ids": [[90], [97]],
       "comparison": -1,
-      "selected": [
-        97
-      ]
+      "selected": [97]
     },
     {
-      "ids": [
-        [
-          228
-        ],
-        [
-          122
-        ]
-      ],
+      "ids": [[228], [122]],
       "comparison": 1,
-      "selected": [
-        228
-      ]
+      "selected": [228]
     },
     {
-      "ids": [
-        [
-          55357,
-          56832
-        ],
-        [
-          55296
-        ]
-      ],
+      "ids": [[55357, 56832], [55296]],
       "comparison": 1,
-      "selected": [
-        55357,
-        56832
-      ]
+      "selected": [55357, 56832]
     },
     {
-      "ids": [
-        [
-          57343
-        ],
-        [
-          55296
-        ]
-      ],
+      "ids": [[57343], [55296]],
       "comparison": -1,
-      "selected": [
-        55296
-      ]
+      "selected": [55296]
     },
     {
-      "ids": [
-        [
-          101,
-          769
-        ],
-        [
-          233
-        ]
-      ],
+      "ids": [[101, 769], [233]],
       "comparison": 0,
-      "selected": [
-        101,
-        769
-      ]
+      "selected": [101, 769]
     }
   ],
   "consume_cases": [
@@ -298,9 +249,7 @@
         "providerReceiptId": "upstream-reset"
       },
       "wire": "{\"redeem_request_id\":\"fixture-redeem\",\"credit_id\":\"\\ud800\"}",
-      "roundtrip_credit_units": [
-        55296
-      ]
+      "roundtrip_credit_units": [55296]
     },
     {
       "code": "already_redeemed",
@@ -309,9 +258,7 @@
         "providerReceiptId": "upstream-already-redeemed"
       },
       "wire": "{\"redeem_request_id\":\"fixture-redeem\",\"credit_id\":\"\\ud800\"}",
-      "roundtrip_credit_units": [
-        55296
-      ]
+      "roundtrip_credit_units": [55296]
     },
     {
       "code": "nothing_to_reset",
@@ -320,9 +267,7 @@
         "reason": "nothing_to_reset"
       },
       "wire": "{\"redeem_request_id\":\"fixture-redeem\",\"credit_id\":\"\\ud800\"}",
-      "roundtrip_credit_units": [
-        55296
-      ]
+      "roundtrip_credit_units": [55296]
     },
     {
       "code": "no_credit",
@@ -331,9 +276,7 @@
         "reason": "no_credit"
       },
       "wire": "{\"redeem_request_id\":\"fixture-redeem\",\"credit_id\":\"\\ud800\"}",
-      "roundtrip_credit_units": [
-        55296
-      ]
+      "roundtrip_credit_units": [55296]
     },
     {
       "code": "other",
@@ -342,9 +285,7 @@
         "providerReceiptId": null
       },
       "wire": "{\"redeem_request_id\":\"fixture-redeem\",\"credit_id\":\"\\ud800\"}",
-      "roundtrip_credit_units": [
-        55296
-      ]
+      "roundtrip_credit_units": [55296]
     }
   ],
   "source_provenance": {
