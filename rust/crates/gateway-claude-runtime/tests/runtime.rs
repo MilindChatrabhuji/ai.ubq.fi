@@ -42,6 +42,7 @@ fn authoritative_refusal_rotates_durable_active_and_all_current_accounts_prove_p
                 key_id: KEY,
                 model: &MODEL.into(),
                 raw: &raw,
+                effective_effort: fixture_effort(&raw),
                 selection: None
             }
         ))
@@ -100,6 +101,7 @@ fn generic_429_cools_down_but_never_rotates_and_no_reset_limit_has_no_proof() {
                     key_id: KEY,
                     model: &MODEL.into(),
                     raw: &raw,
+                    effective_effort: fixture_effort(&raw),
                     selection: None,
                 },
             ))
@@ -181,6 +183,7 @@ fn a_persisted_empty_deny_and_roster_tombstone_cannot_bootstrap_an_account() {
                 key_id: KEY,
                 model: &MODEL.into(),
                 raw: &raw,
+                effective_effort: fixture_effort(&raw),
                 selection: None
             }
         ))
@@ -197,6 +200,7 @@ fn a_persisted_empty_deny_and_roster_tombstone_cannot_bootstrap_an_account() {
                 key_id: KEY,
                 model: &MODEL.into(),
                 raw: &raw,
+                effective_effort: fixture_effort(&raw),
                 selection: None
             }
         ))
@@ -482,6 +486,7 @@ fn split_surrogate_detail_survives_quota_storage_and_the_next_cooldown_response(
             key_id: KEY,
             model: &MODEL.into(),
             raw: &raw,
+            effective_effort: fixture_effort(&raw),
             selection: None,
         },
     ))
@@ -538,6 +543,7 @@ fn imported_cooldown_statuses_match_pinned_bun_constructor_and_never_authorize_p
                 key_id: KEY,
                 model: &MODEL.into(),
                 raw: &raw(),
+                effective_effort: fixture_effort(&raw()),
                 selection: None,
             },
         ))
@@ -660,6 +666,7 @@ fn real_claude_selection_and_quota_cas_retain_opaque_model_units() {
             key_id: KEY,
             model: &model,
             raw: &raw,
+            effective_effort: fixture_effort(&raw),
             selection: None,
         },
     ))
@@ -850,4 +857,64 @@ fn source_capability_options_preserve_actual_same_binding_scalar_auth() {
     );
     assert_eq!(prepared.auth.workspace_id, None);
     assert!(!prepared.supports_native_effort);
+}
+
+#[test]
+fn captured_effective_default_drives_actual_lookup_currentness_and_workspace_proof() {
+    let store = Store::new();
+    let binding = account(1);
+    let config = seed(&store, vec![binding]);
+    let host = Host::new(&store);
+    host.catalog.borrow_mut().models = vec![gateway_core::source_json::SourceJson::from_serializable(&json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["medium","high"]})).unwrap()];
+    let session = ClaudePoolSession::new(config);
+    let raw = raw();
+    let PoolSelection::Eligible(selected) = run(session.select(
+        &store,
+        &host,
+        SelectionInput {
+            key_id: KEY,
+            model: &MODEL.into(),
+            raw: &raw,
+            effective_effort: Some("medium".into()),
+            selection: None,
+        },
+    ))
+    .unwrap() else {
+        panic!("honest medium proof");
+    };
+    assert_eq!(host.catalog_calls.get(), 1);
+    assert_eq!(selected.effective_effort(), Some(&"medium".into()));
+    run(session.ensure_current(&store, &host, &selected, KEY, &MODEL.into(), &raw)).unwrap();
+    assert_eq!(host.catalog_calls.get(), 2);
+    let wrong =
+        gateway_core::source_json::SourceJson::parse(r#"{"model":"other","input":"fixture"}"#)
+            .unwrap();
+    assert!(
+        run(session.ensure_current(&store, &host, &selected, KEY, &MODEL.into(), &wrong)).is_err()
+    );
+    host.catalog.borrow_mut().models = vec![gateway_core::source_json::SourceJson::from_serializable(&json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["high"]})).unwrap()];
+    assert!(
+        run(session.ensure_current(&store, &host, &selected, KEY, &MODEL.into(), &raw)).is_err()
+    );
+    host.catalog.borrow_mut().models = vec![gateway_core::source_json::SourceJson::from_serializable(&json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["medium","high"]})).unwrap()];
+    let observed =
+        run(session.observe_response(&store, &host, &selected, head(400, Headers::new(), NOW)))
+            .unwrap();
+    let next = run(session.after_outcome(
+        &store,
+        &host,
+        observed,
+        error_evidence(
+            Some("not scoped to a workspace".encode_utf16().collect()),
+            true,
+        ),
+    ))
+    .unwrap();
+    let OutcomeDecision::WorkspaceContinuation(next) = next else {
+        panic!("actual workspace continuation required");
+    };
+    assert_eq!(next.effective_effort(), selected.effective_effort());
+    let calls = host.catalog_calls.get();
+    run(session.ensure_current(&store, &host, &next, KEY, &MODEL.into(), &raw)).unwrap();
+    assert_eq!(host.catalog_calls.get(), calls);
 }

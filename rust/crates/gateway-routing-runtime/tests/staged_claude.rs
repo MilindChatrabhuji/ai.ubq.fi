@@ -510,3 +510,106 @@ fn crossed_publication_variants_and_fences_fail_closed_without_a_ready_request()
         }
     });
 }
+
+#[test]
+fn effective_phase_reaches_lookup_before_native_body_and_retains_original_controls() {
+    run(async {
+        for (id, surface, effort) in [
+            ("omitted-response", ClientSurface::Responses, None),
+            ("explicit-none", ClientSurface::Responses, Some("none")),
+            ("explicit-high", ClientSurface::Responses, Some("high")),
+            ("omitted-chat", ClientSurface::Chat, None),
+        ] {
+            let store = Store::new();
+            seed_key(&store);
+            let mut host = Host::new(&store);
+            let mut credential = publication(None, ClaudeCredentialKind::ApiKey);
+            let PublishedCredential::Claude { body_options, .. } = &mut credential else {
+                unreachable!()
+            };
+            body_options
+                .native_reasoning_efforts
+                .as_mut()
+                .unwrap()
+                .push("high".into());
+            host.claude = Some(credential);
+            let mut input = request(id);
+            input.surface = surface;
+            input.raw = if surface == ClientSurface::Chat {
+                SourceJson::parse(r#"{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}]}"#).unwrap()
+            } else {
+                input.raw
+            };
+            if let Some(effort) = effort {
+                input.raw = set_member(
+                    &input.raw,
+                    "reasoning",
+                    SourceJson::from_serializable(&json!({"effort":effort})).unwrap(),
+                );
+            }
+            let original = input.raw.clone();
+            let session = RoutingSession::begin(
+                input,
+                store.clone(),
+                host.clone(),
+                store.clone(),
+                store.clone(),
+            )
+            .await
+            .unwrap();
+            let attempt = session.next_attempt().await.unwrap().unwrap();
+            assert_eq!(
+                host.claude_effective.lock().unwrap().as_slice(),
+                &[Some(JsString16::from_utf8(effort.unwrap_or("medium")))]
+            );
+            assert_eq!(session.original_source(), &original);
+            assert_eq!(attempt.request.decode().request, original);
+            assert_eq!(
+                attempt.request.decode().upstream_model,
+                *session.selected_model()
+            );
+            session.finish(Default::default()).await.unwrap();
+        }
+    });
+}
+#[test]
+fn invalid_ordinary_input_never_calls_capability_lookup_and_high_only_still_refuses() {
+    run(async {
+        for input_kind in ["number", "empty-native", "high-only"] {
+            let store = Store::new();
+            seed_key(&store);
+            let mut host = Host::new(&store);
+            let mut credential = publication(None, ClaudeCredentialKind::ApiKey);
+            let PublishedCredential::Claude { body_options, .. } = &mut credential else {
+                unreachable!()
+            };
+            body_options.native_reasoning_efforts = Some(vec!["high".into()]);
+            host.claude = Some(credential);
+            let mut input = request(input_kind);
+            if input_kind != "high-only" {
+                // [] is valid ordinary data but invalid for this native body; numeric input is truly malformed earlier.
+                input.raw = set_member(
+                    &input.raw,
+                    "input",
+                    SourceJson::parse(if input_kind == "number" { "7" } else { "[]" }).unwrap(),
+                );
+            }
+            let session = RoutingSession::begin(
+                input,
+                store.clone(),
+                host.clone(),
+                store.clone(),
+                store.clone(),
+            )
+            .await
+            .unwrap();
+            let error = session.next_attempt().await.unwrap_err();
+            assert_eq!(error.error.status, 400);
+            assert_eq!(
+                host.claude_effective.lock().unwrap().len(),
+                usize::from(input_kind != "number")
+            );
+            session.finish(Default::default()).await.unwrap();
+        }
+    });
+}

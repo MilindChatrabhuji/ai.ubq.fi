@@ -39,6 +39,7 @@ pub struct SelectedAccount {
     pub(crate) key_id: String,
     pub(crate) model: ModelId,
     pub(crate) raw: SourceJson,
+    pub(crate) effective_effort: Option<JsString16>,
     pub(crate) disabled: bool,
     pub(crate) native_checks: Vec<RevisionCheck>,
     pub(crate) workspace_continuation: bool,
@@ -53,6 +54,9 @@ impl std::fmt::Debug for SelectedAccount {
     }
 }
 impl SelectedAccount {
+    pub fn effective_effort(&self) -> Option<&JsString16> {
+        self.effective_effort.as_ref()
+    }
     pub fn binding(&self) -> &AccountBinding {
         &self.binding
     }
@@ -95,6 +99,7 @@ pub struct SelectionInput<'a> {
     pub key_id: &'a str,
     pub model: &'a ModelId,
     pub raw: &'a SourceJson,
+    pub effective_effort: Option<JsString16>,
     /// The same server-owned source selection used for validation and the m14 plan.
     pub selection: Option<&'a ProviderSelection>,
 }

@@ -224,8 +224,11 @@ impl RoutingHost for Host {
         principal: &AuthPrincipal,
         model: &gateway_core::model::ModelId,
         raw: &gateway_core::source_json::SourceJson,
+        effective_effort: Option<&gateway_core::js_string::JsString16>,
     ) -> Result<ClaudeSelection, GatewayError> {
-        self.claude.select(principal, model, raw).await
+        self.claude
+            .select(principal, model, raw, effective_effort)
+            .await
     }
     async fn observe_claude_response(
         &self,
