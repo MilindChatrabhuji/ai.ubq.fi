@@ -18,6 +18,9 @@ pub use crate::paid_types::*;
 #[path = "paid_source_usage.rs"]
 mod source_usage;
 pub use source_usage::surplus_usage_from_source;
+#[path = "paid_source_records.rs"]
+mod source_records;
+pub use source_records::{decode_paid_attempt_record, decode_paid_rollup_record};
 
 fn pending_id(key: &ApiKeyId, attempt: &PaidAttemptId) -> String {
     serde_json::json!([key.0, attempt.0]).to_string()
@@ -117,7 +120,12 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         text(&input.key_id.0)?;
         text(&input.request_id.0)?;
         text(&input.attempt_id.0)?;
-        text(&input.model)?;
+        if gateway_schema::reasoning::js_trim_source(input.model.as_js_string())
+            .as_units()
+            .is_empty()
+        {
+            return Err(invalid("Paid model is missing."));
+        }
         text(&input.route)?;
         text(&input.path)?;
         nonnegative(input.created_at_ms)?;
@@ -127,7 +135,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         for _ in 0..128 {
             let mut tx = self.transaction(now)?;
             let policy: ApiKeyPolicy = tx
-                .read(&keys::api_policy(&input.key_id.0))
+                .read_source_control(&keys::api_policy(&input.key_id.0))
                 .await?
                 .ok_or_else(|| {
                     unavailable("paid_fallback_unavailable", "Paid policy is missing.")
@@ -157,7 +165,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     }
                 }
                 PaidAuthorization::SubscriptionUnavailable(proof) => {
-                    if !proof.unavailable || proof.bindings.is_empty() || proof.model != input.model
+                    if !proof.unavailable
+                        || proof.bindings.is_empty()
+                        || proof.model() != &input.model
                     {
                         return Err(unavailable(
                             "codex_routing_unavailable",
@@ -191,7 +201,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 ));
             }
             let key = keys::paid_attempt(&input.key_id.0, &input.attempt_id.0);
-            if let Some(existing) = tx.read::<PaidAttempt>(&key).await? {
+            if let Some(existing) = tx.read_source_control::<PaidAttempt>(&key).await? {
                 if receipt
                     .existing_paid
                     .as_ref()
@@ -331,7 +341,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 pending.clone(),
             );
             arm_gate(&mut gate);
-            tx.put(
+            tx.put_source_control(
                 &key,
                 &row,
                 Some(retention(input.created_at_ms, PAID_RETENTION_MS)?),
@@ -383,7 +393,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let mut tx = self.transaction(now)?;
             let key = keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
             let mut row: PaidAttempt = tx
-                .read(&key)
+                .read_source_control(&key)
                 .await?
                 .ok_or_else(|| invalid("Paid reservation is missing."))?;
             validate_attempt(&row, reservation)?;
@@ -393,7 +403,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 return Err(invalid("Paid attempt cannot dispatch."));
             }
             row.transport_started = true;
-            tx.put(
+            tx.put_source_control(
                 &key,
                 &row,
                 Some(retention(reservation.created_at_ms, PAID_RETENTION_MS)?),
@@ -422,7 +432,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let mut tx = self.transaction(now)?;
             let key = keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
             let mut row: PaidAttempt = tx
-                .read(&key)
+                .read_source_control(&key)
                 .await?
                 .ok_or_else(|| invalid("Paid attempt is missing."))?;
             validate_attempt(&row, reservation)?;
@@ -452,7 +462,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 tx.put(&pending_key, &pending, None)?;
                 tx.put(&keys::paid_gate(), &gate, None)?;
             }
-            tx.put(
+            tx.put_source_control(
                 &key,
                 &row,
                 Some(retention(reservation.created_at_ms, PAID_RETENTION_MS)?),
@@ -476,7 +486,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let mut tx = self.transaction(now)?;
             let key = keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
             let mut row: PaidAttempt = tx
-                .read(&key)
+                .read_source_control(&key)
                 .await?
                 .ok_or_else(|| invalid("Paid attempt is missing."))?;
             validate_attempt(&row, reservation)?;
@@ -502,7 +512,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             row.spend_microcredits = Some(0);
             row.terminal_at_ms.get_or_insert(now);
             row.updated_at_ms = now;
-            tx.put(
+            tx.put_source_control(
                 &key,
                 &row,
                 Some(retention(reservation.created_at_ms, PAID_RETENTION_MS)?),
@@ -548,7 +558,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         for _ in 0..128 {
             let mut tx = self.transaction(now)?;
             let key = keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
-            let Some(mut row) = tx.read::<PaidAttempt>(&key).await? else {
+            let Some(mut row) = tx.read_source_control::<PaidAttempt>(&key).await? else {
                 clear_nonbillable_marker(&mut tx, &reservation.key_id, &reservation.attempt_id)
                     .await?;
                 if tx.commit().await? {
@@ -616,35 +626,34 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 keys::paid_window(&reservation.key_id.0, reservation.window_reset_at_ms);
             let window: Option<PaidWindow> = tx.read(&window_key).await?;
             let bucket = reservation.created_at_ms / 3_600_000 * 3_600_000;
-            let model = gateway_schema::util::js_trim(&row.model);
-            let rollup_key = keys::paid_rollup(
+            let model = gateway_core::model::ModelId::from_source(
+                gateway_schema::reasoning::js_trim_source(row.model.as_js_string()),
+            );
+            let rollup_key = keys::paid_rollup_model(
                 bucket,
-                model,
+                &model,
                 provider_label(reservation.provider),
                 rollup_shard(&reservation.attempt_id.0),
             );
-            let mut rollup: PaidRollup = tx.read(&rollup_key).await?.unwrap_or(PaidRollup {
-                v: 1,
-                bucket_start_at_ms: bucket,
-                model: model.to_owned(),
-                provider: reservation.provider,
-                request_count: 0,
-                provider_quota: 0.0,
-                input_tokens: 0,
-                cached_input_tokens: 0,
-                output_tokens: 0,
-                spend_microcredits: 0.0,
-                first_request_at_ms: reservation.created_at_ms,
-                last_request_at_ms: reservation.created_at_ms,
-                updated_at_ms: now,
-            });
-            if rollup.v != 1
-                || rollup.bucket_start_at_ms != bucket
-                || rollup.model != model
-                || rollup.provider != reservation.provider
-            {
-                return Err(invalid("Paid rollup identity is invalid."));
-            }
+            let mut rollup: PaidRollup =
+                tx.read_source_control(&rollup_key)
+                    .await?
+                    .unwrap_or(PaidRollup {
+                        v: 1,
+                        bucket_start_at_ms: bucket,
+                        model: model.clone(),
+                        provider: reservation.provider,
+                        request_count: 0,
+                        provider_quota: 0.0,
+                        input_tokens: 0,
+                        cached_input_tokens: 0,
+                        output_tokens: 0,
+                        spend_microcredits: 0.0,
+                        first_request_at_ms: reservation.created_at_ms,
+                        last_request_at_ms: reservation.created_at_ms,
+                        updated_at_ms: now,
+                    });
+            source_records::validate_rollup_identity(&rollup, &rollup_key)?;
             rollup.request_count = add(rollup.request_count, 1)?;
             rollup.input_tokens = add(rollup.input_tokens, usage.input_tokens)?;
             rollup.cached_input_tokens = add(
@@ -676,14 +685,14 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             gate.pending
                 .remove(&pending_id(&reservation.key_id, &reservation.attempt_id));
             arm_gate(&mut gate);
-            tx.put(
+            tx.put_source_control(
                 &key,
                 &row,
                 Some(retention(reservation.created_at_ms, PAID_RETENTION_MS)?),
             )?;
             tx.delete(&pending_key)?;
             tx.put(&keys::paid_gate(), &gate, None)?;
-            tx.put(&rollup_key, &rollup, None)?;
+            tx.put_source_control(&rollup_key, &rollup, None)?;
             if let Some(mut window) = window {
                 validate_paid_window(&window, &reservation.key_id, reservation.window_reset_at_ms)?;
                 window.settled_microcredits = add(window.settled_microcredits, spend)?;
@@ -730,7 +739,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         for _ in 0..128 {
             let mut tx = self.transaction(now)?;
             let key = keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
-            let Some(mut row) = tx.read::<PaidAttempt>(&key).await? else {
+            let Some(mut row) = tx.read_source_control::<PaidAttempt>(&key).await? else {
                 clear_nonbillable_marker(&mut tx, &reservation.key_id, &reservation.attempt_id)
                     .await?;
                 if tx.commit().await? {
@@ -763,7 +772,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 pending.clone(),
             );
             arm_gate(&mut gate);
-            tx.put(
+            tx.put_source_control(
                 &key,
                 &row,
                 Some(retention(reservation.created_at_ms, PAID_RETENTION_MS)?),

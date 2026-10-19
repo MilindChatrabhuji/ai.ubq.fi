@@ -1,6 +1,7 @@
 //! Fixed same-authority derived control metadata; these DTOs grant no write capability.
 use gateway_core::provider::PaidProvider;
 use gateway_core::state::RevisionCheck;
+use gateway_core::{model::ModelId, source_json::SourceJson, source_serialization as source};
 use gateway_providers::ClientSurface;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -79,7 +80,7 @@ pub struct PaidProviderObservation {
     pub observed_at_ms: i64,
     pub source_valid_until_ms: Option<i64>,
     pub stale: bool,
-    pub models: Vec<Value>,
+    pub models: Vec<SourceJson>,
     pub source_checks: Vec<PaidSourceCheck>,
 }
 
@@ -95,11 +96,39 @@ pub struct PaidProjectionProvenance {
     pub source_checks: Vec<PaidSourceCheck>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PaidRoutingProjection {
-    #[serde(flatten)]
     pub policy: PaidRoutingPolicy,
     pub provenance: PaidProjectionProvenance,
+}
+
+// Serde flatten materializes intermediate content, which cannot retain RawValue
+// model leaves. Decode the complete source tree and each exact finite DTO directly.
+impl Serialize for PaidRoutingProjection {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let policy =
+            SourceJson::from_serializable(&self.policy).map_err(serde::ser::Error::custom)?;
+        let mut fields = source::entries(&policy)
+            .ok_or_else(|| serde::ser::Error::custom("Invalid paid policy"))?;
+        fields.push((
+            "provenance".into(),
+            SourceJson::from_serializable(&self.provenance).map_err(serde::ser::Error::custom)?,
+        ));
+        source::object_keys(fields)
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for PaidRoutingProjection {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = SourceJson::deserialize(deserializer)?;
+        let policy = raw.deserialize().map_err(serde::de::Error::custom)?;
+        let provenance = source::member(&raw, "provenance")
+            .ok_or_else(|| serde::de::Error::custom("Missing paid provenance"))?
+            .deserialize()
+            .map_err(serde::de::Error::custom)?;
+        Ok(Self { policy, provenance })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,8 +141,8 @@ pub enum PaidSyntheticHop {
 /// The normalized body carries original_model, never a client synthetic-hop flag.
 #[derive(Clone)]
 pub struct PaidRequestContext {
-    pub original_model: String,
-    pub body: Value,
+    pub original_model: ModelId,
+    pub body: SourceJson,
     pub surface: ClientSurface,
     pub synthetic_hop: Option<PaidSyntheticHop>,
 }
@@ -237,23 +266,26 @@ async fn source_checks<S: AuthorityStore, I: TokenSource>(
 struct ControlView {
     projection: PaidRoutingProjection,
     config: PaidControlConfig,
-    surplus: Option<Vec<Value>>,
-    openlux: Option<Vec<Value>>,
+    surplus: Option<Vec<SourceJson>>,
+    openlux: Option<Vec<SourceJson>>,
 }
 
 async fn current_projection<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
 ) -> Result<ControlView, GatewayError> {
-    let raw: Value = tx
-        .read(&keys::paid_routing())
+    let raw: SourceJson = tx
+        .read_source_control(&keys::paid_routing())
         .await?
         .ok_or_else(|| control_error("Paid routing projection is missing."))?;
-    if raw["v"] != 2 || raw.get("provenance").is_none() {
+    if source::member(&raw, "v").and_then(|value| value.deserialize::<u32>().ok()) != Some(2)
+        || source::member(&raw, "provenance").is_none()
+    {
         return Err(control_error(
             "A fenced v2 paid routing projection is required.",
         ));
     }
-    let projection: PaidRoutingProjection = serde_json::from_value(raw)
+    let projection: PaidRoutingProjection = raw
+        .deserialize()
         .map_err(|_| control_error("Paid routing projection is malformed."))?;
     let provenance = &projection.provenance;
     if provenance.v != 1 {
@@ -332,7 +364,7 @@ async fn current_projection<S: AuthorityStore, I: TokenSource>(
         ),
     ] {
         let key = keys::paid_control_observation(provider);
-        let observation: Option<PaidProviderObservation> = tx.read(&key).await?;
+        let observation: Option<PaidProviderObservation> = tx.read_source_control(&key).await?;
         if &tx.revision(&key) != expected {
             return Err(control_error("Paid provider observation revision changed."));
         }
@@ -389,8 +421,12 @@ async fn route_current<S: AuthorityStore, I: TokenSource>(
     request: &PaidRequest,
     context: &PaidRequestContext,
 ) -> Result<RouteView, GatewayError> {
-    text(&context.original_model)?;
-    if context.body["model"].as_str() != Some(context.original_model.as_str()) {
+    if source::member(&context.body, "model")
+        .as_ref()
+        .and_then(source::string)
+        .as_ref()
+        != Some(context.original_model.as_js_string())
+    {
         return Err(control_error(
             "Paid context must retain the normalized logical original model.",
         ));
@@ -478,8 +514,9 @@ async fn route_current<S: AuthorityStore, I: TokenSource>(
     let plan = policy::resolve_paid_route(&PaidRoutingInput {
         model: request.model.clone(),
         endpoint_type: endpoint.to_owned(),
-        request_uses_tools: context.body["tools"]
-            .as_array()
+        request_uses_tools: source::member(&context.body, "tools")
+            .as_ref()
+            .and_then(source::array)
             .is_some_and(|tools| !tools.is_empty()),
         codex_model_known: projection.policy.codex_models.contains(&request.model),
         codex_enabled,

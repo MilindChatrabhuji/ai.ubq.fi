@@ -30,7 +30,9 @@ pub fn surplus_usage_from_source(
 ) -> Option<PaidUsage> {
     if attempt.reservation.provider != PaidProvider::Surplus
         || gateway_schema::util::js_trim(&attempt.reservation.attempt_id.0).is_empty()
-        || gateway_schema::util::js_trim(&attempt.model).is_empty()
+        || gateway_schema::reasoning::js_trim_source(attempt.model.as_js_string())
+            .as_units()
+            .is_empty()
         || attempt.quota_per_credit <= 0
         || attempt.quota_per_credit > MAX_SAFE_INTEGER
     {

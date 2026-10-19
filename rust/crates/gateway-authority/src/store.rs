@@ -154,7 +154,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         &mut self,
         account_id: &str,
         cohort_id: &str,
-    ) -> Result<Option<serde_json::Value>, GatewayError> {
+    ) -> Result<Option<SourceJson>, GatewayError> {
         let key = crate::keys::claude_quota(account_id, cohort_id);
         self.cached_record(&key)
             .await?
@@ -162,7 +162,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
                 gateway_core::value::ValueEncoding::ProfileV2 => Ok(
                     crate::claude::quota_proof_metadata(&row.profile_v2_value()?),
                 ),
-                _ => row.json_value().cloned(),
+                _ => SourceJson::from_serializable(row.json_value()?),
             })
             .transpose()
     }
