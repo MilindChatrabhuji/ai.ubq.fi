@@ -42,7 +42,10 @@ pub fn buffered_chat_events(completion: &Value, plan: &DecodePlan) -> Vec<Provid
         ProviderEvent::chat(base(json!(choices))),
         ProviderEvent::chat(base(json!(finishes))),
     ];
-    if crate::source::boolean(&crate::source::path(&plan.request,&["stream_options","include_usage"])) == Some(true)
+    if crate::source::boolean(&crate::source::path(
+        &plan.request,
+        &["stream_options", "include_usage"],
+    )) == Some(true)
         && let Some(usage) = completion.get("usage")
     {
         let mut chunk = base(json!([]));
@@ -81,8 +84,12 @@ pub fn lithos_stream_refusal(
         )
     } else {
         let mut response = crate::writer::envelope(plan, "failed");
-        crate::source::set(&mut response,"error",crate::source::generated(&json!({"code":code,"message":message})));
-        crate::source_echo::response_event("response.failed",response)
+        crate::source::set(
+            &mut response,
+            "error",
+            crate::source::generated(&json!({"code":code,"message":message})),
+        );
+        crate::source_echo::response_event("response.failed", response)
     };
     Some(DecodedResponse {
         status: 200,
@@ -96,12 +103,21 @@ pub fn lithos_stream_refusal(
     })
 }
 /// Native Messages stop vocabulary has its own error identity, distinct from Chat finish reasons.
-pub fn native_stop_error(events: &mut [ProviderEvent],reason: &str) {
-    if let Some(last)=events.last_mut() {
-        let mut response=crate::source::get(&last.data,"response");
-        if crate::source::is(&crate::source::get(&response,"status"),"failed") && crate::source::control(&crate::source::path(&response,&["error","code"])).is_some_and(|code|code.starts_with("unrecognized_finish_reason:")) {
-            crate::source::set(&mut response,"error",crate::source::generated(&json!({"code":"anthropic_unrecognized_stop_reason","message":format!("Anthropic Messages stopped with reason {reason}.")})));
-            crate::source::set(&mut last.data,"response",response);
+pub fn native_stop_error(events: &mut [ProviderEvent], reason: &str) {
+    if let Some(last) = events.last_mut() {
+        let mut response = crate::source::get(&last.data, "response");
+        if crate::source::is(&crate::source::get(&response, "status"), "failed")
+            && crate::source::control(&crate::source::path(&response, &["error", "code"]))
+                .is_some_and(|code| code.starts_with("unrecognized_finish_reason:"))
+        {
+            crate::source::set(
+                &mut response,
+                "error",
+                crate::source::generated(
+                    &json!({"code":"anthropic_unrecognized_stop_reason","message":format!("Anthropic Messages stopped with reason {reason}.")}),
+                ),
+            );
+            crate::source::set(&mut last.data, "response", response);
         }
     }
 }

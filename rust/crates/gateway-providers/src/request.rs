@@ -1,8 +1,8 @@
 //! Exact provider-bound request construction. The caller supplies account/discovery capabilities.
 use crate::types::*;
+use gateway_core::source_json::SourceJson;
 use gateway_core::{GatewayError, provider::UpstreamProvider};
 use serde_json::Value;
-use gateway_core::source_json::SourceJson;
 pub const LITHOS_MODELS: [&str; 8] = [
     "deepseek-ai/DeepSeek-V4.1-Flash",
     "deepseek-ai/DeepSeek-V4.1-Flash-fast",
@@ -90,18 +90,48 @@ pub(crate) fn codex_synthetic_id(id: &str) -> bool {
             .split('_')
             .all(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
 }
-pub fn codex_replay_input(input: &Value) -> SourceJson { crate::source_controls::replay(&crate::source::generated(input)) }
-pub fn build_codex_body(raw: &Value) -> Result<SourceJson, GatewayError> { crate::source_controls::codex(&crate::source::generated(raw)).map_err(crate::source::scalar_error) }
+pub fn codex_replay_input(input: &Value) -> SourceJson {
+    crate::source_controls::replay(&crate::source::generated(input))
+}
+pub fn build_codex_body(raw: &Value) -> Result<SourceJson, GatewayError> {
+    crate::source_controls::codex(&crate::source::generated(raw))
+        .map_err(crate::source::scalar_error)
+}
 pub fn chat_request_to_responses(raw: &Value) -> Result<SourceJson, GatewayError> {
-    crate::source_controls::ordinary(&crate::source::generated(raw),ClientSurface::Chat,raw["model"].as_str().unwrap_or("")).map_err(crate::source::scalar_error)
+    crate::source_controls::ordinary(
+        &crate::source::generated(raw),
+        ClientSurface::Chat,
+        raw["model"].as_str().unwrap_or(""),
+    )
+    .map_err(crate::source::scalar_error)
 }
-pub fn prepare_request(provider: UpstreamProvider,surface: ClientSurface,raw: &Value,options: &PrepareOptions) -> Result<PreparedRequest, GatewayError> {
-    if surface==ClientSurface::SystemOne { return crate::extras::prepare_systemone(raw,options); }
-    if surface==ClientSurface::Embeddings { return crate::extras::prepare_embeddings(raw,options); }
-    let model=raw["model"].as_str().ok_or_else(||invalid("model must be a string","model"))?;
-    crate::source_request::prepare_source_request(provider,surface,&crate::source::generated(raw),model,options).map_err(crate::source::scalar_error)
+pub fn prepare_request(
+    provider: UpstreamProvider,
+    surface: ClientSurface,
+    raw: &Value,
+    options: &PrepareOptions,
+) -> Result<PreparedRequest, GatewayError> {
+    if surface == ClientSurface::SystemOne {
+        return crate::extras::prepare_systemone(raw, options);
+    }
+    if surface == ClientSurface::Embeddings {
+        return crate::extras::prepare_embeddings(raw, options);
+    }
+    let model = raw["model"]
+        .as_str()
+        .ok_or_else(|| invalid("model must be a string", "model"))?;
+    crate::source_request::prepare_source_request(
+        provider,
+        surface,
+        &crate::source::generated(raw),
+        model,
+        options,
+    )
+    .map_err(crate::source::scalar_error)
 }
-pub fn project_cerebras_schema(value: &Value) -> SourceJson {crate::source_controls::cerebras_schema(&crate::source::generated(value))}
+pub fn project_cerebras_schema(value: &Value) -> SourceJson {
+    crate::source_controls::cerebras_schema(&crate::source::generated(value))
+}
 pub(crate) fn codex_user_agent(version: &str) -> String {
     let version = version.trim();
     let parts = version

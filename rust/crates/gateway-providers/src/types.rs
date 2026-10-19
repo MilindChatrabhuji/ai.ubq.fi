@@ -1,4 +1,7 @@
-use gateway_core::{js_string::JsString16, provider::UpstreamProvider, source_json::SourceJson, source_serialization};
+use gateway_core::{
+    js_string::JsString16, provider::UpstreamProvider, source_json::SourceJson,
+    source_serialization,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -53,6 +56,34 @@ impl std::fmt::Debug for AuthMaterial {
             .finish_non_exhaustive()
     }
 }
+/// Immutable Rust-only selected-model observations, never request JSON or authority.
+#[derive(Clone, Debug)]
+pub struct OrdinaryPreparationContext {
+    prompt_cache: Option<Value>,
+    reasoning: gateway_schema::reasoning::ModelReasoning,
+    default_effort: String,
+}
+impl OrdinaryPreparationContext {
+    pub fn from_metadata(
+        metadata: &gateway_schema::catalog::RequestModelMetadata,
+        default_effort: &str,
+    ) -> Self {
+        Self {
+            prompt_cache: metadata.record.as_ref().and_then(|record| record.get("prompt_cache")).cloned(),
+            reasoning: metadata.reasoning.clone(),
+            default_effort: default_effort.to_owned(),
+        }
+    }
+    pub fn prompt_cache(&self) -> Option<&Value> {
+        self.prompt_cache.as_ref()
+    }
+    pub fn reasoning(&self) -> &gateway_schema::reasoning::ModelReasoning {
+        &self.reasoning
+    }
+    pub fn default_effort(&self) -> &str {
+        &self.default_effort
+    }
+}
 #[derive(Clone, Debug)]
 pub struct PrepareOptions {
     pub auth: AuthMaterial,
@@ -72,6 +103,8 @@ pub struct PrepareOptions {
     pub reasoning_summary: Option<String>,
     /// Restored by ReplayStore in the same authenticated context, never by client input.
     pub restored_native_messages: Option<Vec<Value>>,
+    /// Runtime callers supply Some even for unknown metadata. None is the legacy pure adapter contract.
+    pub ordinary_preparation: Option<OrdinaryPreparationContext>,
 }
 impl Default for PrepareOptions {
     fn default() -> Self {
@@ -90,6 +123,7 @@ impl Default for PrepareOptions {
             conversation_id: None,
             reasoning_summary: None,
             restored_native_messages: None,
+            ordinary_preparation: None,
         }
     }
 }
@@ -142,7 +176,10 @@ impl ProviderEvent {
         }
     }
     pub fn chat(data: Value) -> Self {
-        Self { event: None, data: crate::source::generated(&data) }
+        Self {
+            event: None,
+            data: crate::source::generated(&data),
+        }
     }
     pub fn responses_source(data: SourceJson) -> Self {
         let event = source_serialization::member(&data, "type")
@@ -157,7 +194,9 @@ impl ProviderEvent {
         source_serialization::member(&self.data, name)
     }
     pub fn type_name(&self) -> Option<String> {
-        self.field("type").and_then(|value| source_serialization::string(&value)).and_then(|value| value.try_utf8().ok())
+        self.field("type")
+            .and_then(|value| source_serialization::string(&value))
+            .and_then(|value| value.try_utf8().ok())
     }
     pub fn is_done(&self) -> bool {
         crate::source::is(&self.data, "[DONE]")
@@ -170,8 +209,14 @@ impl ProviderEvent {
     }
     /// Only the isolated numeric/accounting fragment crosses the scalar decoder boundary.
     pub fn observed_usage(&self) -> Option<Value> {
-        self.field("usage").as_ref().and_then(crate::source_collector::usage)
-            .or_else(|| self.field("response").and_then(|response| crate::source_collector::usage(&crate::source::get(&response, "usage"))))
+        self.field("usage")
+            .as_ref()
+            .and_then(crate::source_collector::usage)
+            .or_else(|| {
+                self.field("response").and_then(|response| {
+                    crate::source_collector::usage(&crate::source::get(&response, "usage"))
+                })
+            })
     }
     pub fn terminal(&self) -> Option<gateway_core::lifecycle::SemanticTerminal> {
         use gateway_core::lifecycle::SemanticTerminal;
@@ -181,13 +226,22 @@ impl ProviderEvent {
             Some("response.failed") => Some(SemanticTerminal::Failed),
             Some("error") => Some(SemanticTerminal::Error),
             _ if self.field("error").is_some() => Some(SemanticTerminal::Error),
-            _ => self.field("choices").and_then(|value| source_serialization::array(&value)).into_iter().flatten().find_map(|choice| {
-                match crate::source::control(&crate::source::get(&choice, "finish_reason")).as_deref() {
-                    Some("stop" | "tool_calls" | "function_call") => Some(SemanticTerminal::Completed),
-                    Some("length" | "content_filter") => Some(SemanticTerminal::Incomplete),
-                    _ => None,
-                }
-            }),
+            _ => self
+                .field("choices")
+                .and_then(|value| source_serialization::array(&value))
+                .into_iter()
+                .flatten()
+                .find_map(|choice| {
+                    match crate::source::control(&crate::source::get(&choice, "finish_reason"))
+                        .as_deref()
+                    {
+                        Some("stop" | "tool_calls" | "function_call") => {
+                            Some(SemanticTerminal::Completed)
+                        }
+                        Some("length" | "content_filter") => Some(SemanticTerminal::Incomplete),
+                        _ => None,
+                    }
+                }),
         }
     }
     pub fn encode_sse(&self) -> String {
