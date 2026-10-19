@@ -744,11 +744,13 @@ fn native_action_source_custody_is_lossless_data_not_an_operation_capability() {
             .get(&rows::key("action", action.action_ref()).0)
             .unwrap()
             .clone();
+        validate_native_control_custody(&rows::key("action", action.action_ref()), &record)
+            .expect("actual prepared action must satisfy its source custody schema");
         let template: rows::ActionRow = decode_source_control_record(&record)
             .unwrap()
             .deserialize()
             .unwrap();
-        for units in [
+        for (case, units) in [
             "fixture-model".encode_utf16().collect(),
             vec![0xd800],
             vec![0xdc00],
@@ -757,7 +759,10 @@ fn native_action_source_custody_is_lossless_data_not_an_operation_capability() {
             vec![0, 10, 34, 92],
             r"\ud800".encode_utf16().collect(),
             vec![u16::from(b'm'); 4097],
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             // A data-only custody fixture is never passed off as an admitted
             // Journal or a minted native control/refresh permission.
             let mut row = template.clone();
@@ -767,6 +772,15 @@ fn native_action_source_custody_is_lossless_data_not_an_operation_capability() {
                 model: ModelId::from_source(JsString16::from_units(units)),
                 slot: 0,
             };
+            let context_document = SourceJson::from_serializable(&row.fence.context).unwrap();
+            let _: ModelId = gateway_core::source_serialization::member(&context_document, "model")
+                .unwrap()
+                .deserialize()
+                .expect("the actual context model token must decode losslessly");
+            let _: NativeRenewalContext = serde_json::from_str(context_document.as_str())
+                .unwrap_or_else(|error| {
+                    panic!("source custody case {case} context decode: {error}")
+                });
             row.action_ref = facts::digest(&(
                 "uos-native-renewal-action-v2",
                 &row.fence.original_request_id,
@@ -786,16 +800,17 @@ fn native_action_source_custody_is_lossless_data_not_an_operation_capability() {
                     ValueEncoding::ProfileV2
                 }
             );
-            validate_native_control_custody(&key, &record).unwrap();
             let reopened: StoredRecord =
                 serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
             let roundtrip: rows::ActionRow = decode_source_control_record(&reopened)
                 .unwrap()
                 .deserialize()
-                .unwrap();
+                .unwrap_or_else(|error| panic!("source custody case {case} row decode: {error}"));
             assert_eq!(roundtrip.fence, row.fence);
             assert_eq!(reopened.revision, "opaque-custody-revision");
             assert_eq!(reopened.expires_at_ms, None);
+            validate_native_control_custody(&key, &record)
+                .unwrap_or_else(|error| panic!("source custody case {case}: {error:?}"));
             let mut expired = reopened.clone();
             expired.expires_at_ms = Some(1_000_001);
             assert!(validate_native_control_custody(&key, &expired).is_err());
