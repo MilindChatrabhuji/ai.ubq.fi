@@ -93,6 +93,32 @@ impl SourceRefusalBody {
         }
     }
 }
+impl RoutingError {
+    /// Cleanup is an internal diagnostic; the original wire status/body remain authoritative.
+    pub(crate) fn with_cleanup_diagnostic(mut self, cleanup: &RoutingError) -> Self {
+        if self.source_body.is_none() {
+            self.source_body = Some(SourceRefusalBody::Json(
+                gateway_core::source_json::SourceJson::from_serializable(&self.error.envelope)
+                    .expect("A scalar error envelope is valid source JSON"),
+            ));
+        }
+        let code = cleanup
+            .error
+            .envelope
+            .error
+            .code
+            .as_deref()
+            .unwrap_or("unknown")
+            .chars()
+            .take(48)
+            .collect::<String>();
+        self.error.envelope.error.message = format!(
+            "Original request failure; original-lifetime cleanup also failed (status {}, code {}).",
+            cleanup.error.status, code,
+        );
+        self
+    }
+}
 impl From<GatewayError> for RoutingError {
     fn from(error: GatewayError) -> Self {
         Self {
@@ -381,5 +407,47 @@ mod record_key {
             .and_then(|key| key.validate_stored_key())
             .map_err(|_| D::Error::custom("Invalid source tuple key"))?;
         Ok(key)
+    }
+}
+
+#[cfg(test)]
+mod source_cleanup_tests {
+    use super::*;
+    use gateway_core::{js_string::JsString16, source_json::SourceJson};
+    #[test]
+    fn cleanup_diagnostic_never_overwrites_original_source_wire_truth() {
+        let source = gateway_schema::source_request::SourceRequestError::new(
+            400,
+            JsString16::from_units(vec![0xd800]),
+            "invalid_request_error",
+            Some("source_invalid"),
+            Some(Some(JsString16::from_units(vec![0xdfff]))),
+        );
+        let body = source.body().clone();
+        let error = RoutingError::from(source).with_cleanup_diagnostic(
+            &GatewayError::unavailable("cleanup detail", "cleanup_failed").into(),
+        );
+        assert_eq!(error.error.status, 400);
+        assert_eq!(error.source_body.unwrap().as_bytes(), body.as_bytes());
+        assert!(
+            error
+                .error
+                .envelope
+                .error
+                .message
+                .contains("cleanup also failed")
+        );
+        assert!(error.error.envelope.error.message.len() < 160);
+    }
+    #[test]
+    fn scalar_original_error_gets_exact_body_before_internal_cleanup_diagnostic() {
+        let source =
+            GatewayError::new(409, "original conflict", Some("original_conflict")).with_param(None);
+        let body = SourceJson::from_serializable(&source.envelope).unwrap();
+        let error = RoutingError::from(source).with_cleanup_diagnostic(
+            &GatewayError::unavailable("cleanup detail", "cleanup_failed").into(),
+        );
+        assert_eq!(error.error.status, 409);
+        assert_eq!(error.source_body.unwrap().as_bytes(), body.as_bytes());
     }
 }
