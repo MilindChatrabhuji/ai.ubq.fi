@@ -9,6 +9,7 @@ use base64::{
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig, general_purpose::STANDARD},
 };
 use gateway_auth::{AuthMethod, crypto::Secret};
+use gateway_core::js_string::JsString16;
 use gateway_core::{
     GatewayError,
     lifecycle::SemanticTerminal,
@@ -101,7 +102,7 @@ fn decode64(value: &str) -> Option<Vec<u8>> {
 async fn encrypt<H: ExtrasHost>(
     host: &H,
     seed: &Secret,
-    text: &str,
+    text: &JsString16,
 ) -> Result<InputRecord, GatewayError> {
     let iv: [u8; 12] = host.random_bytes(12)?.try_into().map_err(|_| {
         server(
@@ -109,10 +110,11 @@ async fn encrypt<H: ExtrasHost>(
             "embeddings_crypto_unavailable",
         )
     })?;
+    let encoded = source_utf8(text);
     let cipher = host
-        .aes_gcm_encrypt(&crypto_key(seed), &iv, text.as_bytes())
+        .aes_gcm_encrypt(&crypto_key(seed), &iv, encoded.as_bytes())
         .await?;
-    if cipher.len() != text.len() + 16 {
+    if cipher.len() != encoded.len() + 16 {
         return Err(server(
             "Embeddings encryption returned invalid authenticated ciphertext.",
             "embeddings_crypto_unavailable",
@@ -125,14 +127,18 @@ async fn encrypt<H: ExtrasHost>(
         created_at_ms: now(host)?,
     })
 }
-async fn decrypt<H: ExtrasHost>(host: &H, seed: &Secret, record: &InputRecord) -> Option<String> {
+async fn decrypt<H: ExtrasHost>(
+    host: &H,
+    seed: &Secret,
+    record: &InputRecord,
+) -> Option<JsString16> {
     let iv = decode64(&record.iv_b64)?;
     let data = decode64(&record.data_b64)?;
     let bytes = host
         .aes_gcm_decrypt(&crypto_key(seed), &iv, &data)
         .await
         .ok()?;
-    Some(String::from_utf8_lossy(&bytes).into_owned())
+    Some(JsString16::from_utf8(&String::from_utf8_lossy(&bytes)))
 }
 fn profile(job: &Job) -> EmbeddingsProfile {
     EmbeddingsProfile {
@@ -412,7 +418,7 @@ async fn attempt<S: QueryStore, H: ExtrasHost>(
             .await;
         }
         let texts: Vec<_> = chunk.iter().map(|(_, s)| s.clone()).collect();
-        let tokens = texts.iter().map(|s| estimate(s)).sum();
+        let tokens = texts.iter().map(estimate).sum();
         if let Some(wait) = reserve(store, host, tokens, None).await? {
             return queued(store, host, owner, &mut job, wait.max(1000), None).await;
         }
@@ -497,9 +503,9 @@ pub(crate) async fn create<S: QueryStore, H: ExtrasHost>(
     request: &ExtrasRequest<'_>,
 ) -> Result<ExtrasResponse, GatewayError> {
     let started = now(host)?;
-    let p = match extras::parse_embeddings(&request.body, true) {
+    let p = match extras::parse_source_embeddings(&request.body, true) {
         Ok(p) => p,
-        Err(e) => return Ok(ExtrasResponse::error(e)),
+        Err(e) => return Ok(ExtrasResponse::source_error(e)),
     };
     let Some(options) = host.provider_options(ExtrasProvider::Voyage).await? else {
         return Ok(ExtrasResponse::error(configured_error()));
@@ -508,7 +514,7 @@ pub(crate) async fn create<S: QueryStore, H: ExtrasHost>(
     let seed = seed(request, &id);
     let owner = hash(seed.expose());
     let at = now(host)?;
-    let hashes: Vec<_> = p.inputs.iter().map(|s| hash(s)).collect();
+    let hashes: Vec<_> = p.inputs.iter().map(hash_source).collect();
     let mut unique = std::collections::BTreeMap::new();
     for (text, h) in p.inputs.iter().zip(&hashes) {
         unique.insert(h, text);
