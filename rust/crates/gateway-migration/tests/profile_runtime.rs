@@ -148,9 +148,16 @@ fn malformed_import_invalidates_the_derived_policy_in_the_same_commit() {
     let policy = gateway_authority::keys::api_policy("offline-key");
     assert!(run(store.read(&policy)).unwrap().is_some());
     let key = gateway_auth::api_keys::id_key("offline-key");
+    let mut malformed = run(store.read(&key))
+        .unwrap()
+        .unwrap()
+        .json_value()
+        .unwrap()
+        .clone();
+    malformed["window_ms"] = json!(0);
     let ndjson = line(
         json!(["ubq_ai", "api_keys", "id", "offline-key"]),
-        json!({"id":"offline-key","broken":true}),
+        malformed,
     );
     let response = run(execute_profile(
         &store,
@@ -166,8 +173,8 @@ fn malformed_import_invalidates_the_derived_policy_in_the_same_commit() {
             .unwrap()
             .unwrap()
             .json_value()
-            .unwrap()["broken"],
-        true
+            .unwrap()["window_ms"],
+        0
     );
     assert!(
         run(store.read(&policy)).unwrap().is_none(),
@@ -183,11 +190,11 @@ fn malformed_import_invalidates_the_derived_policy_in_the_same_commit() {
         .unwrap(),
     );
     assert!(
-        validated["errors"]
-            .as_array()
+        validated["errors"].as_array().unwrap().iter().any(|v| v
+            .as_str()
             .unwrap()
-            .iter()
-            .any(|v| v.as_str().unwrap().contains("invalid core fields"))
+            .contains("invalid core fields")
+            && v.as_str().unwrap().contains("offline-key"))
     );
 }
 

@@ -208,13 +208,11 @@ impl RoutingHost for Host {
             )),
         }
     }
-    async fn refresh_codex(
-        &self,
-        _fence: &CredentialFence,
-    ) -> Result<RefreshOutcome, GatewayError> {
-        Err(unavailable(
-            "The current native credential owner cannot refresh through this Worker.",
-        ))
+    async fn refresh_codex(&self, fence: &CredentialFence) -> Result<RefreshOutcome, GatewayError> {
+        self.platform
+            .native
+            .refresh_routing(fence, &self.platform)
+            .await
     }
     async fn select_claude(
         &self,
