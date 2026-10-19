@@ -4,6 +4,7 @@ use gateway_core::{
 };
 
 pub(crate) const AUTH_MAX_BYTES: usize = 32 * 1024 * 1024;
+#[cfg(all(test, unix))]
 pub(crate) const PROFILE_MAX_BYTES: usize = 5 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -13,25 +14,33 @@ pub(crate) enum AuthReadFailure {
     TooLarge,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum BodyError {
+pub(super) enum BodyError {
     AuthBody,
+    #[cfg(all(test, unix))]
     ProfileSelector,
+    #[cfg(all(test, unix))]
     ProfileTooLarge,
+    #[cfg(all(test, unix))]
     ProfileWriteConflict,
 }
 impl BodyError {
     pub(crate) fn status(self) -> u16 {
-        if self == Self::ProfileTooLarge {
-            413
-        } else {
-            400
+        match self {
+            Self::AuthBody => 400,
+            #[cfg(all(test, unix))]
+            Self::ProfileTooLarge => 413,
+            #[cfg(all(test, unix))]
+            Self::ProfileSelector | Self::ProfileWriteConflict => 400,
         }
     }
     pub(crate) fn message(self) -> &'static str {
         match self {
             Self::AuthBody => "Body does not look like a Codex auth.json",
+            #[cfg(all(test, unix))]
             Self::ProfileSelector => "profile must be local or prod",
+            #[cfg(all(test, unix))]
             Self::ProfileTooLarge => "Migration body is too large",
+            #[cfg(all(test, unix))]
             Self::ProfileWriteConflict => "dry_run and write are mutually exclusive",
         }
     }
@@ -46,10 +55,10 @@ fn request_text(raw: &[u8]) -> String {
     String::from_utf8_lossy(raw.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(raw)).into_owned()
 }
 
-pub(crate) fn read_auth_json(
-    raw: &[u8],
+/// The same source header guard serves guarded ingress and the one decoder.
+pub(crate) fn check_auth_content_length(
     content_length: Option<&str>,
-) -> Result<SourceJson, AuthReadFailure> {
+) -> Result<(), AuthReadFailure> {
     if let Some(length) = content_length {
         if length.is_empty()
             || (length.len() > 1 && length.starts_with('0'))
@@ -66,6 +75,14 @@ pub(crate) fn read_auth_json(
             return Err(AuthReadFailure::TooLarge);
         }
     }
+    Ok(())
+}
+
+pub(super) fn read_auth_json(
+    raw: &[u8],
+    content_length: Option<&str>,
+) -> Result<SourceJson, AuthReadFailure> {
+    check_auth_content_length(content_length)?;
     if raw.len() > AUTH_MAX_BYTES {
         return Err(AuthReadFailure::TooLarge);
     }
@@ -78,23 +95,23 @@ pub(crate) fn read_auth_json(
 }
 
 /// Deliberately no Debug/Serialize/Clone for a credential-bearing result.
-pub(crate) struct AuthBody<'a> {
+pub(super) struct AuthBody<'a> {
     raw: &'a [u8],
     auth: SourceJson,
     client_version: Option<JsString16>,
 }
 impl AuthBody<'_> {
-    pub(crate) fn raw_body(&self) -> &[u8] {
+    pub(super) fn raw_body(&self) -> &[u8] {
         self.raw
     }
-    pub(crate) fn auth(&self) -> &SourceJson {
+    pub(super) fn auth(&self) -> &SourceJson {
         &self.auth
     }
-    pub(crate) fn client_version(&self) -> Option<&JsString16> {
+    pub(super) fn client_version(&self) -> Option<&JsString16> {
         self.client_version.as_ref()
     }
 }
-pub(crate) fn decode_auth<'a>(
+pub(super) fn decode_auth<'a>(
     raw: &'a [u8],
     content_length: Option<&str>,
 ) -> Result<AuthBody<'a>, BodyError> {
@@ -139,136 +156,144 @@ pub(crate) fn decode_auth<'a>(
     })
 }
 
-fn js_space(value: char) -> bool {
-    matches!(value, '\u{0009}'..='\u{000d}' | ' ' | '\u{00a0}' | '\u{1680}'
+// PROFILE has no authorized live projection/consumer in the current native scope.
+#[cfg(all(test, unix))]
+mod profile {
+    use super::*;
+
+    fn js_space(value: char) -> bool {
+        matches!(value, '\u{0009}'..='\u{000d}' | ' ' | '\u{00a0}' | '\u{1680}'
         | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}'
         | '\u{205f}' | '\u{3000}' | '\u{feff}')
-}
-fn trim(value: &str) -> &str {
-    value.trim_matches(js_space)
-}
-/// Source Number on this one HTTP header. NaN/infinities are not a finite
-/// declared-size rejection; unsigned radix forms and decimal/exponent forms
-/// retain their source meaning. No whole-document numeric projection occurs.
-fn declared_profile_number(raw: &str) -> Option<f64> {
-    let value = trim(raw);
-    if value.is_empty() {
-        return Some(0.0);
     }
-    let radix = if value.starts_with("0x") || value.starts_with("0X") {
-        Some(16)
-    } else if value.starts_with("0b") || value.starts_with("0B") {
-        Some(2)
-    } else if value.starts_with("0o") || value.starts_with("0O") {
-        Some(8)
-    } else {
-        None
-    };
-    if let Some(radix) = radix {
-        if value.len() == 2 {
-            return None;
+    fn trim(value: &str) -> &str {
+        value.trim_matches(js_space)
+    }
+    /// Source Number on this one HTTP header. NaN/infinities are not a finite
+    /// declared-size rejection; unsigned radix forms and decimal/exponent forms
+    /// retain their source meaning. No whole-document numeric projection occurs.
+    fn declared_profile_number(raw: &str) -> Option<f64> {
+        let value = trim(raw);
+        if value.is_empty() {
+            return Some(0.0);
         }
-        let mut number = 0.0;
-        for digit in value[2..].chars() {
-            number = number * f64::from(radix) + f64::from(digit.to_digit(radix)?);
+        let radix = if value.starts_with("0x") || value.starts_with("0X") {
+            Some(16)
+        } else if value.starts_with("0b") || value.starts_with("0B") {
+            Some(2)
+        } else if value.starts_with("0o") || value.starts_with("0O") {
+            Some(8)
+        } else {
+            None
+        };
+        if let Some(radix) = radix {
+            if value.len() == 2 {
+                return None;
+            }
+            let mut number = 0.0;
+            for digit in value[2..].chars() {
+                number = number * f64::from(radix) + f64::from(digit.to_digit(radix)?);
+            }
+            Some(number)
+        } else {
+            value.parse::<f64>().ok()
         }
-        Some(number)
-    } else {
-        value.parse::<f64>().ok()
     }
-}
-fn first(query: &str, name: &str) -> Option<String> {
-    url::form_urlencoded::parse(query.strip_prefix('?').unwrap_or(query).as_bytes())
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value.into_owned())
-}
-fn boolean(query: &str, name: &str) -> Option<bool> {
-    let value = first(query, name)?;
-    let value = trim(&value);
-    if ["1", "true", "yes", "on"]
-        .iter()
-        .any(|name| value.eq_ignore_ascii_case(name))
-    {
-        Some(true)
-    } else if ["0", "false", "no", "off"]
-        .iter()
-        .any(|name| value.eq_ignore_ascii_case(name))
-    {
-        Some(false)
-    } else {
-        None
+    fn first(query: &str, name: &str) -> Option<String> {
+        url::form_urlencoded::parse(query.strip_prefix('?').unwrap_or(query).as_bytes())
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.into_owned())
     }
-}
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ProfileOptions {
-    pub(crate) profile: &'static str,
-    pub(crate) include_cache: bool,
-    pub(crate) include_legacy: bool,
-    pub(crate) overwrite: bool,
-    pub(crate) dry_run: bool,
-}
-/// Non-authoritative pre-body field data. Only profile/declared size are read.
-pub(crate) struct ProfileBodyPlan<'a> {
-    query: &'a str,
-    profile: &'static str,
-}
-pub(crate) fn profile_plan<'a>(
-    query: &'a str,
-    content_length: Option<&str>,
-) -> Result<ProfileBodyPlan<'a>, BodyError> {
-    let selected = first(query, "profile");
-    let profile = match selected.as_deref().map(trim) {
-        Some("local") => "local",
-        None | Some("" | "prod") => "prod",
-        _ => return Err(BodyError::ProfileSelector),
-    };
-    if content_length
-        .and_then(declared_profile_number)
-        .is_some_and(|n| n.is_finite() && n > PROFILE_MAX_BYTES as f64)
-    {
-        return Err(BodyError::ProfileTooLarge);
+    fn boolean(query: &str, name: &str) -> Option<bool> {
+        let value = first(query, name)?;
+        let value = trim(&value);
+        if ["1", "true", "yes", "on"]
+            .iter()
+            .any(|name| value.eq_ignore_ascii_case(name))
+        {
+            Some(true)
+        } else if ["0", "false", "no", "off"]
+            .iter()
+            .any(|name| value.eq_ignore_ascii_case(name))
+        {
+            Some(false)
+        } else {
+            None
+        }
     }
-    Ok(ProfileBodyPlan { query, profile })
-}
-impl ProfileBodyPlan<'_> {
-    pub(crate) fn profile(&self) -> &'static str {
-        self.profile
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(crate) struct ProfileOptions {
+        pub(crate) profile: &'static str,
+        pub(crate) include_cache: bool,
+        pub(crate) include_legacy: bool,
+        pub(crate) overwrite: bool,
+        pub(crate) dry_run: bool,
     }
-    pub(crate) fn decode<'a>(&self, raw: &'a [u8]) -> Result<ProfileBody<'a>, BodyError> {
-        let text = request_text(raw);
-        if text.len() > PROFILE_MAX_BYTES {
+    /// Non-authoritative pre-body field data. Only profile/declared size are read.
+    pub(crate) struct ProfileBodyPlan<'a> {
+        query: &'a str,
+        profile: &'static str,
+    }
+    pub(crate) fn profile_plan<'a>(
+        query: &'a str,
+        content_length: Option<&str>,
+    ) -> Result<ProfileBodyPlan<'a>, BodyError> {
+        let selected = first(query, "profile");
+        let profile = match selected.as_deref().map(trim) {
+            Some("local") => "local",
+            None | Some("" | "prod") => "prod",
+            _ => return Err(BodyError::ProfileSelector),
+        };
+        if content_length
+            .and_then(declared_profile_number)
+            .is_some_and(|n| n.is_finite() && n > PROFILE_MAX_BYTES as f64)
+        {
             return Err(BodyError::ProfileTooLarge);
         }
-        let write = boolean(self.query, "write") == Some(true);
-        let dry_run = boolean(self.query, "dry_run");
-        if write && dry_run == Some(true) {
-            return Err(BodyError::ProfileWriteConflict);
+        Ok(ProfileBodyPlan { query, profile })
+    }
+    impl ProfileBodyPlan<'_> {
+        pub(crate) fn profile(&self) -> &'static str {
+            self.profile
         }
-        let options = ProfileOptions {
-            profile: self.profile,
-            include_cache: boolean(self.query, "include_cache") == Some(true),
-            include_legacy: boolean(self.query, "include_legacy")
-                .unwrap_or(self.profile == "local"),
-            overwrite: boolean(self.query, "overwrite") == Some(true),
-            dry_run: !write,
-        };
-        Ok(ProfileBody { raw, text, options })
+        pub(crate) fn decode<'a>(&self, raw: &'a [u8]) -> Result<ProfileBody<'a>, BodyError> {
+            let text = request_text(raw);
+            if text.len() > PROFILE_MAX_BYTES {
+                return Err(BodyError::ProfileTooLarge);
+            }
+            let write = boolean(self.query, "write") == Some(true);
+            let dry_run = boolean(self.query, "dry_run");
+            if write && dry_run == Some(true) {
+                return Err(BodyError::ProfileWriteConflict);
+            }
+            let options = ProfileOptions {
+                profile: self.profile,
+                include_cache: boolean(self.query, "include_cache") == Some(true),
+                include_legacy: boolean(self.query, "include_legacy")
+                    .unwrap_or(self.profile == "local"),
+                overwrite: boolean(self.query, "overwrite") == Some(true),
+                dry_run: !write,
+            };
+            Ok(ProfileBody { raw, text, options })
+        }
+    }
+    /// Deliberately no Debug/Serialize/Clone for native profile/refresh-bearing text.
+    pub(crate) struct ProfileBody<'a> {
+        raw: &'a [u8],
+        text: String,
+        options: ProfileOptions,
+    }
+    impl ProfileBody<'_> {
+        pub(crate) fn raw_body(&self) -> &[u8] {
+            self.raw
+        }
+        pub(crate) fn text(&self) -> &str {
+            &self.text
+        }
+        pub(crate) fn options(&self) -> &ProfileOptions {
+            &self.options
+        }
     }
 }
-/// Deliberately no Debug/Serialize/Clone for native profile/refresh-bearing text.
-pub(crate) struct ProfileBody<'a> {
-    raw: &'a [u8],
-    text: String,
-    options: ProfileOptions,
-}
-impl ProfileBody<'_> {
-    pub(crate) fn raw_body(&self) -> &[u8] {
-        self.raw
-    }
-    pub(crate) fn text(&self) -> &str {
-        &self.text
-    }
-    pub(crate) fn options(&self) -> &ProfileOptions {
-        &self.options
-    }
-}
+#[cfg(all(test, unix))]
+pub(super) use profile::profile_plan;
