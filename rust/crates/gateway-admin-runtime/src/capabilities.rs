@@ -170,7 +170,11 @@ fn unavailable(name: &str) -> GatewayError {
 /// Defaults fail closed; an unbound capability cannot return an empty or successful placeholder.
 pub trait RuntimeCapabilities {
     /// Source String.localeCompare for operator labels; an unbound collation never substitutes byte order.
-    fn compare_admin_labels(&self, _: &str, _: &str) -> Result<std::cmp::Ordering, GatewayError> {
+    fn compare_admin_labels(
+        &self,
+        _: &gateway_core::js_string::JsString16,
+        _: &gateway_core::js_string::JsString16,
+    ) -> Result<std::cmp::Ordering, GatewayError> {
         Err(unavailable("admin_label_collation"))
     }
     fn catalog(
