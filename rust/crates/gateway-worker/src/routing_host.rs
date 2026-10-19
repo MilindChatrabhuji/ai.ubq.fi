@@ -18,7 +18,6 @@ use gateway_routing_runtime::{
     ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest, PublishedCredential,
     RefreshOutcome, RoutingHost, direct_credential,
 };
-use serde_json::Value;
 use worker::Env;
 
 use crate::{authority::RemoteAuthorityStore, host::PlatformHost, storage::now_ms};
@@ -117,7 +116,7 @@ impl RoutingHost for Host {
                 })
                 .ok_or_else(|| unavailable("The admitted Codex credential was replaced."))?;
             let native_generation = current.identity().native_generation_hash;
-            return Ok(PublishedCredential {
+            return Ok(PublishedCredential::Scalar {
                 material: AuthMaterial {
                     secret: current.access_token.expose().to_owned(),
                     account_id: Some(current.account_id),
@@ -129,7 +128,7 @@ impl RoutingHost for Host {
                     source_revision: snapshot.revision,
                     native_generation,
                 },
-                options: PrepareOptions::default(),
+                options: Box::new(PrepareOptions::default()),
             });
         }
         Err(unavailable(
@@ -190,7 +189,7 @@ impl RoutingHost for Host {
                 credential_binding,
             } => {
                 let current = self.paid_credential(*provider).await?;
-                match current.fence {
+                match current.into_fence() {
                     CredentialFence::Paid {
                         owner_id: actual_owner,
                         owner_epoch: actual_epoch,
@@ -268,6 +267,31 @@ impl RoutingHost for Host {
 }
 
 impl Host {
+    pub(crate) fn physical_claude(
+        &self,
+        attempt: &gateway_routing_runtime::PreparedAttempt,
+    ) -> Result<crate::transport::outbound::ConstructedRequest, gateway_routing_runtime::RoutingError>
+    {
+        if attempt.original_request_id != self.original.request_id.0 {
+            return Err(GatewayError::new(
+                400,
+                "Claude request belongs to another original lifetime.",
+                Some("claude_code_request_invalid"),
+            )
+            .into());
+        }
+        let gateway_routing_runtime::PreparedWireRequest::Claude(body) = &attempt.request else {
+            return Err(GatewayError::new(
+                400,
+                "Claude request has another prepared kind.",
+                Some("claude_code_request_invalid"),
+            )
+            .into());
+        };
+        self.claude
+            .physical_request(&attempt.credential, &body.decode().model, body)
+    }
+
     pub fn new(
         store: RemoteAuthorityStore,
         platform: PlatformHost,
@@ -370,7 +394,7 @@ impl Host {
                 ));
             }
         }
-        Ok(PublishedCredential {
+        Ok(PublishedCredential::Scalar {
             material: AuthMaterial {
                 secret,
                 ..Default::default()
@@ -382,7 +406,7 @@ impl Host {
                 configuration_generation: configuration.generation,
                 credential_binding: binding,
             },
-            options: PrepareOptions::default(),
+            options: Box::new(PrepareOptions::default()),
         })
     }
 }

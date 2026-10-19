@@ -49,7 +49,7 @@ pub(crate) async fn start(
     metadata: LocalRequestMetadata,
     document: SourceRequestDocument,
     store: RemoteAuthorityStore,
-    host: PlatformHost,
+    routing: routing_host::Host,
     context: Rc<Context>,
     capture: Rc<Capture>,
     mut permit: Option<gateway_admission::Permit>,
@@ -66,7 +66,7 @@ pub(crate) async fn start(
             metadata,
             document,
             store,
-            &host,
+            routing,
             tasks,
             capture,
             &mut permit,
@@ -97,17 +97,12 @@ async fn start_inner(
     metadata: LocalRequestMetadata,
     document: SourceRequestDocument,
     store: RemoteAuthorityStore,
-    host: &PlatformHost,
+    routing: routing_host::Host,
     context: Rc<Context>,
     capture: Rc<Capture>,
     permit: &mut Option<gateway_admission::Permit>,
 ) -> Result<Start, RoutingError> {
-    let routing = routing_host::Host::new(
-        store.clone(),
-        host.clone(),
-        context.clone(),
-        metadata.context.clone(),
-    );
+    let host = routing.platform.clone();
     let local = RoutingSession::begin_local_compaction(
         LocalAdmissionInput {
             metadata,
@@ -161,7 +156,7 @@ async fn start_inner(
                 original,
                 false,
                 context,
-                host,
+                &host,
                 capture,
                 permit.take(),
             )
@@ -197,7 +192,7 @@ async fn start_inner(
         original,
         stream && successful,
         context,
-        host,
+        &host,
         capture,
         permit.take(),
     )
