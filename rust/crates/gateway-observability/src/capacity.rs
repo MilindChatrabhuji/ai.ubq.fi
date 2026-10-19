@@ -1,10 +1,13 @@
 //! Source lease-guarded event/admin sampler. No timer, alarm, or inference operation.
+use crate::replay_values::SourceObject;
 use crate::{
     Context, ObservabilityHost, ObservabilityRuntime, capacity_shapes as shape, health,
     host_types::*, store,
 };
 use gateway_auth::{AuthResponse, crypto::sha256_hex};
-use gateway_core::{GatewayError, query::QueryStore};
+use gateway_core::{
+    GatewayError, query::QueryStore, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::{Value, json};
 
 fn view(
@@ -40,55 +43,47 @@ fn view(
 pub fn unavailable_claude(at: i64) -> Value {
     json!({"source":"claude_code","label":"Claude subscription","state":"unavailable","source_observed_at_ms":null,"snapshot_at_ms":at,"failure_kind":"not_configured","failure_status":null,"credential_kind":null,"workspace_id":null,"windows":{"five_hour":null,"seven_day":null},"standard":[],"blocked_until_ms":null,"cooldown_until_ms":null,"last_error":null})
 }
-fn quota_math_view(source: &gateway_core::source_json::SourceJson) -> Value {
-    let Ok(source) = crate::replay_values::SourceObject::parse(source) else {
-        return Value::Null;
+pub fn claude_source(
+    account: &ClaudeAccountReadback,
+    health: &Value,
+    at: i64,
+) -> Result<SourceJson, GatewayError> {
+    let empty = SourceJson::parse("{}")?;
+    let quota = SourceObject::parse(account.quota.as_ref().unwrap_or(&empty))?;
+    let null = SourceJson::parse("null")?;
+    let field = |name: &str| quota.get(name).cloned().unwrap_or_else(|| null.clone());
+    let number = |value: &SourceJson| source::number(value).filter(|n| n.is_finite());
+    let integer = |value: &SourceJson| {
+        number(value).filter(|n| n.fract() == 0.0 && (0.0..=9_007_199_254_740_991.0).contains(n))
     };
-    let mut value = json!({});
-    for name in [
-        "windows",
-        "standard",
-        "representative_claim",
-        "blocked_until_ms",
-        "block_window",
-        "cooldown_until_ms",
-        "updated_at_ms",
-    ] {
-        value[name] = source
-            .get(name)
-            .and_then(|v| v.deserialize::<Value>().ok())
-            .unwrap_or(Value::Null)
+    let blocked = integer(&field("blocked_until_ms")).is_some_and(|t| t > at as f64);
+    let cooling = integer(&field("cooldown_until_ms")).is_some_and(|t| t > at as f64);
+    let error = field("last_error");
+    let error_fields = if error.as_str().trim_start().starts_with('{') {
+        Some(SourceObject::parse(&error)?)
+    } else {
+        None
+    };
+    let failing = blocked || cooling || error_fields.is_some();
+    let windows = field("windows");
+    let standard = field("standard");
+    let mut observed = Vec::new();
+    for document in [&windows, &standard] {
+        if document.as_str().trim_start().starts_with('{') {
+            for (_, value) in source::entries(document)
+                .ok_or_else(|| store::error("Invalid Claude numeric observation metadata"))?
+            {
+                if value.as_str().trim_start().starts_with('{')
+                    && let Some(at) = SourceObject::parse(&value)?
+                        .get("observed_at_ms")
+                        .and_then(number)
+                {
+                    observed.push(at);
+                }
+            }
+        }
     }
-    value["last_error"] = source
-        .get("last_error")
-        .filter(|v| v.as_str() != "null")
-        .and_then(|v| crate::replay_values::SourceObject::parse(v).ok())
-        .and_then(|v| v.select(&["kind", "status", "at_ms"]).ok())
-        .and_then(|v| v.deserialize::<Value>().ok())
-        .unwrap_or(Value::Null);
-    value
-}
-pub fn claude_source(account: &ClaudeAccountReadback, health: &Value, at: i64) -> Value {
-    let quota = account
-        .quota
-        .as_ref()
-        .map(quota_math_view)
-        .unwrap_or(Value::Null);
-    let blocked = store::safe_i64(&quota["blocked_until_ms"]).is_some_and(|t| t > at);
-    let cooling = store::safe_i64(&quota["cooldown_until_ms"]).is_some_and(|t| t > at);
-    let failing = blocked || cooling || !quota["last_error"].is_null();
-    let observed = quota["windows"]
-        .as_object()
-        .into_iter()
-        .flat_map(|w| w.values())
-        .chain(
-            quota["standard"]
-                .as_object()
-                .into_iter()
-                .flat_map(|w| w.values()),
-        )
-        .filter_map(|w| w["observed_at_ms"].as_f64().filter(|n| n.is_finite()))
-        .reduce(f64::max);
+    let observed = observed.into_iter().reduce(f64::max);
     let state = if failing {
         "unavailable"
     } else if observed.is_some_and(|t| at as f64 - t > shape::STALE_MS as f64) {
@@ -96,20 +91,76 @@ pub fn claude_source(account: &ClaudeAccountReadback, health: &Value, at: i64) -
     } else {
         "available"
     };
-    let failure_status = quota["last_error"]["status"].as_u64().or_else(|| {
-        if blocked {
-            Some(429)
-        } else if cooling {
-            health["last_status"].as_u64()
-        } else {
-            None
+    let failure_status = error_fields
+        .as_ref()
+        .and_then(|e| e.get("status"))
+        .and_then(number)
+        .filter(|n| *n >= 0.0 && n.fract() == 0.0)
+        .or_else(|| {
+            if blocked {
+                Some(429.0)
+            } else if cooling {
+                health["last_status"].as_u64().map(|n| n as f64)
+            } else {
+                None
+            }
+        });
+    let window = |name: &str| -> Result<Option<SourceJson>, GatewayError> {
+        if !windows.as_str().trim_start().starts_with('{') {
+            return Ok(None);
         }
-    });
-    let window = |name: &str| {
-        quota["windows"].get(name).filter(|v|v.is_object()).map(|w|json!({"status":w["status"],"used_percent":crate::claude_capacity::used_percent(w["utilization"].as_f64()),"reset_at_ms":w["reset_at_ms"],"observed_at_ms":w["observed_at_ms"]}))
+        let input = SourceObject::parse(&windows)?;
+        let Some(input) = input
+            .get(name)
+            .filter(|v| v.as_str().trim_start().starts_with('{'))
+        else {
+            return Ok(None);
+        };
+        let input = SourceObject::parse(input)?;
+        let leaf = |name| input.get(name).cloned().unwrap_or_else(|| null.clone());
+        Ok(Some(source::object(vec![
+            ("status", leaf("status")),
+            (
+                "used_percent",
+                SourceJson::from_serializable(&crate::claude_capacity::used_percent(number(
+                    &leaf("utilization"),
+                )))?,
+            ),
+            ("reset_at_ms", leaf("reset_at_ms")),
+            ("observed_at_ms", leaf("observed_at_ms")),
+        ])?))
     };
-    let standard:Vec<Value>=quota["standard"].as_object().into_iter().flat_map(|o|o.iter()).map(|(family,w)|json!({"family":family,"limit":w["limit"],"remaining":w["remaining"],"reset_at_ms":w["reset_at_ms"]})).collect();
-    json!({"source":"claude_code","label":"Claude subscription","account_id":account.account_id,"account_cohort_id":account.account_cohort_id,"state":state,"source_observed_at_ms":observed,"snapshot_at_ms":at,"failure_kind":if failing{Some("upstream_error")}else{None},"failure_status":failure_status,"credential_kind":account.credential.kind,"workspace_id":account.workspace.as_ref().map(|w|&w.id),"windows":{"five_hour":window("5h"),"seven_day":window("7d")},"standard":standard,"blocked_until_ms":quota["blocked_until_ms"],"cooldown_until_ms":quota["cooldown_until_ms"],"last_error":quota["last_error"]})
+    let mut standard_rows = Vec::new();
+    if standard.as_str().trim_start().starts_with('{') {
+        for (family, value) in source::entries(&standard)
+            .ok_or_else(|| store::error("Invalid Claude standard metadata"))?
+        {
+            let value = SourceObject::parse(&value)?;
+            let leaf = |name| value.get(name).cloned().unwrap_or_else(|| null.clone());
+            standard_rows.push(source::object(vec![
+                ("family", family.to_source_json()?),
+                ("limit", leaf("limit")),
+                ("remaining", leaf("remaining")),
+                ("reset_at_ms", leaf("reset_at_ms")),
+            ])?);
+        }
+    }
+    let mut document = SourceObject::parse(&SourceJson::from_serializable(
+        &json!({"source":"claude_code","label":"Claude subscription","account_id":account.account_id,"account_cohort_id":account.account_cohort_id,"state":state,"source_observed_at_ms":observed,"snapshot_at_ms":at,"failure_kind":if failing{Some("upstream_error")}else{None},"failure_status":failure_status,"credential_kind":account.credential.kind}),
+    )?)?;
+    document.set("workspace_id", &account.workspace.as_ref().map(|w| &w.id))?;
+    document.set(
+        "windows",
+        &source::object(vec![
+            ("five_hour", SourceJson::from_serializable(&window("5h")?)?),
+            ("seven_day", SourceJson::from_serializable(&window("7d")?)?),
+        ])?,
+    )?;
+    document.set("standard", &standard_rows)?;
+    document.set("blocked_until_ms", &field("blocked_until_ms"))?;
+    document.set("cooldown_until_ms", &field("cooldown_until_ms"))?;
+    document.set("last_error", &error)?;
+    document.source_json()
 }
 impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     async fn slot_capacity(
@@ -428,37 +479,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 Err(_) => cached,
             }
         };
-        let mut accounts = Vec::new();
+        let mut source_accounts = Vec::new();
         for account in &inventory.claude.accounts {
             let health = self
                 .provider_health(&account.target, at)
                 .await
                 .unwrap_or_else(|_| health::unknown_health());
-            accounts.push(claude_source(account, &health, at));
-        }
-        body["claude"] = accounts
-            .iter()
-            .find(|a| a["account_id"].as_str() == inventory.claude.active_account_id.as_deref())
-            .cloned()
-            .unwrap_or_else(|| unavailable_claude(at));
-        body["claude_accounts"] = json!(accounts);
-        let mut source_accounts = Vec::new();
-        for (account, value) in inventory
-            .claude
-            .accounts
-            .iter()
-            .zip(body["claude_accounts"].as_array().expect("account array"))
-        {
-            let error = account
-                .quota
-                .as_ref()
-                .and_then(|q| crate::replay_values::SourceObject::parse(q).ok())
-                .and_then(|q| q.get("last_error").cloned());
-            let mut document = crate::replay_values::SourceObject::parse(
-                &gateway_core::source_json::SourceJson::from_serializable(value)?,
-            )?;
-            document.set("last_error", &error)?;
-            source_accounts.push(document.source_json()?);
+            source_accounts.push(claude_source(account, &health, at)?);
         }
         let source_active = inventory
             .claude
@@ -469,10 +496,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             })
             .and_then(|i| source_accounts.get(i))
             .cloned()
-            .unwrap_or(gateway_core::source_json::SourceJson::from_serializable(
-                &unavailable_claude(at),
-            )?);
-        body["claude_history"] = self.claude_capacity_history(at).await;
+            .unwrap_or(SourceJson::from_serializable(&unavailable_claude(at))?);
+        let source_history = self.claude_capacity_history(at).await;
         body["prompt_cache"] = self.prompt_analytics(&[]).await?;
         body["ledger_growth"] = self.ledger_growth(at).await;
         let remote = self
@@ -492,6 +517,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         )?;
         document.set("claude_accounts", &source_accounts)?;
         document.set("claude", &source_active)?;
+        document.set("claude_history", &source_history)?;
         Ok(AuthResponse::source_json(200, document.source_json()?))
     }
     pub async fn capacity_rollups_response(
@@ -510,9 +536,17 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             .await
             .ok();
         let claude = self.claude_capacity_rollups((at - window).max(0), at).await;
-        Ok(AuthResponse::json(
-            200,
-            json!({"snapshot_at_ms":at,"window_days":days,"retention":{"rollup_bucket_ms":shape::HOUR_MS,"rollup_window_ms":window},"rollup_scan":if points.is_some(){"ok"}else{"unavailable"},"rollups":points.unwrap_or_default(),"claude_rollup_scan":claude["scan"],"claude_rollup_truncated":claude["truncated"],"claude_rollups":claude["points"]}),
-        ))
+        let claude = SourceObject::parse(&claude)?;
+        let mut document = SourceObject::parse(&SourceJson::from_serializable(
+            &json!({"snapshot_at_ms":at,"window_days":days,"retention":{"rollup_bucket_ms":shape::HOUR_MS,"rollup_window_ms":window},"rollup_scan":if points.is_some(){"ok"}else{"unavailable"},"rollups":points.unwrap_or_default()}),
+        )?)?;
+        for (output, input) in [
+            ("claude_rollup_scan", "scan"),
+            ("claude_rollup_truncated", "truncated"),
+            ("claude_rollups", "points"),
+        ] {
+            document.set(output, &claude.get(input))?;
+        }
+        Ok(AuthResponse::source_json(200, document.source_json()?))
     }
 }
