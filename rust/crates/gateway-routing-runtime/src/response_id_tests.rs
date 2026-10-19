@@ -97,7 +97,14 @@ fn codex_replay(output: &Value) -> Value {
         ClientSurface::Responses,
         &original,
         &"gpt-test".into(),
-        &PrepareOptions::default(),
+        &PrepareOptions {
+            auth: gateway_providers::AuthMaterial {
+                secret: "synthetic-only".into(),
+                account_id: Some("synthetic-account".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
     )
     .unwrap();
     assert_eq!(original, snapshot);
@@ -117,7 +124,8 @@ fn both_real_wire_factories_bound_and_clean_the_random_fallback() {
             expected
         );
     }
-    let input = request("claude-sonnet-4-6", false);
+    let mut input = request("claude-sonnet-4-6", false);
+    set(&mut input.raw, "tools", parse(json!([]))).unwrap();
     let phase = claude_ordinary(
         &input,
         &"claude-sonnet-4-6".into(),
@@ -133,7 +141,12 @@ fn both_real_wire_factories_bound_and_clean_the_random_fallback() {
             workspace_id: None,
             checks: vec![],
         },
-        body_options: ClaudeBodyOptions::new(ClaudeCredentialKind::ApiKey),
+        body_options: {
+            let mut options = ClaudeBodyOptions::new(ClaudeCredentialKind::ApiKey);
+            options.native_reasoning_efforts = Some(vec!["medium".into()]);
+            options.supports_disabled_thinking = true;
+            options
+        },
     };
     let wire = finalize_claude(
         &input,
@@ -176,7 +189,7 @@ fn actual_producer_ids_round_trip_through_the_unchanged_codex_cleanup() {
         );
         for item in output.as_array().unwrap() {
             let id = item["id"].as_str().unwrap();
-            assert!(id.contains(&scalar(&response.body)["id"].as_str().unwrap().to_owned()));
+            assert!(id.contains(body["id"].as_str().unwrap()));
         }
         let replay = codex_replay(output);
         let replay = replay.as_array().unwrap();
