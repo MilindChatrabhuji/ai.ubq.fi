@@ -772,7 +772,16 @@ export async function runPrincipalControlCases({ owner, remote, restart, nativeB
       log: { request_id: "retained-bill", quota: 7, prompt_tokens: 3, completion_tokens: 2, model: "fixture", created_at: NOW / 1000 },
     });
     await c.call("revokeKey", {}, "retained-audit");
-    isKind(await c.infer("beginPaidKeyDeletion"), "deleted");
+    for (const principal of ["control", "foreign"])
+      for (const client of ["bun", "worker"]) {
+        const refusal = await deny(c.infer("beginPaidKeyDeletion", {}, randomUUID(), principal, { client }), "authority_capability_denied");
+        assert.equal(refusal.status, 403);
+      }
+    const authorization = await c.evidence();
+    for (const principal of ["control", "foreign"])
+      assert.equal(authorization.rows.capability.find((item) => item.value.id === principal).value.roles.includes("quota_admin"), false);
+    assert.deepEqual(authorization.rows.capability.find((item) => item.value.id === "p28-retention-admin").value.roles, ["quota_admin"]);
+    isKind(await c.action("p28-begin-paid-key-deletion"), "deleted");
     const before = await c.evidence();
     for (const family of ["api_key_id", "api_key_hash", "paid_rollup", "paid_deletion_guard"]) {
       assert.equal(count(before, family), 1);
@@ -790,7 +799,7 @@ export async function runPrincipalControlCases({ owner, remote, restart, nativeB
     assert.equal(after.visibleCounts.api_request, 0);
     assert.equal(after.visibleCounts.api_window, 0);
     for (const family of ["api_key_id", "api_key_hash", "paid_rollup", "paid_deletion_guard"]) assert.equal(after.visibleCounts[family], 1);
-    await finish(c, { retentionBefore: before });
+    await finish(c, { authorization, retentionBefore: before });
   }
   assert.deepEqual(
     cases.map((c) => c.id),

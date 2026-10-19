@@ -2,7 +2,7 @@ import { apiKeyHashKey, apiKeyIdKey, DEFAULT_USAGE_LIMIT_REQUESTS, getDefaultExp
 import { apiKeyHashRecordFor, apiKeyPolicyFromHashRecord } from "../../../src/authority/native-api-key-policy.ts";
 import { NativeAuthority } from "../../../src/authority/native-authority.ts";
 import { NativeAuthoritySql } from "../../../src/authority/native-authority-sql.ts";
-import { NativePrincipalControlServer } from "../../../src/authority/native-authority-rpc.ts";
+import { NativeAuthorityClient, NativeAuthorityRpcServer, NativePrincipalControlServer } from "../../../src/authority/native-authority-rpc.ts";
 import { paidFallbackDeletionGuardV3Key } from "../../../src/authority/native-paid.ts";
 
 export const CONTROL_CASE_IDS = Array.from({ length: 28 }, (_, index) => "P" + String(index + 1).padStart(2, "0"));
@@ -157,6 +157,17 @@ export class PrincipalControlFixture {
         },
       ],
     };
+    if (this.state.scenario === "P28")
+      seed.capabilities.push({
+        id: "p28-retention-admin",
+        epoch: this.epoch,
+        principalId: "p28-retention-admin",
+        keyId: this.keyId,
+        tokenHash: this.original.hash,
+        kernel: { owner: "control-org", repo: "repo" },
+        roles: ["quota_admin"],
+        revoked: false,
+      });
     const clock = () => this.state.now;
     const grant = (role) => ({
       id: role,
@@ -385,6 +396,10 @@ export class PrincipalControlFixture {
   }
   action(owner, action, value) {
     this.authorize(owner);
+    if (action === "p28-begin-paid-key-deletion") {
+      if (this.state.scenario !== "P28" || value !== undefined) throw new Error("fixture retention administrator action denied");
+      return new NativeAuthorityClient(new NativeAuthorityRpcServer(this.authority, "p28-retention-admin"), this.epoch).call("beginPaidKeyDeletion", {});
+    }
     const sql = this.sql,
       now = this.state.now,
       hashKey = apiKeyHashKey(this.original.hash),
