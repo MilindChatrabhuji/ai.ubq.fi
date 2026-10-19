@@ -1,6 +1,6 @@
 #[path = "../../../gateway-schema/tests/support/source_catalog.rs"]
 mod source_catalog;
-use gateway_auth::{AuthMethod, AuthPrincipal, crypto::Secret};
+use gateway_auth::{AuthPrincipal, crypto::Secret};
 use gateway_authority::{
     AuthorityClock, TokenSource, keys,
     paid::{PaidReservation, PaidUsage},
@@ -8,21 +8,18 @@ use gateway_authority::{
 };
 use gateway_core::{
     GatewayError,
-    identity::{ApiKeyId, PoolVersionstamp, PrincipalId, RequestContext, RequestId},
+    identity::{ApiKeyId, PoolVersionstamp},
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
     },
     tuple_key::TupleKey,
 };
-use gateway_providers::{AuthMaterial, ClientSurface, PrepareOptions};
+use gateway_providers::{AuthMaterial, PrepareOptions};
 use gateway_routing_runtime::*;
-use gateway_schema::{
-    catalog::{CatalogInput, ProviderCatalog},
-    snapshot::ModelSnapshot,
-};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
+use source_catalog::json as fixture_json;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     future::Future,
@@ -32,7 +29,8 @@ use std::{
     },
     task::{Context, Poll, Waker},
 };
-pub const NOW: i64 = 1_800_000_000_000;
+mod input;
+pub use input::{NOW, input};
 #[derive(Clone)]
 pub struct Store {
     rows: Arc<Mutex<BTreeMap<String, StoredRecord>>>,
@@ -263,70 +261,6 @@ pub fn window(store: &Store) -> Value {
         &format!("v3:{}", gateway_authority::DAY_MS),
         NOW,
     ))
-}
-pub fn input(id: &str, model: &str, providers: &[&str]) -> RoutingInput {
-    let principal = AuthPrincipal {
-        token: None,
-        method: AuthMethod::KvApiKey {
-            key_id: "key-a".into(),
-            policy: gateway_auth::api_keys::ApiKeyPolicy {
-                token_hash: "fixture".into(),
-                key_id: "key-a".into(),
-                expires_at_ms: -1,
-                usage_limit_requests: 10,
-                window_ms: gateway_authority::DAY_MS,
-                window_start_ms: NOW,
-                usage_reset_at_ms: NOW + gateway_authority::DAY_MS,
-                policy_version: format!("v3:{}", gateway_authority::DAY_MS),
-                paid_fallback_enabled: true,
-                paid_fallback_limit_microcredits: 10000,
-                paid_fallback_spent_microcredits: 0,
-                paid_fallback_reserved_microcredits: 0,
-                paid_fallback_reservation_request_id: None,
-            },
-        },
-        is_admin: false,
-        is_super_admin: false,
-    };
-    let mut catalog = CatalogInput::default();
-    for provider in providers {
-        catalog.providers.insert(
-            (*provider).into(),
-            ProviderCatalog {
-                configured: true,
-                available: true,
-                ..Default::default()
-            },
-        );
-    }
-    catalog.full_snapshot = Some(ModelSnapshot {
-        models: vec![source_catalog::json(
-            &json!({"slug":"gpt-test","supported_reasoning_levels":[{"effort":"none"},{"effort":"high"},{"effort":"ultra"}],"default_reasoning_level":"none"}),
-        )],
-        source: "fixture".into(),
-        updated_at_ms: NOW,
-        client_version: Some("0.163.0".into()),
-    });
-    RoutingInput {
-        context: RequestContext {
-            request_id: RequestId(id.into()),
-            principal: PrincipalId("fixture-principal".into()),
-            key_id: Some(ApiKeyId("key-a".into())),
-            route: "responses".into(),
-            started_at_ms: NOW,
-        },
-        principal,
-        raw: gateway_core::source_json::SourceJson::from_serializable(
-            &json!({"model":model,"input":"source fixture","reasoning":{"effort":"none"}}),
-        )
-        .unwrap(),
-        surface: ClientSurface::Responses,
-        catalog,
-        runtime: None,
-        client_version: "0.163.0".into(),
-        native_session_id: None,
-        retry_prohibited: false,
-    }
 }
 #[derive(Clone)]
 pub struct Host {
