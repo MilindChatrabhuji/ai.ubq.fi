@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectCiScope, isDocumentationPath, isRustGatePath, RUST_NATIVE_ONLY_PACKAGES } from "./test-scope.ts";
 import { testNetworkArgv } from "./test-network.ts";
@@ -12,7 +12,19 @@ const RUST_VERSION = "1.98.1";
 const RUST_REVISION = "48a229ce";
 const WORKER_BUILD_VERSION = "0.8.7";
 export type RustStage = "native" | "wasm";
-type Package = Readonly<{ name: string; directory: string; dependencies: readonly string[]; hasTests: boolean }>;
+export type RustHost = Readonly<{ platform: string; arch: string }>;
+export const rustNativeTarget = (host: RustHost = process): string => {
+  if (host.arch === "arm64" && host.platform === "linux") return NATIVE_TARGET;
+  if (host.arch === "arm64" && host.platform === "darwin") return "aarch64-apple-darwin";
+  throw new Error("Rust verification requires a supported Darwin or Linux ARM64 host");
+};
+type Package = Readonly<{
+  name: string;
+  directory: string;
+  dependencies: readonly string[];
+  runtimeDependencies: readonly string[];
+  hasTests: boolean;
+}>;
 export type RustPlan = Readonly<{
   stage: RustStage;
   packages: readonly string[];
@@ -39,15 +51,16 @@ const sourceHasTests = (directory: string): boolean =>
     const path = join(directory, entry.name);
     return entry.isDirectory() ? sourceHasTests(path) : entry.name.endsWith(".rs") && /#\s*\[\s*(?:test|tokio::test)\s*\]/.test(readFileSync(path, "utf8"));
   });
-const packageDependencies = (value: unknown, names: ReadonlySet<string>): string[] => {
+const packageDependencies = (value: unknown, names: ReadonlySet<string>, includeTests = true): string[] => {
   const found: string[] = [];
-  for (const [key, child] of Object.entries(table(value))) {
+  const entries = Object.entries(table(value)).filter(([key]) => includeTests || key !== "dev-dependencies");
+  for (const [key, child] of entries) {
     if (["dependencies", "dev-dependencies", "build-dependencies"].includes(key)) {
       for (const [alias, dependency] of Object.entries(table(child))) {
         const name = table(dependency).package ?? alias;
         if (typeof name === "string" && names.has(name)) found.push(name);
       }
-    } else if (typeof child === "object" && child !== null) found.push(...packageDependencies(child, names));
+    } else if (typeof child === "object" && child !== null) found.push(...packageDependencies(child, names, includeTests));
   }
   return unique(found);
 };
@@ -71,6 +84,7 @@ export const rustPackages = (root: string): readonly Package[] => {
     name,
     directory,
     dependencies: packageDependencies(value, names),
+    runtimeDependencies: packageDependencies(value, names, false),
     hasTests: sourceHasTests(join(directory, "src")) || sourceHasTests(join(directory, "tests")),
   }));
 };
@@ -95,7 +109,7 @@ const workerDependencies = (packages: readonly Package[], worker: Package): Set<
   const names = new Set([worker.name]);
   for (;;) {
     const before = names.size;
-    for (const item of packages) if (names.has(item.name)) for (const name of item.dependencies) names.add(name);
+    for (const item of packages) if (names.has(item.name)) for (const name of item.runtimeDependencies) names.add(name);
     if (before === names.size) return names;
   }
 };
@@ -107,7 +121,7 @@ const testCommands = (names: readonly string[], target: string, cwd: string): Ru
       { argv, cwd, isolated: true, testRun: true },
     ];
   });
-export const planRustVerification = (root: string, paths: readonly string[], stage: RustStage, complete = false): RustPlan => {
+export const planRustVerification = (root: string, paths: readonly string[], stage: RustStage, complete = false, host: RustHost = process): RustPlan => {
   if (!existsSync(join(root, "rust/Cargo.lock")) || readFileSync(join(root, "rust/Cargo.lock"), "utf8").trim() === "")
     throw new Error("Committed rust/Cargo.lock is required; verification never generates it");
   const packages = rustPackages(root);
@@ -123,7 +137,7 @@ export const planRustVerification = (root: string, paths: readonly string[], sta
   const names = unique(selected.map((item) => item.name));
   const flags = names.flatMap((name) => ["-p", name]);
   const cwd = join(root, "rust");
-  const target = stage === "native" ? NATIVE_TARGET : WASM_TARGET;
+  const target = stage === "native" ? rustNativeTarget(host) : WASM_TARGET;
   const cargo = ["--locked", "--offline", "--target", target, ...flags];
   const commands: RustCommand[] = [
     { argv: ["cargo", "fmt", "--all", "--", "--check"], cwd, isolated: true },
@@ -138,7 +152,29 @@ export const planRustVerification = (root: string, paths: readonly string[], sta
   return { stage, packages: names, testPackages: tests, buildWorker: stage === "wasm", commands };
 };
 
-export const rustVerificationEnvironment = (source: NodeJS.ProcessEnv = process.env): Record<string, string> => {
+const macRustBin = (environment: Record<string, string>): string => join(environment.RUSTUP_HOME, "toolchains", `${RUST_VERSION}-aarch64-apple-darwin`, "bin");
+export const rustToolPath = (name: string, environment: Record<string, string>, host: RustHost = process): string => {
+  if (host.platform !== "darwin" || isAbsolute(name) || name === "git") return name;
+  rustNativeTarget(host);
+  const task = dirname(environment.RUSTUP_HOME);
+  let candidate: string | null;
+  if (["cargo", "rustc", "rustdoc", "rustfmt", "cargo-clippy"].includes(name)) candidate = join(macRustBin(environment), name);
+  else if (name === "wasm-bindgen") candidate = environment.WASM_BINDGEN_BIN;
+  else {
+    const paths = environment.PATH.split(delimiter).filter((path) => isAbsolute(path) && inside(task, path));
+    candidate = paths.length ? Bun.which(name, { PATH: paths.join(delimiter) }) : null;
+  }
+  const executable = candidate && isAbsolute(candidate) ? Bun.which(candidate) : null;
+  if (!executable || !inside(realpathSync(task), realpathSync(executable)))
+    throw new Error(`Prepared task-local ${name} is required; no ambient tool fallback`);
+  return executable;
+};
+export const rustSourceTarget = (directory: string, sha: string, tree: string): string => {
+  if (!isAbsolute(directory) || !/^[a-f0-9]{40}$/.test(sha) || !/^[a-f0-9]{40}$/.test(tree))
+    throw new Error("Exact Rust target requires an absolute path and full source/tree identity");
+  return join(directory, "exact-rust", `${sha}-${tree}`);
+};
+export const rustVerificationEnvironment = (source: NodeJS.ProcessEnv = process.env, host: RustHost = process): Record<string, string> => {
   // unshare maps the child to UID0: without HOME, config lookup falls back to
   // /root rather than the invoking account. Refuse that ambiguous identity.
   if (!source.HOME || !isAbsolute(source.HOME)) throw new Error("An explicit inherited absolute HOME is required for isolated Rust checks");
@@ -164,6 +200,17 @@ export const rustVerificationEnvironment = (source: NodeJS.ProcessEnv = process.
     if (source[name] !== undefined) environment[name] = source[name];
   for (const name of ["CARGO_HOME", "RUSTUP_HOME", "CARGO_TARGET_DIR", "XDG_CACHE_HOME"])
     if (!environment[name] || !isAbsolute(environment[name])) throw new Error(`Prepared task-local ${name} is required`);
+  rustNativeTarget(host);
+  if (host.platform === "darwin") {
+    const paths = (source.PATH ?? "").split(delimiter).filter((path) => isAbsolute(path) && inside(dirname(environment.RUSTUP_HOME), path));
+    environment.PATH = [...new Set([macRustBin(environment), ...paths, "/usr/bin", "/bin", "/usr/sbin", "/sbin"])].join(delimiter);
+    environment.RUSTUP_TOOLCHAIN = `${RUST_VERSION}-aarch64-apple-darwin`;
+    environment.CARGO_INCREMENTAL = "0";
+    environment.CARGO_PROFILE_DEV_DEBUG = "0";
+    environment.CARGO_PROFILE_TEST_DEBUG = "0";
+    environment.RUSTC = rustToolPath("rustc", environment, host);
+    environment.RUSTDOC = rustToolPath("rustdoc", environment, host);
+  }
   return environment;
 };
 export const runCommand: CommandRunner = async (command, environment) => {
@@ -236,7 +283,7 @@ export const verifyWorkerArtifact = (root: string, sha: string) => {
   return files.map(({ name, bytes, sha256 }) => ({ name, bytes: bytes.length, sha256 }));
 };
 const checkedRun = async (argv: readonly string[], cwd: string, environment: Record<string, string>): Promise<string> => {
-  const result = await runCommand({ argv, cwd }, environment);
+  const result = await runCommand({ argv: [rustToolPath(argv[0], environment), ...argv.slice(1)], cwd }, environment);
   if (result.code !== 0) throw new Error(`Preparation command failed (${result.code}): ${argv.join(" ")}\n${result.stderr}`);
   return result.stdout.trim();
 };
@@ -370,7 +417,7 @@ const main = async (): Promise<void> => {
     console.log(JSON.stringify(plan, null, 2));
     return;
   }
-  if (process.platform !== "linux" || process.arch !== "arm64") throw new Error("Interactive Rust compilation requires the primary Linux ARM64 build host");
+  const nativeTarget = rustNativeTarget();
   const environment = rustVerificationEnvironment();
   const sha = await checkedRun(["git", "rev-parse", "HEAD"], ROOT, environment);
   const tree = await checkedRun(["git", "rev-parse", "HEAD^{tree}"], ROOT, environment);
@@ -379,9 +426,14 @@ const main = async (): Promise<void> => {
   await checkedRun(["git", "ls-files", "--error-unmatch", "rust/Cargo.lock"], ROOT, environment);
   if (table(toml(join(ROOT, "rust/rust-toolchain.toml")).toolchain).channel !== RUST_VERSION)
     throw new Error("Rust toolchain manifest disagrees with pinned CI tools");
+  if (process.platform === "darwin") environment.CARGO_TARGET_DIR = rustSourceTarget(environment.CARGO_TARGET_DIR, sha, tree);
   const lock = readFileSync(join(ROOT, "rust/Cargo.lock"));
   await verifyTools(stage, environment);
-  const tests = await executeRustPlan(plan, environment);
+  const bound = {
+    ...plan,
+    commands: plan.commands.map((command) => ({ ...command, argv: [rustToolPath(command.argv[0], environment), ...command.argv.slice(1)] })),
+  };
+  const tests = await executeRustPlan(bound, environment);
   const artifacts = plan.buildWorker ? verifyWorkerArtifact(ROOT, sha) : [];
   if (digest(lock) !== digest(readFileSync(join(ROOT, "rust/Cargo.lock")))) throw new Error("Rust verification changed its frozen lockfile");
   if (await checkedRun(["git", "status", "--porcelain", "--untracked-files=no"], ROOT, environment))
@@ -392,6 +444,8 @@ const main = async (): Promise<void> => {
       stage,
       gitSha: sha,
       tree,
+      nativeTarget,
+      targetDirectory: environment.CARGO_TARGET_DIR,
       lockSha256: digest(lock),
       packages: plan.packages,
       listedTests: tests,
