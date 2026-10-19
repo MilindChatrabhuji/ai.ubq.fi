@@ -322,12 +322,17 @@ impl<
                 codex: codex.clone(),
             })
             .await?;
-        if publication.material.secret.trim().is_empty() {
+        let PublishedCredential::Scalar { material, .. } = &publication else {
+            return Err(journal::unavailable(
+                "Credential publication does not match the admitted provider/account.",
+            ));
+        };
+        if material.secret.trim().is_empty() {
             return Err(journal::unavailable(
                 "The selected provider credential is unavailable.",
             ));
         }
-        match (&codex, &publication.fence) {
+        match (&codex, publication.fence()) {
             (
                 Some(expected),
                 CredentialFence::Codex {
@@ -362,7 +367,7 @@ impl<
             }
         }
         self.host
-            .ensure_credential_current(&publication.fence, &self.input.principal, model)
+            .ensure_credential_current(publication.fence(), &self.input.principal, model)
             .await?;
         Ok(publication)
     }
@@ -372,7 +377,7 @@ impl<
         model: &ModelId,
         publication: &PublishedCredential,
         nonce: &str,
-    ) -> RoutingResult<gateway_providers::PreparedRequest> {
+    ) -> RoutingResult<PreparedWireRequest> {
         crate::wire::prepare(
             &self.input,
             &self.conversation_id,

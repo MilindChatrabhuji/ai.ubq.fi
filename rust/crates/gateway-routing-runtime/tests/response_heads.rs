@@ -2,31 +2,27 @@ mod support;
 use gateway_core::{
     claude::ClaudeErrorEvidence, lifecycle::TransportObservation, provider::UpstreamProvider,
 };
-use gateway_providers::{AuthMaterial, PrepareOptions, policy::HopFailure};
+use gateway_providers::{ClaudeBodyOptions, ClaudeCredentialKind, policy::HopFailure};
 use gateway_routing_runtime::*;
 use serde_json::json;
 use std::{collections::BTreeMap, sync::atomic::Ordering};
 use support::*;
 
 fn publication(workspace: Option<&str>) -> PublishedCredential {
-    PublishedCredential {
-        material: AuthMaterial {
-            secret: "fixture-claude-key".into(),
-            api_key: true,
-            workspace_id: workspace.map(str::to_owned),
-            ..Default::default()
-        },
+    PublishedCredential::Claude {
         fence: CredentialFence::Claude {
             account_id: "fixture-account".into(),
             cohort_id: workspace.unwrap_or("initial").into(),
             credential_fingerprint: "fixture-credential".into(),
             evidence_generation: "fixture-evidence".into(),
-            workspace_id: workspace.map(str::to_owned),
+            workspace_id: workspace.map(Into::into),
             checks: vec![],
         },
-        options: PrepareOptions {
-            supports_disabled_thinking: true,
-            ..Default::default()
+        body_options: {
+            let mut options = ClaudeBodyOptions::new(ClaudeCredentialKind::ApiKey);
+            options.supports_disabled_thinking = true;
+            options.native_reasoning_efforts = Some(vec!["medium".into()]);
+            options
         },
     }
 }
@@ -38,10 +34,19 @@ fn request(id: &str, disabled: bool) -> RoutingInput {
         .get_mut("claude_code")
         .unwrap()
         .models = vec![
-        json!({"id":"claude-sonnet-4-6","supported_endpoint_types":["openai-response","anthropic"],"supports_tools":true}),
+        gateway_core::source_json::SourceJson::from_serializable(
+            &json!({"id":"claude-sonnet-4-6","supported_endpoint_types":["openai-response","anthropic"],"supports_tools":true}),
+        ).unwrap(),
     ];
     if !disabled {
-        request.raw.as_object_mut().unwrap().remove("reasoning");
+        let fields = gateway_core::source_serialization::entries(&request.raw).unwrap();
+        request.raw = gateway_core::source_serialization::object_keys(
+            fields
+                .into_iter()
+                .filter(|(key, _)| key != &"reasoning".into())
+                .collect(),
+        )
+        .unwrap();
     }
     request
 }
@@ -87,7 +92,7 @@ fn headers_require_actual_started_phase_and_are_consumed_once() {
         .await
         .unwrap();
         let attempt = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(attempt.request.provider, UpstreamProvider::ClaudeCode);
+        assert_eq!(attempt.request.provider(), UpstreamProvider::ClaudeCode);
         assert!(session.observe_response(&attempt, head(200)).await.is_err());
         session.before_dispatch(&attempt).await.unwrap();
         assert!(session.observe_response(&attempt, head(200)).await.is_err());
@@ -134,7 +139,7 @@ fn codex_header_receipt_cannot_cross_original_requests_with_colliding_fixture_to
             .await
             .unwrap();
             let attempt = session.next_attempt().await.unwrap().unwrap();
-            assert_eq!(attempt.request.provider, UpstreamProvider::ChatgptCodex);
+            assert_eq!(attempt.request.provider(), UpstreamProvider::ChatgptCodex);
             session.before_dispatch(&attempt).await.unwrap();
             session.transport_started(&attempt).await.unwrap();
             let observed = session.observe_response(&attempt, head(200)).await.unwrap();
@@ -200,14 +205,19 @@ fn workspace_continuation_keeps_encoded_body_attempt_and_single_claim() {
         let second = continuation.attempt().clone();
         assert_eq!(second.id, first.id);
         assert_eq!(second.original_request_id, first.original_request_id);
-        assert_eq!(second.request.body, first.request.body);
+        assert_eq!(second.request.body(), first.request.body());
         assert_eq!(
-            second.request.decode.response_id,
-            first.request.decode.response_id
+            second.request.decode().response_id,
+            first.request.decode().response_id
         );
         assert_eq!(
-            second.request.headers["anthropic-workspace-id"],
-            "actual-workspace"
+            match &second.credential {
+                CredentialFence::Claude { workspace_id, .. } => workspace_id.as_ref(),
+                _ => None,
+            },
+            Some(&gateway_core::js_string::JsString16::from_utf8(
+                "actual-workspace"
+            ))
         );
         assert!(session.before_dispatch(&second).await.is_err());
         session
@@ -257,7 +267,14 @@ fn disabled_thinking_keeps_first_refusal_and_does_not_adopt_workspace() {
         .await
         .unwrap();
         let first = session.next_attempt().await.unwrap().unwrap();
-        assert_eq!(first.request.body["thinking"]["type"], "disabled");
+        let thinking =
+            gateway_core::source_serialization::member(first.request.body(), "thinking").unwrap();
+        assert_eq!(
+            gateway_core::source_serialization::member(&thinking, "type")
+                .unwrap()
+                .as_str(),
+            "\"disabled\""
+        );
         session.before_dispatch(&first).await.unwrap();
         session.transport_started(&first).await.unwrap();
         let observed = session.observe_response(&first, head(400)).await.unwrap();
