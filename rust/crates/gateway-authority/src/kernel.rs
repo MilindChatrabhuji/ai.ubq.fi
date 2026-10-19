@@ -73,7 +73,7 @@ pub struct KernelWindow {
     pub reservations: BTreeMap<String, i64>,
 }
 
-fn kernel_identity(row: &KernelReservation, expected: &KernelReservation) -> bool {
+pub(crate) fn kernel_identity(row: &KernelReservation, expected: &KernelReservation) -> bool {
     row.validate().is_ok()
         && row.v == 2
         && row.owner == expected.owner
@@ -442,45 +442,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     ) -> Result<(), GatewayError> {
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
-            let key = keys::kernel_request(
-                &expected.owner,
-                expected.repo.as_deref(),
-                expected.window_created_at_ms,
-                &expected.request_id.0,
-            );
-            let mut row: KernelReservation = tx
-                .read(&key)
-                .await?
-                .ok_or_else(|| invalid("Kernel reservation is missing."))?;
-            if !kernel_identity(&row, expected)
-                || row.terminal_intent.is_some_and(|intent| intent != terminal)
-                || row.state.is_some_and(|state| state != terminal)
-            {
-                return Err(invalid("Kernel terminal state conflicts."));
-            }
-            if row.state.is_none() {
-                row.terminal_intent = Some(terminal);
-                row.lease_expires_at_ms = add(now, REQUEST_LEASE_MS)?;
-                let window_key = keys::kernel_window(&row.owner, row.repo.as_deref());
-                if let Some(mut window) = tx.read::<KernelWindow>(&window_key).await? {
-                    validate_kernel_window(&window, &row.owner, row.repo.as_deref())?;
-                    if window.created_at_ms == row.window_created_at_ms {
-                        window
-                            .reservations
-                            .insert(row.request_id.0.clone(), row.lease_expires_at_ms);
-                        tx.put(
-                            &window_key,
-                            &window,
-                            Some(retention(window.usage_reset_at_ms, QUOTA_RETENTION_MS)?),
-                        )?;
-                    }
-                }
-                tx.put(
-                    &key,
-                    &row,
-                    Some(retention(row.window_reset_at_ms, QUOTA_RETENTION_MS)?),
-                )?;
-            }
+            stage_kernel_terminal_intent(&mut tx, expected, terminal, now).await?;
             if tx.commit().await? {
                 return Ok(());
             }
@@ -567,4 +529,56 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             "Kernel settlement changed concurrently.",
         ))
     }
+}
+
+/// Stages exactly the existing kernel intent/window writes in the caller's
+/// same-authority transaction. Expired inference leases do not erase a prior
+/// genuine semantic choice. Returns whether this same intent already existed.
+pub(crate) async fn stage_kernel_terminal_intent<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    expected: &KernelReservation,
+    terminal: KernelTerminal,
+    now: i64,
+) -> Result<bool, GatewayError> {
+    let key = keys::kernel_request(
+        &expected.owner,
+        expected.repo.as_deref(),
+        expected.window_created_at_ms,
+        &expected.request_id.0,
+    );
+    let mut row: KernelReservation = tx
+        .read(&key)
+        .await?
+        .ok_or_else(|| invalid("Kernel reservation is missing."))?;
+    if !kernel_identity(&row, expected)
+        || row.terminal_intent.is_some_and(|intent| intent != terminal)
+        || row.state.is_some_and(|state| state != terminal)
+    {
+        return Err(invalid("Kernel terminal state conflicts."));
+    }
+    let was_chosen = row.terminal_intent == Some(terminal) || row.state == Some(terminal);
+    if row.state.is_none() {
+        row.terminal_intent = Some(terminal);
+        row.lease_expires_at_ms = add(now, REQUEST_LEASE_MS)?;
+        let window_key = keys::kernel_window(&row.owner, row.repo.as_deref());
+        if let Some(mut window) = tx.read::<KernelWindow>(&window_key).await? {
+            validate_kernel_window(&window, &row.owner, row.repo.as_deref())?;
+            if window.created_at_ms == row.window_created_at_ms {
+                window
+                    .reservations
+                    .insert(row.request_id.0.clone(), row.lease_expires_at_ms);
+                tx.put(
+                    &window_key,
+                    &window,
+                    Some(retention(window.usage_reset_at_ms, QUOTA_RETENTION_MS)?),
+                )?;
+            }
+        }
+        tx.put(
+            &key,
+            &row,
+            Some(retention(row.window_reset_at_ms, QUOTA_RETENTION_MS)?),
+        )?;
+    }
+    Ok(was_chosen)
 }
