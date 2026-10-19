@@ -360,7 +360,7 @@ fn missing_openlux_catalog_keeps_configured_known_codex_fallback() {
     );
     let mut projection = store.row(&keys::paid_routing()).unwrap().value;
     projection["codex_enabled"] = json!(false);
-    super::paid_control_cases::seed_source(store, keys::paid_routing(), &projection);
+    super::paid_control_cases::seed_source(&store, keys::paid_routing(), &projection);
     republish(&store);
     let mut input = paid_request("missing-catalog", PaidProvider::Metered);
     input.model = "gpt-test".into();
@@ -419,7 +419,7 @@ fn synthetic_scope_is_server_owned_and_matches_current_source_alias() {
     );
     let mut projection = store.row(&keys::paid_routing()).unwrap().value;
     projection["codex_enabled"] = json!(false);
-    super::paid_control_cases::seed_source(store, keys::paid_routing(), &projection);
+    super::paid_control_cases::seed_source(&store, keys::paid_routing(), &projection);
     republish(&store);
     let mut input = paid_request("synthetic", PaidProvider::Metered);
     input.model = "deepseek-v4.1-flash".into();
