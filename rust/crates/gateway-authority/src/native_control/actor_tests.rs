@@ -1,4 +1,5 @@
 use super::*;
+#[path = "actor_tests/live_manual.rs"]
 mod live_manual;
 use gateway_auth::{
     crypto::{Secret, sha256_base64url},
@@ -149,7 +150,7 @@ impl AuthHost for Host {
         self.fetches.fetch_add(1, Ordering::SeqCst);
         Ok(AuthUpstreamResponse {
             status: 200,
-            body: json!({}),
+            body: b"{}".to_vec(),
         })
     }
     async fn kernel_principal(
