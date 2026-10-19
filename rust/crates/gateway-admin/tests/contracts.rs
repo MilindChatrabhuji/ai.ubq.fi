@@ -1103,7 +1103,12 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
             started_at_ms: request.created_at_ms,
         };
         let api = authority
-            .reserve_api_key(&request.key_id, &request.request_id, &request.route, 1_000_000)
+            .reserve_api_key(
+                &request.key_id,
+                &request.request_id,
+                &request.route,
+                1_000_000,
+            )
             .await
             .unwrap();
         let journal_key = gateway_auth::store::key(json!([
