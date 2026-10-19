@@ -54,6 +54,10 @@ const sourceHasTests = (directory: string): boolean =>
 // Recognize only the reviewed native-target predicate. Unknown selectors remain
 // in the portable closure so a new or malformed cfg cannot hide native code.
 const excludesWasmTarget = (selector: string): boolean => /^cfg\(\s*all\(\s*unix\s*,\s*not\(\s*target_arch\s*=\s*"wasm32"\s*\)\s*\)\s*\)$/.test(selector);
+const portableTargetDependencies = (value: unknown, names: ReadonlySet<string>, includeTests: boolean): string[] =>
+  Object.entries(table(value))
+    .filter(([selector]) => !excludesWasmTarget(selector))
+    .flatMap(([, configuration]) => packageDependencies(configuration, names, includeTests, true));
 const packageDependencies = (value: unknown, names: ReadonlySet<string>, includeTests = true, portable = false): string[] => {
   const found: string[] = [];
   const entries = Object.entries(table(value)).filter(([key]) => includeTests || key !== "dev-dependencies");
@@ -63,10 +67,8 @@ const packageDependencies = (value: unknown, names: ReadonlySet<string>, include
         const name = table(dependency).package ?? alias;
         if (typeof name === "string" && names.has(name)) found.push(name);
       }
-    } else if (key === "target" && portable) {
-      for (const [selector, configuration] of Object.entries(table(child)))
-        if (!excludesWasmTarget(selector)) found.push(...packageDependencies(configuration, names, includeTests, portable));
-    } else if (typeof child === "object" && child !== null) found.push(...packageDependencies(child, names, includeTests, portable));
+    } else if (key === "target" && portable) found.push(...portableTargetDependencies(child, names, includeTests));
+    else if (typeof child === "object" && child !== null) found.push(...packageDependencies(child, names, includeTests, portable));
   }
   return unique(found);
 };
