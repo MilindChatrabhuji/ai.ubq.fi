@@ -200,16 +200,16 @@ class PrivateFrameBoundary {
       this._openings.push(byte);
       return false;
     }
-    if (this._quoted) this.stringByte(byte);
-    else this.structuralByte(byte);
+    if (this._quoted) this._stringByte(byte);
+    else this._structuralByte(byte);
     return false;
   }
-  private stringByte(byte: number): void {
+  private _stringByte(byte: number): void {
     if (this._escaped) this._escaped = false;
     else if (byte === 92) this._escaped = true;
     else if (byte === 34) this._quoted = false;
   }
-  private structuralByte(byte: number): void {
+  private _structuralByte(byte: number): void {
     switch (byte) {
       case 34:
         this._quoted = true;
@@ -222,6 +222,9 @@ class PrivateFrameBoundary {
       case 93:
         assert.equal(this._openings.pop(), byte === 125 ? 123 : 91, "Private JSON delimiters differ.");
         this._complete = this._openings.length === 0;
+        break;
+      default:
+        break;
     }
   }
 }
