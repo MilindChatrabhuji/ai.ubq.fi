@@ -791,17 +791,17 @@ fn native_action_source_custody_is_lossless_data_not_an_operation_capability() {
                     ValueEncoding::ProfileV2
                 }
             );
-            validate_native_control_custody(&key, &record)
-                .unwrap_or_else(|error| panic!("source custody case {case}: {error:?}"));
             let reopened: StoredRecord =
                 serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
             let roundtrip: rows::ActionRow = decode_source_control_record(&reopened)
                 .unwrap()
                 .deserialize()
-                .unwrap();
+                .unwrap_or_else(|error| panic!("source custody case {case} row decode: {error}"));
             assert_eq!(roundtrip.fence, row.fence);
             assert_eq!(reopened.revision, "opaque-custody-revision");
             assert_eq!(reopened.expires_at_ms, None);
+            validate_native_control_custody(&key, &record)
+                .unwrap_or_else(|error| panic!("source custody case {case}: {error:?}"));
             let mut expired = reopened.clone();
             expired.expires_at_ms = Some(1_000_001);
             assert!(validate_native_control_custody(&key, &expired).is_err());
