@@ -5,9 +5,7 @@ use gateway_auth::{
     GatewayError,
     native_auth::{NativeCapability, NativeTransportIdentity},
 };
-use gateway_publication::{
-    ConfiguredPaidInputs, RegisteredAccessOwner, transport::PublicationReceiver,
-};
+use gateway_publication::{ConfiguredPaidInputs, transport::PublicationReceiver};
 pub use gateway_worker::GatewayAuthority;
 use std::collections::BTreeSet;
 use worker::{Context, Env, Request};
@@ -25,10 +23,7 @@ fn identity() -> Result<NativeTransportIdentity, GatewayError> {
         "fixture-matrix-owner".into(),
         "fixture-matrix-epoch".into(),
         [31; 32],
-        BTreeSet::from([
-            NativeCapability::ConfigurationPublish,
-            NativeCapability::AccessPublish,
-        ]),
+        BTreeSet::from([NativeCapability::ConfigurationPublish]),
     )
 }
 fn inputs() -> Result<ConfiguredPaidInputs, GatewayError> {
@@ -59,12 +54,8 @@ pub async fn fetch(
         }
         let identity = identity()?;
         let inputs = inputs()?;
-        let owner = RegisteredAccessOwner::configured(
-            gateway_auth::native_credentials::NativeOwnerId("fixture-matrix-native".into()),
-            "/fixture/runtime-matrix-owner".into(),
-        )?;
         let receiver =
-            PublicationReceiver::configured(identity.clone(), inputs.clone(), vec![owner], now)?;
+            PublicationReceiver::configured(identity.clone(), inputs.clone(), Vec::new(), now)?;
         let store = gateway_worker::authority::RemoteAuthorityStore::from_env(&env)?;
         setup::initialize(&store, &identity, &inputs, &receiver, &scenario).await?;
         Ok(receiver)
@@ -87,4 +78,20 @@ pub async fn fetch(
         gateway_worker::NativeBindings::default(),
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn configuration_fixture_does_not_require_an_access_owner() {
+        assert!(
+            super::PublicationReceiver::configured(
+                super::identity().unwrap(),
+                super::inputs().unwrap(),
+                Vec::new(),
+                || 0,
+            )
+            .is_ok()
+        );
+    }
 }
