@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { isDeepStrictEqual } from "node:util";
 import { MATRIX_MODELS } from "../fixtures/provider-matrix.mjs";
 import { createClient, dispatches, object, post, responseObject, selectProviders, settled, stringKey, type MatrixContext } from "./contracts.ts";
 
@@ -37,14 +38,36 @@ async function paidRows(context: MatrixContext, state: Record<string, unknown>):
   return records;
 }
 
-async function transientNoFailover(context: MatrixContext, expected: "codex" | "surplus"): Promise<void> {
+export async function transientNoFailover(context: MatrixContext, expected: "codex" | "surplus"): Promise<void> {
   const marker = "fixture:matrix:paid:transient";
+  const before = await context.events();
   const response = await post(context, "/v1/responses", { model: MATRIX_MODELS.codex, input: marker, stream: false });
   assert.equal(response.status, 503);
   await response.arrayBuffer();
   const state = await settled(context, response);
   assert.equal(state.semantic_committed, false);
-  const calls = dispatches(await context.events(), marker);
+  const after = await context.events();
+  assert(
+    after.length >= before.length && before.every((event, index) => isDeepStrictEqual(event, after[index])),
+    "Controlled fixture event log must retain its complete append-only prefix"
+  );
+  const calls = dispatches(after.slice(before.length), marker);
+  if (!(calls.length > 0 && calls.every((call) => call.provider === expected))) {
+    const knownProviders = ["codex", "claude", "surplus", "openlux", "lithos", "openrouter", "deepseek"];
+    const counts = new Map<string, number>();
+    for (const call of calls) {
+      const provider = typeof call.provider === "string" && knownProviders.includes(call.provider) ? call.provider : "[invalid]";
+      counts.set(provider, (counts.get(provider) ?? 0) + 1);
+    }
+    try {
+      console.error(
+        "RUNTIME_MATRIX_DISPATCH_FAILURE=" +
+          JSON.stringify({ case: marker, expected_provider: expected, dispatch_count: calls.length, providers: Object.fromEntries(counts) })
+      );
+    } catch {
+      // Diagnostics cannot replace the original no-failover assertion.
+    }
+  }
   assert(calls.length > 0 && calls.every((call) => call.provider === expected), "Transient failure cannot mint pool or paid capacity proof");
   context.cases.push(`matrix_${expected}_transient_503_never_advances_paid_waterfall`);
 }
