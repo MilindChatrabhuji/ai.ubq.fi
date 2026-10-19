@@ -157,7 +157,7 @@ fn original_auth_30_parser_shape_and_selected_source_field_projections() {
                 "source JSON projection"
             );
         } else {
-            let kind = parsed.err().expect("source JSON parser refused");
+            let kind = parsed.expect_err("source JSON parser refused");
             let expected_kind = match kind {
                 AuthReadFailure::Empty => "empty",
                 AuthReadFailure::Invalid => "invalid",
@@ -260,7 +260,10 @@ fn original_profile_18_guard_options_and_text_read_phase_projections_not_effects
                     Ok(decoded) => {
                         assert_eq!(decoded.raw_body().as_ptr(), raw.as_ptr());
                         assert_eq!(decoded.raw_body().len(), raw.len());
-                        assert_eq!(decoded.text().as_bytes(), raw.as_slice());
+                        assert!(
+                            decoded.text().as_bytes() == raw.as_slice(),
+                            "original native profile text"
+                        );
                         let options = decoded.options();
                         assert_eq!(
                             JsString16::from_utf8(options.profile),
@@ -314,7 +317,7 @@ fn raw_utf16_auth_values_and_client_version_remain_source_data_without_scalar_sh
         Some(&0xfffd)
     );
     assert_eq!(decoded.client_version().unwrap().as_units(), [0xd800]);
-    assert_eq!(decoded.raw_body(), raw);
+    assert!(decoded.raw_body() == raw, "original raw body custody");
 }
 #[test]
 fn field_phase_limits_and_source_query_number_grammar_do_not_invent_generic_guards() {
@@ -336,7 +339,7 @@ fn field_phase_limits_and_source_query_number_grammar_do_not_invent_generic_guar
     let raw = [0xef, 0xbb, 0xbf, b' ', 0xff];
     let decoded = plan.decode(&raw).expect("source text decode");
     assert_eq!(decoded.text(), " �");
-    assert_eq!(decoded.raw_body(), raw);
+    assert!(decoded.raw_body() == raw, "original raw body custody");
     assert_eq!(decoded.options().profile, "local");
     assert!(decoded.options().include_legacy);
     assert!(!decoded.options().dry_run);
