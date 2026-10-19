@@ -123,9 +123,13 @@ pub fn project_responses(
     stream: bool,
     profile: ChatProfile,
 ) -> Result<ChatProjection, GatewayError> {
-    let projection =
-        crate::source_chat::project(&crate::source::generated(raw), &gateway_core::model::ModelId::from_scalar(model), stream, profile)
-            .map_err(crate::source::scalar_error)?;
+    let projection = crate::source_chat::project(
+        &crate::source::generated(raw),
+        &gateway_core::model::ModelId::from_scalar(model),
+        stream,
+        profile,
+    )
+    .map_err(crate::source::scalar_error)?;
     Ok(ChatProjection {
         body: projection.body,
         tool_names: projection.names,

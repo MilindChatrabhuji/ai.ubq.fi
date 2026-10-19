@@ -4,9 +4,9 @@ use crate::{
     source as s, source_anthropic, source_chat, source_controls as controls,
     types::*,
 };
-use gateway_core::{model::ModelId,
-    GatewayError, js_string::JsString16, provider::UpstreamProvider, source_json::SourceJson,
-    source_serialization as json,
+use gateway_core::{
+    GatewayError, js_string::JsString16, model::ModelId, provider::UpstreamProvider,
+    source_json::SourceJson, source_serialization as json,
 };
 use gateway_schema::{
     request::RequestSurface,
@@ -46,14 +46,14 @@ pub fn prepare_source_request(
         false
     };
     let requested = match view.model_request()? {
-        SourceModelRequest::Default=>selected_model.clone(),
-        SourceModelRequest::Named(name)=>ModelId::from_source(name),
+        SourceModelRequest::Default => selected_model.clone(),
+        SourceModelRequest::Named(name) => ModelId::from_source(name),
     };
     if surface == ClientSurface::Chat {
         view.max_completion_tokens()?;
     }
-    let model =
-        canonical_source_model(provider, selected_model, &options.allowed_models).ok_or_else(|| {
+    let model = canonical_source_model(provider, selected_model, &options.allowed_models)
+        .ok_or_else(|| {
             SourceRequestError::new(
                 404,
                 s::concat(&[
@@ -176,7 +176,9 @@ pub fn prepare_source_request(
                 }
             } else {
                 url = "https://api.cerebras.ai/v1/chat/completions".into();
-                if model.matches_scalar("gpt-oss-120b") && s::is(&s::get(&body, "reasoning_effort"), "none") {
+                if model.matches_scalar("gpt-oss-120b")
+                    && s::is(&s::get(&body, "reasoning_effort"), "none")
+                {
                     return Err(invalid(
                         "reasoning_effort 'none' is not supported by gpt-oss-120b",
                         "reasoning_effort",
@@ -343,7 +345,11 @@ pub fn prepare_source_request(
                             other => other,
                         };
                         if ["low", "medium", "high", "xhigh", "max"].contains(&suffix) {
-                            s::set(&mut body, "model", s::text(&format!("gpt-5.6-sol-{suffix}")));
+                            s::set(
+                                &mut body,
+                                "model",
+                                s::text(&format!("gpt-5.6-sol-{suffix}")),
+                            );
                             s::remove(&mut body, "reasoning");
                         }
                     }

@@ -1,6 +1,8 @@
 //! Existing finite provider body/control transformations over source JSON.
 use crate::{source as s, types::*};
-use gateway_core::{model::ModelId,js_string::JsString16, source_json::SourceJson, source_serialization as json};
+use gateway_core::{
+    js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as json,
+};
 use gateway_schema::source_request::{SourceField, SourceRequestDocument};
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) fn replay(input: &SourceJson) -> SourceJson {
@@ -148,8 +150,7 @@ pub(crate) fn ordinary(
                 s::set(&mut body, key, value);
             }
         }
-        let effort = effort
-            .or_else(|| context.map(|context| context.default_effort().clone()));
+        let effort = effort.or_else(|| context.map(|context| context.default_effort().clone()));
         if let Some(effort) = effort {
             s::set(
                 &mut body,
@@ -186,10 +187,7 @@ pub(crate) fn ordinary(
             None => context.map(|context| {
                 s::object(vec![(
                     "effort",
-                    map_effort(
-                        &context.default_effort().clone(),
-                        Some(context),
-                    ),
+                    map_effort(&context.default_effort().clone(), Some(context)),
                 )])
             }),
         };
@@ -210,8 +208,11 @@ pub(crate) fn ordinary(
     s::set(&mut body, "model", s::quoted(model.as_js_string()));
     Ok(body)
 }
-fn map_effort(effort:&JsString16,context:Option<&OrdinaryPreparationContext>)->SourceJson {
-    s::quoted(&context.map_or_else(||effort.clone(),|context|gateway_schema::reasoning::effort_for_codex(effort,context.reasoning())))
+fn map_effort(effort: &JsString16, context: Option<&OrdinaryPreparationContext>) -> SourceJson {
+    s::quoted(&context.map_or_else(
+        || effort.clone(),
+        |context| gateway_schema::reasoning::effort_for_codex(effort, context.reasoning()),
+    ))
 }
 fn validate_cache(
     context: Option<&OrdinaryPreparationContext>,
@@ -252,8 +253,12 @@ pub(crate) fn roles(body: &mut SourceJson, field: &str, remove_reasoning: bool) 
     }
 }
 pub(crate) fn openrouter(body: &mut SourceJson, model: &ModelId) {
-    if (s::starts(model.as_js_string(),"openai/") || s::starts(model.as_js_string(),"~openai/"))
-        && !model.as_js_string().as_units().split(|&unit|unit==58).any(|part|part.iter().copied().eq("batch".encode_utf16()))
+    if (s::starts(model.as_js_string(), "openai/") || s::starts(model.as_js_string(), "~openai/"))
+        && !model
+            .as_js_string()
+            .as_units()
+            .split(|&unit| unit == 58)
+            .any(|part| part.iter().copied().eq("batch".encode_utf16()))
         && s::present(body, "tool_choice").is_none_or(|v| s::is(&v, "auto"))
         && s::present(body, "functions").is_none()
         && s::present(body, "function_call").is_none()
@@ -276,7 +281,8 @@ pub(crate) fn openrouter(body: &mut SourceJson, model: &ModelId) {
         }
         s::set(body, "tools", s::array(&tools));
     }
-    if (s::starts(model.as_js_string(),"anthropic/claude-") || s::starts(model.as_js_string(),"~anthropic/claude-"))
+    if (s::starts(model.as_js_string(), "anthropic/claude-")
+        || s::starts(model.as_js_string(), "~anthropic/claude-"))
         && s::present(body, "cache_control").is_none()
         && !s::is(
             &s::path(body, &["prompt_cache_options", "mode"]),

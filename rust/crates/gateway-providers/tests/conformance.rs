@@ -518,8 +518,12 @@ fn direct_paid_and_synthetic_pins_preserve_catalog_admission() {
         openlux_enabled: true,
         surplus_configured: true,
         openlux_configured: true,
-        surplus_catalog: Some(vec![surplus]),
-        openlux_catalog: Some(vec![openlux]),
+        surplus_catalog: Some(vec![
+            gateway_core::source_json::SourceJson::from_serializable(&surplus).unwrap(),
+        ]),
+        openlux_catalog: Some(vec![
+            gateway_core::source_json::SourceJson::from_serializable(&openlux).unwrap(),
+        ]),
         allowed_paid_providers: None,
         synthetic_hop: None,
         ubiquity_enabled: true,

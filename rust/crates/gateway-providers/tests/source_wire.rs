@@ -50,7 +50,7 @@ fn literal_source_units_reach_direct_provider_wire_and_input_is_immutable() {
             provider,
             ClientSurface::Responses,
             &original,
-            model,
+            &model.into(),
             &options(),
         )
         .unwrap();
@@ -103,7 +103,7 @@ fn actual_stringify_boundary_uses_shared_duplicate_integer_key_and_number_semant
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap();
@@ -136,7 +136,7 @@ fn buffered_and_actual_sse_writer_created_progress_terminal_echo_the_same_source
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap();
@@ -184,7 +184,7 @@ fn utf16_tool_prefix_collision_namespace_and_map_wire_are_source_strings() {
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap();
@@ -219,7 +219,7 @@ fn direct_native_and_ordinary_branches_keep_the_source_phase_boundary() {
         UpstreamProvider::Openrouter,
         ClientSurface::Responses,
         &raw,
-        "openai/test",
+        &"openai/test".into(),
         &options,
     )
     .unwrap();
@@ -230,7 +230,7 @@ fn direct_native_and_ordinary_branches_keep_the_source_phase_boundary() {
         UpstreamProvider::ChatgptCodex,
         ClientSurface::Responses,
         &raw,
-        "gpt-fixture",
+        &"gpt-fixture".into(),
         &options,
     )
     .unwrap_err();
@@ -262,7 +262,7 @@ fn source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units() {
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap_err();
@@ -284,7 +284,7 @@ fn source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units() {
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap_err();
@@ -320,7 +320,7 @@ fn codex_replay_and_direct_chat_do_not_lose_source_text() {
         UpstreamProvider::ChatgptCodex,
         ClientSurface::Responses,
         &raw,
-        "gpt-fixture",
+        &"gpt-fixture".into(),
         &options(),
     )
     .unwrap();
@@ -337,7 +337,7 @@ fn codex_replay_and_direct_chat_do_not_lose_source_text() {
         UpstreamProvider::Deepseek,
         ClientSurface::Chat,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap();
@@ -379,7 +379,7 @@ fn paid_and_native_claude_source_wire_and_request_echo_keep_text_and_schema_unit
             provider,
             ClientSurface::Responses,
             &raw,
-            "claude-opus-5-5",
+            &"claude-opus-5-5".into(),
             &options(),
         )
         .unwrap();
@@ -404,7 +404,7 @@ fn source_original_tool_identity_survives_buffered_and_streamed_generated_items(
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap()
@@ -456,7 +456,7 @@ fn selected_provider_phase_errors_and_open_effort_do_not_scalarize_source_contro
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap();
@@ -471,7 +471,7 @@ fn selected_provider_phase_errors_and_open_effort_do_not_scalarize_source_contro
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap_err();
@@ -486,7 +486,7 @@ fn selected_provider_phase_errors_and_open_effort_do_not_scalarize_source_contro
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap_err();
@@ -499,7 +499,7 @@ fn selected_provider_phase_errors_and_open_effort_do_not_scalarize_source_contro
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap_err();
@@ -518,7 +518,7 @@ fn reasoning_refusal_and_agent_message_envelopes_preserve_literal_units() {
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap();
@@ -547,7 +547,7 @@ fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_bounda
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap();
@@ -570,7 +570,7 @@ fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_bounda
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &disabled,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap_err();
@@ -616,7 +616,7 @@ fn custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mi
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        "deepseek-flash",
+        &"deepseek-flash".into(),
         &options(),
     )
     .unwrap()

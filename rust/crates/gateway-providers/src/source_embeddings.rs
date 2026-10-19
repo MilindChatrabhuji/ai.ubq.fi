@@ -1,6 +1,6 @@
 //! Finite validated embeddings decode controls; ordinary request text is never scalarized.
 use crate::{extras::base64_encode, types::*};
-use gateway_core::{GatewayError,source_json::SourceJson};
+use gateway_core::{GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 pub fn decode_embeddings(value: &Value, plan: &DecodePlan) -> Result<SourceJson, GatewayError> {
     // Preparation validated this named profile; decode needs only these finite controls.
@@ -43,7 +43,13 @@ pub fn decode_embeddings(value: &Value, plan: &DecodePlan) -> Result<SourceJson,
         .as_f64()
         .filter(|v| v.is_finite())
         .map(|v| v.max(0.0).trunc());
-    let mut body=crate::source::generated(&json!({"object":"list","data":data,"usage":{"prompt_tokens":total,"total_tokens":total}}));
-    crate::source::set(&mut body,"model",crate::source::quoted(plan.model.as_js_string()));
+    let mut body = crate::source::generated(
+        &json!({"object":"list","data":data,"usage":{"prompt_tokens":total,"total_tokens":total}}),
+    );
+    crate::source::set(
+        &mut body,
+        "model",
+        crate::source::quoted(plan.model.as_js_string()),
+    );
     Ok(body)
 }

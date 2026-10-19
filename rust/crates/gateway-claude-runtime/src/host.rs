@@ -9,7 +9,7 @@ use gateway_admin_runtime::{
 };
 use gateway_auth::AuthHost;
 use gateway_catalog_runtime::ProviderBinding;
-use gateway_core::{GatewayError, source_json::SourceJson, state::RevisionCheck};
+use gateway_core::{GatewayError, model::ModelId, source_json::SourceJson, state::RevisionCheck};
 use gateway_providers::{AuthMaterial, Headers, PrepareOptions};
 use gateway_schema::{catalog::ProviderCatalog, selection::ProviderSelection};
 use serde::Serialize;
@@ -35,7 +35,7 @@ pub struct SelectedAccount {
     pub(crate) options: PrepareOptions,
     pub(crate) replay_scope: String,
     pub(crate) key_id: String,
-    pub(crate) model: String,
+    pub(crate) model: ModelId,
     pub(crate) raw: SourceJson,
     pub(crate) disabled: bool,
     pub(crate) native_checks: Vec<RevisionCheck>,
@@ -93,7 +93,7 @@ pub enum PoolSelection {
 
 pub struct SelectionInput<'a> {
     pub key_id: &'a str,
-    pub model: &'a str,
+    pub model: &'a ModelId,
     pub raw: &'a SourceJson,
     /// The same server-owned source selection used for validation and the m14 plan.
     pub selection: Option<&'a ProviderSelection>,
@@ -112,7 +112,7 @@ pub struct ResponseObservation {
 /// No Clone/Deserialize: finalization consumes it exactly once.
 pub struct AcceptedHead {
     pub(crate) selected: SelectedAccount,
-    pub(crate) model: String,
+    pub(crate) model: ModelId,
     pub(crate) response: ResponseObservation,
     pub(crate) classification: Classification,
     pub(crate) observation: Option<QuotaObservation>,
