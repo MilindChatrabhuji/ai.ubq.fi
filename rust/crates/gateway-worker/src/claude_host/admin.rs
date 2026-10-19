@@ -14,6 +14,7 @@ use gateway_admin_runtime::{
 use gateway_auth::{AuthHost, AuthResponse, AuthResponseBody};
 use gateway_core::{
     GatewayError, js_string::JsString16, source_json::SourceJson, source_serialization as source,
+    state::AuthorityStore,
 };
 use gateway_observability::{ObservabilityHost, ObservabilityRuntime};
 use serde::Serialize;
@@ -46,7 +47,7 @@ pub async fn admin<H: ObservabilityHost>(
     match request {
         ClaudeRequest::State => response(observations, context).await,
         ClaudeRequest::SelectAccount { account_id } => {
-            if !claude::select_account(store, platform, &account_id, None).await? {
+            if !select_source_account(store, platform, &account_id).await? {
                 return Err(not_found());
             }
             response(observations, context).await
@@ -55,11 +56,14 @@ pub async fn admin<H: ObservabilityHost>(
             let account = target(
                 store,
                 platform,
-                account_id.as_deref().filter(|id| !id.is_empty()),
+                account_id.as_ref().filter(|id| !id.as_units().is_empty()),
             )
             .await?;
             let Some(account) = account else {
-                return if account_id.as_ref().is_some_and(|id| !id.is_empty()) {
+                return if account_id
+                    .as_ref()
+                    .is_some_and(|id| !id.as_units().is_empty())
+                {
                     Err(not_found())
                 } else {
                     response(observations, context).await
@@ -82,23 +86,30 @@ pub async fn admin<H: ObservabilityHost>(
             let account = target(
                 store,
                 platform,
-                account_id.as_deref().filter(|id| !id.is_empty()),
+                account_id.as_ref().filter(|id| !id.as_units().is_empty()),
             )
             .await?;
             let Some(account) = account else {
-                if account_id.as_ref().is_some_and(|id| !id.is_empty()) {
+                if account_id
+                    .as_ref()
+                    .is_some_and(|id| !id.as_units().is_empty())
+                {
                     return Err(not_found());
                 }
                 return cleared_response(observations, context, false).await;
             };
-            if account_id.as_ref().is_some_and(|id| !id.is_empty()) && cohort_id.is_none() {
+            if account_id
+                .as_ref()
+                .is_some_and(|id| !id.as_units().is_empty())
+                && cohort_id.is_none()
+            {
                 return Err(gateway_auth::invalid(
                     "account_cohort_id is required for a targeted clear",
                 ));
             }
             if cohort_id
                 .as_ref()
-                .is_some_and(|id| *id != account.account_cohort_id)
+                .is_some_and(|id| !selector_matches(id, &account.account_cohort_id))
             {
                 return Err(changed("Claude account generation changed"));
             }
@@ -120,10 +131,34 @@ pub async fn admin<H: ObservabilityHost>(
     }
 }
 
+fn selector_matches(input: &JsString16, actual_stored_id: &str) -> bool {
+    input
+        .as_units()
+        .iter()
+        .copied()
+        .eq(actual_stored_id.encode_utf16())
+}
+
+async fn select_source_account(
+    store: &RemoteAuthorityStore,
+    platform: &PlatformHost,
+    id: &JsString16,
+) -> Result<bool, GatewayError> {
+    if let Ok(id) = id.try_utf8() {
+        return claude::select_account(store, platform, &id, None).await;
+    }
+    // Generated stored UUIDs cannot match these units. Preserve the actual
+    // existing read/decode error order; do not bootstrap or fabricate an ID.
+    if let Some(row) = store.read(&claude::account_store_key()).await? {
+        claude::decode_roster_record(&row, platform.now_ms())?;
+    }
+    Ok(false)
+}
+
 async fn target(
     store: &RemoteAuthorityStore,
     platform: &PlatformHost,
-    id: Option<&str>,
+    id: Option<&JsString16>,
 ) -> Result<Option<AccountBinding>, GatewayError> {
     let seed = super::platform::bootstrap_for_source(store, platform).await?;
     let roster = claude::load_roster(store, platform, &seed).await?;
@@ -132,7 +167,7 @@ async fn target(
             .roster
             .accounts
             .into_iter()
-            .find(|account| account.account_id == id),
+            .find(|account| selector_matches(id, &account.account_id)),
         None => claude::active_binding(&roster.roster).cloned(),
     })
 }
@@ -144,10 +179,11 @@ async fn submit<H: ObservabilityHost>(
     input: ClaudeSubmission,
     context: Context,
 ) -> Result<AuthResponse, GatewayError> {
+    let source_account_id = input.account_id.as_deref().map(JsString16::from_utf8);
     let old = if input.create_new {
         None
     } else {
-        target(store, platform, input.account_id.as_deref())
+        target(store, platform, source_account_id.as_ref())
             .await
             .map_err(|error| gateway_auth::invalid(&error.envelope.error.message))?
     };
@@ -476,6 +512,24 @@ mod tests {
                 .as_str(),
             "null"
         );
+    }
+
+    #[test]
+    fn source_selectors_compare_exact_units_without_new_uuid_input_refusal() {
+        let actual = "00000000-0000-0000-0000-000000000001";
+        assert!(selector_matches(&JsString16::from_utf8(actual), actual));
+        assert!(!selector_matches(
+            &JsString16::from_utf8(&format!(" {actual}")),
+            actual
+        ));
+        assert!(!selector_matches(
+            &JsString16::from_units(vec![0xd800]),
+            actual
+        ));
+        assert!(!selector_matches(
+            &JsString16::from_units(vec![0xdc00]),
+            actual
+        ));
     }
 
     #[test]
