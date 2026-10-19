@@ -59,7 +59,7 @@ pub(crate) fn prepare(
             options.auth = material.clone();
             options.client_version = input.client_version.clone();
             options.native_session_id = input.native_session_id.clone();
-            options.response_id = format!("resp_{}", nonce.replace('-', ""));
+            options.response_id = gateway_providers::response::translated_response_id(nonce);
             options.conversation_id = Some(conversation_id.to_owned());
             options.created_at = now / 1000;
             options.allowed_models = policy::provider_ids(input, provider);
@@ -149,7 +149,7 @@ pub(crate) fn finalize_claude(
         .into());
     };
     let mut options = body_options.clone();
-    options.response_id = format!("resp_{}", nonce.replace('-', ""));
+    options.response_id = gateway_providers::response::translated_response_id(nonce);
     options.created_at = now / 1000;
     // The factory's requested/canonical association and already-normalized controls stay captured.
     let canonical = phase.model().clone();
@@ -162,3 +162,7 @@ pub(crate) fn finalize_claude(
     }
     Ok(PreparedWireRequest::Claude(body))
 }
+
+#[cfg(test)]
+#[path = "response_id_tests.rs"]
+mod response_id_tests;

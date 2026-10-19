@@ -225,7 +225,7 @@ fn existing_import_uses_actual_admin_source_before_header_and_body_proof() {
                     .is_err()
             );
             malformed = row.clone();
-            malformed.value["v"] = json!(2);
+            malformed.value["v"] = json!(3);
             assert!(
                 crate::native_control::validate_native_control_custody(&custody_key, &malformed)
                     .is_err()
@@ -391,3 +391,6 @@ fn unsupported_slots_profiles_and_wrong_original_actor_have_no_fake_fences() {
         );
     });
 }
+
+#[path = "import_effects.rs"]
+mod effects;

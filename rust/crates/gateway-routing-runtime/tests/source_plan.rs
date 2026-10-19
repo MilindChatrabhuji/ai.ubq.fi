@@ -1,14 +1,18 @@
-mod support;
+#[path = "support/input.rs"]
+mod source_input;
 use gateway_core::{
     js_string::JsString16, model::ModelId, provider::UpstreamProvider, source_json::SourceJson,
     source_serialization as source,
 };
 use gateway_providers::ClientSurface;
 use gateway_routing_runtime::{
-    RoutingError, SourceRefusalBody,
+    RoutingError, RoutingInput, SourceRefusalBody,
     policy::{self, RouteHop},
 };
-use support::*;
+use source_input::{NOW, input};
+fn fixture_json<T: serde::Serialize + ?Sized>(value: &T) -> SourceJson {
+    SourceJson::from_serializable(value).unwrap()
+}
 struct NoSortingExpected;
 impl gateway_schema::aliases::SourceStringCollator for NoSortingExpected {
     fn compare(
