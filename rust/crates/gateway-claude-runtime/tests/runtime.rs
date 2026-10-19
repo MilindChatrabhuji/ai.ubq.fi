@@ -333,7 +333,10 @@ fn workspace_retry_selects_default_rotates_cohort_and_does_not_refetch_effort_ca
     let config = seed(&store, vec![a.clone()]);
     let host = Host::new(&store);
     let session = ClaudePoolSession::new(config);
-    let raw = json!({"model":MODEL,"input":"fixture","reasoning":{"effort":"high"}});
+    let raw = gateway_core::source_json::SourceJson::from_serializable(
+        &json!({"model":MODEL,"input":"fixture","reasoning":{"effort":"high"}}),
+    )
+    .unwrap();
     let first = selected(&session, &store, &host, &raw);
     assert_eq!(host.catalog_calls.get(), 1);
     let observed =
@@ -369,7 +372,10 @@ fn disabled_thinking_refusal_never_discovers_workspace_or_transfers_permission()
     let config = seed(&store, vec![account(1)]);
     let host = Host::new(&store);
     let session = ClaudePoolSession::new(config);
-    let raw = json!({"model":MODEL,"input":"fixture","reasoning":{"effort":"none"}});
+    let raw = gateway_core::source_json::SourceJson::from_serializable(
+        &json!({"model":MODEL,"input":"fixture","reasoning":{"effort":"none"}}),
+    )
+    .unwrap();
     let first = selected(&session, &store, &host, &raw);
     let observed =
         run(session.observe_response(&store, &host, &first, head(400, Headers::new(), NOW)))

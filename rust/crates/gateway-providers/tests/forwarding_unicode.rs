@@ -42,7 +42,8 @@ fn source_bmp_prefix_is_exactly_31343_code_units() {
         ChatProfile::Deepseek,
     )
     .unwrap();
-    let content = result.body["messages"].as_array().unwrap().last().unwrap()["content"]
+    let body = scalar(&result.body);
+    let content = body["messages"].as_array().unwrap().last().unwrap()["content"]
         .as_str()
         .unwrap();
     let prefix = &content[..content.find("\n[gateway:").unwrap()];
@@ -72,7 +73,8 @@ fn five_source_unicode_seams_match_exact_prefix_marker_counts_and_call_id() {
                 let before = raw.clone();
                 let result =
                     chat::project_responses(&raw, "deepseek-flash", false, profile).unwrap();
-                let tool = result.body["messages"].as_array().unwrap().last().unwrap();
+                let body = scalar(&result.body);
+                let tool = body["messages"].as_array().unwrap().last().unwrap();
                 assert_eq!(tool["role"], "tool");
                 assert_eq!(tool["tool_call_id"], "call_unicode");
                 assert_eq!(
@@ -88,7 +90,14 @@ fn five_source_unicode_seams_match_exact_prefix_marker_counts_and_call_id() {
                 let actual = &result.elisions[0];
                 let source = &case["elision"];
                 assert_eq!(actual.path, source["path"].as_str().unwrap());
-                assert_eq!(actual.call_id.as_deref(), source["callId"].as_str());
+                assert_eq!(
+                    actual
+                        .call_id
+                        .as_ref()
+                        .map(|id| id.try_utf8().unwrap())
+                        .as_deref(),
+                    source["callId"].as_str()
+                );
                 assert_eq!(actual.kind, source["kind"].as_str().unwrap());
                 assert_eq!(
                     actual.original_bytes,
@@ -115,7 +124,11 @@ fn in_budget_unicode_is_verbatim_for_every_reduction_setting() {
         let result =
             chat::project_responses(&raw, "deepseek-flash", false, ChatProfile::Deepseek).unwrap();
         assert_eq!(
-            result.body["messages"].as_array().unwrap().last().unwrap()["content"],
+            scalar(&result.body)["messages"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()["content"],
             text
         );
         assert!(result.elisions.is_empty());
@@ -165,4 +178,10 @@ fn disabled_unicode_refuses_preparation_with_exact_source_error() {
             expected["param"].as_str()
         );
     }
+}
+
+fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+    value
+        .deserialize()
+        .expect("This frozen regression fixture has scalar text")
 }

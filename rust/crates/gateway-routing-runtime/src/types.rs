@@ -20,7 +20,7 @@ use std::{collections::BTreeMap, future::Future};
 pub struct RoutingInput {
     pub context: RequestContext,
     pub principal: AuthPrincipal,
-    pub raw: Value,
+    pub raw: gateway_core::source_json::SourceJson,
     pub surface: ClientSurface,
     pub catalog: CatalogInput,
     pub runtime: Option<Value>,
@@ -28,6 +28,48 @@ pub struct RoutingInput {
     pub native_session_id: Option<String>,
     /// Existing server-side request retry policy; never read from client JSON.
     pub retry_prohibited: bool,
+}
+
+impl RoutingInput {
+    /// Neutral data construction only; validation remains in source-defined planning phases.
+    pub fn from_source_request(
+        metadata: crate::local_work::LocalRequestMetadata,
+        request: gateway_schema::source_request::OrdinarySourceRequest,
+    ) -> Self {
+        Self {
+            context: metadata.context,
+            principal: metadata.principal,
+            raw: request.original_source().clone(),
+            surface: match request.surface() {
+                gateway_schema::request::RequestSurface::Responses => ClientSurface::Responses,
+                gateway_schema::request::RequestSurface::ChatCompletions => ClientSurface::Chat,
+            },
+            catalog: metadata.catalog,
+            runtime: metadata.runtime,
+            client_version: metadata.client_version,
+            native_session_id: metadata.native_session_id,
+            retry_prohibited: metadata.retry_prohibited,
+        }
+    }
+    pub fn original_source(&self) -> &gateway_core::source_json::SourceJson {
+        &self.raw
+    }
+    pub fn source_member(&self, name: &str) -> Option<gateway_core::source_json::SourceJson> {
+        gateway_core::source_serialization::member(&self.raw, name)
+    }
+    pub fn streamed(&self) -> bool {
+        self.source_member("stream")
+            .is_some_and(|value| value.as_str() == "true")
+    }
+    pub fn requested_reasoning(&self) -> Option<gateway_core::js_string::JsString16> {
+        self.source_member("reasoning")
+            .and_then(|value| gateway_core::source_serialization::member(&value, "effort"))
+            .and_then(|value| gateway_core::source_serialization::string(&value))
+            .or_else(|| {
+                self.source_member("reasoning_effort")
+                    .and_then(|value| gateway_core::source_serialization::string(&value))
+            })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -51,12 +93,47 @@ impl SourceRefusalBody {
         }
     }
 }
+impl RoutingError {
+    /// Cleanup is an internal diagnostic; the original wire status/body remain authoritative.
+    pub(crate) fn with_cleanup_diagnostic(mut self, cleanup: &RoutingError) -> Self {
+        if self.source_body.is_none() {
+            self.source_body = Some(SourceRefusalBody::Json(
+                gateway_core::source_json::SourceJson::from_serializable(&self.error.envelope)
+                    .expect("A scalar error envelope is valid source JSON"),
+            ));
+        }
+        let code = cleanup
+            .error
+            .envelope
+            .error
+            .code
+            .as_deref()
+            .unwrap_or("unknown")
+            .chars()
+            .take(48)
+            .collect::<String>();
+        self.error.envelope.error.message = format!(
+            "Original request failure; original-lifetime cleanup also failed (status {}, code {}).",
+            cleanup.error.status, code,
+        );
+        self
+    }
+}
 impl From<GatewayError> for RoutingError {
     fn from(error: GatewayError) -> Self {
         Self {
             error: Box::new(error),
             headers: BTreeMap::new(),
             source_body: None,
+        }
+    }
+}
+impl From<gateway_schema::source_request::SourceRequestError> for RoutingError {
+    fn from(error: gateway_schema::source_request::SourceRequestError) -> Self {
+        Self {
+            error: Box::new(error.diagnostic().clone()),
+            headers: BTreeMap::new(),
+            source_body: Some(SourceRefusalBody::Json(error.body().clone())),
         }
     }
 }
@@ -217,7 +294,7 @@ pub trait RoutingHost {
         &self,
         principal: &AuthPrincipal,
         model: &str,
-        raw: &Value,
+        raw: &gateway_core::source_json::SourceJson,
     ) -> impl Future<Output = Result<ClaudeSelection, GatewayError>>;
     fn observe_claude_response(
         &self,
@@ -330,5 +407,47 @@ mod record_key {
             .and_then(|key| key.validate_stored_key())
             .map_err(|_| D::Error::custom("Invalid source tuple key"))?;
         Ok(key)
+    }
+}
+
+#[cfg(test)]
+mod source_cleanup_tests {
+    use super::*;
+    use gateway_core::{js_string::JsString16, source_json::SourceJson};
+    #[test]
+    fn cleanup_diagnostic_never_overwrites_original_source_wire_truth() {
+        let source = gateway_schema::source_request::SourceRequestError::new(
+            400,
+            JsString16::from_units(vec![0xd800]),
+            "invalid_request_error",
+            Some("source_invalid"),
+            Some(Some(JsString16::from_units(vec![0xdfff]))),
+        );
+        let body = source.body().clone();
+        let error = RoutingError::from(source).with_cleanup_diagnostic(
+            &GatewayError::unavailable("cleanup detail", "cleanup_failed").into(),
+        );
+        assert_eq!(error.error.status, 400);
+        assert_eq!(error.source_body.unwrap().as_bytes(), body.as_bytes());
+        assert!(
+            error
+                .error
+                .envelope
+                .error
+                .message
+                .contains("cleanup also failed")
+        );
+        assert!(error.error.envelope.error.message.len() < 160);
+    }
+    #[test]
+    fn scalar_original_error_gets_exact_body_before_internal_cleanup_diagnostic() {
+        let source =
+            GatewayError::new(409, "original conflict", Some("original_conflict")).with_param(None);
+        let body = SourceJson::from_serializable(&source.envelope).unwrap();
+        let error = RoutingError::from(source).with_cleanup_diagnostic(
+            &GatewayError::unavailable("cleanup detail", "cleanup_failed").into(),
+        );
+        assert_eq!(error.error.status, 409);
+        assert_eq!(error.source_body.unwrap().as_bytes(), body.as_bytes());
     }
 }

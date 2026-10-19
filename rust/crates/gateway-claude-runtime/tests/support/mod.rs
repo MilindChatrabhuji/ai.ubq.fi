@@ -321,14 +321,17 @@ impl ClaudePoolHost for Host {
         }
     }
 }
-pub fn raw() -> Value {
-    json!({"model":MODEL,"input":"fixture"})
+pub fn raw() -> gateway_core::source_json::SourceJson {
+    gateway_core::source_json::SourceJson::from_serializable(
+        &json!({"model":MODEL,"input":"fixture"}),
+    )
+    .unwrap()
 }
 pub fn selected(
     session: &ClaudePoolSession,
     store: &Store,
     host: &Host,
-    raw: &Value,
+    raw: &gateway_core::source_json::SourceJson,
 ) -> SelectedAccount {
     match run(session.select(
         store,

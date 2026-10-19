@@ -48,11 +48,11 @@ fn claude_oauth_has_native_attribution_and_console_key_does_not() {
     )
     .unwrap();
     assert_eq!(
-        oauth.body["system"][0]["text"],
+        scalar(&oauth.body)["system"][0]["text"],
         "You are Claude Code, Anthropic's official CLI for Claude."
     );
-    assert_eq!(oauth.body["max_tokens"], 32_000);
-    assert!(oauth.body.get("prompt_cache_key").is_none());
+    assert_eq!(scalar(&oauth.body)["max_tokens"], 32_000);
+    assert!(scalar(&oauth.body).get("prompt_cache_key").is_none());
     let mut api = opts();
     api.auth.api_key = true;
     let api = prepare_request(
@@ -67,12 +67,12 @@ fn claude_oauth_has_native_attribution_and_console_key_does_not() {
         api.headers.get("x-api-key").map(String::as_str),
         Some("fixture")
     );
-    assert!(!api.body.to_string().contains("You are Claude Code"));
+    assert!(!api.body.as_str().to_owned().contains("You are Claude Code"));
 }
 #[test]
 fn buffered_cerebras_chat_client_stream_replays_real_finish_and_usage() {
     let prepared=prepare_request(UpstreamProvider::Cerebras,ClientSurface::Chat,&json!({"model":"qwen-3.8-27b","messages":[{"role":"user","content":"x"}],"stream":true,"stream_options":{"include_usage":true}}),&opts()).unwrap();
-    assert_eq!(prepared.body["stream"], false);
+    assert_eq!(scalar(&prepared.body)["stream"], false);
     let body = json!({"id":"chat_1","object":"chat.completion","created":1,"choices":[{"index":0,"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":1,"total_tokens":11}});
     let decoded = decode_response(
         &prepared.decode,
@@ -83,16 +83,16 @@ fn buffered_cerebras_chat_client_stream_replays_real_finish_and_usage() {
     .unwrap();
     assert_eq!(decoded.headers["Content-Type"], "text/event-stream");
     assert_eq!(
-        decoded.events[0].data["choices"][0]["delta"]["content"],
+        scalar(&decoded.events[0].data)["choices"][0]["delta"]["content"],
         "pong"
     );
     assert_eq!(
-        decoded.events[1].data["choices"][0]["finish_reason"],
+        scalar(&decoded.events[1].data)["choices"][0]["finish_reason"],
         "stop"
     );
-    assert_eq!(decoded.events[2].data["usage"]["total_tokens"], 11);
+    assert_eq!(scalar(&decoded.events[2].data)["usage"]["total_tokens"], 11);
     assert_eq!(
-        decoded.events.last().unwrap().data,
+        scalar(&decoded.events.last().unwrap().data),
         Value::String("[DONE]".into())
     );
 }
@@ -130,9 +130,9 @@ fn lithos_header_precedence_and_streamed_final_refusal_stay_in_band() {
     )
     .unwrap();
     assert_eq!(decoded.status, 200);
-    assert_eq!(decoded.events[0].data["type"], "response.failed");
+    assert_eq!(scalar(&decoded.events[0].data)["type"], "response.failed");
     assert_eq!(
-        decoded.events[0].data["response"]["error"]["code"],
+        scalar(&decoded.events[0].data)["response"]["error"]["code"],
         "tokens_exhausted"
     );
 }
@@ -151,7 +151,7 @@ fn codex_error_bytes_are_available_unchanged_before_authority_classification() {
     let result = decode_response(&request.decode, 400, &Headers::new(), bytes).unwrap();
     assert_eq!(result.status, 400);
     assert_eq!(result.raw_body.as_deref(), Some(bytes.as_slice()));
-    assert_eq!(result.body["detail"], "unrelated validation error");
+    assert_eq!(scalar(&result.body)["detail"], "unrelated validation error");
 }
 #[test]
 fn buffered_chat_retains_usage_without_requesting_a_stream_usage_chunk() {
@@ -173,8 +173,11 @@ fn buffered_chat_retains_usage_without_requesting_a_stream_usage_chunk() {
         bytes.as_bytes(),
     )
     .unwrap();
-    assert_eq!(response.body["choices"][0]["message"]["content"], "pong");
-    assert_eq!(response.body["usage"]["prompt_tokens"], 10);
+    assert_eq!(
+        scalar(&response.body)["choices"][0]["message"]["content"],
+        "pong"
+    );
+    assert_eq!(scalar(&response.body)["usage"]["prompt_tokens"], 10);
 }
 #[test]
 fn image_fanout_measures_every_replayed_input_byte() {
@@ -188,4 +191,10 @@ fn image_fanout_measures_every_replayed_input_byte() {
         )
         .is_err()
     );
+}
+
+fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+    value
+        .deserialize()
+        .expect("This frozen regression fixture has scalar text")
 }
