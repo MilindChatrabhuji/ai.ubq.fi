@@ -227,9 +227,16 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
         let index = self.store.read(&index_key).await?;
         store::commit(
             self.store,
-            vec![store::check(&session_key, record), store::check(&index_key, index.as_ref())],
-            vec![RecordMutation::Delete { key: session_key }, RecordMutation::Delete { key: index_key }],
-        ).await
+            vec![
+                store::check(&session_key, record),
+                store::check(&index_key, index.as_ref()),
+            ],
+            vec![
+                RecordMutation::Delete { key: session_key },
+                RecordMutation::Delete { key: index_key },
+            ],
+        )
+        .await
     }
     async fn user_by_handle(&self, handle: &str) -> Result<Option<PasskeyUser>, GatewayError> {
         let id: Option<String> = store::decode(
@@ -304,17 +311,23 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
         };
         let k = key("sessions", &session.token);
         let revision = self.revision()?;
-        let index = crate::session_index::record_for_session(&session, &revision, Some(session.expires_at_ms))?;
-        let index_key = crate::session_index::index_key(&crate::session_index::digest(&session.token))?;
+        let index = crate::session_index::record_for_session(
+            &session,
+            &revision,
+            Some(session.expires_at_ms),
+        )?;
+        let index_key =
+            crate::session_index::index_key(&crate::session_index::digest(&session.token))?;
         if !store::commit(
             self.store,
             vec![store::check(&k, None), store::check(&index_key, None)],
-            vec![store::put(
-                k,
-                &session,
-                Some(session.expires_at_ms),
-                &revision,
-            )?, RecordMutation::Put { key: index_key, record: index }],
+            vec![
+                store::put(k, &session, Some(session.expires_at_ms), &revision)?,
+                RecordMutation::Put {
+                    key: index_key,
+                    record: index,
+                },
+            ],
         )
         .await?
         {
@@ -706,8 +719,13 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
         if let Some(view) = self.session(request, override_token).await? {
             let k = key("sessions", &view.session.token);
             let row = self.store.read(&k).await?;
-            if !self.delete_session(&view.session.token, row.as_ref()).await? {
-                return Err(conflict("Passkey session was modified concurrently; retry logout"));
+            if !self
+                .delete_session(&view.session.token, row.as_ref())
+                .await?
+            {
+                return Err(conflict(
+                    "Passkey session was modified concurrently; retry logout",
+                ));
             }
         }
         let mut response = AuthResponse::json(204, Value::Null);
@@ -728,3 +746,7 @@ pub fn client_data(response: &Value) -> Result<Value, GatewayError> {
     let bytes = decode_base64url(encoded).map_err(|_| invalid("Invalid passkey response"))?;
     serde_json::from_slice(&bytes).map_err(|_| invalid("Invalid passkey response"))
 }
+
+#[cfg(test)]
+#[path = "../tests/session_index_cases/mod.rs"]
+mod session_index_cases;

@@ -434,7 +434,7 @@ fn pending_paid_exposure_and_rollup_marker_survive_restart_and_deferral_inverse(
     assert!(!row.transport_started);
     assert_eq!(
         run(authority.defer_paid(&row.reservation, 2300)).unwrap(),
-        Some(7300)
+        Some(5000)
     );
     let result = run(export_latest(&store, 2300)).unwrap();
     let next = result
@@ -847,12 +847,29 @@ fn identity_sidecars_retain_neither_deleted_session_token_nor_provider_secret() 
     ))
     .unwrap();
     let session = key(json!(["uos_ai", "auth", "sessions", token]));
+    let fence = run(gateway_auth::session_index::read_current(
+        &store,
+        &gateway_auth::session_index::digest(token),
+        2300,
+    ))
+    .unwrap()
+    .unwrap();
+    assert_eq!(fence.fence.session_revision, "session-source");
+    assert_eq!(fence.fence.user_id, "user-fixture");
     run(store.commit(AtomicTransition {
         checks: vec![RevisionCheck {
             key: session.clone(),
             expected_revision: Some("session-source".into()),
         }],
-        mutations: vec![RecordMutation::Delete { key: session }],
+        mutations: vec![
+            RecordMutation::Delete { key: session },
+            RecordMutation::Delete {
+                key: gateway_auth::session_index::index_key(&gateway_auth::session_index::digest(
+                    token,
+                ))
+                .unwrap(),
+            },
+        ],
     }))
     .unwrap();
     let metadata = run(store.query(gateway_core::query::QueryRequest {

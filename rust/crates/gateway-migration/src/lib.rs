@@ -2,8 +2,13 @@
 //! This library neither opens a source VM database nor grants runtime/publication ownership.
 mod capture;
 mod engine;
+pub mod graph_transport;
+mod graph_tree;
 mod indexes;
 mod inverse;
+mod native_capture;
+mod native_custody;
+mod native_inverse;
 mod projection;
 
 pub use capture::{PrivateCapture, SourceEntry};
@@ -11,6 +16,14 @@ pub use engine::{AdoptionReceipt, PreparedAdoption, adopt_empty, prepare};
 pub use gateway_admin_data::profile::{CanonicalDates, SourceDateHost};
 pub use inverse::{
     ArtifactContext, CustodyRecord, PrivateRollbackBundle, export_latest, export_rollback_bundle,
+};
+pub use native_capture::{NativeCapture, NativeEntry, NativeRevision, NativeValue, prepare_native};
+pub use native_custody::{
+    LocalNativeCapture, LocalNativeRollbackBundle, NativeCustody, OwnedNativeSnapshot,
+    export_native_rollback_with_custody, export_native_with_custody, sanitize_native_capture,
+};
+pub use native_inverse::{
+    NativeRollbackBundle, export_native_latest, export_native_rollback_bundle,
 };
 pub use projection::known_source_family;
 
@@ -43,6 +56,8 @@ pub(crate) struct Mapping {
     // Only non-secret transformed source rows need an original value sidecar.
     transform: Transform,
     baseline_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    native_origin: Option<native_capture::NativeOrigin>,
 }
 #[derive(Clone)]
 pub(crate) struct Row {
@@ -67,6 +82,15 @@ fn starts(parts: &[Value], prefix: &[&str]) -> bool {
             .zip(prefix)
             .all(|(a, b)| a.as_str() == Some(*b))
 }
+fn private_source_key(p: &[Value]) -> bool {
+    starts(p, &["uos_ai", "migration"])
+        || starts(p, &["uos_ai", "authority"])
+        || starts(p, &["uos_ai", "auth", "session_revision_index"])
+        || starts(
+            p,
+            &["uos_ai", "codex_live_calls", "v1", "pending_retirement"],
+        )
+}
 fn digest(record: &StoredRecord) -> Result<String, GatewayError> {
     Ok(gateway_auth::crypto::sha256_hex(
         &serde_json::to_vec(record).map_err(|_| invalid("Record cannot be encoded"))?,
@@ -85,10 +109,16 @@ fn parts(key: &RecordKey) -> Result<Vec<Value>, GatewayError> {
         .decoded_parts()?
         .into_iter()
         .map(|part| match part {
-            DecodedKeyPart::String(v) => String::from_utf8(v).map(Value::String).map_err(|_| {
-                unavailable("Non-UTF8 source application keys require exact opaque export")
+            DecodedKeyPart::String(v) => Ok(match String::from_utf8(v) {
+                Ok(value) => Value::String(value),
+                Err(error) => serde_json::json!({"native_string_bytes":error.into_bytes()}),
             }),
-            DecodedKeyPart::Number(v) if v.is_finite() => Ok(serde_json::json!(v)),
+            DecodedKeyPart::Number(v) if v.is_finite() => {
+                let v = if v == 0.0 { 0.0 } else { v };
+                gateway_core::value::PortableValue::number(v)
+                    .to_json_lossless()
+                    .ok_or_else(|| invalid("Finite source key number cannot be projected"))
+            }
             DecodedKeyPart::Boolean(v) => Ok(Value::Bool(v)),
             DecodedKeyPart::Bytes(bytes)=>Ok(serde_json::json!({"type":"Uint8Array","value":gateway_admin_data::profile::encode_base64(&bytes)})),
             DecodedKeyPart::BigInt{negative,magnitude}=>Ok(serde_json::json!({"type":"bigint","value":crate::inverse::decimal_key(negative,&magnitude)})),
