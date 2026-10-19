@@ -24,7 +24,19 @@ export async function failureCaptureCase(url: (path: string) => string, requestI
   assert(captured && Array.isArray(captured.data) && captured.data.length === 1, "The real terminal owner must persist encrypted capture rows.");
   const capture: unknown = captured.data[0];
   assert(object(capture) && object(capture.manifest) && Array.isArray(capture.chunks));
-  assert.equal(capture.manifest.request_id, requestId);
+  assert(!("request_id" in capture.manifest) && !("stored_bytes" in capture.manifest), "Private capture fields must not enter the frozen public manifest.");
+  assert(object(captured.capture_status));
+  assert.equal(captured.capture_status.request_id, requestId);
+  assert.equal(captured.capture_status.fingerprint, capture.manifest.fingerprint);
+  assert.deepEqual(captured.capture_status.manifest_key, [
+    "uos_ai",
+    "sentinel_replay",
+    "v1",
+    "manifest",
+    capture.manifest.captured_at_ms,
+    capture.manifest.fingerprint,
+    capture.manifest.capture_id,
+  ]);
   assert.equal(capture.manifest.chunk_count, capture.chunks.length);
   assert(typeof capture.manifest.ciphertext_bytes === "number" && capture.manifest.ciphertext_bytes > 0);
   assert(capture.chunks.length > 0 && capture.chunks.every((chunk: unknown) => typeof chunk === "string" && chunk.length > 0));
