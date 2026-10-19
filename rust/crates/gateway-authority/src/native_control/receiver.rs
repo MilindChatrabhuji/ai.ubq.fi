@@ -1,7 +1,7 @@
 use super::{
     NativeRenewalAction, NativeRenewalCancellation, NativeRenewalClaim, NativeRenewalControl,
     NativeRenewalFence, NativeRenewalMode, NativeRenewalPublished, OWNER_RENEWAL_MAX_MS, facts,
-    rows::{self, ActionRow, Actor, OperationRow, Phase, conflict, fail},
+    rows::{self, ActionRow, Actor, GenerationEffect, OperationRow, Phase, conflict, fail},
 };
 use crate::{Authority, TokenSource, add, store::Transaction, text};
 use gateway_auth::{
@@ -153,6 +153,7 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                         NativeRenewalMode::ReconcileOnly
                     },
                     start_permit: start_permit.map(str::to_owned),
+                    publication_revision: row.publication_revision,
                 });
             }
         }
@@ -329,11 +330,17 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
             }
             let key = rows::key("operation", operation_id);
             let existing: Option<OperationRow> = tx.read(&key).await?;
+            let generation_key = rows::generation_key(&action.fence)?;
+            let generation: Option<GenerationEffect> = tx.read(&generation_key).await?;
+            if generation.as_ref().is_some_and(|g| g.v != 1) {
+                return Err(fail());
+            }
             let (operation, mode, start_permit) = if let Some(row) = existing {
                 if row.v != 1
                     || row.action_ref != reference
                     || row.operation_id != operation_id
                     || row.request_digest != digest
+                    || generation.is_none()
                 {
                     return Err(conflict());
                 }
@@ -341,6 +348,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
             } else {
                 let permit = self.authority.tokens.next_token()?;
                 text(&permit)?;
+                let fresh = generation.is_none();
                 let row = OperationRow {
                     v: 1,
                     action_ref: reference.into(),
@@ -348,13 +356,37 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
                     request_digest: digest.clone(),
                     claim_ref: self.authority.tokens.next_token()?,
                     start_digest: sha256_hex(permit.as_bytes()),
-                    phase: Phase::Claimed,
+                    phase: if fresh {
+                        Phase::Claimed
+                    } else {
+                        Phase::Unknown
+                    },
                     publication_revision: None,
                     native_source_generation: None,
                     access_generation: None,
                 };
                 tx.put(&key, &row, None)?;
-                (row, NativeRenewalMode::RenewOnce, Some(permit))
+                if fresh {
+                    tx.put(
+                        &generation_key,
+                        &GenerationEffect {
+                            v: 1,
+                            operation_id: operation_id.into(),
+                            claim_ref: row.claim_ref.clone(),
+                            publication_revision: None,
+                        },
+                        None,
+                    )?;
+                }
+                (
+                    row,
+                    if fresh {
+                        NativeRenewalMode::RenewOnce
+                    } else {
+                        NativeRenewalMode::ReconcileOnly
+                    },
+                    fresh.then_some(permit),
+                )
             };
             if action.operation_id.is_none() {
                 action.operation_id = Some(operation_id.into());
@@ -372,6 +404,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
                     },
                     mode,
                     start_permit,
+                    publication_revision: operation.publication_revision,
                 });
             }
         }
@@ -388,8 +421,15 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
             let mut tx = self.authority.transaction(self.time(0)?)?;
             let (action, mut operation) = self.operation(&mut tx, claim).await?;
             self.current(&mut tx, &action).await?;
+            let generation: GenerationEffect = tx
+                .read(&rows::generation_key(&action.fence)?)
+                .await?
+                .ok_or_else(fail)?;
             if !can_start
                 || operation.phase != Phase::Claimed
+                || generation.v != 1
+                || generation.operation_id != claim.operation_id
+                || generation.claim_ref != claim.claim_ref
                 || permit
                     .as_ref()
                     .is_none_or(|p| sha256_hex(p.as_bytes()) != operation.start_digest)
