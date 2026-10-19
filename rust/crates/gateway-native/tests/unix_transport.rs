@@ -256,8 +256,10 @@ enum GuardPolicy {
     AdoptDuringHandshake,
 }
 
+type ObservedRequests = Vec<(String, Option<Value>)>;
+
 struct FixtureGuard {
-    observed: Arc<Mutex<Vec<(String, Option<Value>)>>>,
+    observed: Arc<Mutex<ObservedRequests>>,
     policy: GuardPolicy,
 }
 impl gateway_native::owner_control::NativeRenewalGuard for FixtureGuard {

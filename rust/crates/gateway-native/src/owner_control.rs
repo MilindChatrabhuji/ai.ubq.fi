@@ -15,6 +15,7 @@ pub struct NativeControlContext<'a> {
     original_auth: NativeAuthHeaders<'a>,
 }
 impl<'a> NativeControlContext<'a> {
+    #[cfg(unix)]
     pub(crate) fn admitted(
         deadline: Instant,
         disconnected: &'a dyn Fn() -> bool,
