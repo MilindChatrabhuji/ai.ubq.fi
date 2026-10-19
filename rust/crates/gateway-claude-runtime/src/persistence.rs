@@ -12,7 +12,7 @@ use gateway_auth::{
 use gateway_core::{
     GatewayError,
     model::ModelId,
-    state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck, StoredRecord},
+    state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck},
 };
 use serde_json::json;
 
