@@ -530,7 +530,7 @@ fn deletion_refuses_pending_markers_and_returns_actual_guard_fences() {
     let service = runtime(&store, &host, &config);
     store.put(
         json!(["ubq_ai", "api_keys", "id", "key"]),
-        json!({"revoked_at_ms":900000}),
+        json!({"id":"key","name":"deletion fixture","prefix":"u_0000000000","hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","created_at_ms":800000,"expires_at_ms":-1,"revoked_at_ms":900000,"usage_limit_requests":-1,"usage_requests":0,"usage_reset_at_ms":2000000,"window_ms":604800000,"usage_quota_version":3,"paid_fallback_enabled":false,"paid_fallback_limit_microcredits":0,"paid_fallback_spent_microcredits":0,"paid_fallback_reserved_microcredits":0,"paid_fallback_reservation_request_id":null,"paid_fallback_model_ids":[],"paid_fallback_quota_per_credit":0,"paid_fallback_max_exposure_microcredits":{},"paid_fallback_pricing_checked_at_ms":null}),
     );
     store.put(
         json!(["uos_ai", "paid_fallback", "v3", "pending", "key", "attempt"]),
@@ -927,7 +927,7 @@ fn deletion_cleans_settled_state_then_owned_history_and_retains_ordinary_guard()
     let service = runtime(&store, &host, &config);
     store.put(
         json!(["ubq_ai", "api_keys", "id", "key"]),
-        json!({"revoked_at_ms":900000}),
+        json!({"id":"key","name":"deletion fixture","prefix":"u_0000000000","hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","created_at_ms":800000,"expires_at_ms":-1,"revoked_at_ms":900000,"usage_limit_requests":-1,"usage_requests":0,"usage_reset_at_ms":2000000,"window_ms":604800000,"usage_quota_version":3,"paid_fallback_enabled":false,"paid_fallback_limit_microcredits":0,"paid_fallback_spent_microcredits":0,"paid_fallback_reserved_microcredits":0,"paid_fallback_reservation_request_id":null,"paid_fallback_model_ids":[],"paid_fallback_quota_per_credit":0,"paid_fallback_max_exposure_microcredits":{},"paid_fallback_pricing_checked_at_ms":null}),
     );
     store.put(json!(["uos_ai","paid_fallback","v3","request","key","attempt"]),json!({"v":3,"reservation":{"key_id":"key","request_id":"original","attempt_id":"attempt","provider":"metered","window_reset_at_ms":2000000,"created_at_ms":900000,"reserved_microcredits":20},"policy_version":"v3:week","model":"gpt-source","route":"responses","path":"/v1/responses","stream":true,"reasoning":null,"quota_per_credit":1000,"provider_request_id":"provider-request","dispatch_state":"dispatched","terminal_state":"completed","billing_state":"settled","provider_quota":1.0,"input_tokens":10,"cached_input_tokens":null,"output_tokens":1,"spend_microcredits":10,"transport_started":true,"reconciliation_attempts":0,"last_reconciliation_at_ms":null,"dispatched_at_ms":900000,"terminal_at_ms":900100,"settled_at_ms":900200,"updated_at_ms":900200,"usage_rollup_at_ms":900200}));
     store.put(json!(["uos_ai","paid_fallback","v3","window","key",2000000]),json!({"v":3,"key_id":"key","policy_version":"v3:week","window_reset_at_ms":2000000,"limit_microcredits":100,"settled_microcredits":10,"reserved_microcredits":0,"pending_count":0,"updated_at_ms":900200}));
@@ -1069,7 +1069,7 @@ fn local_development_deletion_releases_only_owner_marker_and_completes_after_abs
     let id = "local-development";
     store.put(
         json!(["ubq_ai", "api_keys", "id", id]),
-        json!({"revoked_at_ms":900000}),
+        json!({"id":id,"name":"deletion fixture","prefix":"u_0000000000","hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","created_at_ms":800000,"expires_at_ms":-1,"revoked_at_ms":900000,"usage_limit_requests":-1,"usage_requests":0,"usage_reset_at_ms":2000000,"window_ms":604800000,"usage_quota_version":3,"paid_fallback_enabled":false,"paid_fallback_limit_microcredits":0,"paid_fallback_spent_microcredits":0,"paid_fallback_reserved_microcredits":0,"paid_fallback_reservation_request_id":null,"paid_fallback_model_ids":[],"paid_fallback_quota_per_credit":0,"paid_fallback_max_exposure_microcredits":{},"paid_fallback_pricing_checked_at_ms":null}),
     );
     store.put(
         json!(["uos_ai", "paid_fallback", "v3", "pending", id, "attempt"]),
