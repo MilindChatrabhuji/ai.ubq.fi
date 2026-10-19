@@ -1,6 +1,9 @@
 //! Exact source Codex429 and entitlement proofs; an HTTP status alone is not quota.
 use chrono::{DateTime, Utc};
 use gateway_authority::routing::{QuotaBlock, QuotaBlockSource};
+use gateway_core::{
+    js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as source,
+};
 use gateway_providers::Headers;
 use serde::{
     Deserialize, Deserializer,
@@ -144,20 +147,71 @@ pub fn codex_quota(
         recovery_pending: false,
     })
 }
+fn source_message(prefix: &str, model: &ModelId, suffix: &str) -> JsString16 {
+    let mut units: Vec<u16> = prefix.encode_utf16().collect();
+    units.extend_from_slice(model.as_js_string().as_units());
+    units.extend(suffix.encode_utf16());
+    JsString16::from_units(units)
+}
+fn complete_source_json(bytes: &[u8], complete: bool) -> Option<SourceJson> {
+    if !complete {
+        return None;
+    }
+    let value = SourceJson::parse_bytes(bytes).ok()?;
+    fn unambiguous(value: &SourceJson) -> bool {
+        match value.as_bytes().first() {
+            Some(b'{') => {
+                let Ok(entries) = value.object_entries() else {
+                    return false;
+                };
+                let mut keys = BTreeSet::new();
+                entries
+                    .into_iter()
+                    .all(|(key, value)| keys.insert(key) && unambiguous(&value))
+            }
+            Some(b'[') => value
+                .array_items()
+                .is_ok_and(|values| values.iter().all(unambiguous)),
+            Some(b'"') => source::string(value).is_some(),
+            _ if matches!(value.as_str(), "true" | "false" | "null") => true,
+            _ => value.as_str().parse::<f64>().is_ok_and(f64::is_finite),
+        }
+    }
+    unambiguous(&value).then_some(value)
+}
 pub fn unsupported_model(
     status: Option<u16>,
     bytes: &[u8],
     complete: bool,
-    model: &str,
-) -> Option<String> {
+    model: &ModelId,
+) -> Option<JsString16> {
     if status != Some(400) {
         return None;
     }
-    let body = complete_json(bytes, complete)?;
-    let detail = body.get("detail")?.as_str()?;
+    let body = complete_source_json(bytes, complete)?;
+    let detail = source::member(&body, "detail").and_then(|value| source::string(&value))?;
     (detail
-        == format!("The '{model}' model is not supported when using Codex with a ChatGPT account."))
-    .then(|| detail.to_owned())
+        == source_message(
+            "The '",
+            model,
+            "' model is not supported when using Codex with a ChatGPT account.",
+        ))
+    .then_some(detail)
+}
+pub(crate) fn model_unavailable_error(
+    model: &ModelId,
+) -> gateway_schema::source_request::SourceRequestError {
+    gateway_schema::source_request::SourceRequestError::new(
+        404,
+        source_message(
+            "The model '",
+            model,
+            "' is not available for these subscriptions.",
+        ),
+        "invalid_request_error",
+        Some("model_not_found"),
+        None,
+    )
 }
 pub fn retry_after_millis(headers: &Headers, now: i64) -> Option<i64> {
     retry_after(headers, now).map(|(time, _)| time - now)

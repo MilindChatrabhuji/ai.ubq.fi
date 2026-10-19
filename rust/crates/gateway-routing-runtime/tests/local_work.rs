@@ -16,7 +16,9 @@ use gateway_core::{
     },
     tuple_key::{ScalarKeyPart, TupleKey},
 };
-use gateway_routing_runtime::{RoutingSession, custody, local_work::*, policy, recover_pending};
+use gateway_routing_runtime::{
+    RoutingHost, RoutingSession, custody, local_work::*, policy, recover_pending,
+};
 use gateway_schema::source_request::SourceRequestDocument;
 use serde_json::json;
 use std::sync::{
@@ -103,7 +105,14 @@ fn local_success_reserves_before_any_ordinary_plan_and_releases_only_unused_disp
     seed_key(&store);
     seed_pool(&store);
     let original_pool = store.value(source_key());
-    assert!(policy::plan(&input("unplanned", "unavailable-model", &[]), NOW).is_err());
+    assert!(
+        policy::plan(
+            &input("unplanned", "unavailable-model", &[]),
+            NOW,
+            Host::new(&store).source_string_collator().as_ref()
+        )
+        .is_err()
+    );
     let local = begin_local(&store, "unplanned");
     assert_eq!(local.original_source().as_str(), ORIGINAL);
     assert_eq!(window(&store)["reserved_requests"], 1);
@@ -113,8 +122,16 @@ fn local_success_reserves_before_any_ordinary_plan_and_releases_only_unused_disp
     assert_eq!(journal["attempts"], json!([]));
     assert!(journal["active"].is_null());
     assert_custody(&store);
-    let delivery = run(local.begin_local_response()).unwrap();
-    let settled = run(delivery.finish(observation(LocalSemanticOutcome::Completed))).unwrap();
+    let mut pending = local.mark_local_completed().unwrap();
+    let LocalCompletionAdvance::Ready(mut delivery) = run(pending.advance()).unwrap() else {
+        panic!("genuine completion must be confirmed");
+    };
+    let settled = run(delivery.finish_delivery(
+        Some(ReaderTermination::Eof),
+        Some(BodyOutcome::Drained),
+        DeliveryOutcome::Unobserved,
+    ))
+    .unwrap();
     assert!(settled.settled);
     assert_eq!(settled.observation.delivery, DeliveryOutcome::Unobserved);
     assert!(settled.observation.semantic_terminal.is_none());
@@ -278,8 +295,16 @@ fn genuine_local_completion_commits_kernel_without_provider_usage_or_native_deli
     .unwrap();
     let lease = run(local.checkpoint()).unwrap();
     assert_eq!(lease.kernel_expires_at_ms(), Some(NOW + REQUEST_LEASE_MS));
-    let delivery = run(local.begin_local_response()).unwrap();
-    run(delivery.finish(observation(LocalSemanticOutcome::Completed))).unwrap();
+    let mut pending = local.mark_local_completed().unwrap();
+    let LocalCompletionAdvance::Ready(mut delivery) = run(pending.advance()).unwrap() else {
+        panic!("genuine completion must be confirmed");
+    };
+    run(delivery.finish_delivery(
+        Some(ReaderTermination::Eof),
+        Some(BodyOutcome::Drained),
+        DeliveryOutcome::Unobserved,
+    ))
+    .unwrap();
     let row = store.value(key("session", "local-kernel"));
     let kernel = store.value(keys::kernel_request(
         "owner",
