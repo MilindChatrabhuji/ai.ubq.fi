@@ -45,26 +45,20 @@ fn unavailable() -> GatewayError {
     )
 }
 
-/// Retain authoritative pricing data and the existing Messages cost requirement.
+/// Retain actual plan pricing data and the existing Messages cost requirement.
 pub(crate) fn pricing_metadata(
-    rows: &[gateway_core::source_json::SourceJson],
-    model: &gateway_core::model::ModelId,
+    pricing: Option<&gateway_core::source_json::SourceJson>,
     require_provider_cost: bool,
 ) -> Result<Option<gateway_core::source_json::SourceJson>, GatewayError> {
     use gateway_core::{
         js_string::JsString16, source_json::SourceJson, source_serialization as source,
     };
-    let row = rows.iter().find(|row| {
-        source::member(row, "id")
-            .and_then(|id| source::string(&id))
-            .is_some_and(|id| id == *model.as_js_string())
-    });
     if !require_provider_cost {
-        return Ok(row.cloned());
+        return Ok(pricing.cloned());
     }
     let key = JsString16::from_utf8("require_provider_cost");
-    let mut fields = match row {
-        Some(row) => row.object_entries()?,
+    let mut fields = match pricing {
+        Some(pricing) => pricing.object_entries()?,
         None => Vec::new(),
     };
     fields.retain(|(name, _)| name != &key);
