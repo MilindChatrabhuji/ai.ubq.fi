@@ -190,11 +190,11 @@ fn malformed_import_invalidates_the_derived_policy_in_the_same_commit() {
         .unwrap(),
     );
     assert!(
-        validated["errors"].as_array().unwrap().iter().any(|v| v
-            .as_str()
+        validated["errors"]
+            .as_array()
             .unwrap()
-            .contains("invalid core fields")
-            && v.as_str().unwrap().contains("offline-key"))
+            .iter()
+            .any(|v| v.as_str() == Some("api key has invalid v2 policy: offline-key"))
     );
 }
 

@@ -5,6 +5,7 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::atomic::{AtomicU64, Ordering},
     task::{Context, Poll, Waker},
 };
 
@@ -145,14 +146,18 @@ impl QueryStore for SqliteStore {
     }
 }
 pub struct Directory(PathBuf);
+static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
 impl Directory {
     pub fn new() -> Self {
         let suffix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("uos-migration-{}-{suffix}", std::process::id()));
+        let nonce = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "uos-migration-{}-{suffix}-{nonce}",
+            std::process::id()
+        ));
         std::fs::create_dir(&path).unwrap();
         Self(path)
     }
