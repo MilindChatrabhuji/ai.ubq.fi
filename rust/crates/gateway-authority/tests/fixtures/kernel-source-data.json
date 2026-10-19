@@ -36,9 +36,7 @@
       },
       "source_policy_expiry": null,
       "source_window_expiry": null,
-      "write_statuses": [
-        200
-      ]
+      "write_statuses": [200]
     },
     {
       "id": "scalar_org",
@@ -69,9 +67,7 @@
       },
       "source_policy_expiry": null,
       "source_window_expiry": null,
-      "write_statuses": [
-        200
-      ]
+      "write_statuses": [200]
     },
     {
       "id": "lone_high_owner",
@@ -104,9 +100,7 @@
       },
       "source_policy_expiry": null,
       "source_window_expiry": null,
-      "write_statuses": [
-        200
-      ]
+      "write_statuses": [200]
     },
     {
       "id": "lone_low_repo",
@@ -139,9 +133,7 @@
       },
       "source_policy_expiry": null,
       "source_window_expiry": null,
-      "write_statuses": [
-        200
-      ]
+      "write_statuses": [200]
     },
     {
       "id": "replacement_owner",
@@ -174,9 +166,7 @@
       },
       "source_policy_expiry": null,
       "source_window_expiry": null,
-      "write_statuses": [
-        200
-      ]
+      "write_statuses": [200]
     },
     {
       "id": "embedded_nul_owner",
@@ -209,9 +199,7 @@
       },
       "source_policy_expiry": null,
       "source_window_expiry": null,
-      "write_statuses": [
-        200
-      ]
+      "write_statuses": [200]
     },
     {
       "id": "valid_surrogate_pair",
@@ -244,9 +232,7 @@
       },
       "source_policy_expiry": null,
       "source_window_expiry": null,
-      "write_statuses": [
-        200
-      ]
+      "write_statuses": [200]
     },
     {
       "id": "collision_high_then_low",
@@ -279,10 +265,7 @@
       },
       "source_policy_expiry": null,
       "source_window_expiry": null,
-      "write_statuses": [
-        200,
-        409
-      ]
+      "write_statuses": [200, 409]
     },
     {
       "id": "collision_high_then_replacement",
@@ -315,10 +298,7 @@
       },
       "source_policy_expiry": null,
       "source_window_expiry": null,
-      "write_statuses": [
-        200,
-        409
-      ]
+      "write_statuses": [200, 409]
     },
     {
       "id": "collision_replacement_then_high",
@@ -351,10 +331,7 @@
       },
       "source_policy_expiry": null,
       "source_window_expiry": null,
-      "write_statuses": [
-        200,
-        409
-      ]
+      "write_statuses": [200, 409]
     },
     {
       "id": "org_lone_high",
@@ -385,9 +362,7 @@
       },
       "source_policy_expiry": null,
       "source_window_expiry": null,
-      "write_statuses": [
-        200
-      ]
+      "write_statuses": [200]
     },
     {
       "id": "trimmed_admin_parts",
@@ -420,9 +395,7 @@
       },
       "source_policy_expiry": null,
       "source_window_expiry": null,
-      "write_statuses": [
-        200
-      ]
+      "write_statuses": [200]
     }
   ]
 }

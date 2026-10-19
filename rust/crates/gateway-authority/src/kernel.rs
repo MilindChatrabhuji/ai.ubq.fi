@@ -4,20 +4,22 @@ use crate::{
     Authority, DAY_MS, QUOTA_RETENTION_MS, REQUEST_LEASE_MS, TokenSource, add, invalid, keys,
     nonnegative, positive, quota_error, retention, text, unavailable,
 };
-use gateway_core::GatewayError;
 use gateway_core::identity::RequestId;
 use gateway_core::state::AuthorityStore;
+use gateway_core::{
+    GatewayError, js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct KernelPolicy<L = String> {
+pub struct KernelPolicy<L = String, E = i64> {
     pub v: u32,
     pub owner: L,
     pub repo: Option<L>,
     pub usage_limit_requests: i64,
     pub window_ms: i64,
-    pub expires_at_ms: i64,
+    pub expires_at_ms: E,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -59,7 +61,7 @@ pub struct KernelReservation {
     pub release_reason: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct KernelWindow<L = String> {
     pub v: u32,
     pub owner: L,
@@ -71,6 +73,268 @@ pub struct KernelWindow<L = String> {
     pub applied_window_ms: i64,
     pub updated_at_ms: i64,
     pub reservations: BTreeMap<String, i64>,
+}
+
+impl<'de, L: Deserialize<'de>> Deserialize<'de> for KernelWindow<L> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Data<L> {
+            v: u32,
+            owner: L,
+            repo: Option<L>,
+            usage_requests: i64,
+            reserved_requests: i64,
+            created_at_ms: i64,
+            usage_reset_at_ms: i64,
+            applied_window_ms: i64,
+            updated_at_ms: i64,
+            #[serde(default)]
+            reservations: BTreeMap<String, i64>,
+        }
+        let row = Data::deserialize(deserializer)?;
+        if row.reserved_requests != row.reservations.len() as i64 {
+            return Err(serde::de::Error::custom(
+                "Kernel aggregate has no exact bound reservation index.",
+            ));
+        }
+        Ok(Self {
+            v: row.v,
+            owner: row.owner,
+            repo: row.repo,
+            usage_requests: row.usage_requests,
+            reserved_requests: row.reserved_requests,
+            created_at_ms: row.created_at_ms,
+            usage_reset_at_ms: row.usage_reset_at_ms,
+            applied_window_ms: row.applied_window_ms,
+            updated_at_ms: row.updated_at_ms,
+            reservations: row.reservations,
+        })
+    }
+}
+
+fn source_identity(value: &SourceJson, owner: &JsString16, repo: Option<&JsString16>) -> bool {
+    let field = |name| source::member(value, name);
+    field("v").as_ref().and_then(source::number) == Some(2.0)
+        && field("scope").as_ref().and_then(source::string)
+            == Some(JsString16::from_utf8(if repo.is_some() {
+                "repo"
+            } else {
+                "org"
+            }))
+        && field("owner").as_ref().and_then(source::string).as_ref() == Some(owner)
+        && match repo {
+            Some(repo) => field("repo").as_ref().and_then(source::string).as_ref() == Some(repo),
+            None => field("repo").is_none_or(|v| v.as_str() == "null"),
+        }
+}
+
+fn source_safe(value: &SourceJson, positive: bool) -> Option<i64> {
+    let n = source::number(value)?;
+    (n.is_finite()
+        && n.fract() == 0.0
+        && n >= if positive { 1.0 } else { 0.0 }
+        && n <= gateway_core::identity::MAX_SAFE_INTEGER as f64)
+        .then_some(n as i64)
+}
+
+/// Only the numeric/string source fields that explicitly call Number(value).
+/// JSON grammar and UTF16 decoding remain the shared SourceJson implementation.
+fn source_numeric(value: &SourceJson) -> Option<f64> {
+    if let Some(n) = source::number(value) {
+        return Some(n);
+    }
+    let text = source::string(value)?.try_utf8().ok()?;
+    let text = gateway_schema::util::js_trim(&text);
+    if text.is_empty() {
+        return Some(0.0);
+    }
+    for (prefixes, radix) in [(["0x", "0X"], 16), (["0b", "0B"], 2), (["0o", "0O"], 8)] {
+        if prefixes.iter().any(|prefix| text.starts_with(prefix)) {
+            if text.len() == 2 {
+                return None;
+            }
+            return text[2..].chars().try_fold(0.0, |n, c| {
+                c.to_digit(radix)
+                    .map(|d| n * f64::from(radix) + f64::from(d))
+            });
+        }
+    }
+    if text
+        .chars()
+        .any(|c| !c.is_ascii_digit() && !".+-eE".contains(c))
+    {
+        return None;
+    }
+    text.parse().ok()
+}
+
+fn source_fields(
+    owner: &JsString16,
+    repo: Option<&JsString16>,
+) -> Option<Vec<(&'static str, SourceJson)>> {
+    let mut fields = vec![
+        ("v", SourceJson::from_serializable(&2).ok()?),
+        (
+            "scope",
+            SourceJson::from_serializable(if repo.is_some() { "repo" } else { "org" }).ok()?,
+        ),
+        ("owner", owner.to_source_json().ok()?),
+    ];
+    if let Some(repo) = repo {
+        fields.push(("repo", repo.to_source_json().ok()?));
+    }
+    Some(fields)
+}
+
+impl KernelPolicy<JsString16, f64> {
+    /// Source-normalized data only. Keep the returned document for metadata and
+    /// the original Number expiry domain; this never mints a live reservation.
+    pub fn normalize_source_document(
+        value: &SourceJson,
+        owner: &JsString16,
+        repo: Option<&JsString16>,
+    ) -> Option<SourceJson> {
+        if !source_identity(value, owner, repo) {
+            return None;
+        }
+        let get = |name| source::member(value, name);
+        let created = source_safe(&get("created_at_ms")?, false)?;
+        let updated = source_safe(&get("updated_at_ms")?, false)?;
+        let window = source_numeric(&get("window_ms")?)?.trunc();
+        let limit = source_numeric(&get("usage_limit_requests")?)?.trunc();
+        if !window.is_finite()
+            || window <= 0.0
+            || window > gateway_core::identity::MAX_SAFE_INTEGER as f64
+            || !limit.is_finite()
+            || (limit != -1.0 && limit < 0.0)
+            || limit > gateway_core::identity::MAX_SAFE_INTEGER as f64
+        {
+            return None;
+        }
+        let expires = get("expires_at_ms")
+            .as_ref()
+            .and_then(source::number)
+            .filter(|n| n.is_finite())
+            .map(f64::trunc)
+            .filter(|n| *n == -1.0 || *n >= 0.0)
+            .unwrap_or(-1.0);
+        let mut fields = source_fields(owner, repo)?;
+        for (name, value) in [
+            ("usage_limit_requests", limit),
+            ("window_ms", window),
+            ("expires_at_ms", expires),
+            ("created_at_ms", created as f64),
+            ("updated_at_ms", updated as f64),
+        ] {
+            fields.push((name, SourceJson::from_serializable(&value).ok()?));
+        }
+        source::canonical(&source::object(fields).ok()?).ok()
+    }
+}
+
+impl KernelWindow<JsString16> {
+    /// Exact source public data view, not a private-index binding. In particular
+    /// positive mapless source aggregates stay positive here, never empty/zero.
+    pub fn normalize_source_document(
+        value: &SourceJson,
+        owner: &JsString16,
+        repo: Option<&JsString16>,
+    ) -> Option<SourceJson> {
+        if !source_identity(value, owner, repo) {
+            return None;
+        }
+        let mut fields = source_fields(owner, repo)?;
+        for (name, positive) in [
+            ("usage_requests", false),
+            ("reserved_requests", false),
+            ("usage_reset_at_ms", true),
+            ("applied_window_ms", true),
+            ("created_at_ms", false),
+            ("updated_at_ms", false),
+        ] {
+            let value = source::member(value, name).or_else(|| {
+                (name == "reserved_requests")
+                    .then(|| SourceJson::parse("0").expect("constant source number"))
+            })?;
+            fields.push((
+                name,
+                SourceJson::from_serializable(&source_safe(&value, positive)?).ok()?,
+            ));
+        }
+        source::object(fields).ok()
+    }
+}
+
+async fn read_kernel_policy<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    key: &gateway_core::state::RecordKey,
+    owner: &str,
+    repo: Option<&str>,
+) -> Result<Option<KernelPolicy<String, f64>>, GatewayError> {
+    let Some(raw) = tx.read_source_control::<SourceJson>(key).await? else {
+        return Ok(None);
+    };
+    let expected_owner = JsString16::from_utf8(owner);
+    let expected_repo = repo.map(JsString16::from_utf8);
+    let raw = if source::member(&raw, "scope").is_some() {
+        KernelPolicy::<JsString16, f64>::normalize_source_document(
+            &raw,
+            &expected_owner,
+            expected_repo.as_ref(),
+        )
+        .ok_or_else(|| invalid("Kernel policy scope conflicts."))?
+    } else {
+        raw
+    };
+    let policy: KernelPolicy<JsString16, f64> = raw.deserialize()?;
+    if policy.v != 2 || policy.owner != expected_owner || policy.repo != expected_repo {
+        return Err(invalid("Kernel policy scope conflicts."));
+    }
+    Ok(Some(KernelPolicy {
+        v: policy.v,
+        owner: owner.to_owned(),
+        repo: repo.map(str::to_owned),
+        usage_limit_requests: policy.usage_limit_requests,
+        window_ms: policy.window_ms,
+        expires_at_ms: policy.expires_at_ms,
+    }))
+}
+
+async fn read_kernel_window<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    key: &gateway_core::state::RecordKey,
+    owner: &str,
+    repo: Option<&str>,
+) -> Result<Option<KernelWindow>, GatewayError> {
+    let Some(raw) = tx.read_source_control::<SourceJson>(key).await? else {
+        return Ok(None);
+    };
+    let row: KernelWindow<JsString16> = raw.deserialize()?;
+    if row.v != 2
+        || row.owner != JsString16::from_utf8(owner)
+        || row.repo != repo.map(JsString16::from_utf8)
+        || source::member(&raw, "scope").is_some()
+            && KernelWindow::<JsString16>::normalize_source_document(
+                &raw,
+                &row.owner,
+                row.repo.as_ref(),
+            )
+            .is_none()
+    {
+        return Err(invalid("Kernel quota aggregate is malformed."));
+    }
+    Ok(Some(KernelWindow {
+        v: row.v,
+        owner: owner.to_owned(),
+        repo: repo.map(str::to_owned),
+        usage_requests: row.usage_requests,
+        reserved_requests: row.reserved_requests,
+        created_at_ms: row.created_at_ms,
+        usage_reset_at_ms: row.usage_reset_at_ms,
+        applied_window_ms: row.applied_window_ms,
+        updated_at_ms: row.updated_at_ms,
+        reservations: row.reservations,
+    }))
 }
 
 pub(crate) fn kernel_identity(row: &KernelReservation, expected: &KernelReservation) -> bool {
@@ -208,10 +472,15 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         text(route)?;
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
-            let repo_policy: Option<KernelPolicy> =
-                tx.read(&keys::kernel_policy(owner, Some(repo))).await?;
-            let org_policy: Option<KernelPolicy> = if repo_policy.is_none() {
-                tx.read(&keys::kernel_policy(owner, None)).await?
+            let repo_policy = read_kernel_policy(
+                &mut tx,
+                &keys::kernel_policy(owner, Some(repo)),
+                owner,
+                Some(repo),
+            )
+            .await?;
+            let org_policy = if repo_policy.is_none() {
+                read_kernel_policy(&mut tx, &keys::kernel_policy(owner, None), owner, None).await?
             } else {
                 None
             };
@@ -244,9 +513,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 nonnegative(limit)?;
             }
             if limit == 0
-                || policy
-                    .as_ref()
-                    .is_some_and(|policy| policy.expires_at_ms != -1 && policy.expires_at_ms <= now)
+                || policy.as_ref().is_some_and(|policy| {
+                    policy.expires_at_ms != -1.0 && policy.expires_at_ms <= now as f64
+                })
             {
                 return Err(quota_error(
                     "Kernel usage limit is zero or expired.",
@@ -254,7 +523,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 ));
             }
             let window_key = keys::kernel_window(owner, scope_repo.as_deref());
-            let prior: Option<KernelWindow> = tx.read(&window_key).await?;
+            let prior =
+                read_kernel_window(&mut tx, &window_key, owner, scope_repo.as_deref()).await?;
             if let Some(window) = &prior {
                 validate_kernel_window(window, owner, scope_repo.as_deref())?;
                 validate_kernel_index(&mut tx, window).await?;
@@ -407,7 +677,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let lease = add(now, REQUEST_LEASE_MS)?;
             row.lease_expires_at_ms = lease;
             let window_key = keys::kernel_window(&row.owner, row.repo.as_deref());
-            let window: Option<KernelWindow> = tx.read(&window_key).await?;
+            let window =
+                read_kernel_window(&mut tx, &window_key, &row.owner, row.repo.as_deref()).await?;
             if let Some(mut window) = window {
                 validate_kernel_window(&window, &row.owner, row.repo.as_deref())?;
                 if window.created_at_ms == row.window_created_at_ms {
@@ -485,7 +756,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 return Ok(false);
             }
             let window_key = keys::kernel_window(&row.owner, row.repo.as_deref());
-            if let Some(mut window) = tx.read::<KernelWindow>(&window_key).await? {
+            if let Some(mut window) =
+                read_kernel_window(&mut tx, &window_key, &row.owner, row.repo.as_deref()).await?
+            {
                 validate_kernel_window(&window, &row.owner, row.repo.as_deref())?;
                 if window.created_at_ms == row.window_created_at_ms {
                     if window.reserved_requests < 1
@@ -561,7 +834,9 @@ pub(crate) async fn stage_kernel_terminal_intent<S: AuthorityStore, I: TokenSour
         row.terminal_intent = Some(terminal);
         row.lease_expires_at_ms = add(now, REQUEST_LEASE_MS)?;
         let window_key = keys::kernel_window(&row.owner, row.repo.as_deref());
-        if let Some(mut window) = tx.read::<KernelWindow>(&window_key).await? {
+        if let Some(mut window) =
+            read_kernel_window(&mut tx, &window_key, &row.owner, row.repo.as_deref()).await?
+        {
             validate_kernel_window(&window, &row.owner, row.repo.as_deref())?;
             if window.created_at_ms == row.window_created_at_ms {
                 window
