@@ -1,6 +1,6 @@
 //! Finite native/provider capabilities. No URL, process, path, SQL, or Bun relay interface.
 use gateway_auth::{AuthResponse, crypto::Secret};
-use gateway_core::{GatewayError, source_json::SourceJson};
+use gateway_core::{GatewayError, model::ModelId, source_json::SourceJson};
 use serde_json::Value;
 use std::{collections::BTreeMap, future::Future};
 
@@ -153,9 +153,9 @@ pub enum AnalyticsRequest {
 
 #[derive(Clone, Debug)]
 pub struct PricingSnapshot {
-    pub eligible_model_ids: Vec<String>,
+    pub eligible_model_ids: Vec<ModelId>,
     pub quota_per_credit: i64,
-    pub model_quota_coefficients: BTreeMap<String, f64>,
+    pub model_quota_coefficients: BTreeMap<ModelId, f64>,
     pub checked_at_ms: i64,
 }
 
@@ -246,7 +246,10 @@ pub trait RuntimeCapabilities {
         async { Err(unavailable("metered_quota")) }
     }
     /// Reads only configured paid-provider pricing. It must never issue inference or buy credits.
-    fn pricing(&self, _: &[String]) -> impl Future<Output = Result<PricingSnapshot, GatewayError>> {
+    fn pricing(
+        &self,
+        _: &[ModelId],
+    ) -> impl Future<Output = Result<PricingSnapshot, GatewayError>> {
         async { Err(unavailable("paid_fallback_pricing")) }
     }
     /// Independent retention status and stat-only host log diagnostics used by /admin/errors.
