@@ -423,31 +423,20 @@ fn safe_observation(event: &ClaudeAcceptedObservation) -> Result<SourceJson, Gat
         let input = observation
             .get(field)
             .ok_or_else(|| store::error("Accepted Claude observation field is missing"))?;
-        let input = SourceObject::parse(input)?;
-        let mut fields = Vec::new();
+        let mut output = SourceObject::parse(&SourceObject::parse(input)?.select(names)?)?;
         for name in names {
-            if let Some(value) = input.get(name) {
-                let value = SourceObject::parse(value)?;
-                let fields = leaves
-                    .iter()
-                    .filter_map(|name| value.get(name).cloned().map(|value| (*name, value)))
-                    .collect();
-                fields.push((*name, source::object(fields)?));
+            if let Some(value) = output.get(name).cloned() {
+                output.set(name, &SourceObject::parse(&value)?.select(leaves)?)?;
             }
         }
-        observation.set(field, &source::object(fields)?)?;
+        observation.set(field, &output.source_json()?)?;
     }
-    source::canonical(&source::object(
-        [
-            "windows",
-            "standard",
-            "representative_claim",
-            "observed_at_ms",
-        ]
-        .into_iter()
-        .filter_map(|name| observation.get(name).cloned().map(|value| (name, value)))
-        .collect(),
-    )?)
+    source::canonical(&observation.select(&[
+        "windows",
+        "standard",
+        "representative_claim",
+        "observed_at_ms",
+    ])?)
 }
 pub fn point_for_observation(
     event: &ClaudeAcceptedObservation,
