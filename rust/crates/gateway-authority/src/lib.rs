@@ -12,6 +12,7 @@ pub mod manual_reset;
 pub mod native_control;
 pub mod native_live;
 pub mod paid;
+pub mod paid_backfill;
 pub mod paid_control;
 mod paid_types;
 mod probes;
