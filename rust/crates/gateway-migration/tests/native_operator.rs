@@ -1,4 +1,5 @@
 #![cfg(all(unix, not(target_arch = "wasm32")))]
+#[path = "support/fixture.rs"]
 mod support;
 use gateway_auth::{
     crypto::base64url,
