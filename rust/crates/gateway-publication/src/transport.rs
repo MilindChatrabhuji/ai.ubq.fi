@@ -53,6 +53,9 @@ impl OwnedNativeAuthHeaders {
             mac: one(NATIVE_MAC_HEADER)?,
         })
     }
+    pub(crate) fn nonce(&self) -> &str {
+        &self.nonce
+    }
     pub fn pairs(&self) -> Vec<(String, String)> {
         vec![
             (NATIVE_VERSION_HEADER.into(), self.version.clone()),
@@ -62,7 +65,7 @@ impl OwnedNativeAuthHeaders {
             (NATIVE_MAC_HEADER.into(), self.mac.clone()),
         ]
     }
-    fn borrowed(&self) -> NativeAuthHeaders<'_> {
+    pub(crate) fn borrowed(&self) -> NativeAuthHeaders<'_> {
         NativeAuthHeaders {
             version: &self.version,
             key_id: &self.key_id,
@@ -334,7 +337,7 @@ impl AccessCredentialSource for ReceivedAccess {
         Ok(self.credentials.clone())
     }
 }
-fn error_response(error: GatewayError) -> PublicationResponse {
+pub(crate) fn error_response(error: GatewayError) -> PublicationResponse {
     PublicationResponse {
         status: error.status,
         headers: vec![

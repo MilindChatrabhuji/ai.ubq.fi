@@ -183,13 +183,27 @@ pub struct ManagedPublicationReceipt {
     pub source_revision: String,
     pub normalized_revision: String,
     pub publication_revision: String,
+    pub current_source_revision: String,
+    pub current_normalized_revision: String,
     pub previous_native_source_generation: String,
     pub native_source_generation: String,
     pub access_generation: String,
 }
 impl ManagedPublicationReceipt {
     fn matches(&self, w: &ManagedAccessWire, identity: &NativeTransportIdentity) -> bool {
-        self.v == 2
+        let current = match self.disposition {
+            PublicationDisposition::Applied => {
+                self.current_source_revision == w.publication_revision
+                    && self.current_normalized_revision == w.publication_revision
+            }
+            PublicationDisposition::AlreadyCurrent => {
+                self.current_source_revision == w.publication_revision
+                    && (self.current_normalized_revision == w.publication_revision
+                        || self.current_normalized_revision == w.normalized_revision)
+            }
+        };
+        current
+            && self.v == 2
             && self.operation == "managed_access_publish"
             && self.owner_id == identity.owner_id()
             && self.owner_epoch == identity.owner_epoch()
