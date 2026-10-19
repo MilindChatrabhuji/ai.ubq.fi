@@ -14,6 +14,7 @@ use gateway_admin_runtime::{
 use gateway_auth::{AuthHost, AuthResponse, AuthResponseBody};
 use gateway_core::{
     GatewayError, js_string::JsString16, source_json::SourceJson, source_serialization as source,
+    state::AuthorityStore,
 };
 use gateway_observability::{ObservabilityHost, ObservabilityRuntime};
 use serde::Serialize;
@@ -46,20 +47,18 @@ pub async fn admin<H: ObservabilityHost>(
     match request {
         ClaudeRequest::State => response(observations, context).await,
         ClaudeRequest::SelectAccount { account_id } => {
-            if !claude::select_account(store, platform, &account_id, None).await? {
+            if !select_source_account(store, platform, &account_id).await? {
                 return Err(not_found());
             }
             response(observations, context).await
         }
         ClaudeRequest::DeleteAccount { account_id } => {
-            let account = target(
-                store,
-                platform,
-                account_id.as_deref().filter(|id| !id.is_empty()),
-            )
-            .await?;
+            let account = target(store, platform, account_id.as_ref()).await?;
             let Some(account) = account else {
-                return if account_id.as_ref().is_some_and(|id| !id.is_empty()) {
+                return if account_id
+                    .as_ref()
+                    .is_some_and(|id| !id.as_units().is_empty())
+                {
                     Err(not_found())
                 } else {
                     response(observations, context).await
@@ -79,29 +78,23 @@ pub async fn admin<H: ObservabilityHost>(
             account_id,
             cohort_id,
         } => {
-            let account = target(
-                store,
-                platform,
-                account_id.as_deref().filter(|id| !id.is_empty()),
-            )
-            .await?;
+            let account = target(store, platform, account_id.as_ref()).await?;
             let Some(account) = account else {
-                if account_id.as_ref().is_some_and(|id| !id.is_empty()) {
+                if account_id
+                    .as_ref()
+                    .is_some_and(|id| !id.as_units().is_empty())
+                {
                     return Err(not_found());
                 }
                 return cleared_response(observations, context, false).await;
             };
-            if account_id.as_ref().is_some_and(|id| !id.is_empty()) && cohort_id.is_none() {
-                return Err(gateway_auth::invalid(
-                    "account_cohort_id is required for a targeted clear",
-                ));
-            }
-            if cohort_id
-                .as_ref()
-                .is_some_and(|id| *id != account.account_cohort_id)
-            {
-                return Err(changed("Claude account generation changed"));
-            }
+            check_target_cohort(
+                account_id
+                    .as_ref()
+                    .is_some_and(|id| !id.as_units().is_empty()),
+                cohort_id.as_ref(),
+                &account.account_cohort_id,
+            )?;
             let host = super::platform::Host {
                 store: store.clone(),
                 platform: platform.clone(),
@@ -120,21 +113,72 @@ pub async fn admin<H: ObservabilityHost>(
     }
 }
 
+fn check_target_cohort(
+    targeted: bool,
+    original_leaf: Option<&SourceJson>,
+    actual_cohort: &str,
+) -> Result<(), GatewayError> {
+    let cohort = original_leaf.and_then(source::string);
+    if targeted && cohort.is_none() {
+        return Err(gateway_auth::invalid(
+            "account_cohort_id is required for a targeted clear",
+        ));
+    }
+    if original_leaf.is_some()
+        && cohort
+            .as_ref()
+            .is_none_or(|id| !selector_matches(id, actual_cohort))
+    {
+        return Err(changed("Claude account generation changed"));
+    }
+    Ok(())
+}
+
+fn matching_target<'a>(
+    roster: &'a claude::AccountStore,
+    id: Option<&JsString16>,
+) -> Option<&'a AccountBinding> {
+    match id {
+        Some(id) => roster
+            .accounts
+            .iter()
+            .find(|account| selector_matches(id, &account.account_id)),
+        None => claude::active_binding(roster),
+    }
+}
+
+fn selector_matches(input: &JsString16, actual_stored_id: &str) -> bool {
+    input
+        .as_units()
+        .iter()
+        .copied()
+        .eq(actual_stored_id.encode_utf16())
+}
+
+async fn select_source_account(
+    store: &RemoteAuthorityStore,
+    platform: &PlatformHost,
+    id: &JsString16,
+) -> Result<bool, GatewayError> {
+    if let Ok(id) = id.try_utf8() {
+        return claude::select_account(store, platform, &id, None).await;
+    }
+    // Generated stored UUIDs cannot match these units. Preserve the actual
+    // existing read/decode error order; do not bootstrap or fabricate an ID.
+    if let Some(row) = store.read(&claude::account_store_key()).await? {
+        claude::decode_roster_record(&row, platform.now_ms())?;
+    }
+    Ok(false)
+}
+
 async fn target(
     store: &RemoteAuthorityStore,
     platform: &PlatformHost,
-    id: Option<&str>,
+    id: Option<&JsString16>,
 ) -> Result<Option<AccountBinding>, GatewayError> {
     let seed = super::platform::bootstrap_for_source(store, platform).await?;
     let roster = claude::load_roster(store, platform, &seed).await?;
-    Ok(match id {
-        Some(id) => roster
-            .roster
-            .accounts
-            .into_iter()
-            .find(|account| account.account_id == id),
-        None => claude::active_binding(&roster.roster).cloned(),
-    })
+    Ok(matching_target(&roster.roster, id).cloned())
 }
 
 async fn submit<H: ObservabilityHost>(
@@ -144,10 +188,11 @@ async fn submit<H: ObservabilityHost>(
     input: ClaudeSubmission,
     context: Context,
 ) -> Result<AuthResponse, GatewayError> {
+    let source_account_id = input.account_id.as_deref().map(JsString16::from_utf8);
     let old = if input.create_new {
         None
     } else {
-        target(store, platform, input.account_id.as_deref())
+        target(store, platform, source_account_id.as_ref())
             .await
             .map_err(|error| gateway_auth::invalid(&error.envelope.error.message))?
     };
@@ -172,11 +217,11 @@ async fn submit<H: ObservabilityHost>(
     )
     .ok_or_else(|| gateway_auth::invalid("credential is invalid"))?;
     let workspace_id = match &input.workspace_id {
-        Some(id) => id.as_deref(),
+        Some(id) => id.as_ref(),
         None => old
             .as_ref()
             .and_then(|account| account.workspace.as_ref())
-            .map(|workspace| workspace.id.as_str()),
+            .map(|workspace| &workspace.id),
     };
     let validation = validate(platform, &candidate, workspace_id).await?;
     if validation.status == Some(401) || validation.status == Some(403) {
@@ -254,7 +299,7 @@ async fn submit<H: ObservabilityHost>(
 async fn validate(
     platform: &PlatformHost,
     credential: &Credential,
-    workspace: Option<&str>,
+    workspace: Option<&JsString16>,
 ) -> Result<Validation, GatewayError> {
     let cancellation = Cancellation::background()?;
     let _deadline = cancellation.set_timeout_ms(8_000)?;
@@ -364,12 +409,12 @@ fn subscription_block(body: AuthResponseBody) -> Result<SourceJson, GatewayError
 }
 fn submitted_workspace(
     previous: Option<&Workspace>,
-    id: &str,
+    id: &JsString16,
     requested: bool,
     status: Option<u16>,
     at: i64,
 ) -> Workspace {
-    let previous = previous.filter(|workspace| workspace.id == id);
+    let previous = previous.filter(|workspace| &workspace.id == id);
     let source = if requested {
         "kv".into()
     } else {
@@ -378,7 +423,7 @@ fn submitted_workspace(
             .unwrap_or_else(|| "kv".into())
     };
     Workspace {
-        id: id.into(),
+        id: id.clone(),
         name: previous.and_then(|workspace| workspace.name.clone()),
         discovered_at_ms: if source == "discovered" {
             Some(at)
@@ -479,6 +524,106 @@ mod tests {
     }
 
     #[test]
+    fn original_cohort_leaf_is_checked_after_lookup_without_presence_loss() {
+        let actual = "00000000-0000-0000-0000-000000000002";
+        let scalar = SourceJson::from_serializable(actual).unwrap();
+        assert!(check_target_cohort(false, None, actual).is_ok());
+        assert!(check_target_cohort(true, Some(&scalar), actual).is_ok());
+        assert_eq!(
+            check_target_cohort(true, None, actual).unwrap_err().status,
+            400
+        );
+        for raw in ["null", "0", "false", "{}"] {
+            let leaf = SourceJson::parse(raw).unwrap();
+            assert_eq!(
+                check_target_cohort(true, Some(&leaf), actual)
+                    .unwrap_err()
+                    .status,
+                400
+            );
+            assert_eq!(
+                check_target_cohort(false, Some(&leaf), actual)
+                    .unwrap_err()
+                    .status,
+                409
+            );
+        }
+        let empty = SourceJson::parse("\"\"").unwrap();
+        assert_eq!(
+            check_target_cohort(true, Some(&empty), actual)
+                .unwrap_err()
+                .status,
+            409
+        );
+    }
+
+    #[test]
+    fn only_missing_selector_uses_active_account_not_explicit_empty_or_lone_unit() {
+        let credential = claude::submitted_credential(
+            std::sync::Arc::new(claude::ClaudeSourceSecret::from_source(
+                JsString16::from_utf8("sk-ant-api03-synthetic"),
+            )),
+            None,
+            10,
+        )
+        .unwrap();
+        let account = AccountBinding {
+            account_id: "00000000-0000-0000-0000-000000000001".into(),
+            account_cohort_id: "00000000-0000-0000-0000-000000000002".into(),
+            credential_fingerprint: claude::fingerprint(&credential, None),
+            evidence_generation: "00000000-0000-0000-0000-000000000003".into(),
+            credential,
+            workspace: None,
+        };
+        let roster = claude::AccountStore {
+            v: 1,
+            active_account_id: Some(account.account_id.clone()),
+            accounts: vec![account],
+            active_reason: JsString16::from_utf8("admin_selection"),
+            updated_at_ms: 10,
+        };
+        assert!(matching_target(&roster, None).is_some());
+        assert!(matching_target(&roster, Some(&JsString16::from_utf8(""))).is_none());
+        assert!(matching_target(&roster, Some(&JsString16::from_units(vec![0xd800]))).is_none());
+    }
+
+    #[test]
+    fn source_selectors_compare_exact_units_without_new_uuid_input_refusal() {
+        let actual = "00000000-0000-0000-0000-000000000001";
+        assert!(selector_matches(&JsString16::from_utf8(actual), actual));
+        assert!(!selector_matches(
+            &JsString16::from_utf8(&format!(" {actual}")),
+            actual
+        ));
+        assert!(!selector_matches(
+            &JsString16::from_units(vec![0xd800]),
+            actual
+        ));
+        assert!(!selector_matches(
+            &JsString16::from_units(vec![0xdc00]),
+            actual
+        ));
+    }
+
+    #[test]
+    fn submitted_workspace_merge_keeps_exact_source_units_without_scalar_projection() {
+        let id = JsString16::from_units(vec![119, 114, 107, 115, 112, 99, 95, 0xd800]);
+        let name = JsString16::from_units(vec![0xdc00]);
+        let previous = Workspace {
+            id: id.clone(),
+            name: Some(name.clone()),
+            source: "kv".into(),
+            discovered_at_ms: Some(10),
+            verified_at_ms: Some(20),
+            last_error: None,
+        };
+        let merged = submitted_workspace(Some(&previous), &id, false, None, 30);
+        assert_eq!(merged.id, id);
+        assert_eq!(merged.name, Some(name));
+        assert_eq!(merged.verified_at_ms, Some(20));
+    }
+
+    #[test]
     fn source_workspace_merge_preserves_or_replaces_generation_timestamps() {
         let previous = Workspace {
             id: "wrkspc_old".into(),
@@ -488,7 +633,13 @@ mod tests {
             verified_at_ms: Some(120),
             last_error: Some("old error".into()),
         };
-        let inherited = submitted_workspace(Some(&previous), "wrkspc_old", false, Some(429), 500);
+        let inherited = submitted_workspace(
+            Some(&previous),
+            &JsString16::from_utf8("wrkspc_old"),
+            false,
+            Some(429),
+            500,
+        );
         assert_eq!(
             (
                 inherited.source.as_str(),
@@ -498,7 +649,13 @@ mod tests {
             ),
             ("discovered", Some(500), Some(120), None)
         );
-        let explicit = submitted_workspace(Some(&previous), "wrkspc_old", true, Some(200), 500);
+        let explicit = submitted_workspace(
+            Some(&previous),
+            &JsString16::from_utf8("wrkspc_old"),
+            true,
+            Some(200),
+            500,
+        );
         assert_eq!(
             (
                 explicit.source.as_str(),
@@ -507,7 +664,13 @@ mod tests {
             ),
             ("kv", Some(100), Some(500))
         );
-        let replacement = submitted_workspace(Some(&previous), "wrkspc_new", true, None, 500);
+        let replacement = submitted_workspace(
+            Some(&previous),
+            &JsString16::from_utf8("wrkspc_new"),
+            true,
+            None,
+            500,
+        );
         assert_eq!(
             (
                 replacement.name,
