@@ -180,7 +180,7 @@ impl RuntimeCapabilities for Capabilities {
     }
     async fn pricing(
         &self,
-        models: &[String],
+        models: &[gateway_core::model::ModelId],
     ) -> Result<gateway_admin_runtime::capabilities::PricingSnapshot, GatewayError> {
         self.support.pricing(models).await
     }
@@ -238,13 +238,11 @@ impl RuntimeCapabilities for Capabilities {
             CatalogRequest::Catalog => Operation::Catalog,
             CatalogRequest::Refresh => Operation::Refresh,
         };
-        let response = self
-            .catalog_service
-            .admin_catalog(&self.catalog_host.store, &self.catalog_host, operation)
-            .await?;
-        let mut wire = AuthResponse::json(response.status, response.body);
-        wire.headers.extend(response.headers);
-        Ok(wire)
+        Ok(crate::catalog::into_auth_response(
+            self.catalog_service
+                .admin_catalog(&self.catalog_host.store, &self.catalog_host, operation)
+                .await,
+        ))
     }
     async fn provider(
         &self,

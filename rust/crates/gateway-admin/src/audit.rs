@@ -107,8 +107,8 @@ pub struct ChangeInput<'a> {
     pub release: &'a str,
     pub action: &'a str,
     pub id: &'a str,
-    pub name: Option<&'a str>,
-    pub changed: &'a Value,
+    pub name: Option<&'a JsString16>,
+    pub changed: &'a SourceJson,
 }
 
 pub struct SourceChangeInput<'a> {
@@ -166,16 +166,14 @@ pub fn mutation<H: AuthHost>(
     host: &H,
     input: ChangeInput<'_>,
 ) -> Result<RecordMutation, GatewayError> {
-    let changed = SourceJson::from_serializable(input.changed)?;
-    let name = input.name.map(JsString16::from_utf8);
     let event = build_event(
         SourceChangeInput {
             principal: Some(input.principal),
             request_id: input.request_id,
             action: input.action,
             id: input.id,
-            name: name.as_ref(),
-            changed: &changed,
+            name: input.name,
+            changed: input.changed,
             now_ms: None,
         },
         || uuid_from_random(&host.random_bytes(16)?),

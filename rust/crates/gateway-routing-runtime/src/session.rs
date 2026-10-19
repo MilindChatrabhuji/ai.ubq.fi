@@ -30,7 +30,7 @@ pub struct RoutingSession<S, I, C, H> {
     pub(crate) waits: RefCell<WaitBudget>,
     conversation_id: String,
     pub(crate) elapsed_wait_ms: std::cell::Cell<i64>,
-    source_collator: std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>,
+    pub(crate) source_collator: std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>,
     pub(crate) extra_lock: std::rc::Rc<futures_util::lock::Mutex<()>>,
 }
 impl<
@@ -318,7 +318,7 @@ impl<
             .host
             .credential(CredentialRequest {
                 provider,
-                model: model.into(),
+                model: model.clone(),
                 codex: codex.clone(),
             })
             .await?;
