@@ -1391,3 +1391,72 @@ fn pre_save_selection_read_cannot_replace_newer_pending_or_current_catalog_views
     );
     assert_eq!(reads.count.get(), 4);
 }
+
+#[test]
+fn versioned_union_and_persisted_account_evidence_keep_source_model_and_effort_units() {
+    use gateway_core::{
+        source_control::decode_source_control_record, source_serialization as source,
+        value::ValueEncoding,
+    };
+    let store = Store::new();
+    let host = Host::new(&store);
+    let runtime = CatalogRuntime::new();
+    host.published
+        .borrow_mut()
+        .codex_accounts
+        .push(CodexAccount {
+            account_id: "account-b".into(),
+            credential_fingerprint: "credential-b".into(),
+        });
+    for raw in [
+        r#"{"top":"first\udc00","models":[{"slug":"\ud800","display_name":"first","supported_reasoning_levels":[{"effort":"\udc00"}]}]}"#,
+        r#"{"top":"second","models":[{"slug":"\ud800","display_name":"second"},{"slug":"\udc00"}]}"#,
+    ] {
+        host.queue(Outcome {
+            response: Ok(CatalogFetchResponse::json(200, raw)),
+            ticks: 0,
+            callback: None,
+        });
+    }
+    let response = run(runtime.versioned_models(&store, &host, "0.163.0", None)).unwrap();
+    let document = SourceJson::parse(response.body.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        source::member(&document, "top"),
+        Some(SourceJson::parse(r#""first\udc00""#).unwrap())
+    );
+    let models = source::array(&source::member(&document, "models").unwrap()).unwrap();
+    assert_eq!(models.len(), 2);
+    assert_eq!(
+        source::member(&models[0], "slug"),
+        Some(SourceJson::parse(r#""\ud800""#).unwrap())
+    );
+    assert_eq!(
+        source::member(&models[0], "display_name"),
+        Some(SourceJson::parse(r#""first""#).unwrap())
+    );
+    let evidence = store.live(&state::account_models_key()).unwrap();
+    assert_eq!(evidence.value_encoding, ValueEncoding::ProfileV2);
+    let evidence_document = decode_source_control_record(&evidence).unwrap();
+    let accounts = source::member(&evidence_document, "accounts").unwrap();
+    let first = source::member(&accounts, "account-a").unwrap();
+    let second = source::member(&accounts, "account-b").unwrap();
+    assert_eq!(
+        source::member(&first, "slugs"),
+        Some(SourceJson::parse(r#"["\ud800"]"#).unwrap())
+    );
+    assert_eq!(
+        source::member(&second, "slugs"),
+        Some(SourceJson::parse(r#"["\ud800","\udc00"]"#).unwrap())
+    );
+    assert!(host.requests.borrow().iter().all(|request| matches!(
+        request,
+        CatalogFetch::Codex {
+            if_none_match: None,
+            ..
+        }
+    )));
+    println!(
+        "M42_VERSIONED_EVIDENCE_WRITER_FIXTURE={}",
+        serde_json::to_string(&(state::account_models_key(), evidence)).unwrap()
+    );
+}
