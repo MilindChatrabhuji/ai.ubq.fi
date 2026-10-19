@@ -54,7 +54,8 @@ export type EvaluatedBlockedReset = Readonly<{
   /** The active-selection row observed before this reset transaction began. */
   originalActive: CodexActiveAccountSnapshot;
 }>;
-export type PreexistingBankedReset = Readonly<{ kind: "evaluated"; evaluated: EvaluatedBlockedReset } | { kind: "none" } | { kind: "blocked" }>;
+export type PreexistingBankedReset =
+  Readonly<{ kind: "evaluated"; evaluated: EvaluatedBlockedReset }> | Readonly<{ kind: "none" }> | Readonly<{ kind: "blocked"; reason: string }>;
 
 type BankedResetFence = { key: KvKey; isCurrent: (value: unknown) => boolean };
 type BankedResetInput = {

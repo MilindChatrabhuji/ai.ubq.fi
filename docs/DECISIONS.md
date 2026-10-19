@@ -6,6 +6,51 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## TypeScript-only VPS releases reuse verified payloads - 2026-10-19
+
+The VPS deploy CLI reuses the selected immutable release's `node_modules` and `.native/kv` payload when the root lockfile
+and native input manifest match exactly. A mismatch falls back to the existing fresh install/build path. This avoids
+recompiling the unchanged native KV addon for routing and client-only changes.
+
+Reason: repeated Cargo builds delayed small TypeScript releases and kept the service on stale behavior longer than
+necessary. Reuse is bound to the selected release's verified provenance and the current tracked native inputs.
+
+Reversal risk: reusing across a changed lockfile or native input would violate the immutable release identity, so either
+mismatch must continue to rebuild and verify from source.
+
+## Client Retry-After is bounded independently of quota deadlines - 2026-10-19
+
+Gateway routing errors retain their durable quota or reset deadline, but the client-facing `Retry-After` hint is capped
+at 60 seconds. A weekly Codex quota block previously emitted the full remaining duration, such as 561,000 seconds, and
+clients slept for days instead of retrying or entering an available failover.
+
+Reason: routing availability can change through paid failover, reset recovery, or operator action long before the
+upstream subscription window resets. The upstream deadline is still enforced internally and is not shortened.
+
+Reversal risk: removing the cap restores multi-day client sleeps on ordinary weekly exhaustion. Emitting no header
+would instead invite tight retry loops.
+
+## Shadow banked-reset decisions do not suppress enabled overage - 2026-10-19
+
+In banked-reset shadow mode, `shadow_selected` and `already_would_spend_once` prove that no reset credit was
+redeemed: shadow persists a decision but never consumes it. Both outcomes now qualify for the existing single bounded
+overage probe when the account's `Allow overage spending` setting is on. The per-account allow setting remains a hard
+gate; `live_armed`, a completed live redemption, and fence or configuration failures still never fall back.
+
+A durable reset record stuck at local `claimed` without a provider submission likewise returns
+`unsubmitted_transaction`. Reconciliation cannot advance that record and no external reset was consumed, so the same
+bounded overage probe may proceed. In-progress, live-armed, submitted, unknown, and ambiguous states remain ineligible.
+
+Enabled overage is a serving path, not a single-flight reset recovery probe. It does not claim the reset probe lease, so
+concurrent client requests may use the account directly; each request still performs at most one bounded upstream
+attempt.
+
+Reason: an exhausted account with overage enabled remained stuck behind an existing shadow decision and fell through to
+paid routing, even though shadow mode could not spend the reset it observed.
+
+Reversal risk: removing these reasons restores that dead-end. Adding live-arming or completed-redemption reasons would
+risk spending both a banked reset and overage for one episode.
+
 ## Explicit manual banked reset verifies and promotes one account - 2026-10-18
 
 An authenticated admin may use one banked reset for a selected Codex account through `POST /admin/providers/codex/banked-resets/consume`. This explicit manual action works independently of the Automatic resets switch and automatic shadow arming; global `enabled=false` and `mode=disabled` still make zero provider calls. Manual and automatic redemptions share the existing one-per-account-per-UTC-day submission budget, account/window idempotency, exact credential and quota fences, and unknown-consumption refusal. An uncertain consume is never replayed.
