@@ -12,6 +12,7 @@ pub mod query;
 pub mod redaction;
 pub mod source_graph;
 pub mod source_json;
+pub mod source_serialization;
 pub mod source_usage;
 pub mod state;
 pub mod tuple_key;
