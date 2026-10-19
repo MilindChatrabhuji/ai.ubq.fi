@@ -196,7 +196,10 @@ pub(crate) async fn load_state<S: QueryStore>(
         .as_ref()
         .and_then(|v| v.deserialize::<ModelSnapshot>().ok());
     let full_snapshot = read_source_control(store, &catalog_store::codex_snapshot_key())
-        .await?
+        // Source loadFullCodexModelsSnapshot catches this optional read only.
+        .await
+        .ok()
+        .flatten()
         .and_then(|r| parse_full_snapshot(&r.document));
     let selection = read_json(store, &selection_key())
         .await?

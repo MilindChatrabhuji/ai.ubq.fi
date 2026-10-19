@@ -119,15 +119,10 @@ impl Binding {
             &self.store,
             &self.host.platform,
             &allowed_key_ids,
-            &crate::admin_host::compare_labels,
+            &|left, right| crate::source_collator::shared().compare(left, right),
         )
         .await?;
-        if !access
-            .policy
-            .allowed_key_ids
-            .iter()
-            .any(|allowed| allowed == key_id)
-        {
+        if !access.policy.allows_scalar(key_id) {
             return Ok(ClaudeSelection::NotApplicable);
         }
         let principal_id = crate::lifecycle::principal_id(principal);

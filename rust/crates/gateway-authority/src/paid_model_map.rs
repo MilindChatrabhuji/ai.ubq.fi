@@ -3,7 +3,7 @@ use gateway_core::{model::ModelId, source_json::SourceJson, source_serialization
 use serde::{Deserializer, Serialize, Serializer, de::DeserializeOwned};
 use std::collections::BTreeMap;
 
-pub(crate) fn serialize<S: Serializer, T: Serialize>(
+pub fn serialize<S: Serializer, T: Serialize>(
     values: &BTreeMap<ModelId, T>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
@@ -24,7 +24,7 @@ pub(crate) fn serialize<S: Serializer, T: Serialize>(
         .map_err(serde::ser::Error::custom)?
         .serialize(serializer)
 }
-pub(crate) fn deserialize<'de, D: Deserializer<'de>, T: DeserializeOwned>(
+pub fn deserialize<'de, D: Deserializer<'de>, T: DeserializeOwned>(
     deserializer: D,
 ) -> Result<BTreeMap<ModelId, T>, D::Error> {
     let raw = <SourceJson as serde::Deserialize>::deserialize(deserializer)?;

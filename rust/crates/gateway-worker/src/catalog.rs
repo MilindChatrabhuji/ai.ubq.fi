@@ -47,7 +47,7 @@ pub async fn public_response(
     ))
 }
 
-fn into_auth_response(
+pub(crate) fn into_auth_response(
     response: Result<AdminCatalogResponse, SourceRequestError>,
 ) -> gateway_auth::AuthResponse {
     match response {

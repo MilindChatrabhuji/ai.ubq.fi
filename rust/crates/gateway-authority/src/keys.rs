@@ -116,6 +116,41 @@ pub fn kernel_policy(owner: &str, repo: Option<&str>) -> RecordKey {
         ]),
     }
 }
+/// Physical source policy identity only. Callers retain the exact logical labels;
+/// a collided tuple key does not grant ownership of an existing policy/window.
+pub fn kernel_policy_source(
+    owner: &gateway_core::js_string::JsString16,
+    repo: Option<&gateway_core::js_string::JsString16>,
+) -> Result<RecordKey, gateway_core::GatewayError> {
+    kernel_source_key(
+        if repo.is_some() {
+            "repo_policy"
+        } else {
+            "org_policy"
+        },
+        owner,
+        repo,
+    )
+}
+
+fn kernel_source_key(
+    family: &str,
+    owner: &gateway_core::js_string::JsString16,
+    repo: Option<&gateway_core::js_string::JsString16>,
+) -> Result<RecordKey, gateway_core::GatewayError> {
+    use gateway_core::tuple_key::KeyPart;
+    let mut parts = vec![
+        KeyPart::String("uos_ai".into()),
+        KeyPart::String("kernel_quota".into()),
+        KeyPart::String("v2".into()),
+        KeyPart::String(family.into()),
+        KeyPart::source_string_utf16(owner.as_units()),
+    ];
+    if let Some(repo) = repo {
+        parts.push(KeyPart::source_string_utf16(repo.as_units()));
+    }
+    Ok(TupleKey::from_parts(&parts)?.to_record_key())
+}
 pub fn kernel_defaults() -> RecordKey {
     key(&[
         Text("uos_ai"),
@@ -150,6 +185,22 @@ pub fn kernel_window(owner: &str, repo: Option<&str>) -> RecordKey {
             Text(owner),
         ]),
     }
+}
+/// Same pinned source tuple conversion as the policy overload, with no label
+/// normalization or inference about logical policy/window ownership.
+pub fn kernel_window_source(
+    owner: &gateway_core::js_string::JsString16,
+    repo: Option<&gateway_core::js_string::JsString16>,
+) -> Result<RecordKey, gateway_core::GatewayError> {
+    kernel_source_key(
+        if repo.is_some() {
+            "repo_window"
+        } else {
+            "org_window"
+        },
+        owner,
+        repo,
+    )
 }
 pub fn kernel_request(owner: &str, repo: Option<&str>, created: i64, id: &str) -> RecordKey {
     match repo {

@@ -367,6 +367,22 @@ pub async fn run(
             Ok(session) => Rc::new(session),
             Err(error) => return crate::inference_source::error_response(error, &capture).await,
         };
+        let currentness = match crate::inference_currentness::CurrentnessGuard::start(
+            session.clone(),
+            host.cancellation.clone(),
+            context.clone(),
+        )
+        .await
+        {
+            Ok(guard) => guard,
+            Err(error) => {
+                session
+                    .finish(Default::default())
+                    .await
+                    .map_err(|error| *error.error)?;
+                return crate::inference_source::error_response(error, &capture).await;
+            }
+        };
         capture
             .begin(
                 &original,
@@ -403,6 +419,7 @@ pub async fn run(
         )?;
         let lifecycle = Rc::new(Lifecycle {
             session,
+            currentness,
             attempt,
             provider_request_id: correlation(provider, &headers).map(str::to_owned),
             status,
