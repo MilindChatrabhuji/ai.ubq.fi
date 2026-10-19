@@ -196,7 +196,7 @@ const evaluateCodexRoutingAccount = (
     // keep it half-open so the request may serve through the paid backup
     // balance instead of waiting for a banked-reset redemption.
     if (policy.overageUsageAllowed) {
-      return { ...routedRoutingAccount({ ...routedAccount, probeRequired: true, probeCircuit: "quota" }), capacityExhausted: true };
+      return { ...routedRoutingAccount({ ...routedAccount, probeRequired: false, probeCircuit: null }), capacityExhausted: true };
     }
     // A fully used capacity observation with a future reset deadline is the
     // authoritative quota block for that window: it must feed the blocked
