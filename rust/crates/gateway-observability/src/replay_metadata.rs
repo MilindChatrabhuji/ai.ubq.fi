@@ -69,7 +69,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             }
             let rows = self.replay_metadata_candidates(at).await?;
             ledger.status_records = rows.len() as f64;
-            ledger.metadata_bytes = rows.iter().map(|r| r.2).sum();
+            ledger.metadata_bytes = rows.iter().fold(0.0, |sum, row| sum + row.2);
             let marker = model::key("metadata_reconciled");
             if store::commit(
                 self.store.as_ref(),

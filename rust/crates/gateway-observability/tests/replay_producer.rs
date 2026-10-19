@@ -18,7 +18,7 @@ use gateway_observability::{
     replay_retention::RetentionLimits,
     replay_trace::UpstreamTrace,
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
@@ -100,7 +100,10 @@ fn ready<S: QueryStore>(runtime: &ObservabilityRuntime<S, CaptureHost>, limits: 
                 .store()
                 .read(&gateway_observability::replay_model::key("budget")))
             .unwrap();
-            panic!("maintenance pass {attempt}: {error:?}; synthetic budget {budget:?}")
+            panic!(
+                "maintenance pass {attempt}: {error:?}; budget encoding {:?}",
+                budget.map(|row| row.value_encoding)
+            )
         });
         if status["accounting_complete"] == true {
             return;
