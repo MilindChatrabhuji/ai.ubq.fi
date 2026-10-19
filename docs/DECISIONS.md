@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Explicit manual banked reset verifies and promotes one account - 2026-10-18
+
+An authenticated admin may use one banked reset for a selected Codex account through `POST /admin/providers/codex/banked-resets/consume`. This explicit manual action works independently of the Automatic resets switch and automatic shadow arming; global `enabled=false` and `mode=disabled` still make zero provider calls. Manual and automatic redemptions share the existing one-per-account-per-UTC-day submission budget, account/window idempotency, exact credential and quota fences, and unknown-consumption refusal. An uncertain consume is never replayed.
+
+After a documented verified consume outcome, the manual action synchronously reads that account's current usage. One atomic transaction stores the fresh account-bound observation, reconciles only quota classes proven recovered, records completed manual promotion and selects that same account with reason `manual_reset`. This explicit operator transition may supersede a healthy active account; ordinary serial routing, provider selection, authentication and model eligibility remain unchanged. Pending propagation or a failed promotion never claims success, and a repeated completed action cannot restore an old priority. The manual intent contains opaque account/credential hashes and quota metadata, never tokens. KV export/import retains the intent together with its authoritative reset-window and account-day ledgers; importing only the intent would lose the consumption and daily-budget proof.
+
+Reason: a manual reset outside the gateway could leave exhausted routing state until a later capacity sample. The button owns verification and promotion directly, without waiting for chart sampling or issuing inference. Acceptance uses isolated upstream fixtures; agents remain forbidden from directly redeeming live credits.
+
 ## Allow overage spending false refuses all overage - 2026-10-18
 
 The per-account `Allow overage spending` setting is a hard gate. With the setting off, the gateway may redeem a banked reset, but it must never dispatch an overage probe, including after the reset preflight returns `no_eligible_credit`, empty or ineligible inventory, `inventory_unavailable`, or `account_day_limit_reached`. That case returns the ordinary `codex_quota_blocked` response. With the setting on, the existing resets-first flow and one bounded overage fallback remain unchanged.
@@ -2196,3 +2204,17 @@ The explicit `source-graph-v1` record encoding preserves native-source shared ob
 The Rust port preserves SimpleWebAuthn server 13.2.2 certificate-path early termination after a provided self-signed issuer verifies, including an issuer that differs from the appended configured anchor. An accepted path therefore does not establish configured-anchor membership. Source-derived fixtures retain the positive unconfigured-root SafetyNet case and the negative issuer-omitted case in `rust/crates/gateway-auth/tests/fixtures/webauthn-source-golden.json`; the maintained verifier compatibility notes record the pinned source and its extension. A stricter terminal-anchor policy is a separately scoped owner decision, not an implicit change in this port.
 
 Certificate revocation-list URLs remain untrusted HTTP(S) inputs after path acceptance. Fetch them with ordinary unauthenticated transport and its default redirects, without provider/admin credentials, privileged headers or the native carrier. The pinned source imposes no application timeout or byte cap on that fetch; preserve actual platform and caller constraints without inventing a numeric source bound. Trusted registration time is injected internally from `AuthHost::now_ms`, and neither these compatibility rules nor passing verifier fixtures authorize a new ceremony origin, RP ID, relay audience or live credential enrollment.
+
+## Surplus inference enables provider secret masking - 2026-10-18
+
+Enable [Surplus Secret Masking](https://www.surplusintelligence.ai/docs/guides/secret-masking) for every Surplus inference POST with exactly one `X-SI-Mask-Secrets: on` header from the shared authenticated-header builder. This covers native Responses and native Claude Chat, streamed and buffered. The provider handles masking and restoration while the gateway retains its existing request and response contracts.
+
+Reason: the owner requested the announced feature. Surplus can globally pause masking and forward requests without protection or a receipt, so this opt-in does not guarantee that every request is masked. The gateway does not require or parse a masking receipt.
+
+Reversal risk: removing the header returns request-level enablement to the provider's defaults.
+
+## Deployment-guard fixtures retain complete bounded coverage - 2026-10-18
+
+CI run `39168411070` passed 33 of the 45 deployment/recovery cases and began the next controlled launcher before the existing ten-minute per-file cap stopped it. The complete `tests/vps-deploy-guards.test.ts` file receives a bounded twenty-minute default; every other file keeps ten minutes, individual Bun test deadlines stay five minutes, and an explicit `--file-timeout-ms` remains capped at ten minutes and overrides the default. No case, assertion, fixture isolation or process-group settlement rule is removed.
+
+Knip treats `cloudflare.config.ts`, `wrangler.config.ts` and `tools/cloudflare/generate-types.ts` as actual external-tool entry points. The configured CLI consumes the two default config exports; `cf` and `wrangler` remain pinned dependencies. Prettier excludes vendored Rust bytes and continues to own the supported first-party formats.

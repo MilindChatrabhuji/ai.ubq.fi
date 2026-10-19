@@ -93,6 +93,7 @@ textAsset(["/chat-stats.js"], "chat-stats.js", "text/javascript; charset=utf-8")
 textAsset(["/models.js"], "models.js", "text/javascript; charset=utf-8");
 textAsset(["/toast.js"], "toast.js", "text/javascript; charset=utf-8");
 textAsset(["/admin.js"], "admin.js", "text/javascript; charset=utf-8");
+textAsset(["/admin-reset.js"], "admin-reset.js", "text/javascript; charset=utf-8");
 textAsset(["/admin-supervisor.js"], "admin-supervisor.js", "text/javascript; charset=utf-8");
 textAsset(["/admin-cache.js"], "admin-cache.js", "text/javascript; charset=utf-8");
 textAsset(["/auth.js"], "auth.js", "text/javascript; charset=utf-8");

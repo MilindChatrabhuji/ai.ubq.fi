@@ -147,12 +147,8 @@
     },
     {
       "surface": "claude_replay",
-      "source_test_files": [
-        "tests/anthropic-replay.test.ts"
-      ],
-      "rust_tests": [
-        "native_replay_is_scoped_complete_expiring_and_never_publicly_signed"
-      ],
+      "source_test_files": ["tests/anthropic-replay.test.ts"],
+      "rust_tests": ["native_replay_is_scoped_complete_expiring_and_never_publicly_signed"],
       "coverage": "partial",
       "unported_vectors_or_runtime_gaps": "Full namespaced/freeform signed continuation loop, canonical argument order, hidden/redacted groups, byte/count eviction and every malformed receipt case are not individually ported."
     },
