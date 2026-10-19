@@ -81,7 +81,33 @@ impl UpstreamTrace {
         self.validate()?;
         let value = serde_json::to_value(self.0.as_ref())
             .map_err(|_| crate::store::error("Upstream trace serialization failed"))?;
-        Ok(gateway_schema::util::json_stringify(&value))
+        fn canonical(value: &serde_json::Value) -> String {
+            match value {
+                serde_json::Value::Object(fields) => {
+                    let mut keys = fields.keys().collect::<Vec<_>>();
+                    keys.sort();
+                    format!(
+                        "{{{}}}",
+                        keys.into_iter()
+                            .map(|key| format!(
+                                "{}:{}",
+                                gateway_schema::util::json_stringify(&serde_json::Value::String(
+                                    key.clone()
+                                )),
+                                canonical(&fields[key])
+                            ))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    )
+                }
+                serde_json::Value::Array(values) => format!(
+                    "[{}]",
+                    values.iter().map(canonical).collect::<Vec<_>>().join(",")
+                ),
+                _ => gateway_schema::util::json_stringify(value),
+            }
+        }
+        Ok(canonical(&value))
     }
     pub(crate) fn validate(&self) -> Result<(), GatewayError> {
         for attempt in &self.0.attempts {

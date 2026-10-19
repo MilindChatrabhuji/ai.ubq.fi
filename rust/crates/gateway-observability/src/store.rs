@@ -87,7 +87,61 @@ pub(crate) async fn commit<S: AuthorityStore>(
     checks: Vec<RevisionCheck>,
     mutations: Vec<RecordMutation>,
 ) -> Result<bool, GatewayError> {
-    Ok(store.commit(AtomicTransition { checks, mutations }).await? == CommitOutcome::Committed)
+    // Keep source fences immutable. Backend-only guards may be refreshed only
+    // after an explicit Conflict receipt; an unknown commit error is never retried.
+    let mut explicit = std::collections::BTreeMap::<String, RevisionCheck>::new();
+    for check in checks {
+        if let Some(previous) = explicit.get(&check.key.0)
+            && previous.expected_revision != check.expected_revision
+        {
+            return Err(error(
+                "Observation transaction has conflicting revision checks",
+            ));
+        }
+        explicit.insert(check.key.0.clone(), check);
+    }
+    // Source Bun KV applies the final mutation for each key. Preserve that
+    // effect while satisfying the portable store's one-mutation requirement.
+    let mut final_writes = std::collections::BTreeMap::<String, RecordMutation>::new();
+    for mutation in mutations {
+        let key = match &mutation {
+            RecordMutation::Put { key, .. } | RecordMutation::Delete { key } => key,
+        };
+        final_writes.insert(key.0.clone(), mutation);
+    }
+    for _ in 0..3 {
+        let mut fenced = explicit.clone();
+        for name in final_writes.keys() {
+            if let std::collections::btree_map::Entry::Vacant(entry) = fenced.entry(name.clone()) {
+                let key = RecordKey(name.clone());
+                let previous = store.read(&key).await?;
+                entry.insert(check(&key, previous.as_ref()));
+            }
+        }
+        match store
+            .commit(AtomicTransition {
+                checks: fenced.into_values().collect(),
+                mutations: final_writes.values().cloned().collect(),
+            })
+            .await?
+        {
+            CommitOutcome::Committed => return Ok(true),
+            CommitOutcome::Conflict => {
+                for original in explicit.values() {
+                    if store
+                        .read(&original.key)
+                        .await?
+                        .as_ref()
+                        .map(|r| &r.revision)
+                        != original.expected_revision.as_ref()
+                    {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+    }
+    Ok(false)
 }
 pub(crate) async fn scan<S: QueryStore>(
     store: &S,

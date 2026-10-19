@@ -52,6 +52,29 @@ impl AuthorityStore for Memory {
         Ok(self.rows.borrow().get(&key.0).cloned())
     }
     async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
+        let mut checks = std::collections::BTreeSet::new();
+        if transition
+            .checks
+            .iter()
+            .any(|check| !checks.insert(check.key.0.clone()))
+        {
+            return Err(GatewayError::unavailable(
+                "Fixture rejects duplicate checks like the actual Worker store",
+                "fixture_invalid_transition",
+            ));
+        }
+        let mut writes = std::collections::BTreeSet::new();
+        if transition.mutations.iter().any(|mutation| {
+            let key = match mutation {
+                RecordMutation::Put { key, .. } | RecordMutation::Delete { key } => key,
+            };
+            !checks.contains(&key.0) || !writes.insert(key.0.clone())
+        }) {
+            return Err(GatewayError::unavailable(
+                "Fixture requires one unique checked mutation like the actual Worker store",
+                "fixture_invalid_transition",
+            ));
+        }
         std::future::poll_fn(|_| {
             if self.pause.get() {
                 Poll::Pending

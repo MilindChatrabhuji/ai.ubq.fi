@@ -94,8 +94,14 @@ fn client(failure: &FailureObservation) -> ClientFailureObservation {
     client
 }
 fn ready<S: QueryStore>(runtime: &ObservabilityRuntime<S, CaptureHost>, limits: RetentionLimits) {
-    for _ in 0..20 {
-        let status = run(runtime.maintain_replays(limits)).unwrap();
+    for attempt in 0..20 {
+        let status = run(runtime.maintain_replays(limits)).unwrap_or_else(|error| {
+            let budget = run(runtime
+                .store()
+                .read(&gateway_observability::replay_model::key("budget")))
+            .unwrap();
+            panic!("maintenance pass {attempt}: {error:?}; synthetic budget {budget:?}")
+        });
         if status["accounting_complete"] == true {
             return;
         }
