@@ -13,6 +13,9 @@ pub(super) fn finite(value: &SourceJson, field: &str) -> Option<Value> {
 pub(super) fn text(value: &SourceJson, field: &str) -> Option<String> {
     member(value, field)?.deserialize().ok()
 }
+pub(super) fn number(value: &SourceJson, field: &str) -> Option<f64> {
+    source::number(&member(value, field)?)
+}
 pub(super) fn integer(value: &SourceJson, field: &str) -> Option<i64> {
     source::number(&member(value, field)?)
         .filter(|number| {
