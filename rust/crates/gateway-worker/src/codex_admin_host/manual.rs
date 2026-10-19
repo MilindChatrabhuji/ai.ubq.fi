@@ -5,23 +5,18 @@ use crate::{
     storage::now_ms,
     transport::outbound::{PinnedDestination, send_http},
 };
-use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::{
-    AuthConfig, AuthRequest, AuthResponse, AuthService,
+    AuthConfig, AuthResponse,
     provider_credentials::{CodexSourceAccount, read_codex_source_pool},
 };
 use gateway_authority::{
     Authority,
     manual_reset::{ManualResetPreparation, ManualResetTarget},
-    native_control::actor::{authenticate_admin_actor, principal_id},
+    native_control::actor::NativeRenewalActor,
     reset::{AccountResetInventory, ResetClaim, ResetCredit, ResetState, select_reset_credit},
     routing::{CapacityObservation, parse_capacity_observation},
 };
-use gateway_core::{
-    GatewayError,
-    identity::{PrincipalId, RequestContext, RequestId},
-    state::AuthorityStore,
-};
+use gateway_core::{GatewayError, state::AuthorityStore};
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
@@ -32,13 +27,12 @@ use worker::{Method, Url};
 pub(super) async fn consume(
     store: &RemoteAuthorityStore,
     platform: &PlatformHost,
-    original: &AuthRequest,
     config: &AuthConfig,
     hash: &str,
-    context: Context,
+    actor: &NativeRenewalActor,
 ) -> Result<AuthResponse, GatewayError> {
     let mut phase = None;
-    let result = run(store, platform, original, config, hash, context, &mut phase).await;
+    let result = run(store, platform, config, hash, actor, &mut phase).await;
     let mut response = match result {
         Ok(body) => AuthResponse::json(200, body),
         Err(error) => {
@@ -59,25 +53,13 @@ pub(super) async fn consume(
 async fn run(
     store: &RemoteAuthorityStore,
     platform: &PlatformHost,
-    original: &AuthRequest,
     config: &AuthConfig,
     hash: &str,
-    context: Context,
+    actor: &NativeRenewalActor,
     phase: &mut Option<&'static str>,
 ) -> Result<Value, GatewayError> {
     let authority = Authority::with_clock(store.clone(), PlatformTokens, PlatformClock);
-    let principal = AuthService::new(store, platform, config)
-        .authenticate_admin(original)
-        .await?;
-    let request = RequestContext {
-        request_id: RequestId(context.request_id),
-        principal: PrincipalId(principal_id(&principal)),
-        key_id: None,
-        route: "/admin/providers/codex/banked-resets/consume".into(),
-        started_at_ms: context.now_ms,
-    };
-    let actor = authenticate_admin_actor(&authority, platform, config, original, &request).await?;
-    let action = match authority.prepare_manual_reset(&actor, config, hash).await? {
+    let action = match authority.prepare_manual_reset(actor, config, hash).await? {
         ManualResetPreparation::Ready(action) => action,
         ManualResetPreparation::NeedsUsage(target) => {
             let usage = usage(store, platform, &target).await?;
@@ -96,7 +78,7 @@ async fn run(
     // A known prior operation is resolved by authority before any new inventory/consume.
     // First attempts select complete inventory before claiming a submission owner.
     let credit = if previous.is_none() {
-        authority.prepare_manual_reset(&actor, config, hash).await?;
+        authority.prepare_manual_reset(actor, config, hash).await?;
         Some(inventory(store, platform, action.target()).await?)
     } else {
         None
@@ -128,7 +110,7 @@ async fn run(
             let credit = match credit {
                 Some(credit) => credit,
                 None => {
-                    authority.prepare_manual_reset(&actor, config, hash).await?;
+                    authority.prepare_manual_reset(actor, config, hash).await?;
                     inventory(store, platform, action.target()).await?
                 }
             };
@@ -207,7 +189,7 @@ async fn run(
         }
     };
     *phase = Some("verified");
-    authority.prepare_manual_reset(&actor, config, hash).await?;
+    authority.prepare_manual_reset(actor, config, hash).await?;
     let observation = usage(store, platform, action.target()).await.map_err(|_| failure(409,"codex_reset_usage_pending","Reset verified; current quota verification is pending. Check again without consuming another reset."))?;
     let promoted = authority
         .promote_manual_reset(&action, config, &verified, &observation)
