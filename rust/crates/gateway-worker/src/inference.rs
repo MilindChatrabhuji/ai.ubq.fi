@@ -8,8 +8,8 @@ use gateway_core::{
 };
 use gateway_providers::{ClientSurface, ProviderEvent, StreamDecoder, decode_response};
 use gateway_routing_runtime::{
-    AttemptFailure, AttemptUsage, FailureOrigin, PreparedAttempt, RefusalDecision, RoutingInput,
-    RoutingSession, TransportState,
+    AttemptFailure, FailureOrigin, PreparedAttempt, RefusalDecision, RoutingInput, RoutingSession,
+    TransportState,
 };
 use gateway_schema::{
     content,
@@ -23,16 +23,16 @@ use crate::{
     catalog::CatalogState,
     host::PlatformHost,
     host::{PlatformClock, PlatformTokens},
+    inference_lifecycle::{Lifecycle, Session, Usage, finish_hook},
     routing_host,
     storage::now_ms,
     transport::{
         body,
         outbound::{DispatchAttempt, PinnedDestination, send_http},
-        stream::{FinishHook, ObservationHandle, ObservedStream},
+        stream::{ObservationHandle, ObservedStream},
     },
 };
 
-type Usage = Rc<RefCell<Option<Value>>>;
 const ATTEMPT_DEADLINE_MS: i32 = 1_800_000;
 
 pub struct RequestResources {
@@ -271,50 +271,6 @@ async fn dispatch_attempts(
     }
 }
 
-type Session =
-    RoutingSession<RemoteAuthorityStore, PlatformTokens, PlatformClock, routing_host::Host>;
-
-struct Lifecycle {
-    session: Rc<Session>,
-    attempt: PreparedAttempt,
-    provider_request_id: Option<String>,
-    status: u16,
-}
-
-impl Lifecycle {
-    async fn observe_terminal(
-        &self,
-        observation: gateway_core::lifecycle::TransportObservation,
-        usage: Option<Value>,
-    ) -> Result<(), GatewayError> {
-        self.session
-            .observe_terminal(
-                &self.attempt,
-                observation,
-                AttemptUsage {
-                    usage,
-                    provider_request_id: self.provider_request_id.clone(),
-                    status: Some(self.status),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|error| *error.error)
-    }
-    async fn finish(
-        &self,
-        observation: gateway_core::lifecycle::TransportObservation,
-        usage: Option<Value>,
-    ) -> Result<(), GatewayError> {
-        self.observe_terminal(observation, usage).await?;
-        self.session
-            .finish(observation)
-            .await
-            .map_err(|error| *error.error)?;
-        Ok(())
-    }
-}
-
 pub async fn run(
     mut request: Request,
     resources: RequestResources,
@@ -404,6 +360,13 @@ pub async fn run(
             route: route.to_owned(),
             started_at_ms: now_ms()?,
         };
+        capture.begin(&original, &model, &raw, client_stream).await;
+        let surplus_models = catalog
+            .input
+            .providers
+            .get("surplus")
+            .map(|provider| provider.models.clone())
+            .unwrap_or_default();
         let session = Rc::new(
             RoutingSession::begin(
                 RoutingInput {
@@ -472,11 +435,31 @@ pub async fn run(
             .headers()
             .entries()
             .collect::<gateway_providers::Headers>();
+        capture.correlate(correlation(provider, &headers));
         let lifecycle = Rc::new(Lifecycle {
             session,
             attempt,
             provider_request_id: correlation(provider, &headers).map(str::to_owned),
             status,
+            store: store.clone(),
+            pricing: surplus_models
+                .into_iter()
+                .find(|row| {
+                    row.get("id").and_then(Value::as_str)
+                        == Some(prepared.decode.upstream_model.as_str())
+                })
+                .map(|mut row| {
+                    if prepared.url.ends_with("/messages") {
+                        row["require_provider_cost"] = json!(true);
+                    }
+                    row
+                })
+                .or_else(|| {
+                    prepared
+                        .url
+                        .ends_with("/messages")
+                        .then(|| json!({"require_provider_cost":true}))
+                }),
         });
         let event_stream = headers.iter().any(|(name, value)| {
             name.eq_ignore_ascii_case("content-type") && value.contains("text/event-stream")
@@ -848,27 +831,6 @@ fn observe_event(observation: &ObservationHandle, event: &ProviderEvent) {
     }
 }
 
-fn finish_hook(
-    lifecycle: Rc<Lifecycle>,
-    usage: Usage,
-    permit: Option<gateway_admission::Permit>,
-    capture: Rc<crate::inference_capture::Capture>,
-) -> FinishHook {
-    Box::new(move |observation| {
-        Box::pin(async move {
-            let usage = usage.borrow().clone();
-            if let Err(error) = lifecycle.finish(observation, usage).await {
-                worker::console_error!(
-                    "Durable request settlement remains pending: {}",
-                    error.envelope.error.message
-                );
-            }
-            capture.finish(observation).await;
-            drop(permit);
-        })
-    })
-}
-
 fn copy_headers(
     response: &mut Response,
     headers: &gateway_providers::Headers,
@@ -894,10 +856,7 @@ fn copy_headers(
     Ok(())
 }
 
-fn correlation<'a>(
-    provider: UpstreamProvider,
-    headers: &'a gateway_providers::Headers,
-) -> Option<&'a str> {
+fn correlation(provider: UpstreamProvider, headers: &gateway_providers::Headers) -> Option<&str> {
     let names: &[&str] = if provider == UpstreamProvider::Deepseek {
         &["x-request-id", "x-ds-request-id", "x-deepseek-request-id"]
     } else if provider == UpstreamProvider::Cerebras {

@@ -120,67 +120,18 @@ impl<
             extras_dispatch: None,
             children: Vec::new(),
             kernel_override: None,
+            local_work: None,
         };
         journal::create(&store, &tokens, &row).await?;
         let authority = Authority::with_clock(store.clone(), tokens.clone(), clock.clone());
-        let admission = async {
-            if let AuthMethod::KvApiKey { key_id, .. } = &input.principal.method {
-                let id = ApiKeyId(key_id.clone());
-                if input.context.key_id.as_ref() != Some(&id) {
-                    return Err(journal::unavailable(
-                        "Principal and original key identity differ.",
-                    ));
-                }
-                row.api = Some(
-                    authority
-                        .reserve_api_key_deferred(
-                            &id,
-                            &input.context.request_id,
-                            &input.context.route,
-                            clock.now_ms()?,
-                        )
-                        .await?,
-                );
-                journal::change(
-                    &store,
-                    &tokens,
-                    &input.context.request_id.0,
-                    clock.now_ms()?,
-                    &[],
-                    |j| {
-                        j.api = row.api.clone();
-                        Ok(())
-                    },
-                )
-                .await?;
-            }
-            if let AuthMethod::GithubToken { owner, repo, .. } = &input.principal.method {
-                row.kernel = Some(
-                    authority
-                        .reserve_kernel(
-                            owner,
-                            repo,
-                            &input.context.request_id,
-                            &input.context.route,
-                            clock.now_ms()?,
-                        )
-                        .await?,
-                );
-                journal::change(
-                    &store,
-                    &tokens,
-                    &input.context.request_id.0,
-                    clock.now_ms()?,
-                    &[],
-                    |j| {
-                        j.kernel = row.kernel.clone();
-                        Ok(())
-                    },
-                )
-                .await?;
-            }
-            Ok::<_, GatewayError>(())
-        }
+        let admission = reserve_original(
+            &input.principal,
+            &input.context,
+            &mut row,
+            &store,
+            &tokens,
+            &clock,
+        )
         .await;
         if let Err(error) = admission {
             if let Some(api) = &row.api {
@@ -404,4 +355,71 @@ impl<
             Ok(PaidAuthorization::DirectPaidModel)
         }
     }
+}
+
+/// The one original admission operation shared by ordinary and local work.
+pub(crate) async fn reserve_original<
+    S: QueryStore + Clone,
+    I: TokenSource + Clone,
+    C: AuthorityClock + Clone + 'static,
+>(
+    principal: &gateway_auth::AuthPrincipal,
+    context: &gateway_core::identity::RequestContext,
+    row: &mut Journal,
+    store: &S,
+    tokens: &I,
+    clock: &C,
+) -> Result<(), GatewayError> {
+    let authority = Authority::with_clock(store.clone(), tokens.clone(), clock.clone());
+    if let AuthMethod::KvApiKey { key_id, .. } = &principal.method {
+        let id = ApiKeyId(key_id.clone());
+        if context.key_id.as_ref() != Some(&id) {
+            return Err(journal::unavailable(
+                "Principal and original key identity differ.",
+            ));
+        }
+        row.api = Some(
+            authority
+                .reserve_api_key_deferred(&id, &context.request_id, &context.route, clock.now_ms()?)
+                .await?,
+        );
+        journal::change(
+            store,
+            tokens,
+            &context.request_id.0,
+            clock.now_ms()?,
+            &[],
+            |j| {
+                j.api = row.api.clone();
+                Ok(())
+            },
+        )
+        .await?;
+    }
+    if let AuthMethod::GithubToken { owner, repo, .. } = &principal.method {
+        row.kernel = Some(
+            authority
+                .reserve_kernel(
+                    owner,
+                    repo,
+                    &context.request_id,
+                    &context.route,
+                    clock.now_ms()?,
+                )
+                .await?,
+        );
+        journal::change(
+            store,
+            tokens,
+            &context.request_id.0,
+            clock.now_ms()?,
+            &[],
+            |j| {
+                j.kernel = row.kernel.clone();
+                Ok(())
+            },
+        )
+        .await?;
+    }
+    Ok(())
 }

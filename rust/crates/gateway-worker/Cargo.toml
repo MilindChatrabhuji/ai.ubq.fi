@@ -13,6 +13,7 @@ default = ["entrypoint"]
 entrypoint = []
 
 [dependencies]
+gateway-compaction.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true
 gateway-authority.workspace = true

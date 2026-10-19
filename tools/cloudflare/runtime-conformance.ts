@@ -7,7 +7,9 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { liveCases } from "./fixtures/live-conformance.ts";
+import { failureCaptureCase, captureSuppressionCase } from "./fixtures/capture-conformance.ts";
 import { runProviderMatrixCases, type MatrixContext, type MatrixScenario } from "./runtime-matrix/index.ts";
+import { replayProviderCases, unicodeForwardingCases } from "./runtime-matrix/context-replay.ts";
 import { testNetworkArgv } from "../../scripts/test-network.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -131,7 +133,7 @@ const config :Workerd.Config = (
       modules = [(name = "index.js", esModule = embed ${quoted(join(application, "index.js"))}), (name = "index_bg.wasm", wasm = embed ${quoted(join(application, "index_bg.wasm"))})],
       compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal", "request_signal_passthrough"],
       globalOutbound = "driver",
-      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "ASSETS", service = "assets"), (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"), (name = "LITHOSAI_API_KEY", text = "fixture-provider-secret"), (name = "DEEPSEEK_API_KEY", text = "fixture-provider-secret"), (name = "CEREBRAS_API_KEY", text = "fixture-provider-secret"), (name = "OPENROUTER_API_KEY", text = "fixture-provider-secret"), (name = "VOYAGEAI_API_KEY", text = "fixture-provider-secret"), (name = "IMAGE_BASE_MODEL", text = "gpt-matrix-test")${scenarioBinding}${paidBindings}],
+      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "ASSETS", service = "assets"), (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"), (name = "LITHOSAI_API_KEY", text = "fixture-provider-secret"), (name = "DEEPSEEK_API_KEY", text = "fixture-provider-secret"), (name = "CEREBRAS_API_KEY", text = "fixture-provider-secret"), (name = "OPENROUTER_API_KEY", text = "fixture-provider-secret"), (name = "VOYAGEAI_API_KEY", text = "fixture-provider-secret"), (name = "SENTINEL_REPLAY_KEY", text = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), (name = "IMAGE_BASE_MODEL", text = "gpt-matrix-test")${scenarioBinding}${paidBindings}],
       durableObjectNamespaces = [(className = "GatewayAuthority", uniqueKey = "uos-rust-runtime-conformance-v1", enableSql = true)],
       durableObjectStorage = (localDisk = "state")
     )),
@@ -477,6 +479,7 @@ async function extrasCases(input: {
   assert(Array.isArray(vectors.data) && isObject(vectors.data[0]) && Array.isArray(vectors.data[0].embedding));
   assert.equal(vectors.data[0].embedding.length, 256);
   assert.equal(vectors.data[0].embedding[0], 0.125);
+  assert.deepEqual(vectors.usage, { prompt_tokens: 7, total_tokens: 7 });
   const embeddingId = embedding.headers.get("x-uos-request-id");
   assert(embeddingId);
   const committed = await lifecycle(embeddingId);
@@ -485,7 +488,7 @@ async function extrasCases(input: {
   assert(isObject(committed.kernel_override));
   assert.equal(committed.kernel_override.terminal, "committed");
   const dispatchCount = (await events()).filter((event) => isObject(event) && event.kind === "extras_dispatch").length;
-  assert.deepEqual(await objectBody(await post("/uos/embeddings", requestBody)), vectors);
+  assert.deepEqual(await objectBody(await post("/uos/embeddings", requestBody)), { ...vectors, usage: { prompt_tokens: 0, total_tokens: 0 } });
   assert.equal((await events()).filter((event) => isObject(event) && event.kind === "extras_dispatch").length, dispatchCount);
   cases.push("actual_voyage_embedding_fixed_transport_cache_and_one_original_admission");
 
@@ -766,6 +769,9 @@ async function inner(): Promise<void> {
     assert(!truncatedText.includes("response.completed"));
     assert(truncatedText.includes("response.failed"));
     cases.push("truncated_upstream_never_becomes_completed");
+    const capturedId = truncated.headers.get("x-uos-request-id");
+    assert(capturedId);
+    await failureCaptureCase(url, capturedId, requestId, cases);
     const created = await post(
       "/admin/api-keys",
       { name: "runtime quota fixture", usage_limit_requests: 2, window_ms: 604800000, paid_fallback_enabled: false },
@@ -815,6 +821,7 @@ async function inner(): Promise<void> {
     assert.notEqual(cancelState.terminal_intent.semantic_terminal, "response.completed");
     await assertUpstreamCancelled(events, "fixture:abort-tcp");
     cases.push("actual_caller_abort_retains_non_successful_transport_state");
+    await captureSuppressionCase(url, cancelId, cases);
     await withScenario("codex", async (fixture) => {
       await imageCases(fixture);
       await liveCases({
@@ -829,6 +836,8 @@ async function inner(): Promise<void> {
       });
     });
     await runProviderMatrixCases({ ...matrixContext, withScenario });
+    await withScenario("codex", replayProviderCases);
+    await withScenario("codex", unicodeForwardingCases);
     console.log(
       JSON.stringify({
         sourceSha: expectedSha,
