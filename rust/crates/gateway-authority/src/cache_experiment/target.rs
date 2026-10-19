@@ -233,7 +233,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         let mut tx = self.transaction(now)?;
         let current = inventory(&mut tx).await?;
         let target = super::state::select_target(&mut tx, current.targets).await?;
-        let target=resolve(&mut tx,&target).await?.map_err(|_| unavailable("Prompt-cache scope experiment target changed before its Stage 0 baseline could be checked."))?;
+        let mut recheck = self.transaction(self.fresh_time(now)?)?;
+        let target=resolve(&mut recheck,&target).await?.map_err(|_| unavailable("Prompt-cache scope experiment target changed before its Stage 0 baseline could be checked."))?;
         Ok(PreparedTarget {
             target,
             release_git_sha: release_git_sha.into(),

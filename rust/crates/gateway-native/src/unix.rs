@@ -244,11 +244,14 @@ impl UnixOwnerTransport {
         locations: Vec<NativeOwnerLocation>,
         deadline: Option<Instant>,
     ) -> Result<Self, GatewayError> {
-        if locations.len() > 2 {
+        if !(1..=2).contains(&locations.len()) {
             return Err(owner_unavailable());
         }
         let mut homes = BTreeMap::new();
         for location in locations {
+            if homes.values().any(|home| home == &location.home) {
+                return Err(owner_unavailable());
+            }
             if homes.insert(location.owner.0, location.home).is_some() {
                 return Err(owner_unavailable());
             }

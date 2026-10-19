@@ -65,6 +65,7 @@ impl OwnerRenewalConfig {
             return Err(invalid());
         }
         let mut seen = BTreeSet::new();
+        let mut homes = BTreeSet::new();
         for owner in &self.owners {
             if owner.owner_id.is_empty()
                 || owner.owner_id.len() > 256
@@ -73,6 +74,7 @@ impl OwnerRenewalConfig {
                 })
                 || !owner.codex_home.is_absolute()
                 || !seen.insert(&owner.owner_id)
+                || !homes.insert(&owner.codex_home)
             {
                 return Err(invalid());
             }

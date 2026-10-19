@@ -41,23 +41,51 @@ fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Optio
     T::deserialize(d).map(Some)
 }
 fn nullable<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
-    Option::<String>::deserialize(d)
+    Option::<String>::deserialize(d).map(|s| {
+        s.map(|s| {
+            s.trim_matches(gateway_schema::util::js_whitespace)
+                .to_owned()
+        })
+    })
+}
+fn trimmed<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    String::deserialize(d).map(|s| {
+        s.trim_matches(gateway_schema::util::js_whitespace)
+            .to_owned()
+    })
+}
+fn nonnegative<'de, D: Deserializer<'de>, T: TryFrom<u64>>(d: D) -> Result<T, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    let number = value
+        .as_f64()
+        .filter(|v| v.is_finite() && v.fract() == 0.0 && *v >= 0.0 && *v <= MAX_SAFE as f64)
+        .ok_or_else(|| serde::de::Error::custom("Expected a nonnegative safe integer."))?;
+    T::try_from(number as u64)
+        .map_err(|_| serde::de::Error::custom("Integer does not fit its source field."))
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TargetBinding {
+    #[serde(deserialize_with = "trimmed")]
     pub id: String,
     pub provider: String,
     pub telemetry_provider: String,
     pub topology_kind: String,
+    #[serde(deserialize_with = "trimmed")]
     pub model: String,
     pub probe_profile: String,
+    #[serde(deserialize_with = "trimmed")]
     pub capability_fingerprint: String,
+    #[serde(deserialize_with = "trimmed")]
     pub inventory_fingerprint: String,
+    #[serde(deserialize_with = "trimmed")]
     pub catalog_versionstamp: String,
+    #[serde(deserialize_with = "trimmed")]
     pub runtime_versionstamp: String,
+    #[serde(deserialize_with = "trimmed")]
     pub auth_pool_versionstamp: String,
+    #[serde(deserialize_with = "trimmed")]
     pub auth_pool_identity_fingerprint: String,
     #[serde(deserialize_with = "nullable")]
     pub catalog_client_version: Option<String>,
@@ -177,10 +205,15 @@ impl Scope {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Usage {
+    #[serde(deserialize_with = "nonnegative")]
     pub input_tokens: u64,
+    #[serde(deserialize_with = "nonnegative")]
     pub cached_tokens: u64,
+    #[serde(deserialize_with = "nonnegative")]
     pub cache_write_tokens: u64,
+    #[serde(deserialize_with = "nonnegative")]
     pub output_tokens: u64,
+    #[serde(deserialize_with = "nonnegative")]
     pub total_tokens: u64,
 }
 impl Usage {
@@ -221,9 +254,11 @@ impl Usage {
 #[serde(deny_unknown_fields)]
 pub struct Sample {
     pub step: String,
+    #[serde(deserialize_with = "nonnegative")]
     pub slot: u8,
     pub raw_usage: Usage,
     pub usage: Usage,
+    #[serde(deserialize_with = "nonnegative")]
     pub elapsed_ms: u64,
 }
 impl Sample {
@@ -279,9 +314,19 @@ pub fn classify(model: &str, samples: &[Sample]) -> Option<Scope> {
     }
     let signals = samples
         .iter()
-        .enumerate()
-        .map(|(i, s)| sample_signal(&samples[..i], s, i).ok())
+        .map(|s| s.usage.signal())
         .collect::<Option<Vec<_>>>()?;
+    if samples.iter().enumerate().any(|(i, s)| {
+        !s.usage.matches_reusable(first.usage.cache_write_tokens)
+            || ([2, 5, 7].contains(&i) && s.usage.mixed())
+            || (if i == 0 {
+                signals[i] != Signal::Write
+            } else {
+                ![2, 5, 7].contains(&i) && signals[i] != Signal::Read
+            })
+    }) {
+        return None;
+    }
     Some(Scope {
         probe_profile: PROFILE.into(),
         effective_model: model.into(),
@@ -306,6 +351,7 @@ pub fn classify(model: &str, samples: &[Sample]) -> Option<Scope> {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Cycle {
+    #[serde(deserialize_with = "nonnegative")]
     pub cycle: u8,
     pub samples: Vec<Sample>,
     #[serde(
@@ -341,12 +387,18 @@ impl Cycle {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct State {
+    #[serde(deserialize_with = "nonnegative")]
     pub v: u8,
     pub target: TargetBinding,
+    #[serde(deserialize_with = "trimmed")]
     pub campaign_owner: String,
+    #[serde(deserialize_with = "nonnegative")]
     pub started_at_ms: i64,
+    #[serde(deserialize_with = "nonnegative")]
     pub expires_at_ms: i64,
+    #[serde(deserialize_with = "trimmed")]
     pub auth_pool_versionstamp: String,
+    #[serde(deserialize_with = "nonnegative")]
     pub next_cycle: u8,
     pub classifications: Vec<Scope>,
     #[serde(
@@ -393,10 +445,13 @@ pub enum Outcome {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Evidence {
+    #[serde(deserialize_with = "nonnegative")]
     pub v: u8,
     pub target: TargetBinding,
     pub outcome: Outcome,
+    #[serde(deserialize_with = "nonnegative")]
     pub started_at_ms: i64,
+    #[serde(deserialize_with = "nonnegative")]
     pub verified_at_ms: i64,
     pub cycles: Vec<Cycle>,
     #[serde(

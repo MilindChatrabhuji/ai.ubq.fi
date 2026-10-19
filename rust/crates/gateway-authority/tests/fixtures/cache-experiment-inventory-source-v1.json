@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "now": 1700000000000,
+  "input": {
+    "snapshot": {
+      "models": [
+        {
+          "slug": "fixture-a",
+          "prompt_cache": {
+            "version": 1,
+            "providers": [
+              {
+                "id": "codex_chatgpt",
+                "controls": {
+                  "key": true,
+                  "implicit": true,
+                  "expected_usage_fields": ["cached_tokens", "cache_write_tokens"]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "slug": "fixture-z",
+          "prompt_cache": {
+            "version": 1,
+            "providers": [
+              {
+                "id": "codex_chatgpt",
+                "controls": {
+                  "key": true,
+                  "implicit": true,
+                  "expected_usage_fields": ["cached_tokens", "cache_write_tokens"]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "source": "fixture",
+      "updated_at_ms": 1700000000000,
+      "client_version": "0.100.0"
+    },
+    "catalogVersionstamp": "catalog-1",
+    "codexAuthPool": {
+      "accounts": [
+        {
+          "account_id": "account-a",
+          "access_token": "fixture-access-a",
+          "refresh_token": "fixture-refresh-a",
+          "updated_at_ms": 1700000000000
+        },
+        {
+          "account_id": "account-b",
+          "access_token": "fixture-access-b",
+          "refresh_token": "fixture-refresh-b",
+          "updated_at_ms": 1700000000000
+        }
+      ],
+      "updated_at_ms": 1700000000000
+    },
+    "codexAuthPoolVersionstamp": "pool-1",
+    "meteredFallbackRoster": {
+      "status": "unknown"
+    }
+  },
+  "inventory": {
+    "status": "ready",
+    "reason": "ready",
+    "targets": [
+      {
+        "id": "prompt-cache-scope-targets-v3:codex_chatgpt:chatgpt_codex:codex_account_pool:responses_implicit_input_text_keyed_cycle_isolated_v5:fixture-a",
+        "provider": "codex_chatgpt",
+        "telemetry_provider": "chatgpt_codex",
+        "model": "fixture-a",
+        "model_family_id": "fixture-a",
+        "model_family_source": "exact_model",
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "catalog_model_present": true,
+        "codex_cache_qualification": "unqualified",
+        "topology": {
+          "kind": "codex_account_pool",
+          "configured_slot_count": 2,
+          "auth_pool_versionstamp": "pool-1"
+        },
+        "probeability": {
+          "status": "unprobeable",
+          "reason": "codex_cache_unqualified"
+        },
+        "catalog_versionstamp": "catalog-1",
+        "catalog_client_version": "0.100.0",
+        "codex_auth_pool_versionstamp": "pool-1",
+        "codex_auth_pool_identity_fingerprint": "sha256:3d1c51e8688dec4dc03ef732381f9ad84bc8d1d6d559f9bce886dd24b1e9a473",
+        "capability_fingerprint": "sha256:82fc91d3cb774d3e55c7a850a9149c5cb6c82b3333d6af8658363d24a2d3b588"
+      },
+      {
+        "id": "prompt-cache-scope-targets-v3:codex_chatgpt:chatgpt_codex:codex_account_pool:responses_implicit_input_text_keyed_cycle_isolated_v5:fixture-z",
+        "provider": "codex_chatgpt",
+        "telemetry_provider": "chatgpt_codex",
+        "model": "fixture-z",
+        "model_family_id": "fixture-z",
+        "model_family_source": "exact_model",
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "catalog_model_present": true,
+        "codex_cache_qualification": "unqualified",
+        "topology": {
+          "kind": "codex_account_pool",
+          "configured_slot_count": 2,
+          "auth_pool_versionstamp": "pool-1"
+        },
+        "probeability": {
+          "status": "unprobeable",
+          "reason": "codex_cache_unqualified"
+        },
+        "catalog_versionstamp": "catalog-1",
+        "catalog_client_version": "0.100.0",
+        "codex_auth_pool_versionstamp": "pool-1",
+        "codex_auth_pool_identity_fingerprint": "sha256:3d1c51e8688dec4dc03ef732381f9ad84bc8d1d6d559f9bce886dd24b1e9a473",
+        "capability_fingerprint": "sha256:5f4339beb1ea82727fc71b8e947cabe49eaf3ef7d57f7bbcce91500deac68e21"
+      }
+    ],
+    "metered_fallback_roster": {
+      "status": "unknown",
+      "model_ids": [],
+      "non_catalog_model_ids": []
+    },
+    "inventory_fingerprint": "sha256:b6d83152c7dfe23fc1de425dc831ab881d9aa8e7825194c0923b23f3f06a9355",
+    "binding_fingerprint": "sha256:a40c3715f97b384d5ad556244eae0ef46ee9e12a20232e7969eec2e5a978db38"
+  },
+  "runtime": {
+    "version": 2,
+    "default_model": "fixture-z",
+    "default_reasoning_effort": "none",
+    "codex_models": {
+      "models": [
+        {
+          "slug": "fixture-a",
+          "supported_reasoning_levels": []
+        },
+        {
+          "slug": "fixture-z",
+          "supported_reasoning_levels": []
+        }
+      ],
+      "source": "fixture",
+      "updated_at_ms": 1700000000000,
+      "client_version": "0.100.0"
+    },
+    "updated_at_ms": 1700000000000
+  },
+  "source_sha256": "faaed55c0c5e7088991784e4963f93de96d2e7c25dd720aae07e9630af9ca668",
+  "capture_ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/4d2b2e10-c97c-4739-9940-960f336d6020"
+}

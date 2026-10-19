@@ -60,6 +60,47 @@ async fn source<S: AuthorityStore, I: TokenSource>(
     Ok((revision, pool))
 }
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    /// The fixed host invokes this immediately before actual transport, after
+    /// request construction. It is a credential fence, not a new admission.
+    pub async fn ensure_cache_dispatch_current(
+        &self,
+        dispatch: &CacheDispatch,
+        now: i64,
+    ) -> Result<(), GatewayError> {
+        let mut tx = self.transaction(now)?;
+        let (revision, pool) = source(&mut tx).await?;
+        let current = pool
+            .accounts
+            .get(dispatch.binding.slot as usize)
+            .ok_or_else(|| failed("Prompt-cache scope experiment slot is invalid."))?;
+        if revision != dispatch.binding.pool_versionstamp.0
+            || current.account_id != dispatch.account_id
+            || current.identity().credential_version != dispatch.binding.credential_version
+            || current.access_token != dispatch.access_token
+        {
+            return Err(failed(
+                "Codex credentials changed before dispatch during the prompt-cache scope experiment.",
+            ));
+        }
+        Ok(())
+    }
+    /// An actual pinned 429 uses the shared account/class writer. A transport
+    /// failure never manufactures a quota observation or an ordinary admission.
+    pub async fn record_cache_quota_block(
+        &self,
+        dispatch: &CacheDispatch,
+        block: crate::routing::QuotaBlock,
+        now: i64,
+    ) -> Result<bool, GatewayError> {
+        self.record_bound_quota_block(
+            &dispatch.binding,
+            model_quota_class(&dispatch.model),
+            dispatch.probe.as_ref(),
+            block,
+            now,
+        )
+        .await
+    }
     pub(super) async fn cache_session(&self, now: i64) -> Result<Session, GatewayError> {
         let (revision, pool) = source(&mut self.transaction(now)?).await?;
         Ok(Session {
@@ -151,7 +192,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     "The requested Codex slot is not eligible for the prompt-cache scope experiment.",
                 ));
             }
-            let mut binding = view.binding(index);
+            let binding = view.binding(index);
             let probe = if evaluation.probe {
                 let row = &mut view.state.slots[index];
                 if row
@@ -163,7 +204,6 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                         "The requested Codex slot could not be claimed for the prompt-cache scope experiment.",
                     ));
                 }
-                row.generation = crate::next_generation(row.generation)?;
                 let lease = ProbeLease {
                     token: self.tokens.next_token()?,
                     generation: row.generation as i64,
@@ -172,7 +212,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     expires_at_ms: crate::add(current, crate::PROBE_LEASE_MS)?,
                 };
                 row.probe_lease = Some(lease.clone());
-                binding.routing_generation = row.generation;
+                view.state.updated_at_ms = current;
                 tx.put(&crate::keys::routing(), &view.state, None)?;
                 Some(lease)
             } else {
@@ -212,15 +252,36 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 return Ok(());
             }
             row.probe_lease = None;
-            if completed {
-                row.remove_quota_class(model_quota_class(&dispatch.model));
-                if row.quota_blocks.is_empty() {
-                    row.retained_reset_at_ms = None;
-                    row.reset_identity_ambiguous = false;
-                    row.reset_identity_stable = false;
-                    row.recovery_pending = false;
+            match expected.circuit {
+                ProbeCircuit::Quota => {
+                    let class = model_quota_class(&dispatch.model);
+                    let retained = (row.retained_reset_at_ms, row.reset_identity_stable);
+                    let recovering = row.recovery_pending;
+                    let block = row.quota_block_for(class);
+                    row.remove_quota_class(class);
+                    if !completed && recovering {
+                        row.retained_reset_at_ms = block
+                            .as_ref()
+                            .and_then(|block| block.reset_at_ms)
+                            .or(retained.0);
+                        row.reset_identity_stable = block
+                            .as_ref()
+                            .map(|block| block.reset_is_stable)
+                            .unwrap_or(retained.1);
+                        row.reset_identity_ambiguous = true;
+                    }
+                }
+                ProbeCircuit::UpstreamTimeout => {
+                    row.upstream_timeout_blocked_until_ms = None;
                 }
             }
+            if completed && row.quota_blocks.is_empty() {
+                row.retained_reset_at_ms = None;
+                row.reset_identity_ambiguous = false;
+                row.reset_identity_stable = false;
+                row.recovery_pending = false;
+            }
+            view.state.updated_at_ms = now;
             tx.put(&crate::keys::routing(), &view.state, None)?;
             if tx.commit().await? {
                 return Ok(());

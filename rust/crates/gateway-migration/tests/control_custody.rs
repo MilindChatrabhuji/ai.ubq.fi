@@ -105,3 +105,79 @@ fn native_live_connection_is_private_no_ttl_custody_and_cannot_be_adopted_as_sou
     );
     assert!(run(export_rollback_bundle(&store, 2400, context())).is_err());
 }
+
+#[test]
+fn native_generation_and_unknown_operation_remain_private_across_restart() {
+    let directory = Directory::new();
+    let path = directory.file("native-control-custody.sqlite3");
+    let store = SqliteStore::open(&path);
+    let capture: PrivateCapture =
+        serde_json::from_str(include_str!("fixtures/offline-source.json")).unwrap();
+    run(adopt_empty(
+        &store,
+        &prepare(&capture, &CanonicalDates).unwrap(),
+    ))
+    .unwrap();
+    let generation = gateway_auth::store::key(json!([
+        "uos_ai",
+        "authority",
+        "native_owner_renewal",
+        "v1",
+        "generation",
+        "a".repeat(64)
+    ]));
+    let operation = gateway_auth::store::key(json!([
+        "uos_ai",
+        "authority",
+        "native_owner_renewal",
+        "v1",
+        "operation",
+        "fixture-operation"
+    ]));
+    let rows = [
+        (
+            generation.clone(),
+            json!({"v":1,"operation_id":"fixture-operation","claim_ref":"fixture-claim","publication_revision":null,"terminal":null}),
+        ),
+        (
+            operation,
+            json!({"v":1,"action_ref":"b".repeat(64),"operation_id":"fixture-operation","request_digest":"c".repeat(64),"claim_ref":"fixture-claim","start_digest":"d".repeat(64),"phase":"unknown","publication_revision":null,"native_source_generation":null,"access_generation":null,"terminal":null}),
+        ),
+    ];
+    for (key, value) in &rows {
+        store.put(
+            key.clone(),
+            StoredRecord::json("current-control-revision", value.clone(), None),
+        );
+    }
+    drop(store);
+    let store = SqliteStore::open(&path);
+    assert!(run(export_latest(&store, 2400)).is_err());
+    let bundle = run(export_rollback_bundle(&store, 2400, context())).unwrap();
+    for (key, value) in &rows {
+        let preserved = bundle
+            .rust_controls
+            .iter()
+            .find(|r| r.key == key.0)
+            .unwrap();
+        assert_eq!(preserved.record.json_value().unwrap(), value);
+        assert_eq!(preserved.record.expires_at_ms, None);
+        assert_eq!(preserved.record.revision, "current-control-revision");
+    }
+    let unchanged = run(store.read(&generation)).unwrap().unwrap();
+    store.put(
+        generation.clone(),
+        StoredRecord::json("expiring-control", rows[0].1.clone(), Some(9000)),
+    );
+    assert!(run(export_rollback_bundle(&store, 2400, context())).is_err());
+    let mut stale = rows[0].1.clone();
+    stale["v"] = json!(2);
+    store.put(
+        generation.clone(),
+        StoredRecord::json("stale-control", stale, None),
+    );
+    assert!(run(export_rollback_bundle(&store, 2400, context())).is_err());
+    store.put(generation.clone(), unchanged.clone());
+    assert_eq!(run(store.read(&generation)).unwrap(), Some(unchanged));
+    assert!(run(export_rollback_bundle(&store, 2400, context())).is_ok());
+}

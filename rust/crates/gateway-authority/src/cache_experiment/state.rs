@@ -44,8 +44,8 @@ struct CampaignLease {
 fn active(value: &Option<Value>, now: i64) -> bool {
     value
         .as_ref()
-        .and_then(|v| v["lease_until_ms"].as_i64())
-        .is_some_and(|v| v > now && v <= 9_007_199_254_740_991)
+        .and_then(|v| v["lease_until_ms"].as_f64())
+        .is_some_and(|v| v.fract() == 0.0 && v > now as f64 && v <= 9_007_199_254_740_991.0)
 }
 pub(super) fn owns(value: &Option<Value>, owner: &str, now: i64) -> bool {
     active(value, now) && value.as_ref().is_some_and(|v| v["owner"] == owner)
@@ -301,7 +301,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
             let state = &permit.state;
-            let (persisted, prior) = records(&mut tx, &state.target).await?;
+            let (persisted, prior) = records(&mut tx, &state.target)
+                .await
+                .map_err(|e| failed(&e.envelope.error.message))?;
             let cycle_key = record_key("cycle_lease", &state.target);
             let campaign_key = record_key("campaign", &state.target);
             let lease = tx.read::<Value>(&cycle_key).await?;
