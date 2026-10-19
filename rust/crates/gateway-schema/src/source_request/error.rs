@@ -42,6 +42,15 @@ impl SourceRequestError {
             ),
         }
     }
+    pub(crate) fn from_scalar(error: GatewayError) -> Self {
+        let body = SourceJson::from_serializable(&error.envelope)
+            .expect("Scalar error fields are valid JSON");
+        Self {
+            status: error.status,
+            body,
+            diagnostic: error,
+        }
+    }
     pub fn body(&self) -> &SourceJson {
         &self.body
     }

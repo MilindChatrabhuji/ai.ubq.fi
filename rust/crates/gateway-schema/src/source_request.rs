@@ -129,3 +129,20 @@ pub fn parse_instructions(
         .map(SourceField::Value)
         .ok_or_else(|| SourceRequestError::scalar("instructions must be a string", None))
 }
+
+pub fn resolve_model(
+    value: Option<&SourceJson>,
+    default: Option<&str>,
+) -> Result<JsString16, SourceRequestError> {
+    match model_request(value)? {
+        SourceModelRequest::Named(value) => Ok(value),
+        SourceModelRequest::Default => default.map(JsString16::from_utf8).ok_or_else(|| SourceRequestError::from_scalar(
+            gateway_core::GatewayError::new(503, "Default model is unavailable: no configured default model or Codex model snapshot.", Some("server_error")))),
+    }
+}
+
+pub(crate) fn scalar_value(
+    value: Option<&serde_json::Value>,
+) -> Result<Option<SourceJson>, gateway_core::GatewayError> {
+    value.map(SourceJson::from_serializable).transpose()
+}
