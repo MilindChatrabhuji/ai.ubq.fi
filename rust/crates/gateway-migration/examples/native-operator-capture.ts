@@ -7,11 +7,21 @@ import { encodeNativeCaptureValue, type TypedValue } from "../../../../src/kv-co
 
 type NativeValue = { encoding: "source-graph-v1"; value: TypedValue } | { encoding: "counter-le64" | "bytes"; value: number[] };
 type RawJsonNumber = Readonly<{ rawJSON: string }>;
-const isRawJsonNumber = (value: unknown): value is RawJsonNumber =>
-  typeof value === "object" && value !== null && "rawJSON" in value && typeof value.rawJSON === "string" && Boolean(JSON.isRawJSON(value));
+type NativeJson = Readonly<{ rawJSON: (source: string) => unknown; isRawJSON: (value: unknown) => unknown }>;
+const isNativeJson = (value: unknown): value is NativeJson =>
+  typeof value === "object" &&
+  value !== null &&
+  "rawJSON" in value &&
+  typeof value.rawJSON === "function" &&
+  "isRawJSON" in value &&
+  typeof value.isRawJSON === "function";
+const isRawJsonNumber = (value: unknown, json: NativeJson): value is RawJsonNumber =>
+  typeof value === "object" && value !== null && "rawJSON" in value && typeof value.rawJSON === "string" && json.isRawJSON(value) === true;
 const exactJsonNumber = (value: bigint): RawJsonNumber => {
-  const raw: unknown = JSON.rawJSON(String(value));
-  if (!isRawJsonNumber(raw)) throw new Error("Pinned Bun raw JSON number support is unavailable");
+  const json: unknown = JSON;
+  if (!isNativeJson(json)) throw new Error("Pinned Bun raw JSON number support is unavailable");
+  const raw = json.rawJSON(String(value));
+  if (!isRawJsonNumber(raw, json)) throw new Error("Pinned Bun raw JSON number support is unavailable");
   return raw;
 };
 export type NativeCapture = {
