@@ -386,6 +386,7 @@ pub trait RoutingHost {
         principal: &AuthPrincipal,
         model: &ModelId,
         raw: &gateway_core::source_json::SourceJson,
+        effective_effort: Option<&gateway_core::js_string::JsString16>,
     ) -> impl Future<Output = Result<ClaudeSelection, GatewayError>>;
     fn observe_claude_response(
         &self,

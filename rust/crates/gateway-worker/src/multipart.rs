@@ -1,7 +1,8 @@
 //! Source image-edit parsing using bounded original bytes and real FormData.
-use gateway_core::GatewayError;
+use gateway_core::{
+    GatewayError, js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use gateway_providers::extras::MultipartFile;
-use serde_json::{Map, Value};
 use worker::js_sys::{Array, Reflect, Uint8Array, try_iter};
 use worker::wasm_bindgen::{JsCast, JsValue};
 use worker::{FormData, Method, Request, RequestInit};
@@ -21,10 +22,10 @@ const STRINGS: &[&str] = &[
 ];
 const OTHER: &[&str] = &["stream", "n", "partial_images", "output_compression"];
 
-pub fn image_json(bytes: &[u8]) -> Result<Value, GatewayError> {
+pub fn image_json(bytes: &[u8]) -> Result<SourceJson, GatewayError> {
     let text = String::from_utf8_lossy(bytes);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    serde_json::from_str(text).map_err(|_| {
+    SourceJson::parse(text).map_err(|_| {
         invalid(
             "Image edits must use a JSON object or multipart form-data body.",
             None,
@@ -35,7 +36,7 @@ pub fn image_json(bytes: &[u8]) -> Result<Value, GatewayError> {
 pub async fn parse(
     request: &Request,
     bytes: &[u8],
-) -> Result<(Value, Vec<MultipartFile>), GatewayError> {
+) -> Result<(SourceJson, Vec<MultipartFile>), GatewayError> {
     let mut init = RequestInit::new();
     init.with_method(Method::Post)
         .with_headers(request.headers().clone())
@@ -64,21 +65,24 @@ pub async fn parse(
         }
         entries.push((name, value));
     }
-    let mut body = Map::new();
+    let mut body = Vec::new();
     for name in STRINGS {
         if let Some((_, value)) = entries.iter().find(|(key, _)| key == name) {
-            let value = value
-                .as_string()
+            let value = form_string(value)
                 .ok_or_else(|| invalid(&format!("{name} must be a string."), Some(name)))?;
-            body.insert((*name).into(), Value::String(value));
+            body.push((*name, value.to_source_json()?));
         }
     }
     for name in OTHER {
         if let Some((_, value)) = entries.iter().find(|(key, _)| key == name) {
-            body.insert(
-                (*name).into(),
-                value.as_string().map(Value::String).unwrap_or(Value::Null),
-            );
+            body.push((
+                *name,
+                form_string(value)
+                    .as_ref()
+                    .map(JsString16::to_source_json)
+                    .transpose()?
+                    .unwrap_or_else(|| SourceJson::parse("null").expect("null is source JSON")),
+            ));
         }
     }
     let count = entries
@@ -132,11 +136,62 @@ pub async fn parse(
             bytes,
         });
     }
-    Ok((Value::Object(body), files))
+    Ok((source::object(body)?, files))
 }
+// Read only actual FormData string values; never invent units or round-trip through Value.
+fn form_string(value: &JsValue) -> Option<JsString16> {
+    if !value.is_string() {
+        return None;
+    }
+    let text = value.unchecked_ref::<worker::js_sys::JsString>();
+    Some(JsString16::from_units(
+        (0..text.length())
+            .map(|at| text.char_code_at(at) as u16)
+            .collect(),
+    ))
+}
+
 fn invalid_form() -> GatewayError {
     invalid("Image edits must include valid multipart form data.", None)
 }
 fn invalid(message: &str, param: Option<&str>) -> GatewayError {
     GatewayError::new(400, message, Some("invalid_request_error")).with_param(param)
+}
+
+#[cfg(test)]
+mod source_tests {
+    #[test]
+    fn image_json_keeps_original_escaped_units_and_unknown_source_keys() {
+        let value =
+            super::image_json(br#"{"prompt":"p\ud800","model":"m\udc00","bad\ud800":true}"#)
+                .unwrap();
+        let prompt = gateway_core::source_serialization::member(&value, "prompt")
+            .as_ref()
+            .and_then(gateway_core::source_serialization::string)
+            .unwrap();
+        assert_eq!(prompt.as_units(), &[112, 0xd800]);
+        assert!(
+            value
+                .object_entries()
+                .unwrap()
+                .iter()
+                .any(|(key, _)| key.as_units().contains(&0xd800))
+        );
+    }
+    #[test]
+    fn image_json_retains_existing_decoder_bom_and_invalid_json_error_phase() {
+        let value = super::image_json(b"\xef\xbb\xbf{\"prompt\":\"hello\"}").unwrap();
+        assert_eq!(
+            gateway_core::source_serialization::member(&value, "prompt")
+                .unwrap()
+                .as_str(),
+            "\"hello\""
+        );
+        let error = super::image_json(b"not json").unwrap_err();
+        assert_eq!(error.status, 400);
+        assert_eq!(
+            error.envelope.error.message,
+            "Image edits must use a JSON object or multipart form-data body."
+        );
+    }
 }

@@ -4,7 +4,7 @@ use crate::{
     host::{PlatformHost, response_bytes},
     transport::{
         body::discard_response,
-        outbound::{Cancellation, PinnedDestination, send_http},
+        outbound::{Cancellation, PinnedDestination, construct_request, send_constructed},
     },
 };
 use gateway_admin_runtime::{
@@ -18,7 +18,9 @@ use gateway_core::{
 };
 use gateway_observability::{ObservabilityHost, ObservabilityRuntime};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use std::collections::BTreeSet;
 
 const UNVALIDATED: &str = "Stored unvalidated: the models listing could not be read.";
@@ -280,7 +282,7 @@ async fn submit<H: ObservabilityHost>(
         data: &'a SourceJson,
         account_id: &'a str,
         validation: ValidationView,
-        hint: Option<&'a str>,
+        hint: Option<&'a JsString16>,
     }
     Ok(AuthResponse::source_json(
         200,
@@ -291,7 +293,7 @@ async fn submit<H: ObservabilityHost>(
                 status: validation.status,
                 detail: validation.detail,
             },
-            hint: input.credential.as_ref().map(|_| candidate.hint.as_str()),
+            hint: input.credential.as_ref().map(|_| &candidate.hint),
         })?,
     ))
 }
@@ -314,15 +316,15 @@ async fn validate(
             super::catalog::append_cursor(&mut url, cursor);
         }
         let destination = PinnedDestination::new(url.as_str())?;
-        let mut response = match send_http(
-            &destination,
-            worker::Method::Get,
-            &super::platform::credential_headers(credential, workspace),
-            &[],
-            &cancellation,
-            || async { Ok(()) },
-        )
-        .await
+        let headers = match super::platform::credential_headers(credential, workspace, false) {
+            Ok(headers) => headers,
+            Err(_) => return Ok(Validation::unavailable(None)),
+        };
+        let request = match construct_request(&destination, worker::Method::Get, headers, &[]) {
+            Ok(request) => request,
+            Err(_) => return Ok(Validation::unavailable(None)),
+        };
+        let mut response = match send_constructed(request, &cancellation, || async { Ok(()) }).await
         {
             Ok(response) => response,
             Err(_) => return Ok(Validation::unavailable(None)),

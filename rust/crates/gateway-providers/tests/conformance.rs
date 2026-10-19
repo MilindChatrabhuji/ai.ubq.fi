@@ -441,7 +441,10 @@ fn additional_inference_routes_have_provider_payloads_and_image_billing_boundary
     )
     .unwrap();
     assert!(image.codex_only);
-    assert_eq!(image.responses["tools"][0]["model"], "gpt-image-1.5");
+    assert_eq!(
+        scalar_source(&image.responses)["tools"][0]["model"],
+        "gpt-image-1.5"
+    );
     assert_eq!(image.request_ids, vec!["request", "request:image:edits:2"]);
     assert!(
         extras::prepare_image(
@@ -616,4 +619,8 @@ fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
     value
         .deserialize()
         .expect("This frozen regression fixture has scalar text")
+}
+
+fn scalar_source(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+    value.deserialize().expect("actual scalar fixture output")
 }

@@ -133,6 +133,34 @@ pub enum ClaudeCredentialKind {
     ApiKey,
     Oauth,
 }
+/// Inputs consumed only by the ordinary source prelude/coordinator, before account capability lookup.
+#[derive(Clone, Debug, Default)]
+pub struct OrdinaryPhaseOptions {
+    pub allowed_models: Vec<ModelId>,
+    pub ordinary_preparation: Option<OrdinaryPreparationContext>,
+}
+/// One already-normalized Claude ordinary outcome. Cloning retains immutable data
+/// only: no auth, original transcript, native proof, serialization or transport grant.
+#[derive(Clone, Debug)]
+pub struct PreparedClaudeOrdinary {
+    pub(crate) normalized: SourceJson,
+    pub(crate) surface: ClientSurface,
+    pub(crate) requested: ModelId,
+    pub(crate) model: ModelId,
+    pub(crate) client_stream: bool,
+    pub(crate) effective_effort: Option<JsString16>,
+}
+impl PreparedClaudeOrdinary {
+    pub fn effective_effort(&self) -> Option<&JsString16> {
+        self.effective_effort.as_ref()
+    }
+    pub fn surface(&self) -> ClientSurface {
+        self.surface
+    }
+    pub fn model(&self) -> &ModelId {
+        &self.model
+    }
+}
 /// Claude body/decode metadata only. No auth, secret or workspace material.
 #[derive(Clone, Debug)]
 pub struct ClaudeBodyOptions {

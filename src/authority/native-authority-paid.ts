@@ -10,9 +10,11 @@ import { currentApiKeyUsageWindow } from "./native-api-key.ts";
 import type { NativePaidReleasePlan, PaidFallbackRequestV3 } from "./native-paid-contracts.ts";
 import {
   NativeAuthorityError,
+  nativeApiKeyId,
   type NativeArguments,
   type NativeAttempt,
   type NativeCapability,
+  type NativeCursor,
   type NativeKey,
   type NativeReply,
   type NativeRequest,
@@ -32,7 +34,8 @@ export class NativeAuthorityPaid {
   }
   attempt(cap: NativeCapability, handle: string, now: number): NativeAttempt {
     const row = this._sql.read("attempt_lifetime", [handle], now).value;
-    if (row?.principalId !== cap.principalId || row.keyId !== cap.keyId) throw new NativeAuthorityError("attempt_ownership_mismatch", 403);
+    if (row?.principalId !== cap.principalId || row.keyId !== nativeApiKeyId(cap) || row.runtimeBindingId !== cap.id)
+      throw new NativeAuthorityError("attempt_ownership_mismatch", 403);
     this._api.request(cap, row.requestHandle, now);
     return row;
   }
@@ -53,11 +56,12 @@ export class NativeAuthorityPaid {
     this._sql.write("paid_gate", paid.paidFallbackReconciliationGateV3Key(), paid.paidFallbackReconciliationGateDueNow(entry, now));
   }
   private _policy(cap: NativeCapability, now: number) {
-    const source = this._sql.currentKeyPolicy(cap.tokenHash, cap.keyId, now);
+    if (cap.keyId === null || cap.tokenHash === null) return null;
+    const source = this._sql.currentKeyPolicy(cap.tokenHash, nativeApiKeyId(cap), now);
     if (
       !source?.value ||
       source.value.revoked ||
-      source.value.api.key_id !== cap.keyId ||
+      source.value.api.key_id !== nativeApiKeyId(cap) ||
       !source.value.api.paid_fallback_enabled ||
       (source.value.api.expires_at_ms !== -1 && source.value.api.expires_at_ms <= now)
     )
@@ -65,7 +69,7 @@ export class NativeAuthorityPaid {
     return { ...source, value: source.value };
   }
   private _fallbackCurrent(request: NativeRequest, now: number): boolean {
-    if (!request.codexProof) return false;
+    if (!request.codexProof || request.model === null) return false;
     const proof = request.codexProof;
     const rows = {
       pool: this._sql.read("codex_pool", CODEX_AUTH_POOL_KV_KEY, now),
@@ -101,7 +105,7 @@ export class NativeAuthorityPaid {
     );
   }
   private _prior(request: NativeRequest, hopId: string, billingId: string, now: number) {
-    const prior = this._sql.paidAttempt(request.keyId, billingId, now);
+    const prior = this._sql.paidAttempt(nativeApiKeyId(request), billingId, now);
     let blocked: NativeReply | null = null;
     if (prior && (prior.requestHandle !== request.handle || prior.hopId !== hopId)) blocked = { kind: "blocked", detail: "attempt_identity_conflict" };
     else if (prior && !this._request(prior, now).value) blocked = { kind: "blocked", detail: "attempt_retention_expired" };
@@ -112,53 +116,58 @@ export class NativeAuthorityPaid {
     return prior;
   }
   reserve(cap: NativeCapability, args: NativeArguments["reservePaidAttempt"], now: number): NativeReply {
-    const request = this._api.request(cap, args.handle, now),
+    const request = this._api.validated(cap, args.handle, now),
       hop = this._hop(args.hopId);
+    const routingHop = request.routingDecision?.hops.find((candidate) => candidate.hopId === hop.id && candidate.authorization === hop.authorization);
+    if (!routingHop) return { kind: "blocked", detail: "request_hop_not_authorized" };
     if (hop.authorization === "codex_unavailable" && !this._fallbackAllowed(request, now))
       return { kind: "blocked", detail: "subscriptions_not_authoritatively_unavailable" };
     const source = this._policy(cap, now);
     if (!source) return { kind: "blocked", detail: "invalid_policy" };
     const policy = source.value,
       unlimited = policy.api.paid_fallback_limit_microcredits === -1;
-    if (!policy.paid.eligibleModels.includes(request.model) && !(unlimited && policy.paid.allowUnrosteredUnlimited))
+    if (
+      !policy.paid.eligibleModels.includes(routingHop.billingModel) &&
+      !(unlimited && policy.paid.allowUnrosteredUnlimited && request.routingDecision?.allowUnrosteredModel === true)
+    )
       return { kind: "skip", detail: "model_not_priced" };
     const billingRequestId = `${request.requestId}:${hop.billingSuffix}`;
     const { prior, blocked } = this._prior(request, hop.id, billingRequestId, now);
     if (blocked) return blocked;
     const reset = currentApiKeyUsageWindow(policy.api.usage_reset_at_ms, policy.api.window_ms, request.createdAtMs).reset;
     const input = {
-      keyId: cap.keyId,
+      keyId: nativeApiKeyId(cap),
       requestId: billingRequestId,
       createdAtMs: request.createdAtMs,
       policyVersion: policy.paid.policyVersion,
       limitMicrocredits: policy.api.paid_fallback_limit_microcredits,
-      maximumExposureMicrocredits: policy.paid.modelExposure[request.model] ?? null,
+      maximumExposureMicrocredits: policy.paid.modelExposure[routingHop.billingModel] ?? null,
       initialSettledMicrocredits: 0,
       quotaPerCredit: policy.paid.quotaPerCredit,
       windowResetAtMs: reset,
-      model: request.model,
+      model: routingHop.billingModel,
       route: request.route,
-      path: request.route,
+      path: request.path,
       stream: request.stream,
       reasoning: request.reasoning,
       dispatchIntent: true,
     };
     if (paid.isInvalidAdmissionPolicy(input, unlimited, input.maximumExposureMicrocredits)) return { kind: "blocked", detail: "invalid_policy" };
-    const requestKey = paid.paidFallbackRequestV3Key(cap.keyId, billingRequestId),
-      windowKey = paid.paidFallbackWindowV3Key(cap.keyId, reset);
+    const requestKey = paid.paidFallbackRequestV3Key(nativeApiKeyId(cap), billingRequestId),
+      windowKey = paid.paidFallbackWindowV3Key(nativeApiKeyId(cap), reset);
     const plan = paid.planPaidFallbackAdmissionV3(
       input,
       {
         request: this._sql.read("paid_request", requestKey, now),
         window: this._sql.read("paid_window", windowKey, now),
-        deletionGuard: this._sql.read("paid_deletion_guard", paid.paidFallbackDeletionGuardV3Key(cap.keyId), now),
+        deletionGuard: this._sql.read("paid_deletion_guard", paid.paidFallbackDeletionGuardV3Key(nativeApiKeyId(cap)), now),
         policyFence: { versionstamp: source.revision },
       },
       { unlimited, maximumExposure: input.maximumExposureMicrocredits },
       now
     );
     if (plan.kind === "exhausted_policy") {
-      this._sql.write("paid_window", windowKey, plan.window, now + plan.windowExpireIn, { scope: cap.keyId });
+      this._sql.write("paid_window", windowKey, plan.window, now + plan.windowExpireIn, { scope: nativeApiKeyId(cap) });
       return { kind: "blocked", detail: "limit_exceeded" };
     }
     if (plan.kind === "blocked") return { kind: plan.kind, detail: plan.reason };
@@ -166,18 +175,20 @@ export class NativeAuthorityPaid {
       return { kind: "reserved", attemptHandle: this._requireAttempt(prior).handle, detail: plan.reservation };
     }
     this._writeRequest(requestKey, plan.request, now + plan.requestExpireIn);
-    this._sql.write("paid_pending", paid.paidFallbackPendingV3Key(cap.keyId, billingRequestId), plan.pending, null, {
-      scope: cap.keyId,
+    this._sql.write("paid_pending", paid.paidFallbackPendingV3Key(nativeApiKeyId(cap), billingRequestId), plan.pending, null, {
+      scope: nativeApiKeyId(cap),
       due: plan.pending.next_reconciliation_at_ms,
     });
     if (plan.checkGate) this._arm(now);
-    if (plan.window && plan.windowExpireIn !== null) this._sql.write("paid_window", windowKey, plan.window, now + plan.windowExpireIn, { scope: cap.keyId });
+    if (plan.window && plan.windowExpireIn !== null)
+      this._sql.write("paid_window", windowKey, plan.window, now + plan.windowExpireIn, { scope: nativeApiKeyId(cap) });
     const handle = crypto.randomUUID();
     this._saveAttempt({
       handle,
       requestHandle: request.handle,
       principalId: cap.principalId,
-      keyId: cap.keyId,
+      runtimeBindingId: cap.id,
+      keyId: nativeApiKeyId(cap),
       hopId: hop.id,
       billingRequestId,
       windowResetAtMs: reset,
@@ -229,7 +240,7 @@ export class NativeAuthorityPaid {
       now
     );
     if (plan) {
-      this._writeRequest(paid.paidFallbackRequestV3Key(cap.keyId, attempt.billingRequestId), plan.request, now + plan.requestExpireIn);
+      this._writeRequest(paid.paidFallbackRequestV3Key(nativeApiKeyId(cap), attempt.billingRequestId), plan.request, now + plan.requestExpireIn);
       if (plan.readGate && (plan.dispatchBoundary || paid.paidFallbackReconciliationGateNeedsArm(this._gate(now), now))) this._arm(now);
     }
     if (args.fetchStarted) {
@@ -272,7 +283,7 @@ export class NativeAuthorityPaid {
     const plan = paid.planPaidFallbackReleaseV3(
       {
         request: this._request(attempt, now),
-        window: this._sql.read("paid_window", paid.paidFallbackWindowV3Key(cap.keyId, attempt.windowResetAtMs), now),
+        window: this._sql.read("paid_window", paid.paidFallbackWindowV3Key(nativeApiKeyId(cap), attempt.windowResetAtMs), now),
         gate: this._gate(now),
       },
       true,
@@ -288,12 +299,12 @@ export class NativeAuthorityPaid {
   }
   defer(cap: NativeCapability, handle: string, now: number): NativeReply {
     const attempt = this.attempt(cap, handle, now),
-      pendingKey = paid.paidFallbackPendingV3Key(cap.keyId, attempt.billingRequestId);
+      pendingKey = paid.paidFallbackPendingV3Key(nativeApiKeyId(cap), attempt.billingRequestId);
     const plan = paid.planPaidFallbackDeferralV3(this._request(attempt, now).value, this._sql.read("paid_pending", pendingKey, now).value, now);
     if (plan.kind === "cleanup") this._cleanup(attempt, now);
     if (plan.kind === "write") {
-      this._writeRequest(paid.paidFallbackRequestV3Key(cap.keyId, attempt.billingRequestId), plan.request, now + plan.requestExpireIn);
-      this._sql.write("paid_pending", pendingKey, plan.pending, null, { scope: cap.keyId, due: plan.pending.next_reconciliation_at_ms });
+      this._writeRequest(paid.paidFallbackRequestV3Key(nativeApiKeyId(cap), attempt.billingRequestId), plan.request, now + plan.requestExpireIn);
+      this._sql.write("paid_pending", pendingKey, plan.pending, null, { scope: nativeApiKeyId(cap), due: plan.pending.next_reconciliation_at_ms });
     }
     return { kind: plan.kind, detail: plan };
   }
@@ -301,7 +312,7 @@ export class NativeAuthorityPaid {
     const attempt = this.attempt(cap, args.attemptHandle, now),
       hop = this._hop(attempt.hopId),
       request = this._request(attempt, now),
-      pending = this._sql.read("paid_pending", paid.paidFallbackPendingV3Key(cap.keyId, attempt.billingRequestId), now);
+      pending = this._sql.read("paid_pending", paid.paidFallbackPendingV3Key(nativeApiKeyId(cap), attempt.billingRequestId), now);
     const evaluation = paid.evaluatePaidFallbackSettlementV3(request.value, pending.value, args.log, {
       correlation: hop.billingCorrelation,
       microcreditsPerCredit: hop.microcreditsPerCredit,
@@ -330,7 +341,7 @@ export class NativeAuthorityPaid {
         request,
         pending,
         gate: this._gate(now),
-        window: this._sql.read("paid_window", paid.paidFallbackWindowV3Key(cap.keyId, attempt.windowResetAtMs), now),
+        window: this._sql.read("paid_window", paid.paidFallbackWindowV3Key(nativeApiKeyId(cap), attempt.windowResetAtMs), now),
         rollup,
       },
       args.log,
@@ -345,24 +356,42 @@ export class NativeAuthorityPaid {
   private _resume(cap: NativeCapability, cursor: string | undefined, family: string, now: number): string {
     if (!cursor) return "";
     const row = this._sql.read("cursor", [cursor], now).value;
-    if (row?.capabilityId !== cap.id || row.family !== family || row.parent !== cap.keyId) throw new NativeAuthorityError("cursor_ownership_mismatch", 403);
+    if (!this._ownsCursor(cap, row) || row.family !== family) throw new NativeAuthorityError("cursor_ownership_mismatch", 403);
     return row.after;
+  }
+  private _ownsCursor(cap: NativeCapability, row: NativeCursor | null): row is NativeCursor {
+    if (row?.capabilityId !== cap.id || row.parent !== nativeApiKeyId(cap)) return false;
+    if (cap.retainedRequestHandles === null) return row.retainedGrantId === undefined && row.retainedHandles === undefined;
+    return (
+      row.retainedGrantId === cap.runtimeGrantId &&
+      row.retainedHandles?.length === cap.retainedRequestHandles.length &&
+      row.retainedHandles.every((handle, index) => handle === cap.retainedRequestHandles?.[index])
+    );
+  }
+  private _cursorScope(cap: NativeCapability): Pick<NativeCursor, "retainedGrantId" | "retainedHandles"> {
+    return cap.retainedRequestHandles === null ? {} : { retainedGrantId: cap.runtimeGrantId, retainedHandles: cap.retainedRequestHandles };
   }
   private _cursor(cap: NativeCapability, family: string, after: string, lease: string | null): string {
     const id = crypto.randomUUID();
-    this._sql.write("cursor", [id], { id, capabilityId: cap.id, family, after, parent: cap.keyId, lease });
+    this._sql.write("cursor", [id], { id, capabilityId: cap.id, family, after, parent: nativeApiKeyId(cap), lease, ...this._cursorScope(cap) });
     return id;
   }
   private _dueAttempt(cap: NativeCapability, billingId: string, now: number) {
-    const request = this._sql.read("paid_request", paid.paidFallbackRequestV3Key(cap.keyId, billingId), now).value;
+    const attempt = this._sql.paidAttempt(nativeApiKeyId(cap), billingId, now);
+    if (
+      cap.retainedRequestHandles !== null &&
+      (attempt?.principalId !== cap.principalId || attempt.runtimeBindingId !== cap.id || !cap.retainedRequestHandles.includes(attempt.requestHandle))
+    )
+      return null;
+    const request = this._sql.read("paid_request", paid.paidFallbackRequestV3Key(nativeApiKeyId(cap), billingId), now).value;
     if (!request || request.billing_state === "settled" || request.billing_state === "not_billed") {
-      this._sql.delete("paid_pending", paid.paidFallbackPendingV3Key(cap.keyId, billingId));
+      this._sql.delete("paid_pending", paid.paidFallbackPendingV3Key(nativeApiKeyId(cap), billingId));
       this._arm(now);
       return null;
     }
-    const attempt = this._sql.paidAttempt(cap.keyId, billingId, now);
     if (!attempt) throw new NativeAuthorityError("paid_attempt_lifetime_missing", 503);
-    if (attempt.principalId !== cap.principalId) return null;
+    if (attempt.principalId !== cap.principalId || attempt.runtimeBindingId !== cap.id) return null;
+    if (cap.retainedRequestHandles !== null && !cap.retainedRequestHandles.includes(attempt.requestHandle)) return null;
     this.attempt(cap, attempt.handle, now);
     return {
       attemptHandle: attempt.handle,
@@ -373,14 +402,22 @@ export class NativeAuthorityPaid {
     };
   }
   claim(cap: NativeCapability, args: NativeArguments["claimPaidReconciliation"], now: number): NativeReply {
-    const leaseKey = paid.paidFallbackReconciliationLeaseV3Key(cap.keyId),
+    const leaseKey = paid.paidFallbackReconciliationLeaseV3Key(nativeApiKeyId(cap)),
       prior = this._sql.read("paid_lease", leaseKey, now).value;
     if (paid.paidFallbackLeaseActiveV3(prior, now)) return { kind: "leased" };
     const token = crypto.randomUUID(),
       lease = paid.paidFallbackReconciliationLeaseV3(token, now);
-    this._sql.write("paid_lease", leaseKey, lease, lease.expires_at_ms, { scope: cap.keyId });
-    this._sql.write("cursor", [token], { id: token, capabilityId: cap.id, family: "paid_lease", after: "", parent: cap.keyId, lease: token });
-    const page = this._sql.page("paid_pending", now, this._resume(cap, args.cursor, "paid_pending", now), args.limit, { scope: cap.keyId });
+    this._sql.write("paid_lease", leaseKey, lease, lease.expires_at_ms, { scope: nativeApiKeyId(cap) });
+    this._sql.write("cursor", [token], {
+      id: token,
+      capabilityId: cap.id,
+      family: "paid_lease",
+      after: "",
+      parent: nativeApiKeyId(cap),
+      lease: token,
+      ...this._cursorScope(cap),
+    });
+    const page = this._sql.page("paid_pending", now, this._resume(cap, args.cursor, "paid_pending", now), args.limit, { scope: nativeApiKeyId(cap) });
     const due = [];
     for (const item of page) {
       if (item.row.value && item.row.value.next_reconciliation_at_ms <= now) {
@@ -399,10 +436,10 @@ export class NativeAuthorityPaid {
   }
   finish(cap: NativeCapability, token: string, now: number): NativeReply {
     const owner = this._sql.read("cursor", [token], now).value,
-      leaseKey = paid.paidFallbackReconciliationLeaseV3Key(cap.keyId),
+      leaseKey = paid.paidFallbackReconciliationLeaseV3Key(nativeApiKeyId(cap)),
       lease = this._sql.read("paid_lease", leaseKey, now).value;
     if (
-      owner?.capabilityId !== cap.id ||
+      !this._ownsCursor(cap, owner) ||
       owner.family !== "paid_lease" ||
       !paid.paidFallbackLeaseOwnedV3(lease, token) ||
       !paid.paidFallbackLeaseActiveV3(lease, now)
@@ -432,7 +469,7 @@ export class NativeAuthorityPaid {
     if (paid.paidFallbackLeaseActiveV3(this._sql.read("paid_backfill_lease", leaseKey, now).value, now)) return { kind: "leased" };
     const lease = paid.paidFallbackBackfillLeaseV3(crypto.randomUUID(), now);
     this._sql.write("paid_backfill_lease", leaseKey, lease, lease.expires_at_ms);
-    const page = this._sql.page("paid_request", now, this._resume(cap, args.cursor, "paid_backfill", now), args.limit, { scope: cap.keyId });
+    const page = this._sql.page("paid_request", now, this._resume(cap, args.cursor, "paid_backfill", now), args.limit, { scope: nativeApiKeyId(cap) });
     let folds = 0;
     for (const item of page) {
       if (item.row.value) folds += this._backfillRow(item.key, item.row.value, now);
@@ -496,7 +533,7 @@ export class NativeAuthorityPaid {
     return { kind: "deleted" as const, deleted };
   }
   deletion(cap: NativeCapability, now: number): NativeReply {
-    const result = this.deleteForKey(cap.keyId, now);
+    const result = this.deleteForKey(nativeApiKeyId(cap), now);
     return { kind: result.kind, detail: result.kind === "blocked" ? result.outstanding : result.deleted };
   }
 }

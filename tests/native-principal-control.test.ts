@@ -12,9 +12,17 @@ import { MeteredError } from "../src/provider/metered.ts";
 import { apiKeyHashRecordFor, apiKeyPolicyFromHashRecord, buildApiKeyCreateRecords } from "../src/authority/native-api-key-policy.ts";
 import { API_KEY_USAGE_V3_RETENTION_MS } from "../src/authority/native-api-key.ts";
 import { API_KEY_CHANGE_RETENTION_MS } from "../src/authority/native-api-key-audit.ts";
+import {
+  syntheticRuntimeSources,
+  admitSyntheticRequest,
+  openSyntheticRequest,
+  bindSyntheticMetadata,
+  syntheticRetainedHistory,
+} from "./fixtures/native-authority/principal-control-sources.mjs";
 import { NativeAuthority } from "../src/authority/native-authority.ts";
 import { NativeAuthoritySql } from "../src/authority/native-authority-sql.ts";
 import { paidFallbackDeletionGuardV3Key, paidFallbackReconciliationLeaseV3Key, paidFallbackWindowV3Key } from "../src/authority/native-paid.ts";
+import { NativeAuthorityError } from "../src/authority/native-authority-contracts.ts";
 import type { NativeAuthorityInitial, NativeCapability, NativeSqlStorage } from "../src/authority/native-authority-contracts.ts";
 import type { NativeControlReply, NativeKeyControlGrant, NativePrincipalControlInitial } from "../src/authority/native-principal-contracts.ts";
 import {
@@ -22,6 +30,7 @@ import {
   NativeAuthorityRpcServer,
   NativePrincipalControlClient,
   NativePrincipalControlServer,
+  NativeRetainedHistoryServer,
   parseNativeCommand,
   parseNativeControlCommand,
 } from "../src/authority/native-authority-rpc.ts";
@@ -31,10 +40,16 @@ const required = <T>(value: T | null | undefined): T => {
   return value;
 };
 const NOW = 1_800_000_000_000;
-const cap: NativeCapability = {
+const cap: NativeCapability & { keyId: string; tokenHash: string; kernel: { owner: string; repo: string } } = {
   id: "synthetic-cap",
   epoch: "control-epoch",
-  principalId: "p",
+  principalId: "api-key:key",
+  runtimeRevision: 3,
+  runtimeGrantId: "synthetic-cap",
+  contextBinding: "synthetic-cap",
+  subjectId: "synthetic-cap",
+  principalRefId: null,
+  retainedRequestHandles: null,
   keyId: "key",
   tokenHash: "synthetic-hash",
   kernel: { owner: "org", repo: "repo" },
@@ -88,7 +103,7 @@ const storage = (database: Database): NativeSqlStorage => ({
   },
 });
 type FixtureContext = Readonly<{ kind: "key_admin" | "principal_resolver"; target?: string | null; token?: string | null; tokenHash?: string }>;
-const fixture = (record = rawRecord(), path = ":memory:") => {
+const fixture = (record = rawRecord(), path = ":memory:", verifiedKernel = false, retained = false) => {
   const db = new Database(path),
     clock = { now: NOW },
     calls: string[] = [];
@@ -99,7 +114,7 @@ const fixture = (record = rawRecord(), path = ":memory:") => {
   const options: NativeAuthorityInitial = {
     namespace: "private-control-fixture",
     epoch: cap.epoch,
-    capabilities: [{ ...cap, keyId: record.id }],
+
     keys: [
       {
         api: required(apiKeyPolicyFromHashRecord(record.hash, apiKeyHashRecordFor(record), NOW)),
@@ -209,7 +224,25 @@ const fixture = (record = rawRecord(), path = ":memory:") => {
       },
     },
   };
-  const authority = new NativeAuthority(storage(db), options, () => clock.now, control);
+  const sources = syntheticRuntimeSources(
+    options,
+    [
+      { ...cap, keyId: record.id, kernel: verifiedKernel ? cap.kernel : null },
+      { ...cap, id: "foreign", keyId: record.id, kernel: null },
+    ],
+    storage(db),
+    () => clock.now,
+    control
+  );
+  const history = syntheticRetainedHistory(
+    options,
+    storage(db),
+    () => clock.now,
+    retained ? [{ id: "historical-foreign", principalId: "foreign", keyId: record.id, requestIds: ["foreign-paid"] }] : []
+  );
+  const runtime = { ...sources.runtime, retainedHistory: history.initial };
+  const authority = new NativeAuthority(storage(db), options, () => clock.now, sources.control, runtime);
+  sources.attach(authority);
   const sql = new NativeAuthoritySql(storage(db), options.namespace, options.epoch);
   const admin = (target: string | null = record.id, token?: string | null, owner = authority) =>
     new NativePrincipalControlClient(
@@ -225,9 +258,10 @@ const fixture = (record = rawRecord(), path = ":memory:") => {
       }),
       cap.epoch
     );
-  const client = (id = cap.id, owner = authority) => new NativeAuthorityClient(new NativeAuthorityRpcServer(owner, id), cap.epoch);
+  const client = (id = cap.id, owner = authority) => new NativeAuthorityClient(new NativeAuthorityRpcServer(owner, sources.binding(id)), cap.epoch);
   return {
     db,
+    sources,
     sql,
     clock,
     calls,
@@ -237,6 +271,7 @@ const fixture = (record = rawRecord(), path = ":memory:") => {
     admin,
     resolver,
     client,
+    history,
     observeSql: (observer: (query: string) => void) => {
       sqlObservers.set(db, observer);
     },
@@ -249,11 +284,11 @@ const fixture = (record = rawRecord(), path = ":memory:") => {
     cleanup: (hook: () => Promise<void>) => {
       cleanup = hook;
     },
-    restart: () => new NativeAuthority(storage(db), options, () => clock.now, control),
+    restart: () => new NativeAuthority(storage(db), options, () => clock.now, sources.control, sources.runtime),
   };
 };
 const apiReserve = async (f: ReturnType<typeof fixture>, requestId: string, client = f.client()): Promise<string> =>
-  required((await client.call("reserveApiUsage", { requestId, route: "/v1/responses", model: "fixture", stream: false })).handle);
+  required((await admitSyntheticRequest(client, { requestId, route: "/v1/responses", model: "fixture", stream: false })).handle);
 const appliedId = (reply: NativeControlReply): string => {
   if (reply.kind !== "applied") throw new Error("expected applied synthetic control result: " + JSON.stringify(reply));
   return reply.keyId;
@@ -563,18 +598,19 @@ test("repeat revoke audits retain first timestamp, replay does not audit, and gu
 });
 
 test("revocation denies fresh and replayed admission/transport while preserving existing-handle accounting cleanup", async () => {
-  const f = fixture(rawRecord("key", true));
+  const f = fixture(rawRecord("key", true), ":memory:", true);
   try {
     const client = f.client(),
-      handle = await apiReserve(f, "inflight", client);
+      handle = required((await openSyntheticRequest(client, { requestId: "inflight", route: "/v1/responses" })).handle);
     expect(await client.call("reserveKernelUsage", { handle })).toMatchObject({ kind: "reserved" });
+    await bindSyntheticMetadata(client, handle, { model: "fixture", stream: false });
     const attempt = required((await client.call("reservePaidAttempt", { handle, hopId: "paid" }, "paid-admission")).attemptHandle);
     await client.call("markApiDispatch", { handle, provider: "metered" });
     await client.call("recordTransportStarted", { handle, provider: "metered", attemptHandle: attempt }, "transport");
     await client.call("recordPaidAttemptLifecycle", { attemptHandle: attempt, patch: { provider_request_id: "paid-response" } });
     await f.admin().call("revokeKey", {});
     expect(await f.resolver().call("resolvePrincipal", {})).toMatchObject({ kind: "refused", status: 401 });
-    expect(await client.call("reserveApiUsage", { requestId: "fresh", route: "/v1/responses", model: "fixture", stream: false })).toMatchObject({
+    expect(await admitSyntheticRequest(client, { requestId: "fresh", route: "/v1/responses", model: "fixture", stream: false })).toMatchObject({
       kind: "unauthorized",
     });
     expect(await client.call("reservePaidAttempt", { handle, hopId: "paid" })).toMatchObject({ kind: "blocked", detail: "invalid_policy" });
@@ -611,14 +647,14 @@ test("revocation denies fresh and replayed admission/transport while preserving 
 });
 
 test("key deletion inspects every principal, preserves permanent guard and fresh delete404, then cleans logs before API rows", async () => {
-  const f = fixture(rawRecord("key", true));
+  const f = fixture(rawRecord("key", true), ":memory:", false, true);
   try {
-    f.sql.transaction(() => {
-      f.sql.write("capability", ["foreign"], { ...cap, id: "foreign", principalId: "foreign" });
-    });
-    const foreign = f.client("foreign"),
-      handle = await apiReserve(f, "foreign-paid", foreign);
-    const attempt = required((await foreign.call("reservePaidAttempt", { handle, hopId: "paid" })).attemptHandle);
+    const foreign = new NativeAuthorityClient(new NativeRetainedHistoryServer(f.authority, f.history.binding("historical-foreign")), cap.epoch),
+      restored = required(f.history.restore()[0]),
+      handle = restored.handle,
+      attempt = restored.attemptHandle;
+    expect(f.sql.read("request_lifetime", [handle], NOW).value?.principalId).toBe("foreign");
+    await assert.rejects(f.client().call("readRequestStatus", { handle, limit: 1 }), /request_ownership_mismatch/);
     await f.admin().call("revokeKey", {});
     expect(await f.admin().call("deleteKey", {})).toMatchObject({ kind: "refused", code: "paid_fallback_billing_outstanding" });
     expect(f.sql.read("paid_deletion_guard", paidFallbackDeletionGuardV3Key("key"), NOW).expiresAtMs).toBeNull();
@@ -744,17 +780,17 @@ test("direct raw-H revocation or removal denies managed admission and cannot rep
   try {
     const client = f.client(),
       args = { requestId: "before-revocation", route: "/v1/responses", model: "fixture", stream: false };
-    await client.call("reserveApiUsage", args, "admission");
+    await admitSyntheticRequest(client, args, "admission");
     const original = required(f.sql.read("api_key_hash", apiKeyHashKey(cap.tokenHash), NOW).value);
     f.sql.transaction(() => {
       f.sql.write("api_key_hash", apiKeyHashKey(cap.tokenHash), { ...original, revoked_at_ms: NOW });
     });
-    expect(await client.call("reserveApiUsage", { ...args, requestId: "after-revocation" })).toMatchObject({ kind: "unauthorized" });
-    await assert.rejects(client.call("reserveApiUsage", args, "admission"), /api_policy_revoked/);
+    expect(await admitSyntheticRequest(client, { ...args, requestId: "after-revocation" })).toMatchObject({ kind: "unauthorized" });
+    await assert.rejects(admitSyntheticRequest(client, args, "admission"), /api_policy_revoked/);
     f.sql.transaction(() => {
       f.sql.delete("api_key_hash", apiKeyHashKey(cap.tokenHash));
     });
-    expect(await client.call("reserveApiUsage", { ...args, requestId: "after-removal" })).toMatchObject({ kind: "unauthorized" });
+    expect(await admitSyntheticRequest(client, { ...args, requestId: "after-removal" })).toMatchObject({ kind: "unauthorized" });
     expect(f.sql.read("api_policy", apiKeyHashKey(cap.tokenHash), NOW).value?.revoked).toBe(false);
     expect(f.sql.page("request_lifetime", NOW, "", 100)).toHaveLength(1);
   } finally {
@@ -864,9 +900,13 @@ test("native no-op and revocation administration do not invent a quota-migration
     expect(await f.admin().call("revokeKey", {})).toMatchObject({ kind: "applied" });
     expect(await f.admin().call("unrevokeKey", {})).toMatchObject({ kind: "applied" });
     expect(await f.resolver().call("resolvePrincipal", {})).toMatchObject({ kind: "refused", status: 503, message: "API key quota migration is incomplete" });
-    expect(await f.client().call("reserveApiUsage", { requestId: "migration", route: "/v1/responses", model: "fixture", stream: false })).toMatchObject({
-      kind: "unauthorized",
+    await assert.rejects(admitSyntheticRequest(f.client(), { requestId: "migration", route: "/v1/responses", model: "fixture", stream: false }), (error) => {
+      expect(error).toBeInstanceOf(NativeAuthorityError);
+      expect(error).toMatchObject({ code: "server_error", status: 503 });
+      return true;
     });
+    for (const table of ["capability", "request_lifetime", "api_request", "kernel_reservation", "attempt_lifetime", "paid_request"] as const)
+      expect(f.sql.page(table, NOW, "", 100)).toHaveLength(0);
     expect(audits(f)).toHaveLength(2);
   } finally {
     f.db.close();

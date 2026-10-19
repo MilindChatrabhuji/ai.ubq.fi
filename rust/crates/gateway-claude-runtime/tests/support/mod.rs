@@ -359,6 +359,12 @@ pub fn raw() -> gateway_core::source_json::SourceJson {
     )
     .unwrap()
 }
+pub fn fixture_effort(raw: &gateway_core::source_json::SourceJson) -> Option<JsString16> {
+    gateway_core::source_serialization::member(raw, "reasoning")
+        .and_then(|value| gateway_core::source_serialization::member(&value, "effort"))
+        .as_ref()
+        .and_then(gateway_core::source_serialization::string)
+}
 pub fn selected(
     session: &ClaudePoolSession,
     store: &Store,
@@ -372,6 +378,7 @@ pub fn selected(
             key_id: KEY,
             model: &MODEL.into(),
             raw,
+            effective_effort: fixture_effort(raw),
             selection: None,
         },
     ))

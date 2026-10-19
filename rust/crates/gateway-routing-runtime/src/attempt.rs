@@ -65,9 +65,15 @@ impl<
                         self.cursor(row.cursor + 1).await?;
                         continue;
                     }
+                    let ordinary = self.claude_ordinary(&self.plan.model)?;
                     match self
                         .host
-                        .select_claude(&self.input.principal, &self.plan.model, &self.input.raw)
+                        .select_claude(
+                            &self.input.principal,
+                            &self.plan.model,
+                            &self.input.raw,
+                            ordinary.effective_effort(),
+                        )
                         .await?
                     {
                         ClaudeSelection::NotApplicable => {

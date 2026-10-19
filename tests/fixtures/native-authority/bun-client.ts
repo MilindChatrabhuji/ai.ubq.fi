@@ -1,3 +1,4 @@
+import { runSyntheticRequestPhase } from "./principal-control-sources.mjs";
 import {
   NativeAuthorityClient,
   NativePrincipalControlClient,
@@ -11,7 +12,7 @@ const task: {
   principal: string;
   epoch: string;
   operations: unknown[];
-  surface?: "principal" | "native-bindings";
+  surface?: "principal" | "native-bindings" | "retained";
   raw?: boolean;
 } = await Bun.stdin.json();
 class FixtureFault extends Error {}
@@ -44,12 +45,18 @@ if (task.surface === "native-bindings") {
     if (reply.fixtureFault) throw new FixtureFault(String(reply.fixtureFault.message));
     return reply;
   };
-  const client = new NativeAuthorityClient({ execute: (command) => send(command, "/rpc/") }, task.epoch);
+  const client = new NativeAuthorityClient(
+    { execute: (command) => send(command, "/rpc/"), bindTrustedRoutingDecision: (handle, operationId) => send({ handle, operationId }, "/trusted-routing/") },
+    task.epoch
+  );
   const control = new NativePrincipalControlClient({ control: (command): Promise<NativeControlRpcResult> => send(command, "/control-rpc/") }, task.epoch);
+  const retained = new NativeAuthorityClient({ execute: (command) => send(command, "/retained-rpc/") }, task.epoch);
   for (const operation of task.operations) {
     try {
       const input = typeof operation === "object" && operation !== null ? { epoch: task.epoch, operationId: crypto.randomUUID(), ...operation } : operation;
-      if (task.surface === "principal") {
+      if (typeof input === "object" && input !== null && "fixturePhase" in input) {
+        results.push(await runSyntheticRequestPhase(client, input));
+      } else if (task.surface === "principal") {
         if (task.raw) results.push(await send(input, "/control-rpc/"));
         else {
           const command = parseNativeControlCommand(input);
@@ -57,7 +64,7 @@ if (task.surface === "native-bindings") {
         }
       } else {
         const command = parseNativeCommand(input);
-        results.push(await client.call(command.method, command.args, command.operationId));
+        results.push(await (task.surface === "retained" ? retained : client).call(command.method, command.args, command.operationId));
       }
     } catch (error) {
       if (error instanceof FixtureFault) results.push({ fixtureFault: { message: error.message } });
