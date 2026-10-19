@@ -284,7 +284,7 @@ fn iso_timestamp(raw: &str) -> Option<i64> {
     let timestamp = days * 86400 + hour * 3600 + minute * 60 + second - offset;
     (timestamp > 0).then_some(timestamp)
 }
-pub(crate) fn parse_page(
+pub fn parse_page(
     provider: CatalogProvider,
     payload: &Value,
 ) -> Result<(Vec<Value>, Option<String>), GatewayError> {
