@@ -1,0 +1,130 @@
+{
+  "source_contract": "gateway-auth/src/provider_credentials.rs::parse_owner; declared POSIX prefix and unchanged owner guard",
+  "cases": [
+    {
+      "owner": "registered-owner",
+      "home": "/fixture/runtime-matrix-owner",
+      "accepted": true
+    },
+    {
+      "owner": "registered-owner",
+      "home": "/fixture/owner",
+      "accepted": true
+    },
+    {
+      "owner": "registered-owner",
+      "home": "/",
+      "accepted": true
+    },
+    {
+      "owner": "registered-owner",
+      "home": "//fixture//owner",
+      "accepted": true
+    },
+    {
+      "owner": "registered-owner",
+      "home": "/fixture/./owner",
+      "accepted": true
+    },
+    {
+      "owner": "registered-owner",
+      "home": "/fixture/../owner",
+      "accepted": true
+    },
+    {
+      "owner": "registered-owner",
+      "home": "/fixture/owner/",
+      "accepted": true
+    },
+    {
+      "owner": "registered-owner",
+      "home": "/fixture/owner ",
+      "accepted": true
+    },
+    {
+      "owner": "registered-owner",
+      "home": "/fixture/所有者",
+      "accepted": true
+    },
+    {
+      "owner": " registered-owner ",
+      "home": "/fixture/owner",
+      "accepted": true
+    },
+    {
+      "owner": "registered-owner",
+      "home": "",
+      "accepted": false
+    },
+    {
+      "owner": "registered-owner",
+      "home": ".",
+      "accepted": false
+    },
+    {
+      "owner": "registered-owner",
+      "home": "..",
+      "accepted": false
+    },
+    {
+      "owner": "registered-owner",
+      "home": "fixture/owner",
+      "accepted": false
+    },
+    {
+      "owner": "registered-owner",
+      "home": "./fixture/owner",
+      "accepted": false
+    },
+    {
+      "owner": "registered-owner",
+      "home": "../fixture/owner",
+      "accepted": false
+    },
+    {
+      "owner": "registered-owner",
+      "home": "~/.codex",
+      "accepted": false
+    },
+    {
+      "owner": "registered-owner",
+      "home": " /fixture/owner",
+      "accepted": false
+    },
+    {
+      "owner": "registered-owner",
+      "home": "C:\\fixture\\owner",
+      "accepted": false
+    },
+    {
+      "owner": "registered-owner",
+      "home": "C:/fixture/owner",
+      "accepted": false
+    },
+    {
+      "owner": "registered-owner",
+      "home": "\\\\server\\share",
+      "accepted": false
+    },
+    {
+      "owner": "registered-owner",
+      "home": "file:///fixture/owner",
+      "accepted": false
+    },
+    {
+      "owner": "",
+      "home": "/fixture/owner",
+      "accepted": false
+    },
+    {
+      "owner": " ",
+      "home": "/fixture/owner",
+      "accepted": false
+    },
+    {
+      "owner": "\t\r\n",
+      "home": "/fixture/owner",
+      "accepted": false
+    }
+  ]
+}
