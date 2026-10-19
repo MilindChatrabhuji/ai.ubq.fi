@@ -75,6 +75,22 @@ pub fn resample_balance(samples: &[Value], bucket: i64, limit: usize) -> Vec<Val
     buckets.into_values().skip(skip).collect()
 }
 impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+    /// Source /admin/errors runs one request-owned retention pass; failure is diagnostic only.
+    pub async fn error_retention_diagnostics(&self) -> Value {
+        self.maintain_replays(crate::replay_retention::RetentionLimits::default())
+            .await
+            .unwrap_or_else(|_| {
+                json!({
+                    "state":"unavailable", "scope":"capture_owned_kv_payload",
+                    "budget_bytes":null, "stored_bytes":null, "reserved_bytes":null,
+                    "records":null, "metadata_bytes":null, "status_records":null,
+                    "evicted_records":null, "evicted_bytes":null, "expired_records":null,
+                    "last_eviction_at_ms":null, "last_warning_at_ms":null,
+                    "over_budget":false, "near_capacity":false, "accounting_complete":false,
+                    "accounting_error":"unavailable", "skipped_reason":null,
+                })
+            })
+    }
     pub async fn provider(
         &self,
         request: ProviderRequest,
