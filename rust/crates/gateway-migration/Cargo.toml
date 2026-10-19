@@ -17,6 +17,9 @@ gateway-schema = { path = "../gateway-schema" }
 serde.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
+gateway-native = { path = "../gateway-native" }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 gateway-native = { path = "../gateway-native" }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
