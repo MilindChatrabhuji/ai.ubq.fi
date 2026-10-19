@@ -61,7 +61,7 @@ pub struct NativeMigrationResponse {
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum NativeResult {
     Adopted { receipt: AdoptionReceipt },
-    Exported { bundle: NativeRollbackBundle },
+    Exported { bundle: Box<NativeRollbackBundle> },
 }
 
 pub fn decode_native_request(bytes: &[u8]) -> Result<NativeMigrationRequest, GatewayError> {
@@ -97,7 +97,9 @@ pub async fn execute_native<S: QueryStore>(
                 return Err(wire_error("Private migration clock is invalid"));
             }
             NativeResult::Exported {
-                bundle: export_native_rollback_bundle(store, now_ms, artifacts.into()).await?,
+                bundle: Box::new(
+                    export_native_rollback_bundle(store, now_ms, artifacts.into()).await?,
+                ),
             }
         }
     };

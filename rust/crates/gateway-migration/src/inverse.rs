@@ -321,12 +321,23 @@ pub(crate) async fn export_rows<S: QueryStore>(
             });
             continue;
         }
+        if starts(&p, &["uos_ai", "routing_runtime"]) {
+            gateway_routing_runtime::custody::validate_journal_row(&key, record)?;
+            controls.push(CustodyRecord {
+                key: k.clone(),
+                record: record.clone(),
+            });
+            continue;
+        }
         if starts(
             &p,
             &["uos_ai", "codex_live_calls", "v1", "pending_retirement"],
         ) || starts(&p, &["uos_ai", "auth", "session_revision_index"])
         {
             record.validate_version()?;
+            if starts(&p, &["uos_ai", "auth", "session_revision_index"]) {
+                gateway_auth::session_index::validate_custody_record(&key, record)?;
+            }
             if starts(
                 &p,
                 &["uos_ai", "codex_live_calls", "v1", "pending_retirement"],

@@ -51,7 +51,10 @@ const sourceHasTests = (directory: string): boolean =>
     const path = join(directory, entry.name);
     return entry.isDirectory() ? sourceHasTests(path) : entry.name.endsWith(".rs") && /#\s*\[\s*(?:test|tokio::test)\s*\]/.test(readFileSync(path, "utf8"));
   });
-const packageDependencies = (value: unknown, names: ReadonlySet<string>, includeTests = true): string[] => {
+// Recognize only the reviewed native-target predicate. Unknown selectors remain
+// in the portable closure so a new or malformed cfg cannot hide native code.
+const excludesWasmTarget = (selector: string): boolean => /^cfg\(\s*all\(\s*unix\s*,\s*not\(\s*target_arch\s*=\s*"wasm32"\s*\)\s*\)\s*\)$/.test(selector);
+const packageDependencies = (value: unknown, names: ReadonlySet<string>, includeTests = true, portable = false): string[] => {
   const found: string[] = [];
   const entries = Object.entries(table(value)).filter(([key]) => includeTests || key !== "dev-dependencies");
   for (const [key, child] of entries) {
@@ -60,7 +63,10 @@ const packageDependencies = (value: unknown, names: ReadonlySet<string>, include
         const name = table(dependency).package ?? alias;
         if (typeof name === "string" && names.has(name)) found.push(name);
       }
-    } else if (typeof child === "object" && child !== null) found.push(...packageDependencies(child, names, includeTests));
+    } else if (key === "target" && portable) {
+      for (const [selector, configuration] of Object.entries(table(child)))
+        if (!excludesWasmTarget(selector)) found.push(...packageDependencies(configuration, names, includeTests, portable));
+    } else if (typeof child === "object" && child !== null) found.push(...packageDependencies(child, names, includeTests, portable));
   }
   return unique(found);
 };
@@ -84,7 +90,7 @@ export const rustPackages = (root: string): readonly Package[] => {
     name,
     directory,
     dependencies: packageDependencies(value, names),
-    runtimeDependencies: packageDependencies(value, names, false),
+    runtimeDependencies: packageDependencies(value, names, false, true),
     hasTests: sourceHasTests(join(directory, "src")) || sourceHasTests(join(directory, "tests")),
   }));
 };

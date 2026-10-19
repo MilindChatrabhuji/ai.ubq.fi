@@ -5,6 +5,13 @@ use serde_json::json;
 
 pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
     let p = &row.parts;
+    if starts(p, &["uos_ai", "codex_reset_shadow_decision"]) {
+        gateway_authority::full_pool_reset::FullPoolShadowDecision::validate_record(
+            &row.key,
+            &row.record,
+        )?;
+        return Ok(());
+    }
     if starts(p, &["ubq_ai", "codex_catalog_chunk"])
         || starts(p, &["ubq_ai", "codex_catalog_source_chunk"])
     {
