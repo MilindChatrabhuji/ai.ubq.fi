@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { normalizeSelectedProviderIds } from "../../../src/provider/selection.ts";
 import { captureUnexpectedStatus, registerFixtureResponse } from "./failure-capture.ts";
 
 export type MatrixScenario = "direct" | "codex" | "claude" | "paid";
@@ -34,7 +35,7 @@ export async function responseObject(response: Response, status = 200): Promise<
 export async function selectProviders(context: MatrixContext, providerIds: string[]): Promise<void> {
   const result = await responseObject(await context.post("/admin/providers/selection", { provider_ids: providerIds }, context.adminToken ?? "fixture-admin"));
   assert.equal(result.stored, true);
-  assert.deepEqual(result.provider_ids, providerIds);
+  assert.deepEqual(result.provider_ids, normalizeSelectedProviderIds(providerIds));
 }
 
 export async function post(context: MatrixContext, path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
