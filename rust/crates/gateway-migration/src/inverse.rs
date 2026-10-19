@@ -263,6 +263,16 @@ pub(crate) async fn export_rows<S: QueryStore>(
     {
         return Err(invalid("Inverse mapping inventory is missing or modified"));
     }
+    let mut routing_rows = Vec::new();
+    for (name, record) in &all {
+        let key = RecordKey(name.clone());
+        if starts(&parts(&key)?, &["uos_ai", "routing_runtime"]) {
+            routing_rows.push((key, record));
+        }
+    }
+    gateway_routing_runtime::custody::validate_journal_rows(
+        routing_rows.iter().map(|(key, record)| (key, *record)),
+    )?;
     let mut entries = Vec::new();
     let mut controls = Vec::new();
     for (k, record) in &all {
@@ -322,7 +332,6 @@ pub(crate) async fn export_rows<S: QueryStore>(
             continue;
         }
         if starts(&p, &["uos_ai", "routing_runtime"]) {
-            gateway_routing_runtime::custody::validate_journal_row(&key, record)?;
             controls.push(CustodyRecord {
                 key: k.clone(),
                 record: record.clone(),
