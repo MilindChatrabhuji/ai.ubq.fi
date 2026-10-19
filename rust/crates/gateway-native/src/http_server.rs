@@ -39,6 +39,7 @@ pub struct NativeHttpService {
     data: SupervisorData,
     renewal: Option<Arc<dyn NativeOwnerRenewalHandler>>,
     live_sideband: Option<Arc<dyn NativeLiveHandler>>,
+    imports: Option<Arc<dyn crate::import_ingress::ImportReceiver>>,
 }
 impl NativeHttpService {
     pub fn configured(
@@ -52,6 +53,7 @@ impl NativeHttpService {
             data,
             renewal: None,
             live_sideband: None,
+            imports: None,
         }
     }
     pub fn with_owner_renewal(mut self, handler: impl NativeOwnerRenewalHandler + 'static) -> Self {
@@ -60,6 +62,27 @@ impl NativeHttpService {
     }
     pub fn with_live_sideband(mut self, handler: impl NativeLiveHandler + 'static) -> Self {
         self.live_sideband = Some(Arc::new(handler));
+        self
+    }
+    /// Fixed trusted import construction: real shared authority/owner/config, no auth callback.
+    pub fn with_imports<S, I, H>(
+        mut self,
+        authority: gateway_authority::Authority<S, I>,
+        owner: gateway_authority::native_control::RegisteredRenewalOwner,
+        current_config: gateway_auth::AuthConfig,
+        handler: H,
+    ) -> Self
+    where
+        S: gateway_core::state::AuthorityStore + Send + Sync + 'static,
+        I: gateway_authority::TokenSource + Send + Sync + 'static,
+        H: crate::native_import::NativeImportHandler + 'static,
+    {
+        self.imports = Some(crate::import_ingress::configured(
+            authority,
+            owner,
+            current_config,
+            handler,
+        ));
         self
     }
     pub fn serve(self, listener: TcpListener) -> Result<(), GatewayError> {
@@ -102,7 +125,17 @@ impl NativeHttpService {
         stream
             .set_write_timeout(Some(Duration::from_secs(5)))
             .map_err(|_| unavailable())?;
-        let request = read_request(stream)?;
+        let request = match read_request(stream)? {
+            IncomingRequest::Legacy(request) => request,
+            IncomingRequest::Import(head) => {
+                return self.imports.as_ref().ok_or_else(unavailable)?.receive(
+                    stream,
+                    head,
+                    &self.identity,
+                    &self.nonces,
+                );
+            }
+        };
         let live_upgrade = request.method == "GET" && request.path == NATIVE_LIVE_PATH;
         if !live_upgrade
             && (request.method != "POST"
@@ -434,9 +467,15 @@ fn read_more(
     bytes.extend_from_slice(&buffer[..count]);
     Ok(())
 }
-fn read_request(stream: &mut TcpStream) -> Result<HttpRequest, GatewayError> {
+enum IncomingRequest {
+    Legacy(HttpRequest),
+    Import(crate::import_ingress::ImportHead),
+}
+fn read_request(stream: &mut TcpStream) -> Result<IncomingRequest, GatewayError> {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut bytes = Vec::new();
+    let mut first_line_complete = false;
+    let mut import_header_only = false;
     let header_end = loop {
         if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
             if end + 4 > 16_384 {
@@ -447,7 +486,29 @@ fn read_request(stream: &mut TcpStream) -> Result<HttpRequest, GatewayError> {
         if bytes.len() > 16_384 {
             return Err(invalid());
         }
-        read_more(stream, &mut bytes, deadline)?;
+        if !first_line_complete || import_header_only {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .filter(|value| !value.is_zero())
+                .ok_or_else(invalid)?;
+            stream
+                .set_read_timeout(Some(remaining))
+                .map_err(|_| invalid())?;
+            let mut byte = [0u8; 1];
+            if stream.read(&mut byte).map_err(|_| invalid())? == 0 {
+                return Err(invalid());
+            }
+            bytes.push(byte[0]);
+            if !first_line_complete && bytes.ends_with(b"\r\n") {
+                let mut slots = [httparse::EMPTY_HEADER; 64];
+                let mut line = httparse::Request::new(&mut slots);
+                line.parse(&bytes).map_err(|_| invalid())?;
+                import_header_only = line.path.and_then(crate::import_ingress::kind).is_some();
+                first_line_complete = true;
+            }
+        } else {
+            read_more(stream, &mut bytes, deadline)?;
+        }
     };
     let mut slots = [httparse::EMPTY_HEADER; 64];
     let mut parsed = httparse::Request::new(&mut slots);
@@ -473,6 +534,17 @@ fn read_request(stream: &mut TcpStream) -> Result<HttpRequest, GatewayError> {
             ))
         })
         .collect::<Result<Vec<_>, GatewayError>>()?;
+    if let Some(kind) = crate::import_ingress::kind(&path) {
+        if bytes.len() != header_end || method != "POST" || parsed.version != Some(1) {
+            return Err(invalid());
+        }
+        return Ok(IncomingRequest::Import(crate::import_ingress::ImportHead {
+            kind,
+            path,
+            headers,
+            framing_deadline: deadline,
+        }));
+    }
     let lengths: Vec<_> = headers
         .iter()
         .filter(|(key, _)| key.eq_ignore_ascii_case("content-length"))
@@ -491,13 +563,13 @@ fn read_request(stream: &mut TcpStream) -> Result<HttpRequest, GatewayError> {
         {
             return Err(invalid());
         }
-        return Ok(HttpRequest {
+        return Ok(IncomingRequest::Legacy(HttpRequest {
             method,
             path,
             headers,
             body: Vec::new(),
             buffered: bytes[header_end..].to_vec(),
-        });
+        }));
     }
     let max_body = if path == NATIVE_CONTROL_PATH {
         NATIVE_CONTROL_MAX_BYTES
@@ -565,13 +637,13 @@ fn read_request(stream: &mut TcpStream) -> Result<HttpRequest, GatewayError> {
     } else {
         return Err(invalid());
     };
-    Ok(HttpRequest {
+    Ok(IncomingRequest::Legacy(HttpRequest {
         method,
         path,
         headers,
         body,
         buffered: Vec::new(),
-    })
+    }))
 }
 fn too_large() -> GatewayError {
     GatewayError::new(
@@ -588,7 +660,7 @@ fn send_event(stream: &mut TcpStream, name: &str, value: Value) -> Result<(), Ga
         .map_err(|_| unavailable())?;
     stream.flush().map_err(|_| unavailable())
 }
-fn disconnected(stream: &TcpStream) -> bool {
+pub(crate) fn disconnected(stream: &TcpStream) -> bool {
     if stream.set_nonblocking(true).is_err() {
         return true;
     }
@@ -602,8 +674,11 @@ fn disconnected(stream: &TcpStream) -> bool {
     closed || reset.is_err()
 }
 fn write_json(stream: &mut TcpStream, status: u16, body: &[u8]) -> Result<(), GatewayError> {
-    stream.write_all(format!("HTTP/1.1 {status} Native\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).as_bytes()).map_err(|_|unavailable())?;
-    stream.write_all(body).map_err(|_| unavailable())
+    let mut response = format!("HTTP/1.1 {status} Native\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).into_bytes();
+    response.extend_from_slice(body);
+    // One framed write prevents an early refusal's body from being left behind
+    // a separately flushed header when unread peer data makes close reset TCP.
+    stream.write_all(&response).map_err(|_| unavailable())
 }
 fn write_error(stream: &mut TcpStream, error: GatewayError) -> Result<(), GatewayError> {
     let body = serde_json::to_vec(&error.envelope).map_err(|_| unavailable())?;
@@ -644,3 +719,7 @@ mod owner_control_tests;
 #[cfg(test)]
 #[path = "live_http_tests.rs"]
 mod live_http_tests;
+
+#[cfg(test)]
+#[path = "import_http_tests.rs"]
+mod import_http_tests;
