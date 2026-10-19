@@ -115,9 +115,9 @@ impl PublicationCarrier for Carrier<'_> {
 }
 async fn install(store: &Store) -> ConfiguredPaidInputs {
     let identity = NativeTransportIdentity::new(
-        "test-key".into(),
-        "test-owner".into(),
-        "test-epoch".into(),
+        "fixture-test-key".into(),
+        "fixture-test-owner".into(),
+        "fixture-test-epoch".into(),
         [31; 32],
         BTreeSet::from([NativeCapability::ConfigurationPublish]),
     )
