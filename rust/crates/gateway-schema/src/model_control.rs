@@ -39,14 +39,12 @@ pub(crate) fn matches(value: &JsString16, literal: &str) -> bool {
     value.as_units().iter().copied().eq(literal.encode_utf16())
 }
 pub(crate) fn trim(value: &JsString16) -> JsString16 {
-    let white = |u: u16| char::from_u32(u32::from(u)).is_some_and(crate::util::js_whitespace);
-    let units = value.as_units();
-    let start = units.iter().position(|u| !white(*u)).unwrap_or(units.len());
-    let end = units
-        .iter()
-        .rposition(|u| !white(*u))
-        .map_or(start, |i| i + 1);
-    JsString16::from_units(units[start..end].to_vec())
+    crate::source_request::trim(value)
+}
+pub(crate) fn push_unique<T: PartialEq>(values: &mut Vec<T>, value: T) {
+    if !values.contains(&value) {
+        values.push(value);
+    }
 }
 pub(crate) fn normalized(value: Option<&SourceJson>) -> Option<JsString16> {
     value

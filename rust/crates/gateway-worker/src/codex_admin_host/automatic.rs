@@ -103,7 +103,7 @@ pub async fn recover_full_pool(
     config: &AuthConfig,
     request: &RequestContext,
     proof: &CohortProof,
-    model: &str,
+    model: &gateway_core::model::ModelId,
 ) -> Result<CodexRecovery, GatewayError> {
     check_client(store, platform, original, config, request).await?;
     if proof.model() != model {

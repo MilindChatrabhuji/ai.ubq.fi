@@ -96,7 +96,10 @@ fn named_limit_applicability_and_ordered_capacity_reconciliation_match_source() 
         equal(
             serde_json::to_value(capacity_headroom_for_observation(
                 &row,
-                case["model"].as_str(),
+                case["model"]
+                    .as_str()
+                    .map(gateway_core::model::ModelId::from_scalar)
+                    .as_ref(),
             ))
             .unwrap(),
             &case["expected"],
@@ -110,7 +113,10 @@ fn named_limit_applicability_and_ordered_capacity_reconciliation_match_source() 
             &state,
             &row,
             case["now"].as_i64().unwrap(),
-            case["model"].as_str(),
+            case["model"]
+                .as_str()
+                .map(gateway_core::model::ModelId::from_scalar)
+                .as_ref(),
             case["updated_at_ms"].as_i64().unwrap(),
         )
         .unwrap();
@@ -159,7 +165,7 @@ fn hot_selection_uses_check_only_identity_and_never_balances_to_sibling() {
         .unwrap()
         .revision;
     let RouteSelection::Eligible(second) = run(authority.select_account(
-        "gpt-test",
+        &"gpt-test".into(),
         gateway_core::provider::CodexQuotaClass::Standard,
         NOW + 1,
     ))

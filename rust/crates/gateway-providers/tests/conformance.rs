@@ -395,10 +395,14 @@ fn native_replay_is_scoped_complete_expiring_and_never_publicly_signed() {
 fn lithos_rung_windows_recover_independently() {
     let mut windows = policy::LithosWindows::default();
     let ultra = "deepseek-ai/DeepSeek-V4.1-Flash-ultra";
-    windows.refuse(ultra, 0, 100);
-    windows.refuse("deepseek-ai/DeepSeek-V4.1-Flash-fast", 0, 200);
-    assert_eq!(windows.select(ultra, 50), "deepseek-ai/DeepSeek-V4.1-Flash");
-    assert_eq!(windows.select(ultra, 150), ultra);
+    windows.refuse(&ultra.into(), 0, 100);
+    windows.refuse(&"deepseek-ai/DeepSeek-V4.1-Flash-fast".into(), 0, 200);
+    assert!(
+        windows
+            .select(&ultra.into(), 50)
+            .matches_scalar("deepseek-ai/DeepSeek-V4.1-Flash")
+    );
+    assert!(windows.select(&ultra.into(), 150).matches_scalar(ultra));
     let mut waits = policy::WaitBudget {
         waits: 0,
         waited_ms: 0,
@@ -518,8 +522,12 @@ fn direct_paid_and_synthetic_pins_preserve_catalog_admission() {
         openlux_enabled: true,
         surplus_configured: true,
         openlux_configured: true,
-        surplus_catalog: Some(vec![surplus]),
-        openlux_catalog: Some(vec![openlux]),
+        surplus_catalog: Some(vec![
+            gateway_core::source_json::SourceJson::from_serializable(&surplus).unwrap(),
+        ]),
+        openlux_catalog: Some(vec![
+            gateway_core::source_json::SourceJson::from_serializable(&openlux).unwrap(),
+        ]),
         allowed_paid_providers: None,
         synthetic_hop: None,
         ubiquity_enabled: true,

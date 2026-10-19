@@ -1,12 +1,12 @@
 //! One source-phase-aware dispatcher. Host routing and accounting remain outside this crate.
 use crate::{
-    request::{bearer_headers, canonical_model, codex_user_agent},
+    request::{bearer_headers, canonical_source_model, codex_user_agent},
     source as s, source_anthropic, source_chat, source_controls as controls,
     types::*,
 };
 use gateway_core::{
-    GatewayError, js_string::JsString16, provider::UpstreamProvider, source_json::SourceJson,
-    source_serialization as json,
+    GatewayError, js_string::JsString16, model::ModelId, provider::UpstreamProvider,
+    source_json::SourceJson, source_serialization as json,
 };
 use gateway_schema::{
     request::RequestSurface,
@@ -25,7 +25,7 @@ pub fn prepare_source_request(
     provider: UpstreamProvider,
     surface: ClientSurface,
     raw: &SourceJson,
-    selected_model: &str,
+    selected_model: &ModelId,
     options: &PrepareOptions,
 ) -> s::Result<PreparedRequest> {
     let document = SourceRequestDocument::new(raw.clone())?;
@@ -46,32 +46,19 @@ pub fn prepare_source_request(
         false
     };
     let requested = match view.model_request()? {
-        SourceModelRequest::Default => JsString16::from_utf8(selected_model),
-        SourceModelRequest::Named(name) => name,
+        SourceModelRequest::Default => selected_model.clone(),
+        SourceModelRequest::Named(name) => ModelId::from_source(name),
     };
-    if requested.try_utf8().is_err() {
-        return Err(SourceRequestError::new(
-            404,
-            s::concat(&[
-                &JsString16::from_utf8("The model '"),
-                &requested,
-                &JsString16::from_utf8("' does not exist or is not available."),
-            ]),
-            "invalid_request_error",
-            Some("model_not_found"),
-            None,
-        ));
-    }
     if surface == ClientSurface::Chat {
         view.max_completion_tokens()?;
     }
-    let model =
-        canonical_model(provider, selected_model, &options.allowed_models).ok_or_else(|| {
+    let model = canonical_source_model(provider, selected_model, &options.allowed_models)
+        .ok_or_else(|| {
             SourceRequestError::new(
                 404,
                 s::concat(&[
                     &JsString16::from_utf8("The model '"),
-                    &requested,
+                    requested.as_js_string(),
                     &JsString16::from_utf8("' does not exist or is not available."),
                 ]),
                 "invalid_request_error",
@@ -142,7 +129,7 @@ pub fn prepare_source_request(
                 }
                 decode = ResponseDecode::ChatToResponses(profile);
             } else {
-                s::set(&mut body, "model", s::text(&model));
+                s::set(&mut body, "model", s::quoted(model.as_js_string()));
                 let chosen = effort.unwrap_or_else(|| {
                     JsString16::from_utf8(
                         if profile == ChatProfile::Deepseek && !source_chat::thinking(raw, None) {
@@ -189,7 +176,9 @@ pub fn prepare_source_request(
                 }
             } else {
                 url = "https://api.cerebras.ai/v1/chat/completions".into();
-                if model == "gpt-oss-120b" && s::is(&s::get(&body, "reasoning_effort"), "none") {
+                if model.matches_scalar("gpt-oss-120b")
+                    && s::is(&s::get(&body, "reasoning_effort"), "none")
+                {
                     return Err(invalid(
                         "reasoning_effort 'none' is not supported by gpt-oss-120b",
                         "reasoning_effort",
@@ -217,7 +206,7 @@ pub fn prepare_source_request(
                     "chat/completions"
                 }
             );
-            s::set(&mut body, "model", s::text(&model));
+            s::set(&mut body, "model", s::quoted(model.as_js_string()));
             controls::openrouter(&mut body, &model);
         }
         UpstreamProvider::ChatgptCodex => {
@@ -291,7 +280,7 @@ pub fn prepare_source_request(
                     if options.supports_parallel_tools == Some(false) {
                         s::remove(&mut body, "parallel_tool_calls");
                     }
-                    if crate::anthropic::is_claude(&model) {
+                    if crate::anthropic::is_claude_model(&model) {
                         warnings.push("surplus_claude_native_prompt_cache_unavailable".into());
                     }
                     controls::roles(&mut body, "input", false);
@@ -347,7 +336,7 @@ pub fn prepare_source_request(
                     ));
                 } else {
                     url = "https://api.openlux.ai/v1/responses".into();
-                    if model == "gpt-5.6-sol"
+                    if model.matches_scalar("gpt-5.6-sol")
                         && let Some(effort) = s::control(&s::path(&body, &["reasoning", "effort"]))
                     {
                         let suffix = match effort.as_str() {
@@ -356,11 +345,15 @@ pub fn prepare_source_request(
                             other => other,
                         };
                         if ["low", "medium", "high", "xhigh", "max"].contains(&suffix) {
-                            s::set(&mut body, "model", s::text(&format!("{model}-{suffix}")));
+                            s::set(
+                                &mut body,
+                                "model",
+                                s::text(&format!("gpt-5.6-sol-{suffix}")),
+                            );
                             s::remove(&mut body, "reasoning");
                         }
                     }
-                    if crate::anthropic::is_claude(&model) {
+                    if crate::anthropic::is_claude_model(&model) {
                         warnings.push("openlux_claude_native_prompt_cache_unavailable".into());
                     }
                 }
@@ -380,7 +373,7 @@ pub fn prepare_source_request(
         model: if surface == ClientSurface::Chat && direct {
             model.clone()
         } else {
-            requested.try_utf8().map_err(lift)?
+            requested
         },
         upstream_model: model,
         response_id: options.response_id.clone(),
@@ -407,12 +400,12 @@ fn profile(provider: UpstreamProvider) -> ChatProfile {
         _ => ChatProfile::Cerebras,
     }
 }
-fn default_effort(profile: ChatProfile, model: &str) -> &'static str {
+fn default_effort(profile: ChatProfile, model: &ModelId) -> &'static str {
     match profile {
         ChatProfile::Deepseek => "high",
         ChatProfile::Lithos => "medium",
         _ => {
-            if model == "qwen-3.8-27b" {
+            if model.matches_scalar("qwen-3.8-27b") {
                 "high"
             } else {
                 "medium"

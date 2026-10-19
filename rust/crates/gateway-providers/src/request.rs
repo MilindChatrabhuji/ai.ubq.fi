@@ -1,7 +1,7 @@
 //! Exact provider-bound request construction. The caller supplies account/discovery capabilities.
 use crate::types::*;
-use gateway_core::source_json::SourceJson;
 use gateway_core::{GatewayError, provider::UpstreamProvider};
+use gateway_core::{model::ModelId, source_json::SourceJson};
 use serde_json::Value;
 pub const LITHOS_MODELS: [&str; 8] = [
     "deepseek-ai/DeepSeek-V4.1-Flash",
@@ -36,6 +36,27 @@ pub fn canonical_model(
             allowed.iter().find(|s| s.as_str() == model.trim()).cloned()
         }
         _ => (!model.trim().is_empty()).then(|| model.trim().to_owned()),
+    }
+}
+/// Source model identity is retained; only the finite direct-provider matcher observes scalar aliases.
+pub fn canonical_source_model(
+    provider: UpstreamProvider,
+    model: &ModelId,
+    allowed: &[ModelId],
+) -> Option<ModelId> {
+    let model = ModelId::from_source(crate::source::trim(model.as_js_string()));
+    match provider {
+        UpstreamProvider::Deepseek | UpstreamProvider::Lithos | UpstreamProvider::Cerebras => model
+            .as_js_string()
+            .try_utf8()
+            .ok()
+            .and_then(|model| canonical_model(provider, &model, &[]))
+            .map(|model| ModelId::from_scalar(&model)),
+        UpstreamProvider::Openrouter => allowed
+            .iter()
+            .find(|candidate| **candidate == model)
+            .cloned(),
+        _ => (!model.as_js_string().as_units().is_empty()).then_some(model),
     }
 }
 pub(crate) fn bearer_headers(secret: &str, accept: &str) -> Headers {
@@ -101,7 +122,7 @@ pub fn chat_request_to_responses(raw: &Value) -> Result<SourceJson, GatewayError
     crate::source_controls::ordinary(
         &crate::source::generated(raw),
         ClientSurface::Chat,
-        raw["model"].as_str().unwrap_or(""),
+        &ModelId::from_scalar(raw["model"].as_str().unwrap_or("")),
         None,
     )
     .map_err(crate::source::scalar_error)
@@ -125,7 +146,7 @@ pub fn prepare_request(
         provider,
         surface,
         &crate::source::generated(raw),
-        model,
+        &ModelId::from_scalar(model),
         options,
     )
     .map_err(crate::source::scalar_error)

@@ -279,6 +279,44 @@ pub fn paid_rollup(bucket: i64, model: &str, provider: &str, shard: u8) -> Recor
         Number(i64::from(shard)),
     ])
 }
+/// Source physical model component. Distinct logical UTF16 labels may intentionally
+/// share the existing TextEncoder key bytes; callers retain each logical label.
+pub fn paid_rollup_model(
+    bucket: i64,
+    model: &gateway_core::model::ModelId,
+    provider: &str,
+    shard: u8,
+) -> RecordKey {
+    paid_rollup_source(
+        bucket as f64,
+        model,
+        &gateway_core::js_string::JsString16::from_utf8(provider),
+        f64::from(shard),
+    )
+    .expect("Integer bucket/shard and source string parts are finite tuple inputs")
+}
+/// Pure source-key construction for the shared usage family. Provider labels
+/// are source UTF16 data here, not a paid-provider enum or a live permission.
+/// Callers retain the source value predicate and bucket/shard guards.
+pub fn paid_rollup_source(
+    bucket: f64,
+    model: &gateway_core::model::ModelId,
+    provider: &gateway_core::js_string::JsString16,
+    shard: f64,
+) -> Result<RecordKey, gateway_core::GatewayError> {
+    use gateway_core::tuple_key::KeyPart;
+    Ok(TupleKey::from_parts(&[
+        KeyPart::String("uos_ai".into()),
+        KeyPart::String("paid_fallback".into()),
+        KeyPart::String("v3".into()),
+        KeyPart::String("usage_rollup".into()),
+        KeyPart::Number(bucket),
+        KeyPart::source_string_utf16(model.as_js_string().as_units()),
+        KeyPart::source_string_utf16(provider.as_units()),
+        KeyPart::Number(shard),
+    ])?
+    .to_record_key())
+}
 pub fn reset_redemption(hash: &str, generation: &str) -> RecordKey {
     key(&[
         Text("uos_ai"),

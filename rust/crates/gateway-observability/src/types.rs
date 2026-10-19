@@ -101,6 +101,11 @@ pub enum HealthWrite {
 
 /// The fixed host owns real clock/wait/RNG. Pure storage algorithms never call a provider.
 pub trait ObservabilityHost {
+    /// The same trusted pure runtime capability used by source model controls.
+    /// It is never supplied by a request/body and has no scalar fallback.
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>;
     fn now_ms(&self) -> i64;
     fn compare_labels(
         &self,

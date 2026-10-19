@@ -4,7 +4,9 @@ use crate::{
     source as s, source_tools,
     types::*,
 };
-use gateway_core::{js_string::JsString16, source_json::SourceJson, source_serialization as json};
+use gateway_core::{
+    js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as json,
+};
 
 pub(crate) struct Projection {
     pub body: SourceJson,
@@ -572,7 +574,7 @@ pub(crate) fn effort(
 }
 pub(crate) fn project(
     raw: &SourceJson,
-    model: &str,
+    model: &ModelId,
     stream: bool,
     profile: ChatProfile,
 ) -> s::Result<Projection> {
@@ -581,7 +583,7 @@ pub(crate) fn project(
         return Err(error("input must contain at least one message", "input"));
     }
     let mut body = s::object(vec![
-        ("model", s::text(model)),
+        ("model", s::quoted(model.as_js_string())),
         ("messages", s::array(&[])),
         ("stream", s::generated(&stream)),
     ]);

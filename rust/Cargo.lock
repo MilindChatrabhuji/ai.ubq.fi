@@ -1004,6 +1004,7 @@ dependencies = [
  "gateway-claude-runtime",
  "gateway-core",
  "gateway-native",
+ "gateway-observability",
  "gateway-routing-runtime",
  "gateway-schema",
  "rusqlite",
@@ -1102,6 +1103,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "gateway-core",
+ "indexmap 2.14.2",
  "ryu-js",
  "serde",
  "serde_json",

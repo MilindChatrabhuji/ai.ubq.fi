@@ -3,9 +3,8 @@ use std::rc::Rc;
 
 use gateway_admin::AdminService;
 use gateway_auth::{AuthPrincipal, AuthRequest, AuthResponse, AuthService};
-use gateway_core::{GatewayError, identity::RequestId};
+use gateway_core::{GatewayError, identity::RequestId, source_json::SourceJson};
 use gateway_schema::{catalog, catalog_cache::CatalogResponse};
-use serde_json::Value;
 use worker::{Context, Env, Method, Request, Response};
 
 use crate::{
@@ -382,7 +381,7 @@ async fn auth_response_with_native(
     }
 }
 
-fn json_response(value: Value) -> Result<Response, GatewayError> {
+fn json_response(value: SourceJson) -> Result<Response, GatewayError> {
     Response::from_json(&value).map_err(|_| invalid_url())
 }
 fn catalog_response(response: CatalogResponse) -> Result<Response, GatewayError> {

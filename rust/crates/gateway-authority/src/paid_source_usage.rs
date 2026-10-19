@@ -2,21 +2,22 @@
 //! It produces correlated billing input only; it does not settle or infer a terminal.
 use super::{PaidAttempt, PaidCorrelation, PaidUsage};
 use gateway_core::{identity::MAX_SAFE_INTEGER, provider::PaidProvider, source_usage::UsageTokens};
-use serde_json::Value;
+use gateway_core::{source_json::SourceJson, source_serialization as source};
 
 fn count(value: Option<u64>) -> Option<i64> {
     value
         .filter(|value| *value <= MAX_SAFE_INTEGER as u64)
         .map(|value| value as i64)
 }
-fn price(value: Option<&Value>) -> Option<f64> {
+fn price(value: Option<&SourceJson>) -> Option<f64> {
     value
-        .and_then(Value::as_f64)
+        .and_then(source::number)
         .filter(|value| value.is_finite() && *value >= 0.0)
 }
-fn cache_price(value: Option<&Value>, input: f64) -> Option<f64> {
+fn cache_price(value: Option<&SourceJson>, input: f64) -> Option<f64> {
     match value {
-        None | Some(Value::Null) => Some(input),
+        None => Some(input),
+        Some(value) if value.as_str() == "null" => Some(input),
         value => price(value),
     }
 }
@@ -26,11 +27,13 @@ fn cache_price(value: Option<&Value>, input: f64) -> Option<f64> {
 pub fn surplus_usage_from_source(
     attempt: &PaidAttempt,
     usage: Option<&UsageTokens>,
-    pricing: Option<&Value>,
+    pricing: Option<&SourceJson>,
 ) -> Option<PaidUsage> {
     if attempt.reservation.provider != PaidProvider::Surplus
         || gateway_schema::util::js_trim(&attempt.reservation.attempt_id.0).is_empty()
-        || gateway_schema::util::js_trim(&attempt.model).is_empty()
+        || gateway_schema::reasoning::js_trim_source(attempt.model.as_js_string())
+            .as_units()
+            .is_empty()
         || attempt.quota_per_credit <= 0
         || attempt.quota_per_credit > MAX_SAFE_INTEGER
     {
@@ -52,13 +55,22 @@ pub fn surplus_usage_from_source(
         }
         None => {
             let pricing = pricing?;
-            if pricing.get("require_provider_cost") == Some(&Value::Bool(true)) {
+            if source::member(pricing, "require_provider_cost")
+                .and_then(|value| value.deserialize::<bool>().ok())
+                == Some(true)
+            {
                 return None;
             }
-            let input_price = price(pricing.get("input_price_per_token"))?;
-            let output_price = price(pricing.get("output_price_per_token"))?;
-            let read_price = cache_price(pricing.get("cache_read_price_per_token"), input_price)?;
-            let write_price = cache_price(pricing.get("cache_write_price_per_token"), input_price)?;
+            let input_price = price(source::member(pricing, "input_price_per_token").as_ref())?;
+            let output_price = price(source::member(pricing, "output_price_per_token").as_ref())?;
+            let read_price = cache_price(
+                source::member(pricing, "cache_read_price_per_token").as_ref(),
+                input_price,
+            )?;
+            let write_price = cache_price(
+                source::member(pricing, "cache_write_price_per_token").as_ref(),
+                input_price,
+            )?;
             let credits = (input - cached) as f64 * input_price
                 + cached as f64 * read_price
                 + write as f64 * write_price

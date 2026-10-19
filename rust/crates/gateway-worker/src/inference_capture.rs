@@ -2,9 +2,12 @@
 use futures_util::Stream;
 use gateway_core::{
     GatewayError,
+    js_string::JsString16,
     lifecycle::{BodyOutcome, ReaderTermination, SemanticTerminal, TransportObservation},
+    model::ModelId,
     provider::UpstreamProvider,
     source_json::SourceJson,
+    source_serialization as source,
 };
 use gateway_observability::{
     replay_producer::{ClientFailureObservation, FailureObservation, should_persist},
@@ -43,8 +46,8 @@ pub struct Capture {
 #[derive(Clone)]
 struct TerminalRequest {
     context: gateway_core::identity::RequestContext,
-    model: String,
-    reasoning: Option<String>,
+    model: JsString16,
+    reasoning: Option<JsString16>,
     prompt_cache_key_present: bool,
 }
 struct ClientWire {
@@ -55,7 +58,7 @@ struct ClientWire {
     valid: bool,
     terminal: Option<String>,
     error_code: Option<String>,
-    error_param: Option<String>,
+    error_param: Option<JsString16>,
     body: Vec<u8>,
     body_bytes: usize,
 }
@@ -99,31 +102,45 @@ impl Capture {
     pub async fn begin(
         &self,
         context: &gateway_core::identity::RequestContext,
-        model: &str,
-        raw: &serde_json::Value,
+        model: &ModelId,
+        raw: &SourceJson,
         stream: bool,
     ) {
         if self.terminal_request.borrow().is_some() {
             return;
         }
-        let reasoning = raw
-            .pointer("/reasoning/effort")
-            .or_else(|| raw.get("reasoning_effort"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned);
-        let prompt_cache_key_present = raw
-            .get("prompt_cache_key")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|key| !gateway_schema::util::js_trim(key).is_empty());
+        let reasoning = source::member(raw, "reasoning")
+            .and_then(|value| source::member(&value, "effort"))
+            .and_then(|value| source::string(&value))
+            .or_else(|| {
+                source::member(raw, "reasoning_effort").and_then(|value| source::string(&value))
+            });
+        let prompt_cache_key_present = source::member(raw, "prompt_cache_key")
+            .and_then(|value| source::string(&value))
+            .is_some_and(|key| {
+                key.as_units().iter().any(|unit| {
+                    !char::from_u32(u32::from(*unit))
+                        .is_some_and(gateway_schema::util::js_whitespace)
+                })
+            });
         *self.terminal_request.borrow_mut() = Some(TerminalRequest {
             context: context.clone(),
-            model: model.into(),
+            model: model.as_js_string().clone(),
             reasoning: reasoning.clone(),
             prompt_cache_key_present,
         });
         if let Some(key) = &context.key_id {
-            let record = serde_json::json!({"id":context.request_id.0,"key_id":key.0,"route":context.route,"path":crate::normalized_path(&self.request.path()),"method":self.request.method().to_string(),"created_at_ms":context.started_at_ms,"status_code":0,"model":model,"stream":stream,"reasoning":reasoning});
-            if let Err(error) = self.runtime.record_request_log(&key.0, &record).await {
+            let result = async {
+                // This generated scalar metadata is not an original request/body shadow.
+                let scalar = serde_json::json!({"id":context.request_id.0,"key_id":key.0,"route":context.route,"path":crate::normalized_path(&self.request.path()),"method":self.request.method().to_string(),"created_at_ms":context.started_at_ms,"status_code":0,"stream":stream});
+                let scalar = SourceJson::from_serializable(&scalar)?;
+                let mut fields = scalar.object_entries()?;
+                fields.push((JsString16::from_utf8("model"), model.to_source_json()?));
+                fields.push((JsString16::from_utf8("reasoning"), SourceJson::from_serializable(&reasoning)?));
+                let record = source::object_keys(fields)?;
+                self.runtime.record_request_log_source(&key.0, &record).await
+            }.await;
+            if let Err(error) = result {
                 worker::console_error!(
                     "Request log creation remains unavailable: {}",
                     error.envelope.error.message
@@ -246,7 +263,7 @@ impl Capture {
         if let Some(key) = &request.context.key_id {
             let result = async {
                 let at = now_ms()?;
-                let mut patch = serde_json::json!({"status_code":status,"provider":provider,"completed_at_ms":at,"latency_ms":at.saturating_sub(request.context.started_at_ms).max(0),"model":request.model,"reasoning":request.reasoning,"input_tokens":extracted.as_ref().and_then(|usage|usage.input_tokens),"output_tokens":extracted.as_ref().and_then(|usage|usage.output_tokens),"provider_request_id":self.provider_request_id.borrow().clone()});
+                let mut patch = serde_json::json!({"status_code":status,"provider":provider,"completed_at_ms":at,"latency_ms":at.saturating_sub(request.context.started_at_ms).max(0),"input_tokens":extracted.as_ref().and_then(|usage|usage.input_tokens),"output_tokens":extracted.as_ref().and_then(|usage|usage.output_tokens),"provider_request_id":self.provider_request_id.borrow().clone()});
                 if let Some(paid) = paid {
                     let billing = match paid.billing_state { gateway_core::lifecycle::BillingState::Pending => "pending", gateway_core::lifecycle::BillingState::Settled => "reconciled", gateway_core::lifecycle::BillingState::NotBilled => "not_billed", gateway_core::lifecycle::BillingState::Unresolved => "unresolved" };
                     patch["billing_status"] = serde_json::json!(billing);
@@ -256,7 +273,12 @@ impl Capture {
                     patch["spend_microcredits"] = serde_json::json!(paid.spend_microcredits);
                     patch["paid_fallback_window_reset_at_ms"] = serde_json::json!(paid.reservation.window_reset_at_ms);
                 } else if matches!(provider.as_str(), "surplus" | "metered") { patch["billing_status"] = serde_json::json!("unresolved"); }
-                self.runtime.update_request_log(&key.0, request.context.started_at_ms, &self.request_id, &patch).await
+                let scalar = SourceJson::from_serializable(&patch)?;
+                let mut fields = scalar.object_entries()?;
+                fields.push((JsString16::from_utf8("model"), request.model.to_source_json()?));
+                fields.push((JsString16::from_utf8("reasoning"), SourceJson::from_serializable(&request.reasoning)?));
+                let patch = source::object_keys(fields)?;
+                self.runtime.update_request_log_source(&key.0, request.context.started_at_ms, &self.request_id, &patch).await
             }.await;
             if let Err(error) = result {
                 worker::console_error!(
@@ -373,7 +395,13 @@ impl Capture {
         };
         let mut client = ClientFailureObservation::from_internal(&internal);
         client.error_code = error.envelope.error.code.clone();
-        client.error_param = error.envelope.error.param.clone().flatten();
+        client.error_param = error
+            .envelope
+            .error
+            .param
+            .as_ref()
+            .and_then(|value| value.as_ref())
+            .map(|value| JsString16::from_utf8(value));
         if let Err(error) = self.store(internal, client).await {
             worker::console_error!(
                 "Failure capture remains unavailable: {}",
@@ -544,7 +572,8 @@ impl ClientWire {
             .or_else(|| field(&value, "response").and_then(|response| field(&response, "error")));
         if let Some(error) = error {
             self.error_code = field(&error, "code").and_then(|v| v.deserialize::<String>().ok());
-            self.error_param = field(&error, "param").and_then(|v| v.deserialize::<String>().ok());
+            self.error_param =
+                field(&error, "param").and_then(|v| v.deserialize::<JsString16>().ok());
         }
     }
 }
@@ -692,7 +721,28 @@ mod tests {
         assert!(client.valid);
         assert_eq!(client.terminal.as_deref(), Some("response.failed"));
         assert_eq!(client.error_code.as_deref(), Some("actual_failure"));
-        assert_eq!(client.error_param.as_deref(), Some("input"));
+        assert_eq!(client.error_param, Some(JsString16::from_utf8("input")));
+    }
+
+    #[test]
+    fn actual_client_error_param_retains_lone_units_before_policy_filter() {
+        let mut client = wire();
+        let mut parser = SseParser::new(MAX_RESPONSES_EVENT_BYTES);
+        for frame in parser
+            .push(
+                br#"data: {"type":"response.failed","response":{"error":{"param":"i\ud800"}}}
+
+"#,
+            )
+            .unwrap()
+        {
+            client.frame(frame);
+        }
+        assert!(client.valid);
+        assert_eq!(
+            client.error_param,
+            Some(JsString16::from_units(vec![105, 0xd800]))
+        );
     }
 
     #[test]

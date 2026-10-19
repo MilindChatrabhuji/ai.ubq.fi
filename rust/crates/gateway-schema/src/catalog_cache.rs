@@ -1,9 +1,11 @@
 //! Exact-version cache values, real portable gzip and deterministic refresh decisions.
+use crate::model_control as c;
 use crate::{metadata::MetadataHint, snapshot::parse_client_version, util::*};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-use gateway_core::GatewayError;
+use gateway_core::{
+    GatewayError, model::ModelId, source_json::SourceJson, source_serialization as source,
+};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 pub const FRESH_MS: i64 = 300_000;
@@ -63,7 +65,7 @@ impl CatalogMetadata {
 pub struct LoadedCatalog {
     pub metadata: CatalogMetadata,
     pub body: String,
-    pub parsed: Value,
+    pub parsed: SourceJson,
     pub source_body: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -73,19 +75,24 @@ pub struct PreparedCatalog {
     pub source_chunks: Vec<Vec<u8>>,
     pub expires_at_ms: i64,
 }
-pub fn parse_catalog(body: &str) -> Option<Value> {
-    let parsed: Value = serde_json::from_str(body).ok()?;
-    let models = parsed.get("models")?.as_array()?;
+pub fn parse_catalog(body: &str) -> Option<SourceJson> {
+    let parsed = SourceJson::parse(body).ok()?;
+    let models = c::get(&parsed, "models").as_ref().and_then(c::array)?;
     if models.is_empty()
-        || !models.iter().all(|v| {
-            is_record(v)
-                && identifier(v)
-                    .is_some_and(|s| !s.trim_matches(crate::util::js_whitespace).is_empty())
+        || !models.iter().all(|model| {
+            c::is_record(model)
+                && c::identifier(model).is_some_and(|id| !c::trim(&id).as_units().is_empty())
         })
     {
         return None;
     }
     Some(parsed)
+}
+fn source_stringify(value: &SourceJson) -> String {
+    source::canonical(value)
+        .expect("source catalog value")
+        .as_str()
+        .to_owned()
 }
 pub fn gzip(body: &str) -> Result<Vec<u8>, GatewayError> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -123,19 +130,20 @@ pub fn decode_chunks(
 }
 pub fn widen_catalog_windows(
     body: &str,
-    enrichment: &std::collections::BTreeMap<String, MetadataHint>,
+    enrichment: &std::collections::BTreeMap<ModelId, MetadataHint>,
 ) -> Option<String> {
     let mut parsed = parse_catalog(body)?;
     let mut changed = false;
-    for model in parsed.get_mut("models")?.as_array_mut()? {
-        let Some(id) = identifier(model) else {
+    let mut models = c::get(&parsed, "models").as_ref().and_then(c::array)?;
+    for model in &mut models {
+        let Some(id) = c::model(model) else {
             continue;
         };
-        let Some(hint) = enrichment.get(id) else {
+        let Some(hint) = enrichment.get(&id) else {
             continue;
         };
-        let endpoint = positive_integer(model.get("context_window"));
-        let ceiling = positive_integer(model.get("max_context_window"));
+        let endpoint = c::positive(c::get(model, "context_window").as_ref());
+        let ceiling = c::positive(c::get(model, "max_context_window").as_ref());
         let widest = [
             endpoint,
             ceiling,
@@ -146,17 +154,24 @@ pub fn widen_catalog_windows(
         .flatten()
         .filter(|n| *n > 0)
         .max();
-        let Some(widest) = widest else { continue };
+        let Some(widest) = widest else {
+            continue;
+        };
         if endpoint.is_none_or(|n| widest > n) {
-            model["context_window"] = serde_json::json!(widest);
+            c::set(model, "context_window", c::json(&widest));
             changed = true;
         }
         if ceiling.is_none_or(|n| widest > n) {
-            model["max_context_window"] = serde_json::json!(widest);
+            c::set(model, "max_context_window", c::json(&widest));
             changed = true;
         }
     }
-    changed.then(|| json_stringify(&parsed))
+    if changed {
+        c::set(&mut parsed, "models", c::json(&models));
+        Some(source_stringify(&parsed))
+    } else {
+        None
+    }
 }
 #[allow(clippy::too_many_arguments)]
 pub fn prepare_catalog(
@@ -167,7 +182,7 @@ pub fn prepare_catalog(
     etag: Option<&str>,
     content_type: Option<&str>,
     fetched_at_ms: i64,
-    enrichment: &std::collections::BTreeMap<String, MetadataHint>,
+    enrichment: &std::collections::BTreeMap<ModelId, MetadataHint>,
 ) -> Result<PreparedCatalog, GatewayError> {
     if parse_client_version(version).is_none() || parse_catalog(source_body).is_none() {
         return Err(GatewayError::new(
@@ -418,7 +433,7 @@ pub fn catalog_response(
     let body = if stored_only {
         catalog.body.clone()
     } else {
-        json_stringify(&crate::native_catalog::native_catalog(
+        source_stringify(&crate::native_catalog::native_catalog(
             Some(&catalog.parsed),
             input,
         ))
@@ -445,7 +460,7 @@ pub fn fallback_response(input: &crate::catalog::CatalogInput) -> Option<Catalog
     let body = crate::native_catalog::native_catalog_fallback(input)?;
     Some(CatalogResponse {
         status: 200,
-        body: Some(json_stringify(&body)),
+        body: Some(source_stringify(&body)),
         headers: [
             ("Content-Type".into(), "application/json".into()),
             ("Cache-Control".into(), "private, max-age=300".into()),

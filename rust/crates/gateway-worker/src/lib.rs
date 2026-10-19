@@ -24,6 +24,7 @@ mod image_host;
 mod inference;
 mod inference_capture;
 mod inference_lifecycle;
+mod inference_source;
 mod lifecycle;
 mod live_host;
 mod live_http;
@@ -39,6 +40,7 @@ mod publication;
 mod response;
 mod routing_host;
 mod runtime;
+mod source_collator;
 pub mod storage;
 pub mod transport;
 

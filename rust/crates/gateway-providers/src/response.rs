@@ -9,7 +9,23 @@ use crate::{
 use gateway_core::source_json::SourceJson;
 use gateway_core::{GatewayError, lifecycle::SemanticTerminal, provider::UpstreamProvider};
 use serde_json::{Value, json};
-pub fn normalize_chat_completion(value: &Value, plan: &DecodePlan) -> Result<Value, GatewayError> {
+pub fn normalize_chat_completion(
+    value: &Value,
+    plan: &DecodePlan,
+) -> Result<SourceJson, GatewayError> {
+    let fields = normalize_chat_completion_fragment(value, plan)?;
+    Ok(chat_model_body(&fields, plan))
+}
+fn chat_model_body(fields: &Value, plan: &DecodePlan) -> SourceJson {
+    let mut body = s::generated(fields);
+    s::set(&mut body, "model", s::quoted(plan.model.as_js_string()));
+    body
+}
+/// Only actual scalar upstream fragments, without source-derived model/request fields.
+fn normalize_chat_completion_fragment(
+    value: &Value,
+    plan: &DecodePlan,
+) -> Result<Value, GatewayError> {
     let id = value["id"]
         .as_str()
         .filter(|s| !s.trim().is_empty())
@@ -100,7 +116,8 @@ pub fn normalize_chat_completion(value: &Value, plan: &DecodePlan) -> Result<Val
         }
         normalized.push(json!({"index":choice["index"].as_u64().unwrap_or(position as u64),"message":mapped,"finish_reason":finish}));
     }
-    let mut result = json!({"id":id,"object":"chat.completion","created":created,"model":plan.model,"choices":normalized});
+    let mut result =
+        json!({"id":id,"object":"chat.completion","created":created,"choices":normalized});
     if let Some(value) = value.get("usage").filter(|v| !v.is_null()) {
         if !value.is_object() {
             return Err(malformed("Upstream usage is not an object."));
@@ -144,7 +161,10 @@ pub fn chat_completion_to_responses(
             .as_str()
             .or_else(|| message["reasoning"].as_str())
             .filter(|s| !s.is_empty())
-            && plan.reasoning_summary.as_deref() != Some("none")
+            && !plan
+                .reasoning_summary
+                .as_ref()
+                .is_some_and(|value| value.as_units().iter().copied().eq("none".encode_utf16()))
         {
             output.push(s::generated(&json!({"id":format!("rs_{}_{choice_index}",plan.response_id),"type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":reason}]})));
         }
@@ -441,7 +461,7 @@ pub fn decode_response(
     let mut native_replay = None;
     let body = match plan.decode {
         ResponseDecode::Chat => {
-            let normalized = normalize_chat_completion(&value, plan)?;
+            let normalized = normalize_chat_completion_fragment(&value, plan)?;
             if plan.provider == UpstreamProvider::Cerebras
                 && !crate::policy::chat_has_answer(&normalized)
             {
@@ -450,7 +470,7 @@ pub fn decode_response(
             if plan.stream {
                 events = crate::finalize::buffered_chat_events(&normalized, plan);
             }
-            s::generated(&normalized)
+            chat_model_body(&normalized, plan)
         }
         ResponseDecode::ChatToResponses(_) | ResponseDecode::AnthropicChatToResponses => {
             let profile = if plan.decode == ResponseDecode::AnthropicChatToResponses {
@@ -469,7 +489,7 @@ pub fn decode_response(
             } else {
                 value.clone()
             };
-            let completion = normalize_chat_completion(&projected, plan)?;
+            let completion = normalize_chat_completion_fragment(&projected, plan)?;
             if plan.provider == UpstreamProvider::Cerebras
                 && !crate::policy::chat_has_answer(&completion)
             {
@@ -530,7 +550,7 @@ pub fn decode_response(
                 s::generated(&value)
             }
         }
-        ResponseDecode::Voyage => s::generated(&crate::extras::decode_embeddings(&value, plan)?),
+        ResponseDecode::Voyage => crate::extras::decode_embeddings(&value, plan)?,
         ResponseDecode::SystemOne => s::generated(&crate::extras::decode_systemone(&value)?),
     };
     if plan.stream && !events.is_empty() {

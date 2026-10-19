@@ -220,10 +220,7 @@ fn complete_selected_and_no_selection_shadow_audits_survive_latest_inverse() {
         old.as_object_mut().unwrap().remove("fences");
         malformed.entries[0].value = to_source_profile(&PortableValue::from_json(&old)).unwrap();
         let error = prepare(&malformed, &CanonicalDates).err().unwrap();
-        assert_eq!(
-            error.envelope.error.code.as_deref(),
-            Some("codex_reset_shadow_schema_invalid")
-        );
+        assert_eq!(error.code(), Some("codex_reset_shadow_schema_invalid"));
         let mut expiring = capture;
         expiring.entries[0].expires_at_ms = Some(9000);
         assert!(prepare(&expiring, &CanonicalDates).is_err());
