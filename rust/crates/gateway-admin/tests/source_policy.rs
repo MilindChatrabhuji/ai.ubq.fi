@@ -378,6 +378,15 @@ fn paid_model_name_and_ordinary_json_map_keys_roundtrip_named_profile_record() {
             .await
             .unwrap()
             .unwrap();
+        export_writer_records(
+            &store,
+            "source-id-hash-policy",
+            &[
+                key.clone(),
+                gateway_auth::api_keys::hash_key(&record.hash),
+                keys::authority_policy_key(&id),
+            ],
+        );
         let policy: gateway_authority::quota::ApiKeyPolicy =
             decode_source_control_record(&policy_row)
                 .unwrap()
@@ -458,6 +467,16 @@ fn scalar_key_record_retains_json_and_revision_fenced_updates() {
         let key = gateway_auth::api_keys::id_key(&id);
         let before = store.read(&key).await.unwrap().unwrap();
         assert_eq!(before.value_encoding, ValueEncoding::Json);
+        let scalar_record = keys::decode_id_record(&key, &before).unwrap();
+        export_writer_records(
+            &store,
+            "scalar-id-hash-policy",
+            &[
+                key.clone(),
+                gateway_auth::api_keys::hash_key(&scalar_record.hash),
+                keys::authority_policy_key(&id),
+            ],
+        );
         store.conflict.set(true);
         let patch = input::object(vec![
             ("id", input::json(&id)),
@@ -500,6 +519,7 @@ fn kernel_public_source_row_stays_listable_before_crypto_projection() {
         let row = store.read(&kernel_keys::key()).await.unwrap().unwrap();
         assert_eq!(row.value_encoding, ValueEncoding::ProfileV2);
         let records = kernel_keys::decode_records(&row).unwrap();
+        export_writer_records(&store, "source-kernel-public-keys", &[kernel_keys::key()]);
         assert_eq!(records[0].owner.as_units(), [32, 0xdc00, 32]);
         assert!(records[0].pem.as_units().contains(&0xd800));
         let listed = kernel_keys::list(&store, NOW).await.unwrap();
@@ -560,4 +580,38 @@ impl gateway_auth::webauthn::WebAuthnCrypto for Host {
             "fixture_verifier_absent",
         ))
     }
+}
+
+/// Actual synthetic writer Store objects for the separately owned named-family
+/// forward/inverse proof. No record reconstruction, decode/re-encode or live key.
+fn export_writer_records(store: &Store, family: &str, keys: &[RecordKey]) {
+    use std::io::Write;
+    let rows = store.rows.borrow();
+    let records: Vec<Value> = keys
+        .iter()
+        .map(|key| json!({"key":key.0,"record":rows.get(&key.0).expect("actual writer row")}))
+        .collect();
+    let receipt = json!({
+        "scope":"Actual synthetic test Store records, not recreated source JSON",
+        "family":family,
+        "source_manifest":env!("CARGO_MANIFEST_DIR"),
+        "test_source_sha256":gateway_auth::crypto::sha256_hex(include_bytes!("source_policy.rs")),
+        "records":records
+    });
+    let root = std::path::Path::new(
+        "/tmp/ai-rust-wasm-20261018/m45-source-admin-policy/writer-exports-v4",
+    );
+    std::fs::create_dir_all(root).unwrap();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = root.join(format!("{family}-{}-{nonce}.json", std::process::id()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .unwrap();
+    file.write_all(&serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+    println!("M45_ACTUAL_WRITER_RECORDS={}", path.display());
 }
