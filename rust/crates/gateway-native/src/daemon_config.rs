@@ -18,6 +18,80 @@ pub struct NativeDaemonConfig {
     nonce_database: PathBuf,
     sources: Vec<SupervisorSourceConfig>,
 }
+/// Version 2 adds only the already-approved fixed native-owner renewal action.
+/// Version 1 continues rejecting every field it did not originally understand.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeDaemonConfigV2 {
+    v: u8,
+    listen: SocketAddr,
+    identity: TransportIdentityConfig,
+    nonce_database: PathBuf,
+    sources: Vec<SupervisorSourceConfig>,
+    owner_renewal: Option<OwnerRenewalConfig>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerRenewalConfig {
+    authority_origin: String,
+    owners: Vec<NativeOwnerConfig>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeOwnerConfig {
+    owner_id: String,
+    codex_home: PathBuf,
+}
+impl OwnerRenewalConfig {
+    pub fn authority_origin(&self) -> &str {
+        &self.authority_origin
+    }
+    pub fn owners(&self) -> &[NativeOwnerConfig] {
+        &self.owners
+    }
+    #[cfg(unix)]
+    fn validate(&self) -> Result<(), GatewayError> {
+        let origin = url::Url::parse(&self.authority_origin).map_err(|_| invalid())?;
+        if origin.scheme() != "https"
+            || origin.host_str().is_none()
+            || !origin.username().is_empty()
+            || origin.password().is_some()
+            || origin.path() != "/"
+            || origin.query().is_some()
+            || origin.fragment().is_some()
+            || self.owners.is_empty()
+            || self.owners.len() > 2
+        {
+            return Err(invalid());
+        }
+        let mut seen = BTreeSet::new();
+        for owner in &self.owners {
+            if owner.owner_id.is_empty()
+                || owner.owner_id.len() > 256
+                || !owner.owner_id.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
+                })
+                || !owner.codex_home.is_absolute()
+                || !seen.insert(&owner.owner_id)
+            {
+                return Err(invalid());
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    fn validate(&self) -> Result<(), GatewayError> {
+        Err(invalid())
+    }
+}
+impl NativeOwnerConfig {
+    pub fn owner_id(&self) -> &str {
+        &self.owner_id
+    }
+    pub fn codex_home(&self) -> &std::path::Path {
+        &self.codex_home
+    }
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TransportIdentityConfig {
@@ -53,6 +127,7 @@ pub struct PreparedNativeDaemonConfig {
     pub identity: NativeTransportIdentity,
     pub nonce_database: PathBuf,
     pub sources: Vec<SupervisorSourceConfig>,
+    pub owner_renewal: Option<OwnerRenewalConfig>,
 }
 impl NativeDaemonConfig {
     pub fn read_stdin(input: impl Read) -> Result<PreparedNativeDaemonConfig, GatewayError> {
@@ -64,10 +139,32 @@ impl NativeDaemonConfig {
         if bytes.len() > 65_536 {
             return Err(invalid());
         }
-        let config: Self = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-        config.prepare()
+        let version: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+        if version.get("v").and_then(serde_json::Value::as_u64) == Some(2) {
+            let config: NativeDaemonConfigV2 =
+                serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+            if config.v != 2 {
+                return Err(invalid());
+            }
+            if let Some(renewal) = &config.owner_renewal {
+                renewal.validate()?;
+            }
+            let mut prepared = Self {
+                v: 1,
+                listen: config.listen,
+                identity: config.identity,
+                nonce_database: config.nonce_database,
+                sources: config.sources,
+            }
+            .prepare(config.owner_renewal.is_some())?;
+            prepared.owner_renewal = config.owner_renewal;
+            Ok(prepared)
+        } else {
+            let config: Self = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+            config.prepare(false)
+        }
     }
-    fn prepare(self) -> Result<PreparedNativeDaemonConfig, GatewayError> {
+    fn prepare(self, owner_renewal: bool) -> Result<PreparedNativeDaemonConfig, GatewayError> {
         if self.v != 1
             || !self.listen.ip().is_loopback()
             || !self.nonce_database.is_absolute()
@@ -95,18 +192,24 @@ impl NativeDaemonConfig {
             return Err(invalid());
         }
         let key: [u8; 32] = bytes.try_into().map_err(|_| invalid())?;
+        let mut capabilities = BTreeSet::from([NativeCapability::SupervisorRead]);
+        if owner_renewal {
+            capabilities.insert(NativeCapability::OwnerRenewal);
+            capabilities.insert(NativeCapability::AccessPublish);
+        }
         let identity = NativeTransportIdentity::new(
             self.identity.key_id,
             self.identity.owner_id,
             self.identity.owner_epoch,
             key,
-            BTreeSet::from([NativeCapability::SupervisorRead]),
+            capabilities,
         )?;
         Ok(PreparedNativeDaemonConfig {
             listen: self.listen,
             identity,
             nonce_database: self.nonce_database,
             sources: self.sources,
+            owner_renewal: None,
         })
     }
 }

@@ -114,6 +114,31 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     .codex(CodexRequest::ResetSettings, context)
                     .await
             }
+            CodexResetConsume => {
+                let body = input
+                    .body
+                    .as_object()
+                    .ok_or_else(|| invalid("Only account_id_hash is accepted."))?;
+                let account_id_hash = body
+                    .get("account_id_hash")
+                    .and_then(Value::as_str)
+                    .filter(|hash| {
+                        hash.len() == 64
+                            && hash
+                                .bytes()
+                                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    })
+                    .filter(|_| body.len() == 1)
+                    .ok_or_else(|| invalid("Only account_id_hash is accepted."))?;
+                self.capabilities
+                    .codex(
+                        CodexRequest::ConsumeReset {
+                            account_id_hash: account_id_hash.into(),
+                        },
+                        context,
+                    )
+                    .await
+            }
             CodexResetUpdate | CodexOverageUpdate => {
                 let name = if operation == CodexResetUpdate {
                     "enabled"

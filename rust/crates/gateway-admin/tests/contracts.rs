@@ -14,6 +14,10 @@ use gateway_auth::{crypto::Secret, upstream::*, *};
 use gateway_core::state::*;
 use serde_json::{Value, json};
 
+fn wire_json(body: &AuthResponseBody) -> Value {
+    serde_json::from_slice(&body.to_bytes().unwrap()).unwrap()
+}
+
 fn run<F: Future>(future: F) -> F::Output {
     let mut context = Context::from_waker(Waker::noop());
     let mut future = std::pin::pin!(future);
@@ -496,7 +500,8 @@ fn paid_limit_updates_and_disabling_preserve_source_pricing_without_provider_rei
             )
             .await
             .unwrap();
-        let id = created.body["id"].as_str().unwrap();
+        let created_body = wire_json(&created.body);
+        let id = created_body["id"].as_str().unwrap();
         assert!(caps.inputs.borrow().is_empty());
         service
             .mutate(
@@ -723,7 +728,8 @@ fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() 
                 .create(&json!({"name":"Cleanup"}), &actor(), "create")
                 .await
                 .unwrap();
-            let id = created.body["id"].as_str().unwrap();
+            let created_body = wire_json(&created.body);
+            let id = created_body["id"].as_str().unwrap();
             service
                 .mutate(
                     AdminOperation::ApiKeysRevoke,
@@ -891,6 +897,7 @@ async fn prepare_paid_fixture_custody(store: &Store, host: &Host) {
     let inputs = ConfiguredPaidInputs::new(
         Some(Secret::new("fixture-surplus-key".into())),
         None,
+        None,
         json!({}),
     )
     .unwrap();
@@ -1042,7 +1049,7 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
         )
         .await
         .unwrap();
-        let id = key.body["id"].as_str().unwrap().to_owned();
+        let id = wire_json(&key.body)["id"].as_str().unwrap().to_owned();
         prepare_paid_fixture_custody(&store, &host).await;
         let raced = PaidRaceStore {
             store: &store,
@@ -1184,8 +1191,9 @@ fn key_creation_commits_identity_policy_window_and_audit_together() {
             .await
             .unwrap();
         assert_eq!(result.status, 200);
-        let id = result.body["id"].as_str().unwrap();
-        let token = result.body["token"].as_str().unwrap();
+        let result_body = wire_json(&result.body);
+        let id = result_body["id"].as_str().unwrap();
+        let token = result_body["token"].as_str().unwrap();
         assert!(gateway_auth::api_keys::api_key_shape(token));
         assert!(
             store
@@ -1222,7 +1230,7 @@ fn key_creation_commits_identity_policy_window_and_audit_together() {
             .unwrap();
         assert_eq!(audit.action, "create");
         assert!(!serde_json::to_string(&audit).unwrap().contains(token));
-        assert!(result.body.get("hash").is_none());
+        assert!(result_body.get("hash").is_none());
     });
 }
 
@@ -1300,7 +1308,8 @@ fn revoked_deletion_never_discards_pending_billing() {
             .create(&json!({"name":"Fixture"}), &actor(), "create")
             .await
             .unwrap();
-        let id = created.body["id"].as_str().unwrap();
+        let created_body = wire_json(&created.body);
+        let id = created_body["id"].as_str().unwrap();
         assert_eq!(
             service
                 .mutate(

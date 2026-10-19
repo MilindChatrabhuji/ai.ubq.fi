@@ -1,6 +1,43 @@
 //! 131 cases executed against frozen source with pinned Bun1.4, no dotenv/install and OS network denial.
 use gateway_observability::{HealthProvider, api, capacity_shapes, health};
 use serde_json::{Value, json};
+// Bun JSON has one Number kind; serde_json distinguishes integral and float encodings.
+// Compare numeric values, while retaining every key, array position, and nonnumeric type.
+fn source_json_equal(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => {
+            matches!((left.as_f64(), right.as_f64()), (Some(a), Some(b)) if a == b)
+        }
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len()
+                && left.iter().zip(right).all(|(a, b)| source_json_equal(a, b))
+        }
+        (Value::Object(left), Value::Object(right)) => {
+            left.len() == right.len()
+                && left.iter().all(|(key, value)| {
+                    right
+                        .get(key)
+                        .is_some_and(|other| source_json_equal(value, other))
+                })
+        }
+        _ => left == right,
+    }
+}
+#[test]
+fn source_number_comparison_does_not_relax_structure_or_values() {
+    assert!(source_json_equal(
+        &json!({"value":[200.0]}),
+        &json!({"value":[200]})
+    ));
+    for different in [
+        json!({"value":[201]}),
+        json!({"value":["200"]}),
+        json!({"value":[200,200]}),
+        json!({"value":[200],"extra":null}),
+    ] {
+        assert!(!source_json_equal(&json!({"value":[200.0]}), &different));
+    }
+}
 #[test]
 fn frozen_typescript_source_parser_and_projection_goldens() {
     let fixture: Value = serde_json::from_str(include_str!("fixtures/source-golden.json")).unwrap();
@@ -55,6 +92,10 @@ fn frozen_typescript_source_parser_and_projection_goldens() {
             )),
             op => panic!("Unexpected source operation {op}"),
         };
-        assert_eq!(actual, *expected, "source case {index} {}", case["op"]);
+        assert!(
+            source_json_equal(&actual, expected),
+            "source case {index} {}: actual {actual:?}, expected {expected:?}",
+            case["op"],
+        );
     }
 }

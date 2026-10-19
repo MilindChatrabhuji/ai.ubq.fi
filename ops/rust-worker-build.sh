@@ -4,7 +4,11 @@ set -euo pipefail
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 repo_root=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
 cd -- "$repo_root"
-[[ $(uname -s) == Linux ]] || fail 'Rust Worker builds run on the prepared VPS; Mac fallback requires its separately recorded authorization.'
+build_host=$(uname -s):$(uname -m)
+case "$build_host" in
+  Linux:aarch64|Linux:arm64|Darwin:arm64) ;;
+  *) fail 'Rust Worker builds require a prepared Darwin or Linux ARM64 host.' ;;
+esac
 
 env_directory=$repo_root
 while :; do
@@ -18,7 +22,7 @@ done
 
 for tool_directory in CARGO_HOME RUSTUP_HOME CARGO_TARGET_DIR XDG_CACHE_HOME TMPDIR; do
   tool_path=${!tool_directory:-}
-  case "$tool_path" in "$repo_root"/*|/var/tmp/*|/tmp/*) ;; *) fail 'Prepared Rust tools, targets and caches must be task-local.' ;; esac
+  case "$tool_path" in "$repo_root"/*|/var/tmp/*|/tmp/*|/private/tmp/*) ;; *) fail 'Prepared Rust tools, targets and caches must be task-local.' ;; esac
 done
 for binary_name in WASM_BINDGEN_BIN WASM_OPT_BIN ESBUILD_BIN; do
   [[ -x ${!binary_name:-} ]] || fail 'All pinned Worker build-tool binary overrides must be prepared.'
@@ -35,17 +39,29 @@ mkdir -p -- "$CARGO_TARGET_DIR"
 
 bun_bin=$(command -v bun) || fail 'Prepared Bun 1.4.0 is required.'
 [[ $("$bun_bin" --version) == 1.4.0 ]] || fail 'Bun 1.4.0 is required.'
-[[ $(worker-build --version) == 0.8.7 ]] || fail 'Prepared worker-build 0.8.7 is required.'
+worker_build_bin=$(command -v worker-build) || fail 'Prepared worker-build 0.8.7 is required.'
+if [[ $build_host == Darwin:arm64 ]]; then
+  worker_build_bin=$("$bun_bin" --no-env-file --no-install -e 'import {rustToolPath,rustVerificationEnvironment} from "./scripts/rust-verify.ts"; process.stdout.write(rustToolPath("worker-build",rustVerificationEnvironment()));')
+fi
+[[ $("$worker_build_bin" --version) == 0.8.7 ]] || fail 'Prepared worker-build 0.8.7 is required.'
 [[ $("$WASM_BINDGEN_BIN" --version) == 'wasm-bindgen 0.2.129' ]] || fail 'Prepared wasm-bindgen 0.2.129 is required.'
 "$bun_bin" --no-env-file --no-install -e 'for (const [name, version] of [["cf", "1.0.0-beta.12"], ["wrangler", "4.151.1"]]) { if ((await Bun.file(`node_modules/${name}/package.json`).json()).version !== version) throw new Error("Prepared CLI version mismatch"); }'
 
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$repo_root/.data/rust-worker-tools/config}"
 export WRANGLER_LOG_PATH="$repo_root/.data/rust-worker-tools/wrangler.log"
 mkdir -p -- "$XDG_CONFIG_HOME" "$(dirname -- "$WRANGLER_LOG_PATH")"
-(
-  cd -- rust/crates/gateway-worker
-  worker-build --release --locked
-)
+if [[ $build_host == Darwin:arm64 ]]; then
+  "$bun_bin" --no-env-file --no-install -e '
+import {rustToolPath,rustVerificationEnvironment} from "./scripts/rust-verify.ts";
+const env=rustVerificationEnvironment();
+for (const name of ["rustc","cargo"]) { const result=Bun.spawnSync([rustToolPath(name,env),"--version"],{env}); if(result.exitCode!==0 || !result.stdout.toString().startsWith(`${name} 1.98.1 `)) throw new Error(`Prepared ${name} 1.98.1 is required`); }
+const child=Bun.spawnSync([rustToolPath("worker-build",env),"--release","--locked"],{cwd:"rust/crates/gateway-worker",env,stdin:"inherit",stdout:"inherit",stderr:"inherit"});
+if(child.error) throw child.error;
+process.exit(child.exitCode);
+'
+else
+  (cd -- rust/crates/gateway-worker; "$worker_build_bin" --release --locked)
+fi
 [[ -s rust/crates/gateway-worker/build/index.js && -s rust/crates/gateway-worker/build/index_bg.wasm ]] || fail 'The prepared Rust Worker artifacts are missing.'
 "$bun_bin" --no-env-file --no-install tools/cloudflare/verify-build-identity.ts "$build_sha"
 "$bun_bin" --no-env-file --no-install run cf build

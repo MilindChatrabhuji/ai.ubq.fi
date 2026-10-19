@@ -3,18 +3,14 @@ use std::{
     collections::BTreeSet,
     future::Future,
     pin::pin,
-    sync::{Arc, Mutex},
-    task::{Context, Poll, Wake, Waker},
+    sync::Mutex,
+    task::{Context, Poll, Waker},
 };
 
-struct Ready;
-impl Wake for Ready {
-    fn wake(self: Arc<Self>) {}
-}
 fn run<T>(future: impl Future<Output = T>) -> T {
     let mut future = pin!(future);
-    let waker = Waker::from(Arc::new(Ready));
-    match future.as_mut().poll(&mut Context::from_waker(&waker)) {
+    let waker = Waker::noop();
+    match future.as_mut().poll(&mut Context::from_waker(waker)) {
         Poll::Ready(value) => value,
         Poll::Pending => panic!("fixture unexpectedly suspended"),
     }
