@@ -268,6 +268,15 @@ impl RoutingHost for Host {
 }
 
 impl Host {
+    pub(crate) fn physical_claude(
+        &self,
+        fence: &CredentialFence,
+        model: &gateway_core::model::ModelId,
+        body: &gateway_providers::PreparedClaudeBody,
+    ) -> Result<crate::transport::outbound::ConstructedRequest, gateway_routing_runtime::RoutingError> {
+        self.claude.physical_request(fence, model, body)
+    }
+
     pub fn new(
         store: RemoteAuthorityStore,
         platform: PlatformHost,

@@ -4,7 +4,7 @@ use crate::{
     host::{PlatformHost, response_bytes},
     transport::{
         body::discard_response,
-        outbound::{Cancellation, PinnedDestination, send_http},
+        outbound::{Cancellation, PinnedDestination, construct_request, send_constructed},
     },
 };
 use gateway_admin_runtime::{
@@ -314,14 +314,15 @@ async fn validate(
             super::catalog::append_cursor(&mut url, cursor);
         }
         let destination = PinnedDestination::new(url.as_str())?;
-        let mut response = match send_http(
-            &destination,
-            worker::Method::Get,
-            &super::platform::credential_headers(credential, workspace),
-            &[],
-            &cancellation,
-            || async { Ok(()) },
-        )
+        let headers = match super::platform::credential_headers(credential, workspace, false) {
+            Ok(headers) => headers,
+            Err(_) => return Ok(Validation::unavailable(None)),
+        };
+        let request = match construct_request(&destination, worker::Method::Get, headers, &[]) {
+            Ok(request) => request,
+            Err(_) => return Ok(Validation::unavailable(None)),
+        };
+        let mut response = match send_constructed(request, &cancellation, || async { Ok(()) })
         .await
         {
             Ok(response) => response,

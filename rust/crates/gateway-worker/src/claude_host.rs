@@ -202,6 +202,18 @@ impl Binding {
             }
         }
     }
+    /// Physical material stays inside this same request-owned selected snapshot.
+    pub(crate) fn physical_request(
+        &self,
+        fence: &CredentialFence,
+        model: &ModelId,
+        body: &gateway_providers::PreparedClaudeBody,
+    ) -> Result<crate::transport::outbound::ConstructedRequest, gateway_routing_runtime::RoutingError> {
+        let (_request, selected) = self.selected(fence, model)?;
+        platform::physical_request(selected.binding(), body)
+            .map_err(|_| crate::inference_local_lifecycle::wrapper_error())
+    }
+
     pub async fn ensure_current(
         &self,
         fence: &CredentialFence,

@@ -39,6 +39,7 @@ pub struct RequestResources {
 
 async fn dispatch_attempts(
     session: Rc<Session>,
+    routing: routing_host::Host,
     cancellation: Rc<crate::transport::outbound::Cancellation>,
     capture: Rc<crate::inference_capture::Capture>,
 ) -> Result<(Response, PreparedAttempt), gateway_routing_runtime::RoutingError> {
@@ -354,13 +355,15 @@ pub async fn run(
             native_session_id: None,
             retry_prohibited: false,
         };
+        // This clone shares the original Claude Binding owner across local fallback and dispatch.
+        let routing = routing_host::Host::new(store.clone(), host.clone(), context.clone(), original.clone());
         let client_stream = document.stream().unwrap_or(false);
         let session = if local_compaction {
             match crate::inference_local::start(
                 metadata,
                 document.clone(),
                 store.clone(),
-                host.clone(),
+                routing.clone(),
                 context.clone(),
                 capture.clone(),
                 permit.take(),
@@ -390,12 +393,7 @@ pub async fn run(
             match RoutingSession::begin(
                 input,
                 store.clone(),
-                routing_host::Host::new(
-                    store.clone(),
-                    host.clone(),
-                    context.clone(),
-                    original.clone(),
-                ),
+                routing.clone(),
                 PlatformClock,
                 PlatformTokens,
             )
@@ -433,7 +431,7 @@ pub async fn run(
             .await;
         let deadline = host.cancellation.set_timeout_ms(ATTEMPT_DEADLINE_MS)?;
         let (mut upstream, attempt) =
-            match dispatch_attempts(session.clone(), host.cancellation.clone(), capture.clone())
+            match dispatch_attempts(session.clone(), routing, host.cancellation.clone(), capture.clone())
                 .await
             {
                 Ok(dispatched) => dispatched,

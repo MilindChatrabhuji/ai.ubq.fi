@@ -2,7 +2,7 @@ use super::platform::{self, Host};
 use crate::{
     authority::RemoteAuthorityStore,
     host::{PlatformHost, response_bytes},
-    transport::outbound::{PinnedDestination, send_http},
+    transport::outbound::{PinnedDestination, construct_request, send_constructed},
 };
 use gateway_admin_runtime::{
     claude::{self, AccountBinding},
@@ -224,14 +224,9 @@ async fn page(
         .map(|milliseconds| cancellation.set_timeout_ms(milliseconds as i32))
         .transpose()?;
     let target = PinnedDestination::new(url.as_str())?;
-    let mut response = send_http(
-        &target,
-        worker::Method::Get,
-        &platform::headers(account, true),
-        &[],
-        &cancellation,
-        || current(store, platform, account, generation),
-    )
+    let headers = platform::headers(account, true).map_err(|_| physical_failure())?;
+    let request = construct_request(&target, worker::Method::Get, headers, &[]).map_err(|_| physical_failure())?;
+    let mut response = send_constructed(request, &cancellation, || current(store, platform, account, generation))
     .await
     .map_err(|failure| failure.error)?;
     let status = response.status_code();
@@ -254,14 +249,9 @@ pub(super) async fn workspace_list(
     let snapshot = super::generation().snapshot();
     current(&host.store, &host.platform, account, &snapshot).await?;
     let target = PinnedDestination::new("https://api.anthropic.com/v1/organizations/workspaces")?;
-    let mut response = send_http(
-        &target,
-        worker::Method::Get,
-        &platform::headers(account, false),
-        &[],
-        &host.platform.cancellation,
-        || current(&host.store, &host.platform, account, &snapshot),
-    )
+    let headers = platform::headers(account, false).map_err(|_| physical_failure())?;
+    let request = construct_request(&target, worker::Method::Get, headers, &[]).map_err(|_| physical_failure())?;
+    let mut response = send_constructed(request, &host.platform.cancellation, || current(&host.store, &host.platform, account, &snapshot))
     .await
     .map_err(|failure| failure.error)?;
     let status = response.status_code();
@@ -348,4 +338,9 @@ mod tests {
         append_cursor(&mut url, &JsString16::from_units(vec![0xd83d, 0xde00]));
         assert_eq!(url.query(), Some("after_id=%F0%9F%98%80"));
     }
+}
+
+fn physical_failure() -> GatewayError {
+    // No upstream response exists; do not classify source construction as provider evidence.
+    GatewayError::new(500, "Internal Server Error", None).with_type("server_error")
 }
