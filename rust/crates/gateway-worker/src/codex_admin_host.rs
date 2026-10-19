@@ -1,10 +1,8 @@
 //! Named administrative Codex operations, always authenticated from the original request.
 use gateway_admin_runtime::capabilities::{CodexRequest, Context};
 use gateway_auth::{AuthConfig, AuthRequest, AuthResponse, AuthService};
-use gateway_core::{
-    GatewayError,
-    identity::{PrincipalId, RequestContext, RequestId},
-};
+use gateway_authority::native_control::actor::NativeRenewalActor;
+use gateway_core::GatewayError;
 
 mod manual;
 
@@ -16,37 +14,26 @@ pub async fn execute(
     request: CodexRequest,
     context: Context,
     observations: &crate::observability_host::Runtime,
+    actor: &NativeRenewalActor,
 ) -> Result<AuthResponse, GatewayError> {
-    let principal = AuthService::new(store, platform, config)
+    AuthService::new(store, platform, config)
         .authenticate_admin(original)
         .await?;
     match request {
         CodexRequest::ConsumeReset { account_id_hash } => {
-            manual::consume(store, platform, original, config, &account_id_hash, context).await
+            manual::consume(store, platform, config, &account_id_hash, actor).await
         }
         CodexRequest::ImportCredentials { .. } => Err(GatewayError::unavailable(
             "The native credential import owner is not configured.",
             "codex_native_import_unavailable",
         )),
         CodexRequest::Recheck { slot } => {
-            use gateway_authority::native_control::actor::{
-                authenticate_admin_actor, principal_id,
-            };
             let authority = gateway_authority::Authority::with_clock(
                 store.clone(),
                 crate::host::PlatformTokens,
                 crate::host::PlatformClock,
             );
-            let request = RequestContext {
-                request_id: RequestId(context.request_id),
-                principal: PrincipalId(principal_id(&principal)),
-                key_id: None,
-                route: format!("/admin/providers/codex/{slot}/recheck"),
-                started_at_ms: context.now_ms,
-            };
-            let actor =
-                authenticate_admin_actor(&authority, platform, config, original, &request).await?;
-            if !authority.recheck_codex_slot(&actor, config, slot).await? {
+            if !authority.recheck_codex_slot(actor, config, slot).await? {
                 return Err(GatewayError::new(
                     404,
                     "Codex account slot is not configured",
