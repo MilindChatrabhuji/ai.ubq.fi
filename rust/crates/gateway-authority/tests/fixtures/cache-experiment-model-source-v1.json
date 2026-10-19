@@ -1,0 +1,4378 @@
+{
+  "version": 1,
+  "now": 1700000000000,
+  "target_cases": [
+    {
+      "input": {
+        "id": "target-1",
+        "provider": "codex_chatgpt",
+        "telemetry_provider": "chatgpt_codex",
+        "topology_kind": "codex_account_pool",
+        "model": "fixture-model",
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "capability_fingerprint": "capability-1",
+        "inventory_fingerprint": "inventory-1",
+        "catalog_versionstamp": "catalog-1",
+        "runtime_versionstamp": "runtime-1",
+        "auth_pool_versionstamp": "pool-1",
+        "auth_pool_identity_fingerprint": "identity-1",
+        "catalog_client_version": null
+      },
+      "expected": {
+        "id": "target-1",
+        "provider": "codex_chatgpt",
+        "telemetry_provider": "chatgpt_codex",
+        "topology_kind": "codex_account_pool",
+        "model": "fixture-model",
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "capability_fingerprint": "capability-1",
+        "inventory_fingerprint": "inventory-1",
+        "catalog_versionstamp": "catalog-1",
+        "runtime_versionstamp": "runtime-1",
+        "auth_pool_versionstamp": "pool-1",
+        "auth_pool_identity_fingerprint": "identity-1",
+        "catalog_client_version": null
+      }
+    },
+    {
+      "input": {
+        "id": "  target-1  ",
+        "provider": "codex_chatgpt",
+        "telemetry_provider": "chatgpt_codex",
+        "topology_kind": "codex_account_pool",
+        "model": " fixture-model ",
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "capability_fingerprint": "capability-1",
+        "inventory_fingerprint": "inventory-1",
+        "catalog_versionstamp": "catalog-1",
+        "runtime_versionstamp": "runtime-1",
+        "auth_pool_versionstamp": "pool-1",
+        "auth_pool_identity_fingerprint": "identity-1",
+        "catalog_client_version": " 0.100.0 "
+      },
+      "expected": {
+        "id": "target-1",
+        "provider": "codex_chatgpt",
+        "telemetry_provider": "chatgpt_codex",
+        "topology_kind": "codex_account_pool",
+        "model": "fixture-model",
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "capability_fingerprint": "capability-1",
+        "inventory_fingerprint": "inventory-1",
+        "catalog_versionstamp": "catalog-1",
+        "runtime_versionstamp": "runtime-1",
+        "auth_pool_versionstamp": "pool-1",
+        "auth_pool_identity_fingerprint": "identity-1",
+        "catalog_client_version": "0.100.0"
+      }
+    },
+    {
+      "input": {
+        "id": "target-1",
+        "provider": "codex_chatgpt",
+        "telemetry_provider": "chatgpt_codex",
+        "topology_kind": "codex_account_pool",
+        "model": "fixture-model",
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "capability_fingerprint": "capability-1",
+        "inventory_fingerprint": "inventory-1",
+        "catalog_versionstamp": "catalog-1",
+        "runtime_versionstamp": "runtime-1",
+        "auth_pool_versionstamp": "pool-1",
+        "auth_pool_identity_fingerprint": "identity-1",
+        "catalog_client_version": null,
+        "extra": true
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "id": "target-1",
+        "provider": "codex_chatgpt",
+        "telemetry_provider": "chatgpt_codex",
+        "topology_kind": "codex_account_pool",
+        "model": "fixture-model",
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "capability_fingerprint": "capability-1",
+        "inventory_fingerprint": "inventory-1",
+        "catalog_versionstamp": "catalog-1",
+        "runtime_versionstamp": "runtime-1",
+        "auth_pool_versionstamp": "pool-1",
+        "auth_pool_identity_fingerprint": "identity-1"
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "id": "target-1",
+        "provider": "codex_chatgpt",
+        "telemetry_provider": "chatgpt_codex",
+        "topology_kind": "codex_account_pool",
+        "model": " ",
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "capability_fingerprint": "capability-1",
+        "inventory_fingerprint": "inventory-1",
+        "catalog_versionstamp": "catalog-1",
+        "runtime_versionstamp": "runtime-1",
+        "auth_pool_versionstamp": "pool-1",
+        "auth_pool_identity_fingerprint": "identity-1",
+        "catalog_client_version": null
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "id": "target-1",
+        "provider": "codex",
+        "telemetry_provider": "chatgpt_codex",
+        "topology_kind": "codex_account_pool",
+        "model": "fixture-model",
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "capability_fingerprint": "capability-1",
+        "inventory_fingerprint": "inventory-1",
+        "catalog_versionstamp": "catalog-1",
+        "runtime_versionstamp": "runtime-1",
+        "auth_pool_versionstamp": "pool-1",
+        "auth_pool_identity_fingerprint": "identity-1",
+        "catalog_client_version": null
+      },
+      "expected": null
+    }
+  ],
+  "state_cases": [
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "campaign_owner": "campaign",
+        "started_at_ms": 1699999999990,
+        "expires_at_ms": 1700000900000,
+        "auth_pool_versionstamp": "pool-1",
+        "next_cycle": 1,
+        "classifications": []
+      },
+      "expected": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "campaign_owner": "campaign",
+        "started_at_ms": 1699999999990,
+        "expires_at_ms": 1700000900000,
+        "auth_pool_versionstamp": "pool-1",
+        "next_cycle": 1,
+        "classifications": []
+      }
+    },
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "campaign_owner": "campaign",
+        "started_at_ms": 0,
+        "expires_at_ms": 1700000900000,
+        "auth_pool_versionstamp": "pool-1",
+        "next_cycle": 1,
+        "classifications": []
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "campaign_owner": "campaign",
+        "started_at_ms": 1700000000001,
+        "expires_at_ms": 1700000900000,
+        "auth_pool_versionstamp": "pool-1",
+        "next_cycle": 1,
+        "classifications": []
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "campaign_owner": "campaign",
+        "started_at_ms": 1699999999990,
+        "expires_at_ms": 1699999999980,
+        "auth_pool_versionstamp": "pool-1",
+        "next_cycle": 1,
+        "classifications": []
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "campaign_owner": "campaign",
+        "started_at_ms": 1699999999990,
+        "expires_at_ms": 1700000900000,
+        "auth_pool_versionstamp": "other",
+        "next_cycle": 1,
+        "classifications": []
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "campaign_owner": "campaign",
+        "started_at_ms": 1699999999990,
+        "expires_at_ms": 1700000900000,
+        "auth_pool_versionstamp": "pool-1",
+        "next_cycle": 1,
+        "classifications": [],
+        "pending_scope": null
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "campaign_owner": "campaign",
+        "started_at_ms": 1699999999990,
+        "expires_at_ms": 1700000900000,
+        "auth_pool_versionstamp": "pool-1",
+        "next_cycle": 4,
+        "classifications": [
+          {
+            "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+            "account_slots": "shared",
+            "token_refresh": "preserved",
+            "conversation_id": "independent",
+            "effective_model": "fixture-model"
+          },
+          {
+            "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+            "account_slots": "shared",
+            "token_refresh": "preserved",
+            "conversation_id": "independent",
+            "effective_model": "fixture-model"
+          },
+          {
+            "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+            "account_slots": "shared",
+            "token_refresh": "preserved",
+            "conversation_id": "independent",
+            "effective_model": "fixture-model"
+          }
+        ],
+        "pending_scope": {
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "account_slots": "shared",
+          "token_refresh": "preserved",
+          "conversation_id": "independent",
+          "effective_model": "fixture-model"
+        }
+      },
+      "expected": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "campaign_owner": "campaign",
+        "started_at_ms": 1699999999990,
+        "expires_at_ms": 1700000900000,
+        "auth_pool_versionstamp": "pool-1",
+        "next_cycle": 4,
+        "classifications": [
+          {
+            "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+            "account_slots": "shared",
+            "token_refresh": "preserved",
+            "conversation_id": "independent",
+            "effective_model": "fixture-model"
+          },
+          {
+            "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+            "account_slots": "shared",
+            "token_refresh": "preserved",
+            "conversation_id": "independent",
+            "effective_model": "fixture-model"
+          },
+          {
+            "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+            "account_slots": "shared",
+            "token_refresh": "preserved",
+            "conversation_id": "independent",
+            "effective_model": "fixture-model"
+          }
+        ],
+        "pending_scope": {
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "account_slots": "shared",
+          "token_refresh": "preserved",
+          "conversation_id": "independent",
+          "effective_model": "fixture-model"
+        }
+      }
+    },
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "campaign_owner": "campaign",
+        "started_at_ms": 1699999999990,
+        "expires_at_ms": 1700000900000,
+        "auth_pool_versionstamp": "pool-1",
+        "next_cycle": 4,
+        "classifications": [
+          {
+            "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+            "account_slots": "shared",
+            "token_refresh": "preserved",
+            "conversation_id": "independent",
+            "effective_model": "fixture-model"
+          },
+          {
+            "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+            "account_slots": "shared",
+            "token_refresh": "preserved",
+            "conversation_id": "independent",
+            "effective_model": "fixture-model"
+          },
+          {
+            "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+            "account_slots": "shared",
+            "token_refresh": "preserved",
+            "conversation_id": "independent",
+            "effective_model": "fixture-model"
+          }
+        ]
+      },
+      "expected": null
+    }
+  ],
+  "evidence_cases": [
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "outcome": "in_progress",
+        "started_at_ms": 1699999999990,
+        "verified_at_ms": 1700000000000,
+        "cycles": [
+          {
+            "cycle": 1,
+            "samples": [
+              {
+                "step": "slot_1_warm",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_first",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_repeat",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_slot_2",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_refresh",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_post_refresh_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_original_conversation_recheck",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              }
+            ],
+            "classification": {
+              "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+              "account_slots": "shared",
+              "token_refresh": "preserved",
+              "conversation_id": "independent",
+              "effective_model": "fixture-model"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "outcome": "in_progress",
+        "started_at_ms": 1699999999990,
+        "verified_at_ms": 1700000000000,
+        "cycles": [
+          {
+            "cycle": 1,
+            "samples": [
+              {
+                "step": "slot_1_warm",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_first",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_repeat",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_slot_2",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_refresh",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_post_refresh_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_original_conversation_recheck",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              }
+            ],
+            "classification": {
+              "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+              "account_slots": "shared",
+              "token_refresh": "preserved",
+              "conversation_id": "independent",
+              "effective_model": "fixture-model"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "outcome": "completed",
+        "started_at_ms": 1699999999990,
+        "verified_at_ms": 1700000000000,
+        "cycles": [
+          {
+            "cycle": 1,
+            "samples": [
+              {
+                "step": "slot_1_warm",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_first",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_repeat",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_slot_2",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_refresh",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_post_refresh_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_original_conversation_recheck",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              }
+            ],
+            "classification": {
+              "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+              "account_slots": "shared",
+              "token_refresh": "preserved",
+              "conversation_id": "independent",
+              "effective_model": "fixture-model"
+            }
+          }
+        ]
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "outcome": "inconclusive",
+        "started_at_ms": 1699999999990,
+        "verified_at_ms": 1700000000000,
+        "cycles": [
+          {
+            "cycle": 1,
+            "samples": [
+              {
+                "step": "slot_1_warm",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_first",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_repeat",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_slot_2",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_refresh",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_post_refresh_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_original_conversation_recheck",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              }
+            ],
+            "classification": {
+              "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+              "account_slots": "shared",
+              "token_refresh": "preserved",
+              "conversation_id": "independent",
+              "effective_model": "fixture-model"
+            }
+          }
+        ],
+        "inconclusive_reason": "slot_drift"
+      },
+      "expected": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "outcome": "inconclusive",
+        "started_at_ms": 1699999999990,
+        "verified_at_ms": 1700000000000,
+        "cycles": [
+          {
+            "cycle": 1,
+            "samples": [
+              {
+                "step": "slot_1_warm",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_first",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_repeat",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_slot_2",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_refresh",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_post_refresh_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_original_conversation_recheck",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              }
+            ],
+            "classification": {
+              "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+              "account_slots": "shared",
+              "token_refresh": "preserved",
+              "conversation_id": "independent",
+              "effective_model": "fixture-model"
+            }
+          }
+        ],
+        "inconclusive_reason": "slot_drift"
+      }
+    },
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "outcome": "failed",
+        "started_at_ms": 1699999999990,
+        "verified_at_ms": 1700000000000,
+        "cycles": [
+          {
+            "cycle": 1,
+            "samples": [
+              {
+                "step": "slot_1_warm",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_first",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_repeat",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_slot_2",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_refresh",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_post_refresh_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_original_conversation_recheck",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              }
+            ],
+            "classification": {
+              "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+              "account_slots": "shared",
+              "token_refresh": "preserved",
+              "conversation_id": "independent",
+              "effective_model": "fixture-model"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "outcome": "failed",
+        "started_at_ms": 1699999999990,
+        "verified_at_ms": 1700000000000,
+        "cycles": [
+          {
+            "cycle": 1,
+            "samples": [
+              {
+                "step": "slot_1_warm",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_first",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_repeat",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_slot_2",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_refresh",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_post_refresh_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_original_conversation_recheck",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              }
+            ],
+            "classification": {
+              "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+              "account_slots": "shared",
+              "token_refresh": "preserved",
+              "conversation_id": "independent",
+              "effective_model": "fixture-model"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "outcome": "in_progress",
+        "started_at_ms": 1699999999990,
+        "verified_at_ms": 1700000000000,
+        "cycles": [
+          {
+            "cycle": 1,
+            "samples": [
+              {
+                "step": "slot_1_warm",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_first",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_repeat",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_slot_2",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_refresh",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_post_refresh_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_original_conversation_recheck",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              }
+            ],
+            "classification": null,
+            "inconclusive_reason": "slot_drift"
+          }
+        ]
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "outcome": "in_progress",
+        "started_at_ms": 1699999999990,
+        "verified_at_ms": 1700000000001,
+        "cycles": [
+          {
+            "cycle": 1,
+            "samples": [
+              {
+                "step": "slot_1_warm",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_first",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_repeat",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_slot_2",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_refresh",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_post_refresh_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_original_conversation_recheck",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              }
+            ],
+            "classification": {
+              "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+              "account_slots": "shared",
+              "token_refresh": "preserved",
+              "conversation_id": "independent",
+              "effective_model": "fixture-model"
+            }
+          }
+        ]
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "v": 3,
+        "target": {
+          "id": "target-1",
+          "provider": "codex_chatgpt",
+          "telemetry_provider": "chatgpt_codex",
+          "topology_kind": "codex_account_pool",
+          "model": "fixture-model",
+          "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          "capability_fingerprint": "capability-1",
+          "inventory_fingerprint": "inventory-1",
+          "catalog_versionstamp": "catalog-1",
+          "runtime_versionstamp": "runtime-1",
+          "auth_pool_versionstamp": "pool-1",
+          "auth_pool_identity_fingerprint": "identity-1",
+          "catalog_client_version": null
+        },
+        "outcome": "in_progress",
+        "started_at_ms": 1699999999990,
+        "verified_at_ms": 1700000000000,
+        "cycles": [
+          {
+            "cycle": 1,
+            "samples": [
+              {
+                "step": "slot_1_warm",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 2560,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_first",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_2_repeat",
+                "slot": 2,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_slot_2",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_after_refresh",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_post_refresh_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              },
+              {
+                "step": "slot_1_conversation_changed_repeat",
+                "slot": 1,
+                "raw_usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "usage": {
+                  "input_tokens": 2560,
+                  "cached_tokens": 2560,
+                  "cache_write_tokens": 0,
+                  "output_tokens": 12,
+                  "total_tokens": 2572
+                },
+                "elapsed_ms": 120
+              }
+            ],
+            "classification": {
+              "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+              "account_slots": "shared",
+              "token_refresh": "preserved",
+              "conversation_id": "independent",
+              "effective_model": "fixture-model"
+            }
+          }
+        ]
+      },
+      "expected": null
+    }
+  ],
+  "classifications": [
+    {
+      "samples": [
+        {
+          "step": "slot_1_warm",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_first",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_repeat",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_slot_2",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_refresh",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_post_refresh_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_original_conversation_recheck",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        }
+      ],
+      "expected": {
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "account_slots": "shared",
+        "token_refresh": "preserved",
+        "conversation_id": "independent",
+        "effective_model": "fixture-model"
+      }
+    },
+    {
+      "samples": [
+        {
+          "step": "slot_1_warm",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_first",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_repeat",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_slot_2",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_refresh",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_post_refresh_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_original_conversation_recheck",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        }
+      ],
+      "expected": {
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "account_slots": "account_scoped",
+        "token_refresh": "preserved",
+        "conversation_id": "independent",
+        "effective_model": "fixture-model"
+      }
+    },
+    {
+      "samples": [
+        {
+          "step": "slot_1_warm",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_first",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_repeat",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_slot_2",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_refresh",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_post_refresh_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_original_conversation_recheck",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        }
+      ],
+      "expected": {
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "account_slots": "shared",
+        "token_refresh": "changed",
+        "conversation_id": "independent",
+        "effective_model": "fixture-model"
+      }
+    },
+    {
+      "samples": [
+        {
+          "step": "slot_1_warm",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_first",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_repeat",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_slot_2",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_refresh",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_post_refresh_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_original_conversation_recheck",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        }
+      ],
+      "expected": {
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "account_slots": "account_scoped",
+        "token_refresh": "changed",
+        "conversation_id": "independent",
+        "effective_model": "fixture-model"
+      }
+    },
+    {
+      "samples": [
+        {
+          "step": "slot_1_warm",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_first",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_repeat",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_slot_2",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_refresh",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_post_refresh_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_original_conversation_recheck",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        }
+      ],
+      "expected": {
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "account_slots": "shared",
+        "token_refresh": "preserved",
+        "conversation_id": "scoped",
+        "effective_model": "fixture-model"
+      }
+    },
+    {
+      "samples": [
+        {
+          "step": "slot_1_warm",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_first",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_repeat",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_slot_2",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_refresh",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_post_refresh_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_original_conversation_recheck",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        }
+      ],
+      "expected": {
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "account_slots": "account_scoped",
+        "token_refresh": "preserved",
+        "conversation_id": "scoped",
+        "effective_model": "fixture-model"
+      }
+    },
+    {
+      "samples": [
+        {
+          "step": "slot_1_warm",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_first",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_repeat",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_slot_2",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_refresh",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_post_refresh_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_original_conversation_recheck",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        }
+      ],
+      "expected": {
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "account_slots": "shared",
+        "token_refresh": "changed",
+        "conversation_id": "scoped",
+        "effective_model": "fixture-model"
+      }
+    },
+    {
+      "samples": [
+        {
+          "step": "slot_1_warm",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_first",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_2_repeat",
+          "slot": 2,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_slot_2",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_after_refresh",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_post_refresh_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 0,
+            "cache_write_tokens": 2560,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_conversation_changed_repeat",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        },
+        {
+          "step": "slot_1_original_conversation_recheck",
+          "slot": 1,
+          "raw_usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "usage": {
+            "input_tokens": 2560,
+            "cached_tokens": 2560,
+            "cache_write_tokens": 0,
+            "output_tokens": 12,
+            "total_tokens": 2572
+          },
+          "elapsed_ms": 120
+        }
+      ],
+      "expected": {
+        "probe_profile": "responses_implicit_input_text_keyed_cycle_isolated_v5",
+        "account_slots": "account_scoped",
+        "token_refresh": "changed",
+        "conversation_id": "scoped",
+        "effective_model": "fixture-model"
+      }
+    }
+  ],
+  "request": {
+    "model": "fixture-model",
+    "input": [
+      {
+        "type": "message",
+        "role": "developer",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "cache-scope-cycle:cycle-nonce\n\ncache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache cache"
+          }
+        ]
+      },
+      {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Reply with exactly: cache scope experiment."
+          }
+        ]
+      }
+    ],
+    "store": false,
+    "stream": true,
+    "reasoning": {
+      "effort": "none"
+    },
+    "prompt_cache_key": "cache-key"
+  },
+  "source_sha256": "96a33c695c77d469c2d2cd844481ff40afedf5db5595a88a828f206d20b4ad61",
+  "capture_ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/aa1acc13-47b2-49c0-989b-763a544b1f12"
+}

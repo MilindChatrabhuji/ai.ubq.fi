@@ -139,12 +139,17 @@ fn actor_shape(raw: &Value) -> Result<(), GatewayError> {
     let Some(fields) = raw.as_object() else {
         return Err(fail());
     };
-    if fields.len() != 8
+    if fields.len() != 9
         || raw["v"] != 1
         || raw["principal"].as_str().is_none_or(|s| s.is_empty())
-        || !["owner_revision", "config_revision", "runtime_revision"]
-            .iter()
-            .all(|k| fields.contains_key(*k))
+        || ![
+            "owner_revision",
+            "config_revision",
+            "runtime_revision",
+            "source_valid_until_ms",
+        ]
+        .iter()
+        .all(|k| fields.contains_key(*k))
     {
         return Err(fail());
     }

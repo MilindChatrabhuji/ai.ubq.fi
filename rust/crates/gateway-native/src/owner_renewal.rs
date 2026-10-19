@@ -21,13 +21,20 @@ use gateway_auth::{
     },
 };
 use gateway_authority::native_control::{
-    NativeRenewalFence, NativeRenewalMode,
+    NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalFence, NativeRenewalMode,
     wire::{
         NativeRenewalAuthorityRequest as Request, NativeRenewalAuthorityResponse as Response,
         OriginalControlHeaders,
     },
 };
-use std::{cell::RefCell, collections::BTreeSet};
+use std::cell::RefCell;
+
+pub(crate) fn require_current_fence(fence: &NativeRenewalFence) -> Result<(), GatewayError> {
+    if fence.v != NATIVE_RENEWAL_FENCE_VERSION {
+        return Err(unverified());
+    }
+    Ok(())
+}
 
 pub struct PublishedAccess {
     pub publication_revision: String,
@@ -62,15 +69,7 @@ impl<P: NativeAccessPublisher> NativeOwnerRenewalService<P> {
         publisher: P,
         locations: Vec<NativeOwnerLocation>,
     ) -> Result<Self, GatewayError> {
-        let mut seen = BTreeSet::new();
-        if locations.is_empty()
-            || locations.len() > 2
-            || locations
-                .iter()
-                .any(|location| !seen.insert(location.owner.0.clone()))
-        {
-            return Err(unverified());
-        }
+        UnixOwnerTransport::new(locations.clone())?;
         Ok(Self {
             authority,
             publisher,
@@ -82,6 +81,7 @@ impl<P: NativeAccessPublisher> NativeOwnerRenewalService<P> {
         claim: &RemoteClaim,
         context: &NativeControlContext<'_>,
     ) -> Result<NativeControlResponse, GatewayError> {
+        require_current_fence(&claim.fence)?;
         if let Some(revision) = &claim.publication_revision {
             self.authority.exchange(
                 &Request::Published {
@@ -350,3 +350,7 @@ fn changed() -> GatewayError {
         Some("native_owner_changed"),
     )
 }
+
+#[cfg(test)]
+#[path = "renewal_v2_tests.rs"]
+mod renewal_v2_tests;

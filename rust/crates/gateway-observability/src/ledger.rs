@@ -4,6 +4,10 @@ use gateway_core::{GatewayError, lifecycle::DeliveryOutcome, query::QueryStore};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+#[path = "terminal_rollup.rs"]
+mod terminal_rollup;
+pub use terminal_rollup::TerminalUsageRollup;
+
 pub const REQUEST_RETENTION_MS: i64 = 365 * store::DAY;
 pub const ERROR_RETENTION_MS: i64 = 7 * store::DAY;
 fn integer(value: Option<&Value>, fallback: f64) -> f64 {

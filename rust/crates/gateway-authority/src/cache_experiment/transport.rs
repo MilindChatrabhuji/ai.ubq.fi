@@ -6,14 +6,18 @@ use super::{
 };
 use crate::{
     Authority, TokenSource,
-    routing::{ProbeCircuit, ProbeLease, model_quota_class, read_view},
+    routing::{ProbeCircuit, ProbeLease, model_quota_class, read_pinned_view},
     store::Transaction,
 };
 use gateway_auth::{
     crypto::Secret,
     provider_credentials::{CodexSourcePool, codex_source_pool_key, parse_codex_source_pool},
 };
-use gateway_core::{GatewayError, identity::AccountBinding, state::AuthorityStore};
+use gateway_core::{
+    GatewayError,
+    identity::{AccountBinding, PoolVersionstamp},
+    state::AuthorityStore,
+};
 use serde_json::Value;
 
 pub(super) struct Session {
@@ -60,6 +64,47 @@ async fn source<S: AuthorityStore, I: TokenSource>(
     Ok((revision, pool))
 }
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    /// The fixed host invokes this immediately before actual transport, after
+    /// request construction. It is a credential fence, not a new admission.
+    pub async fn ensure_cache_dispatch_current(
+        &self,
+        dispatch: &CacheDispatch,
+        now: i64,
+    ) -> Result<(), GatewayError> {
+        let mut tx = self.transaction(now)?;
+        let (revision, pool) = source(&mut tx).await?;
+        let current = pool
+            .accounts
+            .get(dispatch.binding.slot as usize)
+            .ok_or_else(|| failed("Prompt-cache scope experiment slot is invalid."))?;
+        if revision != dispatch.binding.pool_versionstamp.0
+            || current.account_id != dispatch.account_id
+            || current.identity().credential_version != dispatch.binding.credential_version
+            || current.access_token != dispatch.access_token
+        {
+            return Err(failed(
+                "Codex credentials changed before dispatch during the prompt-cache scope experiment.",
+            ));
+        }
+        Ok(())
+    }
+    /// An actual pinned 429 uses the shared account/class writer. A transport
+    /// failure never manufactures a quota observation or an ordinary admission.
+    pub async fn record_cache_quota_block(
+        &self,
+        dispatch: &CacheDispatch,
+        block: crate::routing::QuotaBlock,
+        now: i64,
+    ) -> Result<bool, GatewayError> {
+        self.record_bound_quota_block(
+            &dispatch.binding,
+            model_quota_class(&dispatch.model),
+            dispatch.probe.as_ref(),
+            block,
+            now,
+        )
+        .await
+    }
     pub(super) async fn cache_session(&self, now: i64) -> Result<Session, GatewayError> {
         let (revision, pool) = source(&mut self.transaction(now)?).await?;
         Ok(Session {
@@ -93,19 +138,59 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     pub(super) async fn cache_session_after_refresh(
         &self,
         session: &Session,
+        publication: &PoolVersionstamp,
         now: i64,
     ) -> Result<Result<Session, Reason>, GatewayError> {
-        let current = self.cache_session(now).await?;
-        if current.ids != session.ids {
+        let mut tx = self.transaction(now)?;
+        let key = codex_source_pool_key();
+        let value: Value = tx.read(&key).await?.ok_or_else(|| {
+            failed("Codex auth pool is unavailable for the prompt-cache scope experiment.")
+        })?;
+        let pool = parse_codex_source_pool(&value)?.ok_or_else(|| {
+            failed("Codex auth pool is unavailable for the prompt-cache scope experiment.")
+        })?;
+        let [first, second] = pool.accounts.as_slice() else {
+            return Ok(Err(Reason::AuthPoolDrift));
+        };
+        let current = Session {
+            revision: tx.revision(&key).ok_or_else(|| {
+                failed("Codex auth pool is unavailable for the prompt-cache scope experiment.")
+            })?,
+            ids: [first.account_id.clone(), second.account_id.clone()],
+            versions: [
+                first.identity().credential_version.0,
+                second.identity().credential_version.0,
+            ],
+        };
+        if current.revision != publication.0
+            || current.ids != session.ids
+            || current.versions[1] != session.versions[1]
+        {
             return Ok(Err(Reason::AuthPoolDrift));
         }
         if current.versions[0] == session.versions[0] {
             return Ok(Err(Reason::RefreshUnchanged));
         }
-        if current.versions[1] != session.versions[1] {
-            return Ok(Err(Reason::AuthPoolDrift));
-        }
         Ok(Ok(current))
+    }
+    /// Source refresh errors become drift only after a strong, valid pool read
+    /// proves that its revision changed. An unreadable/unknown outcome stays failed.
+    pub(super) async fn cache_pool_changed_after_refresh_error(
+        &self,
+        session: &Session,
+        now: i64,
+    ) -> Result<bool, GatewayError> {
+        let mut tx = self.transaction(now)?;
+        let key = codex_source_pool_key();
+        let Some(value) = tx.read::<Value>(&key).await? else {
+            return Ok(false);
+        };
+        if parse_codex_source_pool(&value)?.is_none() {
+            return Ok(false);
+        }
+        Ok(tx
+            .revision(&key)
+            .is_some_and(|revision| revision != session.revision))
     }
     pub(super) async fn cache_dispatch(
         &self,
@@ -137,7 +222,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     "Codex auth pool changed during the prompt-cache scope experiment.",
                 ));
             }
-            let mut view = read_view(&mut tx).await?;
+            let mut view = read_pinned_view(&mut tx).await?;
             let current = self.fresh_time(now)?;
             let evaluation = crate::routing::evaluate(
                 &view,
@@ -151,7 +236,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     "The requested Codex slot is not eligible for the prompt-cache scope experiment.",
                 ));
             }
-            let mut binding = view.binding(index);
+            let binding = view.binding(index);
             let probe = if evaluation.probe {
                 let row = &mut view.state.slots[index];
                 if row
@@ -163,7 +248,6 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                         "The requested Codex slot could not be claimed for the prompt-cache scope experiment.",
                     ));
                 }
-                row.generation = crate::next_generation(row.generation)?;
                 let lease = ProbeLease {
                     token: self.tokens.next_token()?,
                     generation: row.generation as i64,
@@ -172,7 +256,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     expires_at_ms: crate::add(current, crate::PROBE_LEASE_MS)?,
                 };
                 row.probe_lease = Some(lease.clone());
-                binding.routing_generation = row.generation;
+                view.state.updated_at_ms = current;
                 tx.put(&crate::keys::routing(), &view.state, None)?;
                 Some(lease)
             } else {
@@ -203,7 +287,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         };
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
-            let mut view = read_view(&mut tx).await?;
+            let mut view = read_pinned_view(&mut tx).await?;
             if !view.current_binding(&dispatch.binding) {
                 return Ok(());
             }
@@ -212,15 +296,36 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 return Ok(());
             }
             row.probe_lease = None;
-            if completed {
-                row.remove_quota_class(model_quota_class(&dispatch.model));
-                if row.quota_blocks.is_empty() {
-                    row.retained_reset_at_ms = None;
-                    row.reset_identity_ambiguous = false;
-                    row.reset_identity_stable = false;
-                    row.recovery_pending = false;
+            match expected.circuit {
+                ProbeCircuit::Quota => {
+                    let class = model_quota_class(&dispatch.model);
+                    let retained = (row.retained_reset_at_ms, row.reset_identity_stable);
+                    let recovering = row.recovery_pending;
+                    let block = row.quota_block_for(class);
+                    row.remove_quota_class(class);
+                    if !completed && recovering {
+                        row.retained_reset_at_ms = block
+                            .as_ref()
+                            .and_then(|block| block.reset_at_ms)
+                            .or(retained.0);
+                        row.reset_identity_stable = block
+                            .as_ref()
+                            .map(|block| block.reset_is_stable)
+                            .unwrap_or(retained.1);
+                        row.reset_identity_ambiguous = true;
+                    }
+                }
+                ProbeCircuit::UpstreamTimeout => {
+                    row.upstream_timeout_blocked_until_ms = None;
                 }
             }
+            if completed && row.quota_blocks.is_empty() {
+                row.retained_reset_at_ms = None;
+                row.reset_identity_ambiguous = false;
+                row.reset_identity_stable = false;
+                row.recovery_pending = false;
+            }
+            view.state.updated_at_ms = now;
             tx.put(&crate::keys::routing(), &view.state, None)?;
             if tx.commit().await? {
                 return Ok(());
@@ -244,7 +349,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         let campaign_key = record_key("campaign", target);
         let _: Option<Value> = tx.read(&cycle_key).await?;
         let _: Option<Value> = tx.read(&campaign_key).await?;
-        let view = read_view(&mut tx).await?;
+        let view = read_pinned_view(&mut tx).await?;
         let current = self.fresh_time(now)?;
         if view.pool.accounts.len() != 2
             || view.pool.pool_versionstamp.0 != target.auth_pool_versionstamp

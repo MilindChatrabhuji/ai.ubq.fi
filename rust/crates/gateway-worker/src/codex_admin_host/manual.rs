@@ -5,40 +5,33 @@ use crate::{
     storage::now_ms,
     transport::outbound::{PinnedDestination, send_http},
 };
-use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::{
-    AuthConfig, AuthRequest, AuthResponse, AuthService,
+    AuthConfig, AuthResponse,
     provider_credentials::{CodexSourceAccount, read_codex_source_pool},
 };
 use gateway_authority::{
     Authority,
     manual_reset::{ManualResetPreparation, ManualResetTarget},
-    native_control::actor::{authenticate_admin_actor, principal_id},
-    reset::{AccountResetInventory, ResetClaim, ResetCredit, ResetState, select_reset_credit},
+    native_control::actor::NativeRenewalActor,
+    reset::{ResetClaim, ResetState},
     routing::{CapacityObservation, parse_capacity_observation},
 };
 use gateway_core::{
-    GatewayError,
-    identity::{PrincipalId, RequestContext, RequestId},
-    state::AuthorityStore,
+    GatewayError, js_string::JsString16, source_json::SourceJson, state::AuthorityStore,
 };
 use serde_json::{Value, json};
-use std::{
-    cell::RefCell,
-    collections::{BTreeMap, BTreeSet},
-};
+use std::{cell::RefCell, collections::BTreeMap};
 use worker::{Method, Url};
 
 pub(super) async fn consume(
     store: &RemoteAuthorityStore,
     platform: &PlatformHost,
-    original: &AuthRequest,
     config: &AuthConfig,
     hash: &str,
-    context: Context,
+    actor: &NativeRenewalActor,
 ) -> Result<AuthResponse, GatewayError> {
     let mut phase = None;
-    let result = run(store, platform, original, config, hash, context, &mut phase).await;
+    let result = run(store, platform, config, hash, actor, &mut phase).await;
     let mut response = match result {
         Ok(body) => AuthResponse::json(200, body),
         Err(error) => {
@@ -59,25 +52,13 @@ pub(super) async fn consume(
 async fn run(
     store: &RemoteAuthorityStore,
     platform: &PlatformHost,
-    original: &AuthRequest,
     config: &AuthConfig,
     hash: &str,
-    context: Context,
+    actor: &NativeRenewalActor,
     phase: &mut Option<&'static str>,
 ) -> Result<Value, GatewayError> {
     let authority = Authority::with_clock(store.clone(), PlatformTokens, PlatformClock);
-    let principal = AuthService::new(store, platform, config)
-        .authenticate_admin(original)
-        .await?;
-    let request = RequestContext {
-        request_id: RequestId(context.request_id),
-        principal: PrincipalId(principal_id(&principal)),
-        key_id: None,
-        route: "/admin/providers/codex/banked-resets/consume".into(),
-        started_at_ms: context.now_ms,
-    };
-    let actor = authenticate_admin_actor(&authority, platform, config, original, &request).await?;
-    let action = match authority.prepare_manual_reset(&actor, config, hash).await? {
+    let action = match authority.prepare_manual_reset(actor, config, hash).await? {
         ManualResetPreparation::Ready(action) => action,
         ManualResetPreparation::NeedsUsage(target) => {
             let usage = usage(store, platform, &target).await?;
@@ -96,7 +77,7 @@ async fn run(
     // A known prior operation is resolved by authority before any new inventory/consume.
     // First attempts select complete inventory before claiming a submission owner.
     let credit = if previous.is_none() {
-        authority.prepare_manual_reset(&actor, config, hash).await?;
+        authority.prepare_manual_reset(actor, config, hash).await?;
         Some(inventory(store, platform, action.target()).await?)
     } else {
         None
@@ -128,7 +109,7 @@ async fn run(
             let credit = match credit {
                 Some(credit) => credit,
                 None => {
-                    authority.prepare_manual_reset(&actor, config, hash).await?;
+                    authority.prepare_manual_reset(actor, config, hash).await?;
                     inventory(store, platform, action.target()).await?
                 }
             };
@@ -139,10 +120,7 @@ async fn run(
             let latest = RefCell::new(record);
             let account = account(store, action.target()).await?;
             let (_, consume) = endpoints(platform)?;
-            let body = serde_json::to_vec(
-                &json!({"redeem_request_id":invocation.idempotency_key,"credit_id":credit}),
-            )
-            .map_err(|_| unavailable("Reset request is invalid."))?;
+            let body = super::source_inventory::consume_body(&invocation.idempotency_key, &credit)?;
             let destination = PinnedDestination::new(consume.as_str())?;
             let cancellation = platform.cancellation.child()?;
             let headers = headers(&account, true);
@@ -150,7 +128,7 @@ async fn run(
                 &destination,
                 Method::Post,
                 &headers,
-                &body,
+                body.as_bytes(),
                 &cancellation,
                 || async {
                     let expected = latest.borrow().clone();
@@ -186,8 +164,13 @@ async fn run(
             } else {
                 None
             };
+            let receipt = match code.as_deref() {
+                Some("reset") => Some("upstream-reset"),
+                Some("already_redeemed") => Some("upstream-already-redeemed"),
+                _ => None,
+            };
             let observed = authority
-                .record_reset_outcome(&latest.into_inner(), state, None, error, now_ms()?)
+                .record_reset_outcome(&latest.into_inner(), state, receipt, error, now_ms()?)
                 .await?;
             if state != ResetState::Verified {
                 if state == ResetState::Rejected {
@@ -207,7 +190,7 @@ async fn run(
         }
     };
     *phase = Some("verified");
-    authority.prepare_manual_reset(&actor, config, hash).await?;
+    authority.prepare_manual_reset(actor, config, hash).await?;
     let observation = usage(store, platform, action.target()).await.map_err(|_| failure(409,"codex_reset_usage_pending","Reset verified; current quota verification is pending. Check again without consuming another reset."))?;
     let promoted = authority
         .promote_manual_reset(&action, config, &verified, &observation)
@@ -283,6 +266,21 @@ pub(super) async fn get(
     account: &CodexSourceAccount,
     deadline: Option<i32>,
 ) -> Result<Value, GatewayError> {
+    get_source(platform, url, account, deadline, || async { Ok(()) })
+        .await?
+        .deserialize()
+}
+pub(super) async fn get_source<F, Fut>(
+    platform: &PlatformHost,
+    url: &Url,
+    account: &CodexSourceAccount,
+    deadline: Option<i32>,
+    before_dispatch: F,
+) -> Result<SourceJson, GatewayError>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<(), GatewayError>>,
+{
     let cancellation = platform.cancellation.child()?;
     let _deadline = deadline
         .map(|ms| cancellation.set_timeout_ms(ms))
@@ -294,7 +292,7 @@ pub(super) async fn get(
         &headers(account, false),
         &[],
         &cancellation,
-        || async { Ok(()) },
+        before_dispatch,
     )
     .await
     .map_err(|failure| failure.error)?;
@@ -306,7 +304,8 @@ pub(super) async fn get(
         .bytes()
         .await
         .map_err(|_| unavailable("Reset observation could not be read."))?;
-    serde_json::from_slice(&bytes).map_err(|_| unavailable("Reset observation is invalid."))
+    let text = String::from_utf8_lossy(&bytes);
+    SourceJson::parse(text.strip_prefix('\u{feff}').unwrap_or(&text))
 }
 async fn usage(
     store: &RemoteAuthorityStore,
@@ -336,22 +335,17 @@ async fn inventory(
     store: &RemoteAuthorityStore,
     platform: &PlatformHost,
     target: &ManualResetTarget,
-) -> Result<String, GatewayError> {
+) -> Result<JsString16, GatewayError> {
     let account = account(store, target).await?;
     let (url, _) = endpoints(platform)?;
-    let payload = get(platform, &url, &account, Some(5000)).await?;
+    let payload = get_source(platform, &url, &account, Some(5000), || async { Ok(()) }).await?;
     let at = now_ms()?;
-    let credits = parse_inventory(&payload, at)?;
-    select_reset_credit(
-        &[AccountResetInventory {
-            binding: target.binding().clone(),
-            observed_at_ms: at,
-            credits,
-        }],
-        at,
-    )?
-    .map(|selected| selected.credit.credit_id)
-    .ok_or_else(|| {
+    let host = super::source_inventory::SourceRuntime;
+    let inventory =
+        super::source_inventory::parse_inventory(&payload, target.binding(), at, |value| {
+            host.date(value)
+        })?;
+    super::source_inventory::select_credit(&inventory, &host, at)?.ok_or_else(|| {
         failure(
             422,
             "no_eligible_credit",
@@ -360,64 +354,6 @@ async fn inventory(
     })
 }
 
-pub(super) fn parse_inventory(payload: &Value, at: i64) -> Result<Vec<ResetCredit>, GatewayError> {
-    let available = payload["available_count"]
-        .as_f64()
-        .filter(|n| {
-            n.is_finite()
-                && n.fract() == 0.0
-                && (0.0..=gateway_core::identity::MAX_SAFE_INTEGER as f64).contains(n)
-        })
-        .map(|n| n as i64)
-        .ok_or_else(|| unavailable("Reset inventory is incomplete."))?;
-    let rows = payload["credits"]
-        .as_array()
-        .ok_or_else(|| unavailable("Reset inventory is incomplete."))?;
-    let mut ids = BTreeSet::new();
-    let mut credits = Vec::new();
-    let mut count = 0;
-    for row in rows {
-        let text = |field| {
-            row[field]
-                .as_str()
-                .filter(|s| !gateway_schema::util::js_trim(s).is_empty())
-                .ok_or_else(|| unavailable("Reset inventory is invalid."))
-        };
-        let id = text("id")?;
-        let status = text("status")?;
-        let kind = text("reset_type")?;
-        if !ids.insert(id) {
-            return Err(unavailable("Reset inventory repeats a credit."));
-        }
-        let expiry = match row.get("expires_at") {
-            Some(Value::Null) => None,
-            Some(Value::String(value)) if !gateway_schema::util::js_trim(value).is_empty() => {
-                let n = worker::js_sys::Date::parse(value);
-                if !n.is_finite()
-                    || n.fract() != 0.0
-                    || !(0.0..=gateway_core::identity::MAX_SAFE_INTEGER as f64).contains(&n)
-                {
-                    return Err(unavailable("Reset expiry is invalid."));
-                }
-                Some(n as i64)
-            }
-            _ => return Err(unavailable("Reset expiry is invalid.")),
-        };
-        if status == "available" {
-            count += 1;
-        }
-        credits.push(ResetCredit {
-            credit_id: id.into(),
-            expires_at_ms: expiry,
-            observed_at_ms: at,
-            eligible: status == "available" && kind == "codex_rate_limits",
-        });
-    }
-    if count != available {
-        return Err(unavailable("Reset inventory is incomplete."));
-    }
-    Ok(credits)
-}
 fn failure(status: u16, code: &str, message: &str) -> GatewayError {
     GatewayError::new(status, message, Some(code))
 }
@@ -425,7 +361,7 @@ fn unavailable(message: &str) -> GatewayError {
     GatewayError::unavailable(message, "codex_reset_unavailable")
 }
 
-fn consume_code(bytes: &[u8]) -> Option<String> {
+pub(super) fn consume_code(bytes: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(bytes);
     let value = gateway_core::source_json::SourceJson::parse(
         text.strip_prefix('\u{feff}').unwrap_or(&text),
@@ -456,22 +392,5 @@ mod tests {
             Some("already_redeemed")
         );
         assert_eq!(consume_code(br#"{"code":null}"#), None);
-    }
-    #[test]
-    fn incomplete_credit_inventory_never_becomes_a_spend_candidate() {
-        let one = json!({"id":"fixture-credit","status":"available","reset_type":"codex_rate_limits","expires_at":null});
-        assert!(
-            parse_inventory(&json!({"available_count":2,"credits":[one.clone()]}), 10).is_err()
-        );
-        assert!(
-            parse_inventory(
-                &json!({"available_count":2,"credits":[one.clone(),one.clone()]}),
-                10
-            )
-            .is_err()
-        );
-        let credits = parse_inventory(&json!({"available_count":1.0,"credits":[one]}), 10).unwrap();
-        assert_eq!(credits.len(), 1);
-        assert!(credits[0].eligible);
     }
 }

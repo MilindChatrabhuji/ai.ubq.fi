@@ -39,6 +39,7 @@ pub struct Capabilities {
     support: crate::admin_support_host::Binding,
     original: gateway_auth::AuthRequest,
     auth_config: gateway_auth::AuthConfig,
+    actor: std::rc::Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
 }
 
 impl Capabilities {
@@ -49,14 +50,16 @@ impl Capabilities {
         store: crate::authority::RemoteAuthorityStore,
         platform: &crate::host::PlatformHost,
         context: std::rc::Rc<worker::Context>,
-    ) -> Self {
-        let observations = crate::observability_host::bind(
+        actor: std::rc::Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
+    ) -> Result<Self, GatewayError> {
+        let observations = crate::observability_host::bind_admin(
             request_id,
             original_body,
             store.clone(),
             platform,
             context.clone(),
-        );
+            actor.clone(),
+        )?;
         let catalog_host = crate::catalog_host::Host {
             store: store.clone(),
             env: platform.env.clone(),
@@ -74,7 +77,7 @@ impl Capabilities {
             body: Vec::new(),
             native_peer: original_request.native_peer.clone(),
         };
-        Self {
+        Ok(Self {
             request_id: request_id.0.clone(),
             original_body_bytes: original_body.len(),
             catalog_service: crate::catalog::service(),
@@ -83,7 +86,8 @@ impl Capabilities {
             support,
             original,
             auth_config: crate::host::auth_config(&platform.env),
-        }
+            actor,
+        })
     }
     fn measured_body_bytes(&self, context: &Context) -> Result<usize, GatewayError> {
         if context.request_id != self.request_id {
@@ -97,6 +101,17 @@ impl Capabilities {
 }
 
 impl RuntimeCapabilities for Capabilities {
+    async fn migration(
+        &self,
+        request: gateway_admin_runtime::capabilities::MigrationRequest,
+        context: Context,
+    ) -> Result<AuthResponse, GatewayError> {
+        self.measured_body_bytes(&context)?;
+        self.catalog_host
+            .store
+            .profile_migration(request, context)
+            .await
+    }
     async fn capture(
         &self,
         request: gateway_admin_runtime::capabilities::CaptureRequest,
@@ -145,8 +160,11 @@ impl RuntimeCapabilities for Capabilities {
         crate::codex_admin_host::execute(
             &self.catalog_host.store,
             &self.catalog_host.platform,
-            &self.original,
-            &self.auth_config,
+            crate::codex_admin_host::OriginalAdmin {
+                request: &self.original,
+                config: &self.auth_config,
+                actor: &self.actor,
+            },
             request,
             context,
             &self.observations,

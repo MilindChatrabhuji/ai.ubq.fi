@@ -19,6 +19,7 @@ members = [
   "crates/gateway-native",
   "crates/gateway-live-runtime",
   "crates/gateway-worker",
+  "crates/gateway-worker-fixture",
 ]
 exclude = ["vendor/webauthn-rs-core-0.6.1-dev"]
 resolver = "3"

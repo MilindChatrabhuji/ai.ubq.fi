@@ -1,0 +1,653 @@
+[
+  {
+    "name": "estimated_catalog_prices",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      }
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": {
+      "provider_quota": 14500,
+      "input_tokens": 10,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "buyer_cost_micro": null
+    }
+  },
+  {
+    "name": "exact_odd_charge",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      },
+      "buyer_cost_micro": 5
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": {
+      "provider_quota": 5,
+      "input_tokens": 10,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "buyer_cost_micro": 5
+    }
+  },
+  {
+    "name": "exact_zero_charge",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      },
+      "buyer_cost_micro": 0
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": {
+      "provider_quota": 0,
+      "input_tokens": 10,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "buyer_cost_micro": 0
+    }
+  },
+  {
+    "name": "exact_no_catalog",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      },
+      "buyer_cost_micro": 5
+    },
+    "pricing": null,
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": {
+      "provider_quota": 5,
+      "input_tokens": 10,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "buyer_cost_micro": 5
+    }
+  },
+  {
+    "name": "exact_ignores_invalid_catalog",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      },
+      "buyer_cost_micro": 5
+    },
+    "pricing": {
+      "input_price_per_token": "bad"
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": {
+      "provider_quota": 5,
+      "input_tokens": 10,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "buyer_cost_micro": 5
+    }
+  },
+  {
+    "name": "present_malformed_buyer_null",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      },
+      "buyer_cost_micro": null
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": null
+  },
+  {
+    "name": "present_malformed_buyer_string",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      },
+      "buyer_cost_micro": "5"
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": null
+  },
+  {
+    "name": "present_malformed_buyer_fraction",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      },
+      "buyer_cost_micro": 0.25
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": null
+  },
+  {
+    "name": "present_malformed_buyer_negative",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      },
+      "buyer_cost_micro": -1
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": null
+  },
+  {
+    "name": "messages_require_charge",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      }
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003,
+      "require_provider_cost": true
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": null
+  },
+  {
+    "name": "messages_exact_charge",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      },
+      "buyer_cost_micro": 5
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003,
+      "require_provider_cost": true
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": {
+      "provider_quota": 5,
+      "input_tokens": 10,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "buyer_cost_micro": 5
+    }
+  },
+  {
+    "name": "missing_prices_no_estimate",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      }
+    },
+    "pricing": null,
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": null
+  },
+  {
+    "name": "default_cache_prices",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      }
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": {
+      "provider_quota": 17000,
+      "input_tokens": 10,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "buyer_cost_micro": null
+    }
+  },
+  {
+    "name": "null_cache_prices_default",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      }
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": null,
+      "cache_write_price_per_token": null
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": {
+      "provider_quota": 17000,
+      "input_tokens": 10,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "buyer_cost_micro": null
+    }
+  },
+  {
+    "name": "malformed_cache_price_no_estimate",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      }
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": "bad",
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": null
+  },
+  {
+    "name": "missing_cached_estimated_as_zero",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "partial",
+    "expected": {
+      "provider_quota": 16000,
+      "input_tokens": 10,
+      "cached_input_tokens": 0,
+      "output_tokens": 3,
+      "buyer_cost_micro": null
+    }
+  },
+  {
+    "name": "missing_cached_exact_stays_null",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "buyer_cost_micro": 5
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "partial",
+    "expected": {
+      "provider_quota": 5,
+      "input_tokens": 10,
+      "cached_input_tokens": null,
+      "output_tokens": 3,
+      "buyer_cost_micro": 5
+    }
+  },
+  {
+    "name": "cached_exceeds_input",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 11,
+        "cache_write_tokens": 1
+      }
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "invalid",
+    "expected": null
+  },
+  {
+    "name": "cache_write_exceeds_input",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 11
+      }
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": null
+  },
+  {
+    "name": "missing_input_no_billing",
+    "raw": {
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      }
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "partial",
+    "expected": null
+  },
+  {
+    "name": "missing_output_no_billing",
+    "raw": {
+      "input_tokens": 10,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      }
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "partial",
+    "expected": null
+  },
+  {
+    "name": "invalid_total_does_not_replace_source_usage_guards",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 99,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      }
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "invalid",
+    "expected": {
+      "provider_quota": 14500,
+      "input_tokens": 10,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "buyer_cost_micro": null
+    }
+  },
+  {
+    "name": "quota_overflow_no_billing",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      }
+    },
+    "pricing": {
+      "input_price_per_token": 1e300,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "reported",
+    "expected": null
+  },
+  {
+    "name": "blank_model_no_billing",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      }
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "  ",
+    "source_status": "reported",
+    "expected": null
+  },
+  {
+    "name": "blank_attempt_no_billing",
+    "raw": {
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "input_tokens_details": {
+        "cached_tokens": 2,
+        "cache_write_tokens": 1
+      }
+    },
+    "pricing": {
+      "input_price_per_token": 0.001,
+      "output_price_per_token": 0.002,
+      "cache_read_price_per_token": 0.0001,
+      "cache_write_price_per_token": 0.0003
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "  ",
+    "model": "model",
+    "source_status": "reported",
+    "expected": null
+  },
+  {
+    "name": "safe_half_rounds_up",
+    "raw": {
+      "input_tokens": 1,
+      "output_tokens": 0,
+      "total_tokens": 1
+    },
+    "pricing": {
+      "input_price_per_token": 5e-7,
+      "output_price_per_token": 0
+    },
+    "quota_per_credit": 1000000,
+    "attempt_id": "a",
+    "model": "model",
+    "source_status": "partial",
+    "expected": {
+      "provider_quota": 1,
+      "input_tokens": 1,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "buyer_cost_micro": null
+    }
+  }
+]

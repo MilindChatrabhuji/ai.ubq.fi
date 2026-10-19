@@ -25,7 +25,7 @@ pub async fn route(
     request_id: RequestId,
     native: crate::native_host::NativeBindings,
 ) -> Result<crate::GatewayResponse, GatewayError> {
-    now_ms()?;
+    let started_at_ms = now_ms()?;
     let path = crate::normalized_path(&request.path()).to_owned();
     if let Some(response) = crate::assets::handle(&request, &env, &path).await? {
         return Ok(response.into());
@@ -78,6 +78,38 @@ pub async fn route(
         if !matches!(request.method(), Method::Get | Method::Head) {
             auth_request.body = body::inference_bytes(&mut request).await?;
         }
+        // Custody is minted at the original authenticated boundary, never from
+        // the administrative module's normalized Context or a later timestamp.
+        let principal = auth.authenticate_admin(&auth_request).await?;
+        let original_context = gateway_core::identity::RequestContext {
+            request_id: request_id.clone(),
+            principal: gateway_core::identity::PrincipalId(
+                gateway_authority::native_control::actor::principal_id(&principal),
+            ),
+            key_id: match &principal.method {
+                gateway_auth::AuthMethod::KvApiKey { key_id, .. } => {
+                    Some(gateway_core::identity::ApiKeyId(key_id.clone()))
+                }
+                _ => None,
+            },
+            route: path.clone(),
+            started_at_ms,
+        };
+        let authority = gateway_authority::Authority::with_clock(
+            store.clone(),
+            crate::host::PlatformTokens,
+            crate::host::PlatformClock,
+        );
+        let actor = Rc::new(
+            gateway_authority::native_control::actor::authenticate_admin_actor(
+                &authority,
+                &host,
+                &config,
+                &auth_request,
+                &original_context,
+            )
+            .await?,
+        );
         // Retain a measured receipt from this exact raw request before the
         // administrative service parses JSON into its finite operation DTO.
         let bindings = crate::admin_host::Capabilities::new(
@@ -87,7 +119,8 @@ pub async fn route(
             store.clone(),
             &host,
             context.clone(),
-        );
+            actor,
+        )?;
         let runtime_config = crate::admin_host::config(&env);
         let capabilities = gateway_admin_runtime::AdminRuntime {
             store: &store,
@@ -156,6 +189,52 @@ pub async fn route(
     } else {
         None
     };
+    if let Some(route) = gateway_live_runtime::live_route(&auth_request.method, &path) {
+        let principal = principal.ok_or_else(gateway_auth::unauthorized)?;
+        let live = crate::live_host::WorkerLiveHost::bind(
+            host.clone(),
+            context.clone(),
+            auth_request,
+            config.clone(),
+            principal.clone(),
+            request_id,
+        )
+        .await?;
+        let runtime = gateway_live_runtime::LiveRuntime::new(
+            Rc::new(store),
+            Rc::new(crate::transport::random::opaque_token),
+        );
+        return match route {
+            gateway_live_runtime::LiveRoute::Create => {
+                let headers = request
+                    .headers()
+                    .entries()
+                    .map(|(name, value)| (name.to_ascii_lowercase(), value))
+                    .collect();
+                let input =
+                    crate::live_http::parse_create(&mut request, &host.cancellation, headers)
+                        .await?;
+                let response = runtime
+                    .create_call(&principal, input, &live, host.cancellation.as_ref())
+                    .await;
+                crate::live_host::into_response(response, context)
+            }
+            gateway_live_runtime::LiveRoute::Sideband(call_id) => {
+                let upgrade = request
+                    .headers()
+                    .get("upgrade")
+                    .map_err(|_| invalid_url())?
+                    .unwrap_or_default();
+                match runtime
+                    .prepare_sideband(&principal, &call_id, &upgrade, &live)
+                    .await
+                {
+                    Ok(prepared) => live.upgrade(prepared).await,
+                    Err(response) => crate::live_host::into_response(response, context),
+                }
+            }
+        };
+    }
     if path == "/v1/models" && request.method() == Method::Get {
         let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
         let url = request.url().map_err(|_| invalid_url())?;

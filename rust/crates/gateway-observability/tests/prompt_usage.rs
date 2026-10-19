@@ -62,7 +62,7 @@ fn all_source_fixtures_map_without_reinterpreting_or_inventing_usage() {
             event.cache_write_tokens_present,
             usage
                 .as_ref()
-                .is_some_and(|u| u.cache_write_tokens_present())
+                .is_some_and(|u| u.cache_write_input_tokens.is_some())
         );
         assert_eq!(event.provider.as_deref(), Some("chatgpt_codex"));
         assert!(event.completed);

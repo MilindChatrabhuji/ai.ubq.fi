@@ -2,7 +2,7 @@
 //! constructors and authenticated receipts. Refresh material stays native.
 use crate::{
     owner_control::NativeControlContext,
-    owner_renewal::{NativeAccessPublisher, PublishedAccess},
+    owner_renewal::{NativeAccessPublisher, PublishedAccess, require_current_fence},
     private_https::PrivateHttps,
 };
 use gateway_auth::{
@@ -87,6 +87,7 @@ impl NativeAccessPublisher for NativeAccessPublicationHttp {
         projection: &ManagedAccessProjection,
         context: &NativeControlContext<'_>,
     ) -> Result<PublishedAccess, GatewayError> {
+        require_current_fence(fence)?;
         context.check()?;
         let NativeControlRequest::CodexRenewAccess { action_ref } = &request.request;
         let command = PreparedPublicationCommand::managed_access_from_registered(
@@ -126,6 +127,7 @@ impl NativeAccessPublisher for NativeAccessPublicationHttp {
         generation: &NativeGeneration,
         context: &NativeControlContext<'_>,
     ) -> Result<PublishedAccess, GatewayError> {
+        require_current_fence(fence)?;
         context.check()?;
         let command = PreparedPublicationCommand::access_from_registered(
             ExpectedAccessPublication {

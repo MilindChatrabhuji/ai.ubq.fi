@@ -6,6 +6,7 @@ pub mod cache_experiment;
 pub mod capacity;
 mod capacity_rules;
 pub mod claude;
+pub mod full_pool_reset;
 mod kernel;
 pub mod keys;
 pub mod manual_reset;
