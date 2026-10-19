@@ -157,7 +157,10 @@ const planOverageFallback = (
   // The per-account setting is a hard gate: a blocked cohort that cannot
   // redeem a reset must not spend overage when the operator left it off.
   if (!overageUsageAllowedSync(blocked.accountIdHash)) return null;
-  const routing: RoutingAccount = { ...blocked, probeRequired: true, probeCircuit: "quota", overageFallback: true, requestedModel };
+  // Overage is an explicitly enabled serving path, not a single-flight reset
+  // recovery probe. Concurrent requests may use the account directly; each one
+  // still performs exactly one bounded transport attempt.
+  const routing: RoutingAccount = { ...blocked, probeRequired: false, probeCircuit: null, overageFallback: true, requestedModel };
   return { reason, accountEntry: { ...currentPoolEntry, auth: blocked.auth, routing }, routing };
 };
 
@@ -181,6 +184,9 @@ const ensureOverageProbeLeaseCurrent = async (routing: RoutingAccount): Promise<
     throw new CodexActiveAccountFenceError();
   }
 };
+
+const overageProbeFence = (routing: RoutingAccount): (() => Promise<void>) | undefined =>
+  routing.probeRequired ? () => ensureOverageProbeLeaseCurrent(routing) : undefined;
 
 export const installCodexResponseOperations = (ctx: CodexResponseContext): void => {
   const reloadConfiguredBankedResetConfig = (ctx.reloadConfiguredBankedResetConfig = (): CodexBankedResetConfig =>
@@ -667,14 +673,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
       reason: pending.reason,
     });
     try {
-      const response = await ctx.fetchAttempt(
-        pending.accountEntry,
-        claimed.auth,
-        claimed,
-        "overage_fallback",
-        () => ensureOverageProbeLeaseCurrent(claimed),
-        true
-      );
+      const response = await ctx.fetchAttempt(pending.accountEntry, claimed.auth, claimed, "overage_fallback", overageProbeFence(claimed), true);
       if (response.ok) {
         if (claimed.probeGeneration !== null) codexProbeByResponse.set(response, claimed);
         return ctx.decorateAuthWarning(response);

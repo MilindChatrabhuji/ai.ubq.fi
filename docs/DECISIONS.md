@@ -29,6 +29,10 @@ A durable reset record stuck at local `claimed` without a provider submission li
 `unsubmitted_transaction`. Reconciliation cannot advance that record and no external reset was consumed, so the same
 bounded overage probe may proceed. In-progress, live-armed, submitted, unknown, and ambiguous states remain ineligible.
 
+Enabled overage is a serving path, not a single-flight reset recovery probe. It does not claim the reset probe lease, so
+concurrent client requests may use the account directly; each request still performs at most one bounded upstream
+attempt.
+
 Reason: an exhausted account with overage enabled remained stuck behind an existing shadow decision and fell through to
 paid routing, even though shadow mode could not spend the reset it observed.
 

@@ -38,7 +38,7 @@ type BlockedRun = Readonly<{ responses: Response[]; calls: readonly UpstreamCall
 const runBlockedSequence = async (
   requestIds: readonly string[],
   inventoryResponse: () => Response,
-  options: Readonly<{ allowOverage?: boolean | readonly boolean[]; mode?: "live" | "shadow"; seedUnsubmittedReset?: boolean }> = {}
+  options: Readonly<{ allowOverage?: boolean | readonly boolean[]; mode?: "live" | "shadow"; seedUnsubmittedReset?: boolean; parallel?: boolean }> = {}
 ): Promise<BlockedRun> => {
   const { allowOverage = false, mode = "live" } = options;
   const originalFetch = globalThis.fetch;
@@ -109,20 +109,29 @@ const runBlockedSequence = async (
   });
   console.info = (...args: unknown[]) => logs.push(args.map(String).join(" "));
   try {
-    const responses: Response[] = [];
-    for (const [index, requestId] of requestIds.entries()) {
-      const requestAllowsOverage = typeof allowOverage === "boolean" ? allowOverage : (allowOverage[index] ?? false);
-      await writeOverageUsage(kv as unknown as Kv, await sha256Hex("account-one"), requestAllowsOverage);
-      await loadOverageUsageSettings(kv.auth, true);
+    const requestOptionsFor = (requestId: string) => {
       const base = bankedResetRequestOptions(requestId);
-      const requestOptions = {
+      return {
         ...base,
         bankedReset: {
           ...base.bankedReset,
           config: { ...base.bankedReset.config, mode },
         },
       };
-      const response = await fetchCodexResponses({ input: requestId }, requestOptions);
+    };
+    if (options.parallel) {
+      const requestAllowsOverage = typeof allowOverage === "boolean" ? allowOverage : (allowOverage[0] ?? false);
+      await writeOverageUsage(kv as unknown as Kv, await sha256Hex("account-one"), requestAllowsOverage);
+      await loadOverageUsageSettings(kv.auth, true);
+      const responses = await Promise.all(requestIds.map((requestId) => fetchCodexResponses({ input: requestId }, requestOptionsFor(requestId))));
+      return { responses, calls, logs };
+    }
+    const responses: Response[] = [];
+    for (const [index, requestId] of requestIds.entries()) {
+      const requestAllowsOverage = typeof allowOverage === "boolean" ? allowOverage : (allowOverage[index] ?? false);
+      await writeOverageUsage(kv as unknown as Kv, await sha256Hex("account-one"), requestAllowsOverage);
+      await loadOverageUsageSettings(kv.auth, true);
+      const response = await fetchCodexResponses({ input: requestId }, requestOptionsFor(requestId));
       responses.push(response);
     }
     return { responses, calls, logs };
@@ -267,6 +276,28 @@ test("an unsubmitted stale reset claim allows the enabled bounded overage probe"
     []
   );
   assert.ok(logs.some((line) => line.includes("codex_overage_served") && line.includes('"reason":"unsubmitted_transaction"')));
+});
+
+test("concurrent enabled overage requests do not contend for one probe lease", async () => {
+  const { responses, calls, logs } = await runBlockedSequence(
+    ["overage-concurrent-one", "overage-concurrent-two"],
+    () =>
+      Response.json({
+        available_count: 1,
+        credits: [{ id: "credit-account-one", status: "available", reset_type: "codex_rate_limits", expires_at: null }],
+      }),
+    { allowOverage: true, mode: "live", seedUnsubmittedReset: true, parallel: true }
+  );
+
+  assert.deepEqual(
+    responses.map((response) => response.status),
+    [200, 200]
+  );
+  assert.deepEqual(
+    calls.filter((call) => call.kind === "inference").map((call) => call.accountId),
+    ["account-one", "account-one"]
+  );
+  assert.equal(logs.filter((line) => line.includes("codex_overage_served")).length, 2);
 });
 
 test("shadow-only reset outcomes still refuse overage when the account setting is off", async () => {
