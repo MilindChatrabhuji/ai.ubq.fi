@@ -382,3 +382,28 @@ fn actual_pipelined_close_before_dial_makes_zero_upstream_connections() {
     bridge.join().unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
+
+#[test]
+fn actual_socket_error_after_101_is_transport_unknown_without_a_second_http_response() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let outcome = response_committed(&mut stream, |stream| {
+            stream
+                .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+                .map_err(|_| unavailable())?;
+            stream.flush().map_err(|_| unavailable())?;
+            Err(failure("controlled post-upgrade transport failure"))
+        });
+        assert_eq!(outcome, NativeLiveOutcome::TransportUnknown);
+    });
+    let mut client = TcpStream::connect(address).unwrap();
+    client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let mut received = Vec::new();
+    client.read_to_end(&mut received).unwrap();
+    assert!(received.starts_with(b"HTTP/1.1 101 "));
+    assert_eq!(received.windows(8).filter(|bytes| *bytes == b"HTTP/1.1").count(), 1);
+    assert!(received.ends_with(b"\r\n\r\n"));
+    server.join().unwrap();
+}
