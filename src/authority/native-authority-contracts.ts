@@ -3,6 +3,7 @@ import type { ApiKeyHashRecord, ApiKeyRecord } from "../types.ts";
 import type { ApiKeyChangeEvent } from "./native-api-key-audit.ts";
 import type { LocalDevelopmentDeletionGuard } from "../auth/local-development-key.ts";
 import type { NativeControlReceipt, NativeKeyControlGrant, NativePrincipalResolution } from "./native-principal-contracts.ts";
+import type { NativeRetainedHistoryGrant, NativeRuntimeGrant, NativeRuntimeRequestBinding, NativeTrustedRoutingDecision } from "./native-runtime-contracts.ts";
 import type {
   KernelDefaultWindowCutoverV2,
   KernelQuotaConstants,
@@ -44,9 +45,15 @@ export type NativeCapability = Readonly<{
   id: string;
   epoch: string;
   principalId: string;
-  keyId: string;
-  tokenHash: string;
-  kernel: Readonly<{ owner: string; repo: string }>;
+  keyId: string | null;
+  tokenHash: string | null;
+  kernel: Readonly<{ owner: string; repo: string }> | null;
+  runtimeRevision: 3;
+  runtimeGrantId: string;
+  contextBinding: string;
+  subjectId: string;
+  principalRefId: string | null;
+  retainedRequestHandles: readonly string[] | null;
   roles: readonly NativeRole[];
   revoked: boolean;
 }>;
@@ -100,7 +107,6 @@ export type NativeResetProof = Readonly<{
 export type NativeAuthorityInitial = Readonly<{
   namespace: string;
   epoch: string;
-  capabilities: readonly NativeCapability[];
   keys: readonly NativeKeyPolicy[];
   kernelPolicies: readonly KernelQuotaPolicyV2[];
   kernelDefaults: KernelQuotaDefaults;
@@ -117,15 +123,21 @@ export type NativeSemantic = "completed" | "incomplete" | "failed" | "cancelled"
 export type NativeCodexAuthorization = Readonly<{ account: CodexRoutingAccount; owner: NativeOwner }>;
 export type NativeRequest = Readonly<{
   handle: string;
+  runtimeBindingId: string;
   principalId: string;
-  keyId: string;
+  keyId: string | null;
   requestId: string;
   route: string;
-  model: string;
-  stream: boolean;
+  path: string;
+  model: string | null;
+  stream: boolean | null;
   reasoning: string | null;
+  metadataBound: boolean;
+  apiApplicable: boolean;
+  kernelApplicable: boolean;
   createdAtMs: number;
-  api: ApiKeyPolicy;
+  api: ApiKeyPolicy | null;
+  routingDecision: Omit<NativeTrustedRoutingDecision, "intentDigest"> | null;
   kernel: KernelQuotaReservationIdentity | null;
   codex: CodexRoutingAccount | null;
   selection: CodexRouteSelection | null;
@@ -140,6 +152,7 @@ export type NativeRequest = Readonly<{
 }>;
 export type NativeAttempt = Readonly<{
   handle: string;
+  runtimeBindingId: string;
   requestHandle: string;
   principalId: string;
   keyId: string;
@@ -148,9 +161,21 @@ export type NativeAttempt = Readonly<{
   windowResetAtMs: number;
   fetchStarted: boolean;
 }>;
-export type NativeCursor = Readonly<{ id: string; capabilityId: string; family: string; after: string; parent: string | null; lease: string | null }>;
+export type NativeCursor = Readonly<{
+  id: string;
+  capabilityId: string;
+  family: string;
+  after: string;
+  parent: string | null;
+  lease: string | null;
+  retainedGrantId?: string;
+  retainedHandles?: readonly string[];
+}>;
 export type NativeReply = Readonly<{ kind: string; handle?: string; attemptHandle?: string; cursor?: string | null; lease?: string; detail?: unknown }>;
 export type NativeRows = {
+  retained_history_grant: NativeRetainedHistoryGrant;
+  runtime_grant: NativeRuntimeGrant;
+  runtime_request: NativeRuntimeRequestBinding;
   key_control_grant: NativeKeyControlGrant;
   principal_resolution: NativePrincipalResolution;
   api_key_id: ApiKeyRecord;
@@ -184,13 +209,15 @@ export type NativeRows = {
   request_lifetime: NativeRequest;
   attempt_lifetime: NativeAttempt;
   cursor: NativeCursor;
-  operation_receipt: Readonly<{ command: string; reply: NativeReply; codexAuthorization?: NativeCodexAuthorization }>;
+  operation_receipt: Readonly<{ command: string; reply: NativeReply; codexAuthorization?: NativeCodexAuthorization; retainedScope?: string }>;
 };
 export type NativeTable = keyof NativeRows;
 export type NativeKey = readonly (Uint8Array | string | number | bigint | boolean)[];
 export type NativeRead<T> = Readonly<{ value: T | null; revision: string | null; versionstamp: string | null; expiresAtMs: number | null }>;
 export type NativeArguments = {
-  reserveApiUsage: Readonly<{ requestId: string; route: string; model: string; stream: boolean; reasoning?: string | null }>;
+  openAuthenticatedRequest: Readonly<{ requestId: string; route: string; path: string }>;
+  reserveApiUsage: Readonly<{ handle: string }>;
+  bindValidatedRequestMetadata: Readonly<{ handle: string; model: string; stream: boolean; reasoning: string | null }>;
   recordTransportStarted: Readonly<{ handle: string; provider: ApiKeyUsageProvider; attemptHandle?: string }>;
   markApiDispatch: Readonly<{ handle: string; provider: ApiKeyUsageProvider }>;
   releaseApiUndispatched: Readonly<{ handle: string; reason: string }>;
@@ -252,8 +279,11 @@ export class NativeAuthorityError extends Error {
   }
 }
 export const nativeObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
-export const nativeIdentity = (scope: KernelQuotaScope, capability: NativeCapability): KernelQuotaIdentity => ({
-  scope,
-  owner: capability.kernel.owner,
-  repo: scope === "repo" ? capability.kernel.repo : undefined,
-});
+export const nativeIdentity = (scope: KernelQuotaScope, capability: NativeCapability): KernelQuotaIdentity => {
+  if (!capability.kernel) throw new NativeAuthorityError("kernel_scope_not_applicable", 403);
+  return { scope, owner: capability.kernel.owner, repo: scope === "repo" ? capability.kernel.repo : undefined };
+};
+export const nativeApiKeyId = (capability: Pick<NativeCapability, "keyId">): string => {
+  if (capability.keyId === null) throw new NativeAuthorityError("api_scope_not_applicable", 403);
+  return capability.keyId;
+};

@@ -1,4 +1,5 @@
 import { API_KEY_USAGE_PROVIDERS } from "./native-api-key.ts";
+import type { NativeRetainedHistoryBinding, NativeRuntimeBinding } from "./native-runtime-contracts.ts";
 import type {
   NativeControlArguments,
   NativeControlBinding,
@@ -53,7 +54,9 @@ const response = shape({
   body: (value) => typeof value === "string" && value.length <= 48_000,
 });
 const GUARDS: Readonly<Record<NativeMethod, Guard>> = {
-  reserveApiUsage: shape({ requestId: text, route: text, model: text, stream: boolean, reasoning: optional(nullable(text)) }),
+  openAuthenticatedRequest: shape({ requestId: text, route: text, path: text }),
+  reserveApiUsage: shape(handle),
+  bindValidatedRequestMetadata: shape({ ...handle, model: text, stream: boolean, reasoning: nullable(text) }),
   recordTransportStarted: shape({ ...handle, provider: oneOf(...API_KEY_USAGE_PROVIDERS), attemptHandle: optional(text) }),
   markApiDispatch: shape({ ...handle, provider: oneOf(...API_KEY_USAGE_PROVIDERS) }),
   releaseApiUndispatched: shape({ ...handle, reason: text }),
@@ -120,6 +123,8 @@ const GUARDS: Readonly<Record<NativeMethod, Guard>> = {
   readRequestStatus: shape({ ...handle, ...page }),
 };
 export const NATIVE_METHOD_ROLES: Readonly<Record<NativeMethod, NativeRole>> = {
+  openAuthenticatedRequest: "inference",
+  bindValidatedRequestMetadata: "inference",
   reserveApiUsage: "inference",
   recordTransportStarted: "transport",
   markApiDispatch: "transport",
@@ -183,17 +188,51 @@ export const parseNativeCommand = (value: unknown): NativeCommand => {
   if (new TextEncoder().encode(nativeCommandBytes(value)).byteLength > 65_536) throw new NativeAuthorityError("authority_command_too_large", 413);
   return value as NativeCommand;
 };
-export type NativeOperationRunner = Readonly<{ execute(capabilityId: string, command: NativeCommand): Promise<NativeReply> }>;
+export type NativeBoundRuntimePort = Readonly<{
+  execute(command: NativeCommand): Promise<NativeReply>;
+  bindTrustedRoutingDecision(handle: string, operationId: string): Promise<NativeReply>;
+}>;
+export type NativeOperationRunner = Readonly<{ bindAuthenticatedRuntime(binding: NativeRuntimeBinding): NativeBoundRuntimePort }>;
+export type NativeRetainedHistoryRunner = Readonly<{
+  bindRetainedHistory(binding: NativeRetainedHistoryBinding): Readonly<{ execute(command: NativeCommand): Promise<NativeReply> }>;
+}>;
 export type NativeRpcResult = Readonly<{ result: NativeReply }> | Readonly<{ error: Readonly<{ code: string; status: number }> }>;
-export type NativeRpcTransport = Readonly<{ execute(command: unknown): Promise<NativeRpcResult> }>;
+export type NativeRpcTransport = Readonly<{
+  execute(command: unknown): Promise<NativeRpcResult>;
+  bindTrustedRoutingDecision?(handle: string, operationId: string): Promise<NativeRpcResult>;
+}>;
 export class NativeAuthorityRpcServer implements NativeRpcTransport {
-  constructor(
-    private readonly _authority: NativeOperationRunner,
-    private readonly _capabilityId: string
-  ) {}
+  private readonly _port: NativeBoundRuntimePort;
+  constructor(authority: NativeOperationRunner, binding: NativeRuntimeBinding) {
+    this._port = authority.bindAuthenticatedRuntime(binding);
+  }
   async execute(command: unknown): Promise<NativeRpcResult> {
     try {
-      return { result: await this._authority.execute(this._capabilityId, parseNativeCommand(command)) };
+      return { result: await this._port.execute(parseNativeCommand(command)) };
+    } catch (error) {
+      if (error instanceof NativeAuthorityError) return { error: { code: error.code, status: error.status } };
+      throw error;
+    }
+  }
+  async bindTrustedRoutingDecision(handle: string, operationId: string): Promise<NativeRpcResult> {
+    try {
+      if (!text(handle) || !text(operationId)) throw new NativeAuthorityError("invalid_private_routing_binding", 400);
+      return { result: await this._port.bindTrustedRoutingDecision(handle, operationId) };
+    } catch (error) {
+      if (error instanceof NativeAuthorityError) return { error: { code: error.code, status: error.status } };
+      throw error;
+    }
+  }
+}
+/** A separate private cleanup channel; no command or public mode can select this binding. */
+export class NativeRetainedHistoryServer implements NativeRpcTransport {
+  private readonly _execute: (command: NativeCommand) => Promise<NativeReply>;
+  constructor(authority: NativeRetainedHistoryRunner, binding: NativeRetainedHistoryBinding) {
+    this._execute = authority.bindRetainedHistory(binding).execute;
+  }
+  async execute(command: unknown): Promise<NativeRpcResult> {
+    try {
+      return { result: await this._execute(parseNativeCommand(command)) };
     } catch (error) {
       if (error instanceof NativeAuthorityError) return { error: { code: error.code, status: error.status } };
       throw error;
@@ -206,6 +245,12 @@ export class NativeAuthorityClient {
     private readonly _transport: NativeRpcTransport,
     private readonly _epoch: string
   ) {}
+  async bindTrustedRoutingDecision(handle: string, operationId: string = crypto.randomUUID()): Promise<NativeReply> {
+    if (!this._transport.bindTrustedRoutingDecision) throw new NativeAuthorityError("private_routing_port_unavailable", 503);
+    const reply = await this._transport.bindTrustedRoutingDecision(handle, operationId);
+    if ("error" in reply) throw new NativeAuthorityError(reply.error.code, reply.error.status);
+    return reply.result;
+  }
   async call<TMethod extends NativeMethod>(method: TMethod, args: NativeArguments[TMethod], operationId: string = crypto.randomUUID()): Promise<NativeReply> {
     const command = parseNativeCommand({ epoch: this._epoch, operationId, method, args });
     const reply = await this._transport.execute(command);
