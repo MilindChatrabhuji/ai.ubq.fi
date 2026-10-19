@@ -316,7 +316,9 @@ fn paid_alias_tie_uses_one_constructor_collator_and_missing_or_unknown_pairs_fai
     )])
     .unwrap();
     context.synthetic_hop = Some(PaidSyntheticHop::Openlux);
-    let absent = match run(authority(&store).authorize_paid_route(&input, &context, NOW)) {
+    let missing_collator =
+        gateway_authority::Authority::with_clock(store.clone(), Tokens::default(), store.clone());
+    let absent = match run(missing_collator.authorize_paid_route(&input, &context, NOW)) {
         Err(error) => error,
         Ok(_) => panic!("missing demanded collator"),
     };
