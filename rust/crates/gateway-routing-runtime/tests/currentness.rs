@@ -248,6 +248,7 @@ fn changed_original_or_actual_api_reservation_is_not_current() {
             store.seed(journal_key("api-identity"), row);
         }
         assert!(run(session.currentness().checkpoint()).is_err());
+        assert_eq!(window(&store)["committed_requests"], 1);
     }
 }
 

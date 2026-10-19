@@ -14,7 +14,7 @@ pub struct PendingLocalCompletion<S, I, C, H> {
     plan: Option<LocalCompletedJournalPlan>,
 }
 pub struct LocalCompletionRefusal<S, I, C, H> {
-    original: LocalWorkHandle<S, I, C, H>,
+    original: Box<LocalWorkHandle<S, I, C, H>>,
     error: RoutingError,
 }
 impl<S, I, C, H> std::fmt::Debug for LocalCompletionRefusal<S, I, C, H> {
@@ -24,6 +24,9 @@ impl<S, I, C, H> std::fmt::Debug for LocalCompletionRefusal<S, I, C, H> {
             .finish_non_exhaustive()
     }
 }
+pub type LocalCompletionChoice<S, I, C, H> =
+    Result<PendingLocalCompletion<S, I, C, H>, LocalCompletionRefusal<S, I, C, H>>;
+
 pub enum LocalCompletionAdvance<S, I, C, H> {
     Ready(LocalDeliveryHandle<S, I, C, H>),
     Conflict,
@@ -38,9 +41,7 @@ impl<
 {
     /// Call immediately after the genuine successful build and final observed abort check.
     /// This consumes ownership synchronously, before any awaited persistence operation.
-    pub fn mark_local_completed(
-        self,
-    ) -> Result<PendingLocalCompletion<S, I, C, H>, LocalCompletionRefusal<S, I, C, H>> {
+    pub fn mark_local_completed(self) -> LocalCompletionChoice<S, I, C, H> {
         let chosen = if self.host.cancelled() {
             Err(self.host.cancellation_error())
         } else {
@@ -53,7 +54,7 @@ impl<
                 plan: None,
             }),
             Err(error) => Err(LocalCompletionRefusal {
-                original: self,
+                original: Box::new(self),
                 error: error.into(),
             }),
         }
@@ -113,7 +114,7 @@ impl<
         if let Some(plan) = &self.plan {
             if confirmed_continuation(original, plan).await? {
                 return Ok(LocalCompletionAdvance::Ready(LocalDeliveryHandle {
-                    original: self.original.take().ok_or_else(invalid)?,
+                    original: Box::new(self.original.take().ok_or_else(invalid)?),
                     completed: true,
                 }));
             }
@@ -143,7 +144,7 @@ impl<
         Ok(match outcome {
             LocalCompletedIntentOutcome::Applied | LocalCompletedIntentOutcome::AlreadyApplied => {
                 LocalCompletionAdvance::Ready(LocalDeliveryHandle {
-                    original: self.original.take().ok_or_else(invalid)?,
+                    original: Box::new(self.original.take().ok_or_else(invalid)?),
                     completed: true,
                 })
             }
@@ -151,7 +152,7 @@ impl<
                 if confirmed_continuation(original, self.plan.as_ref().ok_or_else(invalid)?).await?
                 {
                     LocalCompletionAdvance::Ready(LocalDeliveryHandle {
-                        original: self.original.take().ok_or_else(invalid)?,
+                        original: Box::new(self.original.take().ok_or_else(invalid)?),
                         completed: true,
                     })
                 } else {

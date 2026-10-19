@@ -311,7 +311,7 @@ impl<
                             .release_paid_before_transport(paid, self.now()?)
                             .await?;
                     }
-                    return Err(error.into());
+                    return Err(error);
                 }
             };
             let attempt = AttemptRecord {

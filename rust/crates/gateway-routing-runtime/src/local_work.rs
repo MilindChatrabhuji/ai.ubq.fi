@@ -26,7 +26,9 @@ use gateway_schema::{catalog::CatalogInput, source_request::SourceRequestDocumen
 
 #[path = "local_completion_runtime.rs"]
 mod completion;
-pub use completion::{LocalCompletionAdvance, LocalCompletionRefusal, PendingLocalCompletion};
+pub use completion::{
+    LocalCompletionAdvance, LocalCompletionChoice, LocalCompletionRefusal, PendingLocalCompletion,
+};
 
 /// Existing request metadata only. No caller supplies a replacement normalized body.
 pub struct LocalRequestMetadata {
@@ -72,7 +74,7 @@ pub(crate) struct LocalProviderParts<S, I, C, H> {
 }
 pub struct LocalDeliveryHandle<S, I, C, H> {
     completed: bool,
-    original: LocalWorkHandle<S, I, C, H>,
+    original: Box<LocalWorkHandle<S, I, C, H>>,
 }
 pub struct LocalWorkCurrentness<'a, S, I, C, H> {
     original: &'a LocalWorkHandle<S, I, C, H>,
@@ -549,7 +551,7 @@ impl<
             return Err(error);
         }
         Ok(LocalDeliveryHandle {
-            original: self,
+            original: Box::new(self),
             completed: false,
         })
     }
@@ -864,7 +866,8 @@ mod factory_tests {
         // This matching scalar source fixture exercises the real existing planner;
         // it is not a product Value adapter or acceptance of the pending M05 factory.
         let source = SourceJson::parse(&serde_json::to_string(&fixture.raw).unwrap()).unwrap();
-        let plan = crate::policy::plan(&fixture, NOW).unwrap();
+        let collator = Host::new(store).source_string_collator();
+        let plan = crate::policy::plan(&fixture, NOW, collator.as_ref()).unwrap();
         let local = run(RoutingSession::begin_local_compaction(
             LocalAdmissionInput {
                 metadata: LocalRequestMetadata {
@@ -900,7 +903,7 @@ mod factory_tests {
         );
         let parts = run(admission.attest_plan(plan)).unwrap();
         assert_eq!(parts.input.original.original_source(), &original);
-        assert_eq!(parts.plan.model, "gpt-test");
+        assert!(parts.plan.model.matches_scalar("gpt-test"));
         let after = parts.store.value(journal::key("factory-owner"));
         assert_eq!(after["local_work"]["phase"], "provider_planned");
         for field in ["context", "input_digest", "api", "kernel", "attempts"] {
