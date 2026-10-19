@@ -959,6 +959,7 @@ dependencies = [
 name = "gateway-core"
 version = "0.1.0"
 dependencies = [
+ "ryu-js",
  "serde",
  "serde_json",
 ]
@@ -1118,6 +1119,7 @@ dependencies = [
  "gateway-authority",
  "gateway-catalog-runtime",
  "gateway-claude-runtime",
+ "gateway-compaction",
  "gateway-core",
  "gateway-extras-runtime",
  "gateway-live-runtime",
