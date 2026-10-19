@@ -79,6 +79,7 @@ pub async fn route(
         let bindings = crate::admin_host::Capabilities::new(
             &request_id,
             &auth_request.body,
+            &auth_request,
             store.clone(),
             &host,
             context.clone(),
