@@ -352,8 +352,8 @@ impl ExperimentIo for Host<'_> {
             })?;
             for frame in frames {
                 let event=SourceJson::parse(&frame.data).map_err(|_|failed("Prompt-cache scope experiment stream failed: Upstream emitted malformed Responses SSE JSON."))?;
-                let kind=sample::member(&event,"type")?.as_ref().and_then(sample::string).map(|s|s.trim_matches(gateway_schema::util::js_whitespace).to_owned()).filter(|s|!s.is_empty()).ok_or_else(||failed("Prompt-cache scope experiment stream failed: Upstream emitted a Responses SSE event without a type."))?;
-                if kind == "response.completed" {
+                let kind = sample::event_type(&event)?;
+                if kind.as_deref() == Some("response.completed") {
                     let result=sample::member(&event,"response")?.filter(|r|r.as_str().starts_with('{')).ok_or_else(||failed("Prompt-cache scope experiment stream failed: Upstream emitted a Responses terminal event with an invalid payload."))?;
                     let elapsed = (crate::admission::monotonic()?
                         .saturating_sub(head.started)
@@ -370,8 +370,8 @@ impl ExperimentIo for Host<'_> {
                     return sample::completed(&result, slot, model, index, elapsed);
                 }
                 if matches!(
-                    kind.as_str(),
-                    "error" | "response.failed" | "response.incomplete"
+                    kind.as_deref(),
+                    Some("error" | "response.failed" | "response.incomplete")
                 ) {
                     return Err(failed(
                         "Prompt-cache scope experiment did not receive a completed terminal response.",
