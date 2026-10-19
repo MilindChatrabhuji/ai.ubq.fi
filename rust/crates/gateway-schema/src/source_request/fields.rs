@@ -187,17 +187,16 @@ pub fn validate_request_fields(
     validate_prompt_cache_controls(value)?;
     if surface == RequestSurface::Responses
         && let Some(metadata) = member(value, "client_metadata")?
-    {
-        if !source::entries(&metadata).is_some_and(|entries| {
+        && !source::entries(&metadata).is_some_and(|entries| {
             entries
                 .into_iter()
                 .all(|(_, value)| source::string(&value).is_some())
-        }) {
-            return Err(invalid(
-                "client_metadata must be an object with string values",
-                Some("client_metadata"),
-            ));
-        }
+        })
+    {
+        return Err(invalid(
+            "client_metadata must be an object with string values",
+            Some("client_metadata"),
+        ));
     }
     Ok(())
 }

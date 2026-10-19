@@ -405,8 +405,8 @@ pub(super) fn normalize_chat_message(
         let text = content
             .iter()
             .filter_map(|v| v.get("text").and_then(Value::as_text))
-            .cloned()
             .filter(|s| !s.trim_matches(crate::util::js_whitespace).is_empty())
+            .cloned()
             .collect::<Vec<_>>();
         let text = super::value::join(&text, "\n");
         return Ok(ChatMessage {
