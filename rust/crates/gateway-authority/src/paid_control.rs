@@ -16,6 +16,8 @@ use gateway_core::{
 use gateway_providers::policy::{self, DeepseekHop, PaidRoutingInput};
 use gateway_schema::{catalog_store, selection::ProviderSelection};
 use std::collections::BTreeSet;
+#[path = "paid_original_request.rs"]
+mod original;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PaidSourceCheck {
@@ -126,6 +128,8 @@ pub struct PaidRoutingReceipt {
     pub(crate) request: PaidRequest,
     pub(crate) context: PaidRequestContext,
     pub(crate) checks: Vec<RevisionCheck>,
+    pub(crate) original_request: Option<gateway_core::identity::RequestContext>,
+    pub(crate) existing_paid: Option<crate::paid::PaidReservation>,
     owner_id: String,
     owner_epoch: String,
     configuration_generation: String,
@@ -524,6 +528,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 request: request.clone(),
                 context: context.clone(),
                 checks: tx.checks(),
+                original_request: None,
+                existing_paid: None,
                 owner_id: route.owner_id,
                 owner_epoch: route.owner_epoch,
                 configuration_generation: route.configuration_generation,
@@ -566,6 +572,14 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             || route.credential_binding != receipt.credential_binding
         {
             return Err(control_error("Paid receipt credential custody changed."));
+        }
+        if let Some(original) = &receipt.original_request {
+            tx.now = self.fresh_time(tx.now)?;
+            original::require_current(tx, request, original, receipt.existing_paid.as_ref())
+                .await?;
+            tx.now = self.fresh_time(tx.now)?;
+            original::require_current(tx, request, original, receipt.existing_paid.as_ref())
+                .await?;
         }
         Ok(route.policy)
     }

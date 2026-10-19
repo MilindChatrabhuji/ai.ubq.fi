@@ -183,6 +183,97 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() {
 }
 
 #[test]
+fn paid_original_api_release_prevents_new_paid_exposure() {
+    use gateway_authority::{Authority, keys, quota::ApiReservation};
+    use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+
+    run(async {
+        let store = Store::new();
+        seed_key(&store);
+        let id = "paid-original-released";
+        let session = RoutingSession::begin(
+            paid_input(&store, id, "paid-model"),
+            store.clone(),
+            Host::new(&store),
+            store.clone(),
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let journal_key = TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("routing_runtime"),
+            ScalarKeyPart::String("v1"),
+            ScalarKeyPart::String("session"),
+            ScalarKeyPart::String(id),
+        ])
+        .to_record_key();
+        let original_api: ApiReservation =
+            serde_json::from_value(store.value(journal_key)["api"].clone()).unwrap();
+        Authority::with_clock(store.clone(), store.clone(), store.clone())
+            .release_api_key(&original_api, true, "fixture_original_released", NOW)
+            .await
+            .unwrap();
+        assert!(session.next_attempt().await.is_err());
+        assert_eq!(
+            store.value(keys::paid_window("key-a", NOW + gateway_authority::DAY_MS)),
+            Value::Null,
+            "A stale original API owner must fail before any paid exposure is created"
+        );
+    });
+}
+
+#[test]
+fn paid_dispatch_missing_active_history_cannot_recreate_exposure() {
+    use gateway_authority::keys;
+    use gateway_core::state::{
+        AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
+    };
+
+    run(async {
+        let store = Store::new();
+        seed_key(&store);
+        let session = RoutingSession::begin(
+            paid_input(&store, "paid-active-history-missing", "paid-model"),
+            store.clone(),
+            Host::new(&store),
+            store.clone(),
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let attempt = session.next_attempt().await.unwrap().unwrap();
+        let paid = attempt.paid.as_ref().unwrap();
+        let key = keys::paid_attempt(&paid.key_id.0, &paid.attempt_id.0);
+        let record = store.read(&key).await.unwrap().unwrap();
+        let window_key = keys::paid_window("key-a", NOW + gateway_authority::DAY_MS);
+        let exposure = store.value(window_key.clone());
+        assert_ne!(exposure, Value::Null);
+        assert_eq!(
+            store
+                .commit(AtomicTransition {
+                    checks: vec![RevisionCheck {
+                        key: key.clone(),
+                        expected_revision: Some(record.revision),
+                    }],
+                    mutations: vec![RecordMutation::Delete { key: key.clone() }],
+                })
+                .await
+                .unwrap(),
+            CommitOutcome::Committed
+        );
+        assert!(session.before_dispatch(&attempt).await.is_err());
+        assert!(store.read(&key).await.unwrap().is_none());
+        assert_eq!(
+            store.value(window_key),
+            exposure,
+            "Existing-only dispatch must not reserve fresh exposure when history vanished"
+        );
+        assert_eq!(window(&store)["committed_requests"], 0);
+    });
+}
+
+#[test]
 fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity() {
     run(async {
         let store = Store::new();

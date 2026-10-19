@@ -6,6 +6,12 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Rust audit text preserves source UTF-16 truncation - 2026-10-19
+
+API-key audit fields and target names preserve the source `slice(0, 200)` contract, including a lone surrogate when the cut splits a pair. Audit writes retain ordinary Json records when lossless and use the existing ProfileV2 encoding only when ordinary JSON values cannot represent the event. The audit-only read projection uses validated SourceJson and retains existing Json compatibility, scalar-field selection, timestamp-only visibility and event ordering. This adds no storage family, general codec reinterpretation or live-state conversion.
+
+Reason: Unicode-scalar truncation changed the retained text, and ordinary Rust strings could not represent every source audit value. Source-golden persistence and read-page fixtures cover the exact code units. Migration and latest-state inverse must preserve the same existing ProfileV2 representation before operational acceptance.
+
 ## TypeScript-only VPS releases reuse verified payloads - 2026-10-19
 
 The VPS deploy CLI reuses the selected immutable release's `node_modules` and `.native/kv` payload when the root lockfile

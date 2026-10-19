@@ -5,11 +5,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use gateway_admin::{
-    audit::{self, KeyChange},
-    keys::*,
-    *,
-};
+use gateway_admin::{audit, keys::*, *};
 use gateway_auth::{crypto::Secret, upstream::*, *};
 use gateway_core::state::*;
 use serde_json::{Value, json};
@@ -1163,7 +1159,10 @@ fn every_source_admin_endpoint_is_accounted_for() {
 #[test]
 fn audit_never_persists_credential_material() {
     let raw = json!({"name":"key","usage_limit_requests":50,"token":"private-token","hash":"private-hash","authorization":"Bearer private","prompt":"private"});
-    let sanitized = audit::safe_changed(&raw);
+    let sanitized = audit::safe_changed(&raw)
+        .unwrap()
+        .deserialize::<Value>()
+        .unwrap();
     assert_eq!(sanitized, json!({"name":"key","usage_limit_requests":50}));
     let shared = audit::actor(&actor());
     assert_eq!(shared.kind, "shared_admin_credential");
@@ -1224,9 +1223,7 @@ fn key_creation_commits_identity_policy_window_and_audit_together() {
             .rows
             .borrow()
             .values()
-            .find_map(|row| {
-                serde_json::from_value::<KeyChange>(row.json_value().unwrap().clone()).ok()
-            })
+            .find_map(|row| audit::decode_event(row).ok())
             .unwrap();
         assert_eq!(audit.action, "create");
         assert!(!serde_json::to_string(&audit).unwrap().contains(token));

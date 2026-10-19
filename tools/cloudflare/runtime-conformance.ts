@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { liveCases } from "./fixtures/live-conformance.ts";
 import { failureCaptureCase, captureSuppressionCase } from "./fixtures/capture-conformance.ts";
 import { runProviderMatrixCases, type MatrixContext, type MatrixScenario } from "./runtime-matrix/index.ts";
+import { replayProviderCases, unicodeForwardingCases } from "./runtime-matrix/context-replay.ts";
 import { testNetworkArgv } from "../../scripts/test-network.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -834,6 +835,8 @@ async function inner(): Promise<void> {
       });
     });
     await runProviderMatrixCases({ ...matrixContext, withScenario });
+    await withScenario("codex", replayProviderCases);
+    await withScenario("codex", unicodeForwardingCases);
     console.log(
       JSON.stringify({
         sourceSha: expectedSha,

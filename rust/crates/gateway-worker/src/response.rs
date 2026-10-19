@@ -19,7 +19,9 @@ impl GatewayResponse {
     }
     pub fn headers(&self) -> Headers {
         match self {
-            Self::Http(response) => response.headers().clone(),
+            // workers-rs Headers::clone copies entries; clone the JS handle so
+            // response decoration mutates the actual outgoing headers instead.
+            Self::Http(response) => Headers(response.headers().0.clone()),
             Self::Raw(response) => Headers(response.headers()),
         }
     }

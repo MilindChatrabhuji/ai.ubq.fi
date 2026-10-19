@@ -51,16 +51,21 @@ pub fn route(path: &str, method: Method) -> Result<Option<ExtrasRoute>, GatewayE
     }
 }
 
+pub struct Target {
+    pub route: ExtrasRoute,
+    pub request_id: RequestId,
+}
+
 pub async fn run(
     mut request: Request,
-    route: ExtrasRoute,
+    target: Target,
     resources: RequestResources,
     principal: &AuthPrincipal,
     store: RemoteAuthorityStore,
     catalog: CatalogState,
     platform: &PlatformHost,
-    request_id: RequestId,
 ) -> Result<Response, GatewayError> {
+    let Target { route, request_id } = target;
     let RequestResources { context, permit } = resources;
     let image = matches!(route, ExtrasRoute::Images(_));
     let edit = route == ExtrasRoute::Images(ImageKind::Edits);

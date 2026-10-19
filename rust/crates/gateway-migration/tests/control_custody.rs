@@ -282,3 +282,63 @@ fn session_and_full_routing_custody_are_validated_before_private_inverse() {
     store.put(session_key, malformed);
     assert!(run(export_rollback_bundle(&store, 2400, context())).is_err());
 }
+
+#[test]
+fn actual_audit_profile_v2_split_surrogate_survives_restart_and_latest_inverse() {
+    let sample: Value =
+        serde_json::from_str(include_str!("fixtures/audit-profile-v2-split-record.json")).unwrap();
+    assert_eq!(
+        sample["source_sha"],
+        "0b740dfafdf32fd14706533c9c3816805c759611"
+    );
+    let audit_key = RecordKey(sample["key"].as_str().unwrap().into());
+    let audit: StoredRecord = serde_json::from_value(sample["record"].clone()).unwrap();
+    let expected = gateway_core::source_json::SourceJson::parse(
+        sample["expected_source_json"].as_str().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        gateway_core::source_json::SourceJson::from_portable_json(
+            &audit.profile_v2_value().unwrap()
+        )
+        .unwrap(),
+        expected
+    );
+    let directory = Directory::new();
+    let path = directory.file("audit-current.sqlite3");
+    let store = SqliteStore::open(&path);
+    let capture: PrivateCapture =
+        serde_json::from_str(include_str!("fixtures/offline-source.json")).unwrap();
+    run(adopt_empty(
+        &store,
+        &prepare(&capture, &CanonicalDates).unwrap(),
+    ))
+    .unwrap();
+    store.put(audit_key.clone(), audit.clone());
+    drop(store);
+    let store = SqliteStore::open(&path);
+    let latest = run(export_latest(&store, 2400)).unwrap();
+    let source = latest
+        .entries
+        .iter()
+        .find(|r| r.versionstamp == audit.revision)
+        .unwrap();
+    assert!(source.value.as_str().contains("\\ud83d"));
+    assert!(!source.value.as_str().contains('�'));
+    let restore = SqliteStore::open(&directory.file("audit-new.sqlite3"));
+    run(adopt_empty(
+        &restore,
+        &prepare(&latest, &CanonicalDates).unwrap(),
+    ))
+    .unwrap();
+    let restored = run(restore.read(&audit_key)).unwrap().unwrap();
+    assert_eq!(restored.revision, audit.revision);
+    assert_eq!(restored.expires_at_ms, audit.expires_at_ms);
+    assert_eq!(
+        gateway_core::source_json::SourceJson::from_portable_json(
+            &restored.profile_v2_value().unwrap()
+        )
+        .unwrap(),
+        expected
+    );
+}
