@@ -387,6 +387,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             CodexRequest::ImportCredentials { .. } => {
                 Err(store::missing("native_credential_owner"))
             }
+            CodexRequest::ConsumeReset { .. } => Err(store::missing("native_manual_reset_owner")),
             CodexRequest::CacheExperimentBaseline => {
                 self.cache_experiment_baseline_response().await
             }
