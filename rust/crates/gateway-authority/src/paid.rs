@@ -15,6 +15,9 @@ use crate::{
 };
 
 pub use crate::paid_types::*;
+#[path = "paid_source_usage.rs"]
+mod source_usage;
+pub use source_usage::surplus_usage_from_source;
 
 fn pending_id(key: &ApiKeyId, attempt: &PaidAttemptId) -> String {
     serde_json::json!([key.0, attempt.0]).to_string()
@@ -611,7 +614,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 input_tokens: 0,
                 cached_input_tokens: 0,
                 output_tokens: 0,
-                spend_microcredits: 0,
+                spend_microcredits: 0.0,
                 first_request_at_ms: reservation.created_at_ms,
                 last_request_at_ms: reservation.created_at_ms,
                 updated_at_ms: now,
@@ -630,7 +633,10 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 usage.cached_input_tokens.unwrap_or(0),
             )?;
             rollup.output_tokens = add(rollup.output_tokens, usage.output_tokens)?;
-            rollup.spend_microcredits = add(rollup.spend_microcredits, spend)?;
+            rollup.spend_microcredits += spend as f64;
+            if !rollup.spend_microcredits.is_finite() || rollup.spend_microcredits < 0.0 {
+                return Err(invalid("Paid rollup spend overflow."));
+            }
             rollup.provider_quota += usage.provider_quota;
             if !rollup.provider_quota.is_finite() {
                 return Err(invalid("Paid rollup quota overflow."));
