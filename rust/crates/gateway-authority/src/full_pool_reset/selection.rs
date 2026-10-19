@@ -72,6 +72,11 @@ pub(super) fn select<H: SourceCreditCollation>(
             || inventory.observed_at_ms > now
             || now - inventory.observed_at_ms > 30_000
             || inventory.credits.iter().any(|credit| {
+                credit.credit_id.as_units().len() > 512
+                    || credit.status.as_units().len() > 128
+                    || credit.reset_type.as_units().len() > 128
+            })
+            || inventory.credits.iter().any(|credit| {
                 is(&credit.status, "available")
                     && credit.expires_at_ms.is_some_and(|expiry| expiry <= now)
             })

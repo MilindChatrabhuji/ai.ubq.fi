@@ -1,4 +1,4 @@
-mod support;
+use crate::support::*;
 use gateway_authority::{
     full_pool_reset::*,
     keys,
@@ -15,7 +15,6 @@ use gateway_core::{
 };
 use serde_json::{Value, json};
 use std::cmp::Ordering;
-use support::*;
 
 struct Collation;
 impl SourceCreditCollation for Collation {
@@ -86,7 +85,7 @@ fn plan(
     else {
         panic!("expected source observation")
     };
-    plan
+    *plan
 }
 fn observations(plan: &FullPoolResetPlan, credit: Option<JsString16>) -> Vec<SourceResetInventory> {
     plan.bindings()
@@ -388,7 +387,7 @@ fn source_golden_collation_controls_selection_and_utf16_credit_hashes() {
             Ok(self.0.comparison.cmp(&0))
         }
     }
-    let source = SourceJson::parse(include_str!("fixtures/full-pool-source-v1.json")).unwrap();
+    let source = SourceJson::parse(include_str!("../fixtures/full-pool-source-v1.json")).unwrap();
     let rows = source
         .object_entries()
         .unwrap()
@@ -427,4 +426,22 @@ fn source_golden_collation_controls_selection_and_utf16_credit_hashes() {
         };
         assert_eq!(permit.credit_id().as_units(), case.selected);
     }
+}
+
+#[test]
+fn provider_accepted_overlong_id_invalidates_the_complete_pool_decision() {
+    let (_, authority, proof) = setup(ResetMode::Shadow);
+    let first = plan(&authority, &proof);
+    let rows = observations(&first, Some(JsString16::from_units(vec![b'x' as u16; 513])));
+    let FullPoolEvaluation::Shadow { decision, .. } =
+        run(authority.finish_full_pool_reset(first, &rows, &Collation)).unwrap()
+    else {
+        panic!("invalid source evaluator inventory must retain its no-selection audit")
+    };
+    assert_eq!(
+        decision.decision_reason,
+        "inventory_response_invalid_or_expired"
+    );
+    assert!(decision.selected_account_id_hash.is_none());
+    assert!(decision.selected_credit_id_hash.is_none());
 }
