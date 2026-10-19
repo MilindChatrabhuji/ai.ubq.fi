@@ -335,6 +335,7 @@ describe("Sentinel complete CI check set", () => {
       "needs_validate",
       "needs_native",
       "needs_native_build",
+      "needs_worker_runtime",
       "needs_mac",
       "needs_darwin",
       "needs_darwin_tests",
@@ -350,6 +351,10 @@ describe("Sentinel complete CI check set", () => {
     expect(scopeStep).toContain("scripts/test-scope.ts --ci-json");
     expect(scopeStep).toContain("'.needsDocs'");
     expect(scopeStep).toContain("'.needsDarwinTests'");
+    expect(scopeStep).toContain("'.needsWorkerRuntime'");
+    const workerPreparation = jobs.native.steps.find((step) => step.name === "Prepare pinned mixed-client Worker test runtime");
+    expect(workerPreparation?.if).toBe("${{ needs.scope.outputs.needs_worker_runtime == 'true' }}");
+    expect(workerPreparation?.run).toBe("bun --no-env-file --no-install scripts/prepare-worker-test-runtime.ts");
     expect(jobs.docs.if).toBe("${{ needs.scope.outputs.needs_docs == 'true' }}");
     expect(jobs.native.steps.find((step) => step.name === "Preflight deployment and immutable release fixtures")?.if).toBe(
       "${{ needs.scope.outputs.needs_native == 'true' }}"
@@ -389,6 +394,45 @@ describe("Sentinel complete CI check set", () => {
 });
 
 describe("test scope", () => {
+  test("Worker fixture reads select only an existing real mixed test and admit its native runtime", () => {
+    const root = mkdtempSync(join(fixture, "worker-scope-"));
+    const mixed = "tests/native-authority-workerd.test.ts";
+    const candidates = [mixed, "tests/unrelated.test.ts"];
+    const changedInputs = [
+      "tests/fixtures/native-authority/fixture-worker.mjs",
+      "tests/fixtures/native-authority/bun-client.ts",
+      "tests/fixtures/native-authority/mixed-client-workerd.mjs",
+      "scripts/prepare-worker-test-runtime.ts",
+      "tools/worker-test-runtime/inputs.json",
+    ];
+    for (const path of changedInputs) expect(selectAffectedTestFiles([path], candidates, root)).toEqual([]);
+    expect(ciScopeForSelection({ ...sourceSelection, affectedTests: [mixed] }, root, {}).needsWorkerRuntime).toBe(false);
+    expect(ciScopeForSelection({ ...sourceSelection, runAll: true }, root, {}).needsWorkerRuntime).toBe(false);
+    mkdirSync(join(root, "tests"));
+    writeFileSync(join(root, mixed), "// Synthetic selector input only, never executed\n");
+    for (const path of changedInputs) {
+      const selected = selectAffectedTestFiles([path], candidates, root);
+      expect(selected).toEqual([mixed]);
+      expect(ciScopeForSelection({ ...sourceSelection, paths: [path], affectedTests: selected }, root, {})).toMatchObject({
+        needsWorkerRuntime: true,
+        needsNativeBuild: true,
+        needsNativeKv: false,
+      });
+    }
+    for (const selection of [docsSelection, { ...sourceSelection, paths: ["tests/unrelated.test.ts"] }]) {
+      expect(ciScopeForSelection(selection, root, {}).needsWorkerRuntime).toBe(false);
+    }
+    expect(ciScopeForSelection({ ...sourceSelection, runAll: true, affectedTests: [] }, root, {}).needsWorkerRuntime).toBe(true);
+    expect(ciScopeForSelection(sourceSelection, root, protectedContexts[0]).needsWorkerRuntime).toBe(false);
+    mkdirSync(join(root, "src"));
+    mkdirSync(join(root, "tests/fixtures/native-authority"), { recursive: true });
+    writeFileSync(join(root, "src/authority.ts"), "export const authority = 1;\n");
+    writeFileSync(join(root, "src/unrelated.ts"), "export const unrelated = 1;\n");
+    writeFileSync(join(root, "tests/fixtures/native-authority/fixture-worker.mjs"), "import '../../../src/authority.ts';\n");
+    expect(selectAffectedTestFiles(["src/authority.ts"], candidates, root)).toEqual([mixed]);
+    expect(selectAffectedTestFiles(["src/unrelated.ts"], candidates, root)).toEqual([]);
+  });
+
   test("selects only tests whose imports reach the changed source file", () => {
     expect(selectAffectedTestFiles(["src/a.ts"], ["tests/a.test.ts", "tests/b.test.ts"], fixture)).toEqual(["tests/a.test.ts"]);
   });
