@@ -20,10 +20,13 @@ import {
   resetCodexAccountRoutingForTest,
   resetCodexAuthCacheForTest,
   seedStableBankedResetBlock,
+  selectCodexRoutingAccountsStrong,
 } from "./helpers/codex-auth-cache-harness.ts";
 import { loadOverageUsageSettings, resetOverageUsageCacheForTest, writeOverageUsage } from "../src/codex/overage-settings.ts";
+import { codexResetRedemptionKey } from "../src/codex/banked-reset.ts";
 import { sha256Hex } from "../src/utils.ts";
 import type { Kv } from "#kv";
+import type { CodexResetRedemptionRecord } from "../src/types.ts";
 
 type UpstreamCall = Readonly<{ kind: "inference" | "inventory" | "consume"; accountId: string }>;
 type BlockedRun = Readonly<{ responses: Response[]; calls: readonly UpstreamCall[]; logs: readonly string[] }>;
@@ -35,7 +38,7 @@ type BlockedRun = Readonly<{ responses: Response[]; calls: readonly UpstreamCall
 const runBlockedSequence = async (
   requestIds: readonly string[],
   inventoryResponse: () => Response,
-  options: Readonly<{ allowOverage?: boolean | readonly boolean[]; mode?: "live" | "shadow" }> = {}
+  options: Readonly<{ allowOverage?: boolean | readonly boolean[]; mode?: "live" | "shadow"; seedUnsubmittedReset?: boolean }> = {}
 ): Promise<BlockedRun> => {
   const { allowOverage = false, mode = "live" } = options;
   const originalFetch = globalThis.fetch;
@@ -54,6 +57,39 @@ const runBlockedSequence = async (
   resetCodexAccountRoutingForTest();
   resetOverageUsageCacheForTest();
   await seedStableBankedResetBlock("account-one");
+  if (options.seedUnsubmittedReset) {
+    const routing = await selectCodexRoutingAccountsStrong(kv.auth, kv.auth.accounts, fixedStartMs);
+    assert.equal(routing.kind, "quota_blocked");
+    const blocked = routing.blockedAccounts.at(0);
+    assert.ok(blocked);
+    const accountHash = await sha256Hex("account-one");
+    const credentialVersionInput = `uos_ai\u0000codex_reset_credential_version\u0000${blocked.credentialVersion}`;
+    const credentialVersion = `v1:${await sha256Hex(credentialVersionInput)}`;
+    const quotaGenerationInput = `uos_ai\u0000codex_reset_generation\u0000${accountHash}\u0000${blocked.quotaResetAtMs}`;
+    const quotaGeneration = `v1:${await sha256Hex(quotaGenerationInput)}`;
+    const idempotencyInput = `uos_ai\u0000codex_reset_idempotency\u0000${accountHash}\u0000${quotaGeneration}`;
+    const idempotencyKey = `uos_ai_codex_reset_v1_${await sha256Hex(idempotencyInput)}`;
+    const idempotencyKeyHash = await sha256Hex(idempotencyKey);
+    const record: CodexResetRedemptionRecord = {
+      v: 1,
+      account_id_hash: accountHash,
+      credential_version: credentialVersion,
+      quota_generation: quotaGeneration,
+      routing_generation: blocked.routingGeneration,
+      idempotency_key_hash: idempotencyKeyHash,
+      state: "claimed",
+      owner_token: "fixture-stale-owner",
+      fence: 1,
+      lease_expires_at_ms: fixedStartMs + 30_000,
+      provider_receipt_id: null,
+      created_at_ms: fixedStartMs - 1_000,
+      updated_at_ms: fixedStartMs - 1_000,
+      submitted_at_ms: null,
+      verified_at_ms: null,
+      last_error_code: null,
+    };
+    await kv.set(codexResetRedemptionKey(accountHash, quotaGeneration), record);
+  }
   globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     const accountId = request.headers.get("chatgpt-account-id") ?? "";
@@ -208,6 +244,29 @@ test("a duplicate shadow decision allows the enabled bounded overage probe", asy
     logs.some((line) => line.includes("codex_overage_served") && line.includes('"reason":"already_would_spend_once"')),
     logs.join("\n")
   );
+});
+
+test("an unsubmitted stale reset claim allows the enabled bounded overage probe", async () => {
+  const { responses, calls, logs } = await runBlockedSequence(
+    ["overage-unsubmitted-reset"],
+    () =>
+      Response.json({
+        available_count: 1,
+        credits: [{ id: "credit-account-one", status: "available", reset_type: "codex_rate_limits", expires_at: null }],
+      }),
+    { allowOverage: true, mode: "live", seedUnsubmittedReset: true }
+  );
+
+  assert.equal(responses.at(0)?.status, 200);
+  assert.deepEqual(
+    calls.filter((call) => call.kind === "inference").map((call) => call.accountId),
+    ["account-one"]
+  );
+  assert.deepEqual(
+    calls.filter((call) => call.kind === "consume"),
+    []
+  );
+  assert.ok(logs.some((line) => line.includes("codex_overage_served") && line.includes('"reason":"unsubmitted_transaction"')));
 });
 
 test("shadow-only reset outcomes still refuse overage when the account setting is off", async () => {

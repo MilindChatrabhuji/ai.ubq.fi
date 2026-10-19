@@ -27,6 +27,8 @@ no banked reset can be redeemed.
   immediately as previous behavior did, while banked resets still redeem when their gates pass.
 - Shadow-mode reset outcomes (`shadow_selected` and `already_would_spend_once`) count as no redemption because shadow
   never consumes a credit, so an explicitly allowed account may use the bounded overage probe.
+- An unsubmitted local reset claim (`unsubmitted_transaction`) also counts as no redemption; submitted, unknown,
+  live-armed, and in-progress states remain excluded.
 - Never spend overage while a redeemable banked reset existed for the same request. Every fallback records the exact
   redemption-unavailable reason (`no_eligible_credit`, `inventory_unavailable`, `account_day_limit_reached`,
   `live_arming_pending`, `routing_fence_stale`, ...).
