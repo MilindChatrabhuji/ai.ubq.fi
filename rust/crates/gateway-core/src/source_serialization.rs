@@ -51,9 +51,6 @@ pub fn member(value: &SourceJson, name: &str) -> Option<SourceJson> {
         .find(|(k, _)| k.as_units().iter().copied().eq(name.encode_utf16()))
         .map(|(_, v)| v)
 }
-pub fn quoted(text: &Text) -> Result<SourceJson, GatewayError> {
-    SourceJson::from_serializable(text).map_err(|_| fail())
-}
 pub fn object(fields: Vec<(&str, SourceJson)>) -> Result<SourceJson, GatewayError> {
     object_keys(
         fields
