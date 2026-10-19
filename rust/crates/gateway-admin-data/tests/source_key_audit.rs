@@ -1,6 +1,8 @@
 use gateway_admin_data::migration::{ObservedRow, audit};
 use gateway_core::{
-    source_control::{decode_source_control_record, encode_source_control_record},
+    source_control::{
+        decode_source_control_record, encode_source_control_record, source_json_tree,
+    },
     source_json::SourceJson,
     source_serialization as source,
     state::StoredRecord,
@@ -76,14 +78,15 @@ fn named_key_pair_audit_preserves_complete_utf16_policy_and_finite_facts() {
         pairs[0].hash,
         decode_source_control_record(&rows[1].record).unwrap()
     );
-    assert_eq!(
-        source::member(&pairs[0].id, "paid_fallback_model_ids"),
-        source::member(&id, "paid_fallback_model_ids")
-    );
-    assert_eq!(
-        source::member(&pairs[0].id, "paid_fallback_max_exposure_microcredits"),
-        source::member(&id, "paid_fallback_max_exposure_microcredits")
-    );
+    for field in [
+        "paid_fallback_model_ids",
+        "paid_fallback_max_exposure_microcredits",
+    ] {
+        assert_eq!(
+            source_json_tree(&source::member(&pairs[0].id, field).unwrap()).unwrap(),
+            source_json_tree(&source::member(&id, field).unwrap()).unwrap()
+        );
+    }
     assert_eq!(
         rows.iter()
             .map(|row| row.record.clone())
