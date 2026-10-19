@@ -687,6 +687,6 @@ fn real_claude_selection_and_quota_cas_retain_opaque_model_units() {
     );
     println!(
         "M35_CLAUDE_ROW_FIXTURE={}",
-        serde_json::to_string(&(quota_key(&account), stored)).unwrap()
+        serde_json::to_string(&(quota_key(&account).0, stored)).unwrap()
     );
 }
