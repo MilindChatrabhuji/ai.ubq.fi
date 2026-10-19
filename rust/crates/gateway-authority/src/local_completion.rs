@@ -138,17 +138,20 @@ async fn api_matches<S: AuthorityStore, I: TokenSource>(
     );
     let actual: Option<ApiUsageRequest> = tx.read(&key).await?;
     let Some(actual) = actual else {
-        return Ok(expected.deferred);
+        // Source unused release treats a missing original row as a no-op.
+        // Transaction::read retains the actual absence check through the joint CAS.
+        return Ok(true);
     };
     actual.validate()?;
     Ok(actual.key_id == expected.key_id
         && actual.request_id == expected.request_id
         && actual.route == expected.route
-        && matches!(
-            actual.state,
-            ApiUsageState::Reserved | ApiUsageState::Released
-        )
-        && !actual.transport_started)
+        && match actual.state {
+            // The earlier dispatch-aware release never compensates dispatched use.
+            // Its validated request revision is fenced; no API window is mutated.
+            ApiUsageState::Dispatched => true,
+            ApiUsageState::Reserved | ApiUsageState::Released => !actual.transport_started,
+        })
 }
 
 fn kernel_snapshot_matches(
