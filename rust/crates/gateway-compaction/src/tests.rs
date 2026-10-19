@@ -149,6 +149,7 @@ struct Host {
     oversized: usize,
     cancel: Cell<bool>,
     cancel_after_ask: bool,
+    cancel_after_residue: bool,
 }
 impl Host {
     fn new(mode: &str) -> Self {
@@ -160,6 +161,7 @@ impl Host {
             oversized: 0,
             cancel: Cell::new(false),
             cancel_after_ask: false,
+            cancel_after_residue: false,
         }
     }
 }
@@ -220,6 +222,16 @@ impl CompactionHost for Host {
             if self.mode == "keep" {
                 value = 1.0;
             }
+            if self.mode == "equal" {
+                value = 0.7;
+            }
+            if self.mode == "ranked" {
+                value = if name_text.starts_with("call_") {
+                    0.9
+                } else {
+                    [0.6, 0.7, 0.8, 0.9, 0.95][id - 1]
+                };
+            }
             if self.mode == "outside" {
                 value = if id == 1 {
                     if name_text.starts_with("call_") {
@@ -249,6 +261,9 @@ impl CompactionHost for Host {
     ) -> Result<SourceJson, GatewayError> {
         assert!(timeout == 20_000 || timeout == 1000);
         self.residue_calls.borrow_mut().push(body.clone());
+        if self.cancel_after_residue {
+            self.cancel.set(true);
+        }
         let n = self.residue_calls.borrow().len();
         if self.residue == "failure"
             || self.residue == "fail"
@@ -358,7 +373,12 @@ fn source_local_response_and_all_candidate_failures_match_without_usage_or_parti
 }
 #[test]
 fn source_state_fitting_ladder_preserves_exact_stages_and_budget_counts() {
-    for case in cases("states") {
+    let supplemental =
+        SourceJson::parse(include_str!("../tests/fixtures/state-supplemental-v1.json")).unwrap();
+    for case in cases("states")
+        .into_iter()
+        .chain(text::array(&field(&supplemental, "cases")).unwrap())
+    {
         let r: Recipe = decode(&field(&case, "recipe"));
         let messages = recipe(&r);
         let calls = state::collect_calls(&messages, 2);
@@ -466,4 +486,243 @@ fn cancellation_cannot_return_success_or_hide_in_hybrid_fallback() {
         FailureKind::Cancelled
     );
     assert_eq!(host.asks.borrow().len(), 1);
+}
+
+fn fitting_input(recipe: &SourceJson, pattern: &str, prompt: &str) -> SourceJson {
+    use serde_json::{Value, json};
+    let message = |value: String| json!({"type":"message","role":"user","content":[{"type":"input_text","text":value}]});
+    let call = |id: &str, command: &str| json!({"type":"function_call","call_id":id,"name":"shell","arguments":json!({"command":command}).to_string()});
+    let output = |id: &str, value: String| json!({"type":"function_call_output","call_id":id,"output":value});
+    let large = |n: usize| pattern.repeat(n.div_ceil(pattern.len()))[..n].to_owned();
+    let kind = string(&field(recipe, "kind"));
+    let mut input: Vec<Value> = if kind == "fit" {
+        let mut values = vec![message("Goal: keep the release evidence.".into())];
+        for (key, letter) in [('a', 'A'), ('b', 'B'), ('c', 'C'), ('d', 'D'), ('e', 'E')] {
+            let id = format!("old_{key}");
+            values.push(call(&id, &format!("cat /tmp/{key}")));
+            values.push(output(&id, letter.to_string().repeat(360_000)));
+        }
+        values
+    } else if kind == "oversized" {
+        let mut values = vec![
+            message(format!("Goal: {}", "x".repeat(1_501_000))),
+            call("old", "echo old"),
+            output("old", "RESULT_OBSOLETE ".repeat(40)),
+        ];
+        for recent in [
+            "recent one",
+            "recent two",
+            "recent three",
+            "recent four",
+            "recent five",
+            "recent six",
+        ] {
+            values.push(message(recent.into()));
+        }
+        values
+    } else {
+        let mut values = vec![
+            message("Goal: finish the large-session check.".into()),
+            call("big", "cat /tmp/big.log"),
+            output("big", large(decode(&field(recipe, "result")))),
+        ];
+        for _ in 0..8 {
+            values.push(message(large(decode::<usize>(&field(recipe, "text")) / 8)));
+        }
+        values.push(message("Final goal: keep the exact state.".into()));
+        values
+    };
+    input.push(message(prompt.into()));
+    state::json(&serde_json::json!({"model":"fixture-model","input":input})).unwrap()
+}
+
+#[test]
+fn source_large_summary_fitting_floor_refusal_and_fit_before_reduction_match_exactly() {
+    let corpus = SourceJson::parse(include_str!("../tests/fixtures/fitting-v1.json")).unwrap();
+    let pattern = string(&field(&corpus, "pattern"));
+    let prompt = string(&field(&corpus, "prompt"));
+    for case in text::array(&field(&corpus, "cases")).unwrap() {
+        let recipe = field(&case, "recipe");
+        let name = string(&field(&recipe, "name"));
+        let body = fitting_input(&recipe, &pattern, &prompt);
+        let host = Host::new(&string(&field(&recipe, "mode")));
+        let result = run(build_compaction_response(
+            &body,
+            &host,
+            ResponseOptions {
+                stream: false,
+                hybrid: false,
+            },
+        ));
+        assert_eq!(
+            host.asks.borrow().len(),
+            decode::<usize>(&field(&case, "asks")),
+            "{name}"
+        );
+        let expected = field(&case, "expected");
+        if string(&field(&expected, "kind")) == "failure" {
+            assert_eq!(
+                result.unwrap_err().kind.label(),
+                string(&field(&expected, "failure")),
+                "{name}"
+            );
+            continue;
+        }
+        let result = result.unwrap();
+        assert_eq!(
+            result.status,
+            decode::<u16>(&field(&expected, "status")),
+            "{name}"
+        );
+        assert_eq!(
+            result.content_type,
+            string(&field(&expected, "contentType")),
+            "{name}"
+        );
+        equal(
+            &state::json(&result.headers).unwrap(),
+            &field(&expected, "headers"),
+        );
+        assert_eq!(
+            result.input_estimate_tokens,
+            decode::<usize>(&field(&case, "inputTokens")),
+            "{name}"
+        );
+        let mut summary = String::new();
+        for part in text::array(&field(&expected, "summary")).unwrap() {
+            if let Some(value) = text::string(&part) {
+                summary.push_str(&value.try_utf8().unwrap());
+            } else {
+                let (value, count): (String, usize) = decode(&part);
+                summary.push_str(&value.repeat(count));
+            }
+        }
+        let units = summary.encode_utf16().collect::<Vec<_>>();
+        assert_eq!(
+            units.len(),
+            decode::<usize>(&field(&expected, "chars")),
+            "{name}"
+        );
+        assert!(
+            result.summary.as_units() == units,
+            "{name}: exact source summary differs"
+        );
+    }
+}
+
+struct PendingHost {
+    base: Host,
+    active: Cell<usize>,
+    peak: Cell<usize>,
+}
+impl PendingHost {
+    fn new() -> Self {
+        let mut base = Host::new("drop");
+        base.residue = "success".into();
+        Self {
+            base,
+            active: Cell::new(0),
+            peak: Cell::new(0),
+        }
+    }
+    async fn pending_once(&self) {
+        struct Active<'a>(&'a Cell<usize>);
+        impl Drop for Active<'_> {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() - 1);
+            }
+        }
+        self.active.set(self.active.get() + 1);
+        self.peak.set(self.peak.get().max(self.active.get()));
+        let _active = Active(&self.active);
+        let mut pending = true;
+        std::future::poll_fn(|cx| {
+            if std::mem::take(&mut pending) {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            } else {
+                Poll::Ready(())
+            }
+        })
+        .await;
+    }
+}
+impl CompactionHost for PendingHost {
+    fn now_ms(&self) -> Result<i64, GatewayError> {
+        self.base.now_ms()
+    }
+    fn random_uuid(&self) -> Result<String, GatewayError> {
+        self.base.random_uuid()
+    }
+    fn cancelled(&self) -> bool {
+        self.base.cancelled()
+    }
+    async fn ask_jev(
+        &self,
+        state: &SourceJson,
+        questions: &SourceJson,
+        timeout: u32,
+    ) -> Result<SourceJson, GatewayError> {
+        self.pending_once().await;
+        self.base.ask_jev(state, questions, timeout).await
+    }
+    async fn rewrite_residue(
+        &self,
+        body: &SourceJson,
+        timeout: u32,
+    ) -> Result<SourceJson, GatewayError> {
+        self.pending_once().await;
+        self.base.rewrite_residue(body, timeout).await
+    }
+}
+#[test]
+fn source_window_and_residue_worker_bounds_hold_across_pending_host_io() {
+    let messages = recipe(&Recipe {
+        count: 800,
+        text: 0,
+        input: 0,
+        notes: false,
+    });
+    let host = PendingHost::new();
+    let options = Options {
+        preserve_recent_messages: Some(2.0),
+        max_state_tokens: Some(800.0),
+        max_request_tokens: Some(4000.0),
+        ..Options::default()
+    };
+    let result = run(engine::compact(&messages, &host, &options)).unwrap();
+    assert!(result.stats.windows > 3);
+    assert_eq!(host.peak.get(), 3);
+    assert_eq!(host.active.get(), 0);
+    let pure: Text = decode(&field(&cases("residues").remove(0), "pure"));
+    let host = PendingHost::new();
+    assert!(run(hybrid::run(&pure, &host, 400, 1000)).is_some());
+    assert_eq!(host.peak.get(), 4);
+    assert_eq!(host.active.get(), 0);
+    assert_eq!(
+        host.base.residue_calls.borrow().len(),
+        hybrid::chunks(&pure, 400).len()
+    );
+}
+#[test]
+fn cancellation_during_residue_cannot_be_hidden_by_best_effort_fallback() {
+    let case = cases("bodies").remove(0);
+    let body = text::parse_text(&decode::<Text>(&field(&case, "raw"))).unwrap();
+    let mut host = Host::new("drop");
+    host.residue = "success".into();
+    host.cancel_after_residue = true;
+    assert_eq!(
+        run(build_compaction_response(
+            &body,
+            &host,
+            ResponseOptions {
+                stream: false,
+                hybrid: true
+            }
+        ))
+        .unwrap_err()
+        .kind,
+        FailureKind::Cancelled
+    );
+    assert_eq!(host.residue_calls.borrow().len(), 1);
 }
