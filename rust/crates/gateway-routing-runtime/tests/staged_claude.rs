@@ -575,7 +575,7 @@ fn effective_phase_reaches_lookup_before_native_body_and_retains_original_contro
 #[test]
 fn invalid_ordinary_input_never_calls_capability_lookup_and_high_only_still_refuses() {
     run(async {
-        for malformed in [true, false] {
+        for input_kind in ["number", "empty-native", "high-only"] {
             let store = Store::new();
             seed_key(&store);
             let mut host = Host::new(&store);
@@ -585,13 +585,14 @@ fn invalid_ordinary_input_never_calls_capability_lookup_and_high_only_still_refu
             };
             body_options.native_reasoning_efforts = Some(vec!["high".into()]);
             host.claude = Some(credential);
-            let mut input = request(if malformed {
-                "bad-before-lookup"
-            } else {
-                "high-only-refusal"
-            });
-            if malformed {
-                input.raw = set_member(&input.raw, "input", SourceJson::parse("[]").unwrap());
+            let mut input = request(input_kind);
+            if input_kind != "high-only" {
+                // [] is valid ordinary data but invalid for this native body; numeric input is truly malformed earlier.
+                input.raw = set_member(
+                    &input.raw,
+                    "input",
+                    SourceJson::parse(if input_kind == "number" { "7" } else { "[]" }).unwrap(),
+                );
             }
             let session = RoutingSession::begin(
                 input,
@@ -606,7 +607,7 @@ fn invalid_ordinary_input_never_calls_capability_lookup_and_high_only_still_refu
             assert_eq!(error.error.status, 400);
             assert_eq!(
                 host.claude_effective.lock().unwrap().len(),
-                usize::from(!malformed)
+                usize::from(input_kind != "number")
             );
             session.finish(Default::default()).await.unwrap();
         }
