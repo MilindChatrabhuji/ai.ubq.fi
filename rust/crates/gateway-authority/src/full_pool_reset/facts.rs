@@ -115,7 +115,10 @@ pub(super) async fn capture_reconciliation<S: AuthorityStore, I: TokenSource>(
     capture_for(tx, proof, original, CapturePurpose::ExistingLedger).await
 }
 #[derive(Clone, Copy)]
-enum CapturePurpose { NewSpend, ExistingLedger }
+enum CapturePurpose {
+    NewSpend,
+    ExistingLedger,
+}
 async fn capture_for<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     proof: &CohortProof,
@@ -161,10 +164,16 @@ async fn capture_for<S: AuthorityStore, I: TokenSource>(
         let block = state
             .quota_block_for(proof.quota_class())
             .ok_or_else(|| declined("routing_fence_missing"))?;
-        let reset = block.reset_at_ms.ok_or_else(||declined("invalid_quota_generation"))?;
+        let reset = block
+            .reset_at_ms
+            .ok_or_else(|| declined("invalid_quota_generation"))?;
         let current = match purpose {
-            CapturePurpose::NewSpend => !block.reset_ambiguous && !state.reset_identity_ambiguous
-                && reset == block.blocked_until_ms && reset > tx.now,
+            CapturePurpose::NewSpend => {
+                !block.reset_ambiguous
+                    && !state.reset_identity_ambiguous
+                    && reset == block.blocked_until_ms
+                    && reset > tx.now
+            }
             // Source staleVerifiedResetProbeEligible retains a stable old
             // observation beneath a newer block. This read-only path grants
             // no inventory, audit insertion or new-spend permission.

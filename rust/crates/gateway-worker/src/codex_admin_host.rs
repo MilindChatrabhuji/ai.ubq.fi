@@ -4,18 +4,31 @@ use gateway_auth::{AuthConfig, AuthRequest, AuthResponse, AuthService};
 use gateway_authority::native_control::actor::NativeRenewalActor;
 use gateway_core::GatewayError;
 
+mod automatic;
 mod manual;
+mod source_inventory;
+pub use automatic::recover_full_pool;
+
+/// Request-owned authentication evidence, never decoded from an administrative command.
+pub struct OriginalAdmin<'a> {
+    pub request: &'a AuthRequest,
+    pub config: &'a AuthConfig,
+    pub actor: &'a NativeRenewalActor,
+}
 
 pub async fn execute(
     store: &crate::authority::RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
-    original: &AuthRequest,
-    config: &AuthConfig,
+    owner: OriginalAdmin<'_>,
     request: CodexRequest,
     context: Context,
     observations: &crate::observability_host::Runtime,
-    actor: &NativeRenewalActor,
 ) -> Result<AuthResponse, GatewayError> {
+    let OriginalAdmin {
+        request: original,
+        config,
+        actor,
+    } = owner;
     AuthService::new(store, platform, config)
         .authenticate_admin(original)
         .await?;
