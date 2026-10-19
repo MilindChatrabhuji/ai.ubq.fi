@@ -127,6 +127,19 @@ pub(crate) fn audit(
 ) -> Result<(), gateway_core::GatewayError> {
     for row in rows
         .iter()
+        .filter(|r| starts(&r.parts, &["uos_ai", "codex_reset_shadow_decision"]))
+    {
+        if gateway_authority::full_pool_reset::FullPoolShadowDecision::validate_record(
+            &row.key,
+            &row.record,
+        )
+        .is_err()
+        {
+            errors.push("codex reset shadow decision is malformed".into());
+        }
+    }
+    for row in rows
+        .iter()
         .filter(|r| starts(&r.parts, &["uos_ai", "codex_reset_redemption"]))
     {
         let p = &row.parts;
