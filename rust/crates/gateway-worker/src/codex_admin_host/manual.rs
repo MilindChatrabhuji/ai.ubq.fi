@@ -167,8 +167,7 @@ async fn run(
                     .bytes()
                     .await
                     .ok()
-                    .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-                    .and_then(|body| body["code"].as_str().map(str::to_owned)),
+                    .and_then(|bytes| consume_code(&bytes)),
                 Ok(mut response) => {
                     crate::transport::body::discard_response(&mut response);
                     None
@@ -238,7 +237,7 @@ async fn account(
             )
         })
 }
-fn headers(account: &CodexSourceAccount, content: bool) -> BTreeMap<String, String> {
+pub(super) fn headers(account: &CodexSourceAccount, content: bool) -> BTreeMap<String, String> {
     let mut headers = BTreeMap::from([
         (
             "Authorization".into(),
@@ -255,7 +254,7 @@ fn headers(account: &CodexSourceAccount, content: bool) -> BTreeMap<String, Stri
     }
     headers
 }
-fn endpoints(platform: &PlatformHost) -> Result<(Url, Url), GatewayError> {
+pub(super) fn endpoints(platform: &PlatformHost) -> Result<(Url, Url), GatewayError> {
     let base = crate::host::setting(&platform.env, "CODEX_BASE_URL")
         .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".into());
     let mut url = Url::parse(gateway_schema::util::js_trim(&base))
@@ -278,7 +277,7 @@ fn endpoints(platform: &PlatformHost) -> Result<(Url, Url), GatewayError> {
     consume.set_path(&format!("{path}/consume"));
     Ok((url, consume))
 }
-async fn get(
+pub(super) async fn get(
     platform: &PlatformHost,
     url: &Url,
     account: &CodexSourceAccount,
@@ -340,15 +339,40 @@ async fn inventory(
 ) -> Result<String, GatewayError> {
     let account = account(store, target).await?;
     let (url, _) = endpoints(platform)?;
-    let payload = get(platform, &url, &account, None).await?;
+    let payload = get(platform, &url, &account, Some(5000)).await?;
+    let at = now_ms()?;
+    let credits = parse_inventory(&payload, at)?;
+    select_reset_credit(
+        &[AccountResetInventory {
+            binding: target.binding().clone(),
+            observed_at_ms: at,
+            credits,
+        }],
+        at,
+    )?
+    .map(|selected| selected.credit.credit_id)
+    .ok_or_else(|| {
+        failure(
+            422,
+            "no_eligible_credit",
+            "Banked reset was not completed: no eligible credit.",
+        )
+    })
+}
+
+pub(super) fn parse_inventory(payload: &Value, at: i64) -> Result<Vec<ResetCredit>, GatewayError> {
     let available = payload["available_count"]
-        .as_i64()
-        .filter(|n| (0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(n))
+        .as_f64()
+        .filter(|n| {
+            n.is_finite()
+                && n.fract() == 0.0
+                && (0.0..=gateway_core::identity::MAX_SAFE_INTEGER as f64).contains(n)
+        })
+        .map(|n| n as i64)
         .ok_or_else(|| unavailable("Reset inventory is incomplete."))?;
     let rows = payload["credits"]
         .as_array()
         .ok_or_else(|| unavailable("Reset inventory is incomplete."))?;
-    let at = now_ms()?;
     let mut ids = BTreeSet::new();
     let mut credits = Vec::new();
     let mut count = 0;
@@ -392,26 +416,62 @@ async fn inventory(
     if count != available {
         return Err(unavailable("Reset inventory is incomplete."));
     }
-    select_reset_credit(
-        &[AccountResetInventory {
-            binding: target.binding().clone(),
-            observed_at_ms: at,
-            credits,
-        }],
-        at,
-    )?
-    .map(|selected| selected.credit.credit_id)
-    .ok_or_else(|| {
-        failure(
-            422,
-            "no_eligible_credit",
-            "Banked reset was not completed: no eligible credit.",
-        )
-    })
+    Ok(credits)
 }
 fn failure(status: u16, code: &str, message: &str) -> GatewayError {
     GatewayError::new(status, message, Some(code))
 }
 fn unavailable(message: &str) -> GatewayError {
     GatewayError::unavailable(message, "codex_reset_unavailable")
+}
+
+fn consume_code(bytes: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(bytes);
+    let value = gateway_core::source_json::SourceJson::parse(
+        text.strip_prefix('\u{feff}').unwrap_or(&text),
+    )
+    .ok()?;
+    value
+        .object_entries()
+        .ok()?
+        .into_iter()
+        .rev()
+        .find(|(key, _)| key.as_units().iter().copied().eq("code".encode_utf16()))?
+        .1
+        .deserialize()
+        .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn source_terminal_ignores_unrelated_lossless_operator_text() {
+        assert_eq!(
+            consume_code(br#"{"code":"reset","unrelated":"\ud800"}"#).as_deref(),
+            Some("reset")
+        );
+        assert_eq!(
+            consume_code(b"\xef\xbb\xbf{\"code\":\"already_redeemed\"}").as_deref(),
+            Some("already_redeemed")
+        );
+        assert_eq!(consume_code(br#"{"code":null}"#), None);
+    }
+    #[test]
+    fn incomplete_credit_inventory_never_becomes_a_spend_candidate() {
+        let one = json!({"id":"fixture-credit","status":"available","reset_type":"codex_rate_limits","expires_at":null});
+        assert!(
+            parse_inventory(&json!({"available_count":2,"credits":[one.clone()]}), 10).is_err()
+        );
+        assert!(
+            parse_inventory(
+                &json!({"available_count":2,"credits":[one.clone(),one.clone()]}),
+                10
+            )
+            .is_err()
+        );
+        let credits = parse_inventory(&json!({"available_count":1.0,"credits":[one]}), 10).unwrap();
+        assert_eq!(credits.len(), 1);
+        assert!(credits[0].eligible);
+    }
 }
