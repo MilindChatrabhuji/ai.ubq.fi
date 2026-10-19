@@ -399,11 +399,19 @@ fn actual_socket_error_after_101_is_transport_unknown_without_a_second_http_resp
         assert_eq!(outcome, NativeLiveOutcome::TransportUnknown);
     });
     let mut client = TcpStream::connect(address).unwrap();
-    client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
     let mut received = Vec::new();
     client.read_to_end(&mut received).unwrap();
     assert!(received.starts_with(b"HTTP/1.1 101 "));
-    assert_eq!(received.windows(8).filter(|bytes| *bytes == b"HTTP/1.1").count(), 1);
+    assert_eq!(
+        received
+            .windows(8)
+            .filter(|bytes| *bytes == b"HTTP/1.1")
+            .count(),
+        1
+    );
     assert!(received.ends_with(b"\r\n\r\n"));
     server.join().unwrap();
 }
