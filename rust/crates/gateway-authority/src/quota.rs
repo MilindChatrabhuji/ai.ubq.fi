@@ -535,11 +535,24 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         reason: &str,
         now: i64,
     ) -> Result<bool, GatewayError> {
+        self.release_api_key_classified(reservation, known_before_transport, reason, now)
+            .await
+            .map_err(crate::local_api_release::ReleaseFailure::into_diagnostic)
+    }
+    pub(crate) async fn release_api_key_classified(
+        &self,
+        reservation: &ApiReservation,
+        known_before_transport: bool,
+        reason: &str,
+        now: i64,
+    ) -> Result<bool, crate::local_api_release::ReleaseFailure> {
         if reservation.deferred {
             return Ok(false);
         }
         for _ in 0..5 {
-            let mut tx = self.transaction(now)?;
+            let mut tx = self
+                .transaction(now)
+                .map_err(crate::local_api_release::ReleaseFailure::unavailable)?;
             let request_key = keys::api_request(
                 &reservation.key_id.0,
                 &reservation.policy_version,
@@ -551,11 +564,17 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 &reservation.policy_version,
                 reservation.window_start_ms,
             );
-            let Some(mut row) = tx.read::<ApiUsageRequest>(&request_key).await? else {
+            let Some(mut row) = tx
+                .read_api_release::<ApiUsageRequest>(&request_key)
+                .await
+                .map_err(classify_release_read)?
+            else {
                 return Ok(false);
             };
             if !api_row_matches(&row, reservation) {
-                return Err(invalid("API release identity conflicts."));
+                return Err(crate::local_api_release::ReleaseFailure::malformed(
+                    invalid("API release identity conflicts."),
+                ));
             }
             if row.state == ApiUsageState::Released
                 || (row.state == ApiUsageState::Dispatched
@@ -564,20 +583,30 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 return Ok(false);
             }
             let mut window: ApiUsageWindow = tx
-                .read(&window_key)
-                .await?
-                .ok_or_else(|| invalid("API quota aggregate is missing."))?;
-            validate_window(&window, reservation)?;
+                .read_api_release(&window_key)
+                .await
+                .map_err(classify_release_read)?
+                .ok_or_else(|| {
+                    crate::local_api_release::ReleaseFailure::malformed(invalid(
+                        "API quota aggregate is missing.",
+                    ))
+                })?;
+            validate_window(&window, reservation)
+                .map_err(crate::local_api_release::ReleaseFailure::malformed)?;
             if row.state == ApiUsageState::Reserved {
                 if window.reserved_requests < 1
                     || window.reservations.remove(&row.request_id.0).is_none()
                 {
-                    return Err(invalid("Missing API reservation capacity."));
+                    return Err(crate::local_api_release::ReleaseFailure::malformed(
+                        invalid("Missing API reservation capacity."),
+                    ));
                 }
                 window.reserved_requests -= 1;
             } else {
                 if window.committed_requests < 1 {
-                    return Err(invalid("Missing API committed capacity."));
+                    return Err(crate::local_api_release::ReleaseFailure::malformed(
+                        invalid("Missing API committed capacity."),
+                    ));
                 }
                 window.committed_requests -= 1;
             }
@@ -587,19 +616,27 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             row.released_at_ms = Some(now);
             row.release_reason = Some(reason.chars().take(120).collect());
             window.updated_at_ms = now;
-            let expiry = Some(retention(
-                reservation.window_reset_at_ms,
-                QUOTA_RETENTION_MS,
-            )?);
-            tx.put(&request_key, &row, expiry)?;
-            tx.put(&window_key, &window, expiry)?;
-            if tx.commit().await? {
+            let expiry = Some(
+                retention(reservation.window_reset_at_ms, QUOTA_RETENTION_MS)
+                    .map_err(crate::local_api_release::ReleaseFailure::unavailable)?,
+            );
+            tx.put(&request_key, &row, expiry)
+                .map_err(crate::local_api_release::ReleaseFailure::unavailable)?;
+            tx.put(&window_key, &window, expiry)
+                .map_err(crate::local_api_release::ReleaseFailure::unavailable)?;
+            if tx
+                .commit()
+                .await
+                .map_err(crate::local_api_release::ReleaseFailure::unavailable)?
+            {
                 return Ok(true);
             }
         }
-        Err(unavailable(
-            "api_key_quota_reservation_unavailable",
-            "API quota release changed concurrently.",
+        Err(crate::local_api_release::ReleaseFailure::changed(
+            unavailable(
+                "api_key_quota_reservation_unavailable",
+                "API quota release changed concurrently.",
+            ),
         ))
     }
 }
@@ -607,3 +644,16 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
 pub use crate::kernel::{
     KernelDefaults, KernelPolicy, KernelReservation, KernelTerminal, KernelWindow,
 };
+
+fn classify_release_read(
+    error: crate::store::ApiReleaseReadError,
+) -> crate::local_api_release::ReleaseFailure {
+    match error {
+        crate::store::ApiReleaseReadError::Backend(error) => {
+            crate::local_api_release::ReleaseFailure::unavailable(error)
+        }
+        crate::store::ApiReleaseReadError::Record(error) => {
+            crate::local_api_release::ReleaseFailure::malformed(error)
+        }
+    }
+}
