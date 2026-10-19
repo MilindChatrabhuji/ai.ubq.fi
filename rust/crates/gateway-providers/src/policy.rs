@@ -75,89 +75,13 @@ pub fn paid_hop_identity(request_id: &str, provider: PaidProvider) -> String {
         }
     )
 }
-pub fn response_has_answer(value: &Value) -> bool {
-    value
-        .get("output")
-        .and_then(Value::as_array)
-        .is_some_and(|items| items.iter().any(item_has_answer))
-}
-pub fn item_has_answer(item: &Value) -> bool {
-    match item.get("type").and_then(Value::as_str).unwrap_or("") {
-        "reasoning" => false,
-        "function_call" | "custom_tool_call" => {
-            nonempty(item.get("call_id"))
-                && nonempty(item.get("name"))
-                && (item.get("arguments").is_some_and(Value::is_string)
-                    || item.get("input").is_some_and(Value::is_string))
-        }
-        "code_interpreter_call"
-        | "computer_call"
-        | "file_search_call"
-        | "image_generation_call"
-        | "mcp_call"
-        | "web_search_call" => matches!(
-            item.get("status").and_then(Value::as_str),
-            Some("in_progress" | "completed" | "failed")
-        ),
-        _ => item
-            .get("content")
-            .and_then(Value::as_array)
-            .is_some_and(|parts| {
-                parts
-                    .iter()
-                    .any(|p| nonempty(p.get("text")) || nonempty(p.get("refusal")))
-            }),
-    }
-}
+pub fn response_has_answer(value: &Value) -> bool {crate::source_policy::response_has_answer(&crate::source::generated(value))}
+pub fn item_has_answer(value: &Value) -> bool {crate::source_policy::item_has_answer(&crate::source::generated(value))}
 fn nonempty(value: Option<&Value>) -> bool {
     value.and_then(Value::as_str).is_some_and(|v| !v.is_empty())
 }
-pub fn semantic_event(event: &Value) -> bool {
-    let kind = event.get("type").and_then(Value::as_str).unwrap_or("");
-    if [
-        "response.output_text.delta",
-        "response.output_text.done",
-        "response.refusal.delta",
-        "response.refusal.done",
-    ]
-    .contains(&kind)
-    {
-        return nonempty(event.get("delta"))
-            || nonempty(event.get("text"))
-            || nonempty(event.get("refusal"));
-    }
-    if kind == "response.image_generation_call.partial_image" {
-        return nonempty(event.get("partial_image_b64"));
-    }
-    if ["response.output_item.added", "response.output_item.done"].contains(&kind) {
-        return event.get("item").is_some_and(item_has_answer);
-    }
-    if kind == "response.completed" || kind == "response.output" {
-        return event.get("response").is_some_and(response_has_answer)
-            || response_has_answer(event);
-    }
-    [
-        "code_interpreter_call",
-        "computer_call",
-        "file_search_call",
-        "image_generation_call",
-        "mcp_call",
-        "web_search_call",
-    ]
-    .iter()
-    .any(|tool| {
-        ["completed", "in_progress", "failed"]
-            .iter()
-            .any(|status| kind == format!("response.{tool}.{status}"))
-    })
-}
-pub fn reasoning_progress(event: &Value) -> bool {
-    let kind = event.get("type").and_then(Value::as_str).unwrap_or("");
-    kind.starts_with("response.reasoning")
-        && (nonempty(event.get("delta"))
-            || nonempty(event.get("text"))
-            || event.get("part").is_some_and(|p| nonempty(p.get("text"))))
-}
+pub fn semantic_event(value: &Value) -> bool {crate::source_policy::semantic_event(&crate::source::generated(value))}
+pub fn reasoning_progress(value: &Value) -> bool {crate::source_policy::reasoning_progress(&crate::source::generated(value))}
 pub fn chat_has_answer(value: &Value) -> bool {
     value
         .get("choices")
