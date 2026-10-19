@@ -39,6 +39,7 @@ pub struct Capture {
     trace: TraceRecorder,
     trace_valid: Cell<bool>,
     finished: Cell<bool>,
+    local_completed: Cell<bool>,
     terminal_request: RefCell<Option<TerminalRequest>>,
     provider_request_id: RefCell<Option<String>>,
     client: RefCell<ClientWire>,
@@ -46,7 +47,7 @@ pub struct Capture {
 #[derive(Clone)]
 struct TerminalRequest {
     context: gateway_core::identity::RequestContext,
-    model: JsString16,
+    model: Option<JsString16>,
     reasoning: Option<JsString16>,
     prompt_cache_key_present: bool,
 }
@@ -83,6 +84,7 @@ impl Capture {
             trace: TraceRecorder::default(),
             trace_valid: Cell::new(true),
             finished: Cell::new(false),
+            local_completed: Cell::new(false),
             terminal_request: RefCell::new(None),
             provider_request_id: RefCell::new(None),
             client: RefCell::new(ClientWire {
@@ -106,6 +108,31 @@ impl Capture {
         raw: &SourceJson,
         stream: bool,
     ) {
+        if let Some(request) = self.terminal_request.borrow_mut().as_mut() {
+            request.model = Some(model.as_js_string().clone());
+        }
+        self.begin_request(context, Some(model.as_js_string()), raw, stream)
+            .await;
+    }
+    pub(crate) async fn begin_local(
+        &self,
+        context: &gateway_core::identity::RequestContext,
+        raw: &SourceJson,
+        stream: bool,
+    ) {
+        let model = source::member(raw, "model")
+            .as_ref()
+            .and_then(source::string);
+        self.begin_request(context, model.as_ref(), raw, stream)
+            .await;
+    }
+    async fn begin_request(
+        &self,
+        context: &gateway_core::identity::RequestContext,
+        model: Option<&JsString16>,
+        raw: &SourceJson,
+        stream: bool,
+    ) {
         if self.terminal_request.borrow().is_some() {
             return;
         }
@@ -125,7 +152,7 @@ impl Capture {
             });
         *self.terminal_request.borrow_mut() = Some(TerminalRequest {
             context: context.clone(),
-            model: model.as_js_string().clone(),
+            model: model.cloned(),
             reasoning: reasoning.clone(),
             prompt_cache_key_present,
         });
@@ -135,7 +162,7 @@ impl Capture {
                 let scalar = serde_json::json!({"id":context.request_id.0,"key_id":key.0,"route":context.route,"path":crate::normalized_path(&self.request.path()),"method":self.request.method().to_string(),"created_at_ms":context.started_at_ms,"status_code":0,"stream":stream});
                 let scalar = SourceJson::from_serializable(&scalar)?;
                 let mut fields = scalar.object_entries()?;
-                fields.push((JsString16::from_utf8("model"), model.to_source_json()?));
+                fields.push((JsString16::from_utf8("model"), SourceJson::from_serializable(&model)?));
                 fields.push((JsString16::from_utf8("reasoning"), SourceJson::from_serializable(&reasoning)?));
                 let record = source::object_keys(fields)?;
                 self.runtime.record_request_log_source(&key.0, &record).await
@@ -168,10 +195,10 @@ impl Capture {
             )
         };
         let extracted = gateway_core::source_usage::extract_usage_tokens(usage);
-        let completed = source_completed(observation);
+        let completed = self.local_completed.get() || source_completed(observation);
         let mut event = gateway_observability::prompt::PromptEvent {
             provider: Some(provider.clone()),
-            model: Some(request.model.clone()),
+            model: request.model.clone(),
             route: request.context.route.clone(),
             status,
             completed,
@@ -196,7 +223,7 @@ impl Capture {
         if let Err(error) = self
             .runtime
             .record_terminal_usage_rollup(gateway_observability::ledger::TerminalUsageRollup {
-                model: Some(&request.model),
+                model: request.model.as_ref(),
                 provider: Some(&provider),
                 request_id: &self.request_id,
                 request_created_at_ms: Some(request.context.started_at_ms as f64),
@@ -240,7 +267,7 @@ impl Capture {
                     route: request.context.route.clone(),
                     status,
                     provider: provider.clone(),
-                    model: Some(request.model.clone()),
+                    model: request.model.clone(),
                     reasoning: request.reasoning.clone(),
                     stream: Some(stream),
                     terminal_type: terminal,
@@ -275,7 +302,7 @@ impl Capture {
                 } else if matches!(provider.as_str(), "surplus" | "metered") { patch["billing_status"] = serde_json::json!("unresolved"); }
                 let scalar = SourceJson::from_serializable(&patch)?;
                 let mut fields = scalar.object_entries()?;
-                fields.push((JsString16::from_utf8("model"), request.model.to_source_json()?));
+                fields.push((JsString16::from_utf8("model"), SourceJson::from_serializable(&request.model)?));
                 fields.push((JsString16::from_utf8("reasoning"), SourceJson::from_serializable(&request.reasoning)?));
                 let patch = source::object_keys(fields)?;
                 self.runtime.update_request_log_source(&key.0, request.context.started_at_ms, &self.request_id, &patch).await
@@ -317,6 +344,26 @@ impl Capture {
             }
         }
     }
+    /// Only the genuine K2 one-shot wire choice supplies local completion data.
+    pub(crate) fn configure_local(&self, status: u16, stream: bool, completed: bool) {
+        self.local_completed.set(completed);
+        let mut client = self.client.borrow_mut();
+        client.status = status;
+        client.stream = stream;
+        client.provider = "gateway".into();
+        client.parser = stream.then(|| SseParser::new(MAX_RESPONSES_EVENT_BYTES));
+    }
+    pub(crate) async fn finish_local(&self, observation: TransportObservation) {
+        self.finish(observation, None, None).await;
+    }
+    pub(crate) async fn finish_buffered_local(&self, response: &Response) {
+        if let ResponseBody::Body(bytes) = response.body() {
+            self.bytes(bytes);
+        }
+        // A buffered value being ready is not an actual transport delivery receipt.
+        self.finish_local(TransportObservation::default()).await;
+    }
+
     pub fn configure(
         &self,
         status: u16,
@@ -458,7 +505,7 @@ impl Capture {
                         _ => None,
                     })
             };
-            let completed = source_completed(observation);
+            let completed = self.local_completed.get() || source_completed(observation);
             let failure = match observation.reader_termination {
                 Some(ReaderTermination::ReadError) => Some("gateway_stream_read_error".into()),
                 Some(ReaderTermination::Deadline) => Some("gateway_timeout".into()),

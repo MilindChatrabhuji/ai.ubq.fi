@@ -276,7 +276,10 @@ pub async fn run(
     host: &PlatformHost,
     request_id: RequestId,
 ) -> Result<Response, GatewayError> {
-    let RequestResources { context, permit } = resources;
+    let RequestResources {
+        context,
+        mut permit,
+    } = resources;
     let responses = crate::normalized_path(&request.path()) == "/v1/responses";
     let surface = if responses {
         ClientSurface::Responses
@@ -304,6 +307,16 @@ pub async fn run(
             })
         })
         .unwrap_or_else(|| "0.100.0".into());
+    let local_compaction = responses
+        && crate::host::setting(&host.env, "JEV_COMPACTION_DISABLED").as_deref() != Some("1")
+        && gateway_compaction::is_responses_compaction(
+            request
+                .headers()
+                .get("x-codex-turn-metadata")
+                .ok()
+                .flatten()
+                .as_deref(),
+        );
     let capture = crate::inference_capture::Capture::new(
         request,
         &bytes,
@@ -341,31 +354,58 @@ pub async fn run(
             native_session_id: None,
             retry_prohibited: false,
         };
-        let input = RoutingInput::from_source_request(
-            metadata,
-            document.for_surface(if responses {
-                gateway_schema::request::RequestSurface::Responses
-            } else {
-                gateway_schema::request::RequestSurface::ChatCompletions
-            }),
-        );
-        let client_stream = input.streamed();
-        let session = match RoutingSession::begin(
-            input,
-            store.clone(),
-            routing_host::Host::new(
+        let client_stream = document.stream().unwrap_or(false);
+        let session = if local_compaction {
+            match crate::inference_local::start(
+                metadata,
+                document.clone(),
                 store.clone(),
                 host.clone(),
                 context.clone(),
-                original.clone(),
-            ),
-            PlatformClock,
-            PlatformTokens,
-        )
-        .await
-        {
-            Ok(session) => Rc::new(session),
-            Err(error) => return crate::inference_source::error_response(error, &capture).await,
+                capture.clone(),
+                permit.take(),
+            )
+            .await
+            {
+                Ok(started) => {
+                    permit = started.permit;
+                    match started.route {
+                        crate::inference_local::Start::Response(response) => return Ok(response),
+                        crate::inference_local::Start::Ordinary(session) => session,
+                    }
+                }
+                Err(error) => {
+                    return crate::inference_source::error_response(error, &capture).await;
+                }
+            }
+        } else {
+            let input = RoutingInput::from_source_request(
+                metadata,
+                document.for_surface(if responses {
+                    gateway_schema::request::RequestSurface::Responses
+                } else {
+                    gateway_schema::request::RequestSurface::ChatCompletions
+                }),
+            );
+            match RoutingSession::begin(
+                input,
+                store.clone(),
+                routing_host::Host::new(
+                    store.clone(),
+                    host.clone(),
+                    context.clone(),
+                    original.clone(),
+                ),
+                PlatformClock,
+                PlatformTokens,
+            )
+            .await
+            {
+                Ok(session) => Rc::new(session),
+                Err(error) => {
+                    return crate::inference_source::error_response(error, &capture).await;
+                }
+            }
         };
         let currentness = match crate::inference_currentness::CurrentnessGuard::start(
             session.clone(),
