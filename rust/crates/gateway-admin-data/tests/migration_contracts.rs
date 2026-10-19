@@ -418,7 +418,9 @@ fn kernel_audit_rejects_reset_mismatch_and_bad_terminal_intervals() {
             .unwrap()
             .errors
             .iter()
-            .any(|e| e.contains("reset is inconsistent"))
+            .any(|e| e
+                .try_utf8()
+                .is_ok_and(|text| text.contains("reset is inconsistent")))
     );
     let mut invalid = reservation("request", "reserved");
     invalid["lease_expires_at_ms"] = json!(101);

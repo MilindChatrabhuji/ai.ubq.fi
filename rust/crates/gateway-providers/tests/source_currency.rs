@@ -91,21 +91,21 @@ fn prepared_provider_wire_keeps_source_sampling_warnings_and_zero() {
 fn lithos_tier_windows_use_same_case_and_trim_identity_as_dispatch() {
     use gateway_providers::policy::{LithosWindows, lithos_ladder};
     assert_eq!(
-        lithos_ladder("  DEEPSEEK-AI/deepseek-v4.1-flash-ULTRA "),
+        lithos_ladder(&"  DEEPSEEK-AI/deepseek-v4.1-flash-ULTRA ".into()),
         vec![
-            "deepseek-ai/DeepSeek-V4.1-Flash-fast",
-            "deepseek-ai/DeepSeek-V4.1-Flash"
+            "deepseek-ai/DeepSeek-V4.1-Flash-fast".into(),
+            "deepseek-ai/DeepSeek-V4.1-Flash".into()
         ]
     );
     let mut windows = LithosWindows::default();
-    windows.refuse(" DEEPSEEK-AI/DeepSeek-V4.1-FLASH-ultra ", 1000, 500);
+    windows.refuse(&" DEEPSEEK-AI/DeepSeek-V4.1-FLASH-ultra ".into(), 1000, 500);
     assert_eq!(
-        windows.select("deepseek-ai/deepseek-v4.1-flash-ultra", 1200),
-        "deepseek-ai/DeepSeek-V4.1-Flash-fast"
+        windows.select(&"deepseek-ai/deepseek-v4.1-flash-ultra".into(), 1200),
+        gateway_core::model::ModelId::from_scalar("deepseek-ai/DeepSeek-V4.1-Flash-fast")
     );
     assert_eq!(
-        windows.select("deepseek-ai/deepseek-v4.1-flash-ultra", 1500),
-        "deepseek-ai/DeepSeek-V4.1-Flash-ultra"
+        windows.select(&"deepseek-ai/deepseek-v4.1-flash-ultra".into(), 1500),
+        gateway_core::model::ModelId::from_scalar("deepseek-ai/DeepSeek-V4.1-Flash-ultra")
     );
 }
 

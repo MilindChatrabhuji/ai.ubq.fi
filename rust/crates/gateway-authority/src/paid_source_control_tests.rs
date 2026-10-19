@@ -199,3 +199,49 @@ fn keyed_paid_decoder_retains_expired_data_but_refuses_wrong_key_metadata_and_en
         StoredRecord::profile("seed", gateway_core::value::PortableValue::Null, None).unwrap();
     assert!(crate::paid::decode_paid_attempt_record(&key("a"), &invalid).is_err());
 }
+
+#[test]
+fn source_pricing_keeps_absent_null_and_malformed_utf16_cache_leaves_distinct() {
+    let mut row: PaidAttempt = source_request("a", false, &model(&[0xd800]))
+        .deserialize()
+        .unwrap();
+    row.reservation.provider = PaidProvider::Surplus;
+    let raw = json!({"input_tokens":10,"output_tokens":3,"total_tokens":13,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":1}});
+    let usage = gateway_core::source_usage::extract_usage_tokens(Some(&raw)).unwrap();
+    for text in [
+        r#"{"input_price_per_token":0.001,"output_price_per_token":0.002}"#,
+        r#"{"input_price_per_token":0.001,"output_price_per_token":0.002,"cache_read_price_per_token":null,"cache_write_price_per_token":null}"#,
+    ] {
+        let pricing = SourceJson::parse(text).unwrap();
+        let actual =
+            crate::paid::surplus_usage_from_source(&row, Some(&usage), Some(&pricing)).unwrap();
+        assert_eq!(actual.provider_quota, 17000.0);
+    }
+    for field in ["cache_read_price_per_token", "cache_write_price_per_token"] {
+        let pricing = source::object(vec![
+            ("input_price_per_token", SourceJson::parse("0.001").unwrap()),
+            (
+                "output_price_per_token",
+                SourceJson::parse("0.002").unwrap(),
+            ),
+            (
+                field,
+                JsString16::from_units(vec![0xd800])
+                    .to_source_json()
+                    .unwrap(),
+            ),
+        ])
+        .unwrap();
+        assert!(
+            crate::paid::surplus_usage_from_source(&row, Some(&usage), Some(&pricing)).is_none()
+        );
+    }
+    let malformed = gateway_core::source_usage::extract_usage_tokens(Some(
+        &json!({"input_tokens":10,"output_tokens":3,"buyer_cost_micro":"bad"}),
+    ))
+    .unwrap();
+    let valid =
+        SourceJson::parse(r#"{"input_price_per_token":0.001,"output_price_per_token":0.002}"#)
+            .unwrap();
+    assert!(crate::paid::surplus_usage_from_source(&row, Some(&malformed), Some(&valid)).is_none());
+}

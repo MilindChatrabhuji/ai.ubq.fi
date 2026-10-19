@@ -2,22 +2,26 @@
 use crate::{CatalogRuntime, CatalogState, host::*, state};
 use gateway_core::{
     GatewayError,
+    source_json::SourceJson,
+    source_serialization as source,
+    source_control::encode_source_control_record,
     query::QueryStore,
-    state::{AtomicTransition, CommitOutcome, RecordMutation, StoredRecord},
+    state::{AtomicTransition, CommitOutcome, RecordMutation},
 };
 use gateway_schema::{
     catalog::{
         ProviderCatalog, build_catalog_snapshot, public_catalog as public_catalog_projection,
     },
     catalog_store,
-    runtime_config::{build_runtime_config, normalize_runtime_config},
+    runtime_config::{build_runtime_config, normalize_runtime_config, default_model, default_reasoning_effort},
+    source_request::SourceRequestError,
     selection::{ModelWhitelist, normalize_whitelist_ids},
     snapshot::{SnapshotOverrides, normalize_snapshot},
-    util::{invalid, json_stringify},
+    util,
 };
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::{
-    cmp::Ordering,
     collections::BTreeMap,
     future::{Future, poll_fn},
     task::Poll,
@@ -28,7 +32,6 @@ const MAX_KV_BYTES: usize = 65_536;
 
 /// Source String.localeCompare is supplied by the existing host, never byte-order emulated.
 pub trait AdminCatalogHost: CatalogHost {
-    fn compare_model_ids(&self, left: &str, right: &str) -> Result<Ordering, GatewayError>;
     /// Schedule the fixed optional OpenRouter refresh on the current request's lifetime.
     /// This must return immediately; the existing discovery deadline remains in force.
     fn warm_openrouter(&self);
@@ -36,9 +39,9 @@ pub trait AdminCatalogHost: CatalogHost {
 
 pub enum AdminCatalogOperation {
     CodexModelsGet,
-    CodexModelsSet { document: Value },
+    CodexModelsSet { document: SourceJson },
     WhitelistGet,
-    WhitelistSet { document: Value },
+    WhitelistSet { document: SourceJson },
     Catalog,
     Refresh,
 }
@@ -46,11 +49,11 @@ pub enum AdminCatalogOperation {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AdminCatalogResponse {
     pub status: u16,
-    pub body: Value,
+    pub body: SourceJson,
     pub headers: BTreeMap<String, String>,
 }
 impl AdminCatalogResponse {
-    fn json(body: Value, no_store: bool) -> Self {
+    fn json(body: SourceJson, no_store: bool) -> Self {
         let mut headers = BTreeMap::from([("content-type".into(), "application/json".into())]);
         if no_store {
             headers.insert("cache-control".into(), "no-store".into());
@@ -65,69 +68,32 @@ impl AdminCatalogResponse {
 fn persist_error(message: &str) -> GatewayError {
     GatewayError::new(500, message, Some("server_error")).with_type("server_error")
 }
-fn runtime_error(error: GatewayError) -> GatewayError {
-    let message = error.envelope.error.message;
-    let status = if message.contains("too large") || message.contains("4 KiB") {
-        413
-    } else {
-        409
-    };
-    GatewayError::new(status, message, Some("runtime_config_invalid"))
+fn lift(error:GatewayError)->SourceRequestError{SourceRequestError::from_gateway(error)}
+fn invalid(message:&str,param:Option<&str>)->SourceRequestError{lift(util::invalid(message,param))}
+fn json_source<T:Serialize+?Sized>(value:&T)->SourceJson{SourceJson::from_serializable(value).expect("finite catalog control")}
+fn object(fields:Vec<(&str,SourceJson)>)->SourceJson{source::object(fields).expect("catalog source response")}
+fn member(value:&SourceJson,key:&str)->SourceJson{source::member(value,key).unwrap_or_else(||json_source(&()))}
+fn runtime_error(error:SourceRequestError)->SourceRequestError{
+ let message=source::member(error.body(),"error").and_then(|v|source::member(&v,"message")).as_ref().and_then(source::string).expect("source error message");
+ let includes=|text:&str|{let pattern=text.encode_utf16().collect::<Vec<_>>();message.as_units().windows(pattern.len()).any(|part|part==pattern)};
+ let status=if includes("too large")||includes("4 KiB"){413}else{409};
+ SourceRequestError::new(status,message,"invalid_request_error",Some("runtime_config_invalid"),None)
 }
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null | Value::Bool(false) => false,
-        Value::String(value) => !value.is_empty(),
-        Value::Number(value) => value.as_f64() != Some(0.0),
-        _ => true,
-    }
-}
-fn whitelist(record: Option<&StoredRecord>) -> Value {
-    record
-        .and_then(|row| ModelWhitelist::normalize(&row.value))
-        .map(|row| json!(row))
-        .unwrap_or_else(|| json!({"model_ids":[],"updated_at_ms":0}))
+fn truthy(value:&SourceJson)->bool{match value.as_str(){"null"|"false"=>false,_=>{if let Some(value)=source::string(value){!value.as_units().is_empty()}else{source::number(value)!=Some(0.0)}}}}
+fn whitelist(document:Option<&SourceJson>)->SourceJson{
+ document.and_then(ModelWhitelist::normalize).as_ref().map(json_source).unwrap_or_else(||json_source(&json!({"model_ids":[],"updated_at_ms":0})))
 }
 fn provider_summary(snapshot: Option<&ProviderCatalog>) -> Value {
     json!({"models":snapshot.map(|s|s.models.len()).unwrap_or(0),"updated_at_ms":snapshot.and_then(|s|s.updated_at_ms)})
 }
 
-fn order_rows<H: AdminCatalogHost>(host: &H, rows: &mut [Value]) -> Result<(), GatewayError> {
-    let mut failed = None;
-    rows.sort_by(|left, right| {
-        if failed.is_some() {
-            return Ordering::Equal;
-        }
-        match host.compare_model_ids(
-            left["id"].as_str().unwrap_or(""),
-            right["id"].as_str().unwrap_or(""),
-        ) {
-            Ok(order) => order,
-            Err(error) => {
-                failed = Some(error);
-                Ordering::Equal
-            }
-        }
-    });
-    match failed {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
-}
-
 impl CatalogRuntime {
     /// Public catalog projection only; administrator operations retain separate authorization.
-    pub async fn public_catalog<S: QueryStore, H: AdminCatalogHost>(
-        &self,
-        store: &S,
-        host: &H,
-    ) -> Result<AdminCatalogResponse, GatewayError> {
-        let loaded = self.admin_catalog_view(store, host).await?;
-        let mut catalog = public_catalog_projection(&loaded.input);
-        if let Some(models) = catalog["data"].as_array_mut() {
-            order_rows(host, models)?;
-        }
-        Ok(AdminCatalogResponse::json(catalog, true))
+    pub async fn public_catalog<S:QueryStore,H:AdminCatalogHost>(&self,store:&S,host:&H)->Result<AdminCatalogResponse,SourceRequestError>{
+        let loaded=self.admin_catalog_view(store,host).await.map_err(lift)?;
+        let collator=self.source_string_collator(host);
+        let catalog=public_catalog_projection(&loaded.input,collator.as_ref()).map_err(lift)?;
+        Ok(AdminCatalogResponse::json(catalog,true))
     }
 
     async fn admin_catalog_view<S: QueryStore, H: AdminCatalogHost>(
@@ -153,186 +119,59 @@ impl CatalogRuntime {
     }
 
     /// Call only after the application's existing administrator authorization succeeds.
-    pub async fn admin_catalog<S: QueryStore, H: AdminCatalogHost>(
-        &self,
-        store: &S,
-        host: &H,
-        operation: AdminCatalogOperation,
-    ) -> Result<AdminCatalogResponse, GatewayError> {
+    pub async fn admin_catalog<S:QueryStore,H:AdminCatalogHost>(&self,store:&S,host:&H,operation:AdminCatalogOperation)->Result<AdminCatalogResponse,SourceRequestError>{
         match operation {
-            AdminCatalogOperation::CodexModelsGet => {
-                let snapshot = state::read_json(store, &catalog_store::codex_snapshot_key())
-                    .await
-                    .ok()
-                    .flatten()
-                    .filter(|row| state::parse_full_snapshot(&row.value).is_some())
-                    .map(|row| row.value)
-                    .unwrap_or(Value::Null);
-                Ok(AdminCatalogResponse::json(
-                    json!({"ok":true,"data":snapshot}),
-                    false,
-                ))
+            AdminCatalogOperation::CodexModelsGet=>{
+                let snapshot=state::read_source_control(store,&catalog_store::codex_snapshot_key()).await.ok().flatten().filter(|row|state::parse_full_snapshot(&row.document).is_some()).map(|row|row.document).unwrap_or_else(||json_source(&()));
+                Ok(AdminCatalogResponse::json(object(vec![("ok",json_source(&true)),("data",snapshot)]),false))
             }
-            AdminCatalogOperation::CodexModelsSet { document } => {
-                self.admin_save_models(store, host, &document).await
+            AdminCatalogOperation::CodexModelsSet{document}=>self.admin_save_models(store,host,&document).await,
+            AdminCatalogOperation::WhitelistGet=>{let current=state::read_source_control(store,&state::whitelist_key()).await.map_err(lift)?;Ok(AdminCatalogResponse::json(object(vec![("ok",json_source(&true)),("data",whitelist(current.as_ref().map(|r|&r.document)))]),false))}
+            AdminCatalogOperation::WhitelistSet{document}=>self.admin_save_whitelist(store,host,&document).await,
+            AdminCatalogOperation::Catalog=>{
+                let loaded=self.admin_catalog_view(store,host).await.map_err(lift)?;let collator=self.source_string_collator(host);
+                let catalog=build_catalog_snapshot(&loaded.input,collator.as_ref()).map_err(lift)?;
+                let whitelist=loaded.input.whitelist.as_ref().map(json_source).unwrap_or_else(||json_source(&json!({"model_ids":[],"updated_at_ms":0})));
+                let active=source::member(&whitelist,"model_ids").as_ref().and_then(source::array).is_some_and(|ids|!ids.is_empty());
+                Ok(AdminCatalogResponse::json(object(vec![("ok",json_source(&true)),("data",object(vec![("models",member(&catalog,"models")),("sources",member(&catalog,"sources")),("whitelist",whitelist),("filter_active",json_source(&active))]))]),true))
             }
-            AdminCatalogOperation::WhitelistGet => {
-                let current = state::read_json(store, &state::whitelist_key()).await?;
-                Ok(AdminCatalogResponse::json(
-                    json!({"ok":true,"data":whitelist(current.as_ref())}),
-                    false,
-                ))
-            }
-            AdminCatalogOperation::WhitelistSet { document } => {
-                self.admin_save_whitelist(store, host, &document).await
-            }
-            AdminCatalogOperation::Catalog => {
-                let loaded = self.admin_catalog_view(store, host).await?;
-                let mut catalog = build_catalog_snapshot(&loaded.input);
-                if let Some(models) = catalog["models"].as_array_mut() {
-                    order_rows(host, models)?;
-                }
-                let whitelist = loaded
-                    .input
-                    .whitelist
-                    .map(|row| json!(row))
-                    .unwrap_or_else(|| json!({"model_ids":[],"updated_at_ms":0}));
-                let active = whitelist["model_ids"]
-                    .as_array()
-                    .is_some_and(|ids| !ids.is_empty());
-                Ok(AdminCatalogResponse::json(
-                    json!({"ok":true,"data":{"models":catalog["models"],"sources":catalog["sources"],"whitelist":whitelist,"filter_active":active}}),
-                    true,
-                ))
-            }
-            AdminCatalogOperation::Refresh => self.admin_refresh(store, host).await,
+            AdminCatalogOperation::Refresh=>self.admin_refresh(store,host).await.map_err(lift),
         }
     }
 
-    async fn admin_save_models<S: QueryStore, H: CatalogHost>(
-        &self,
-        store: &S,
-        host: &H,
-        document: &Value,
-    ) -> Result<AdminCatalogResponse, GatewayError> {
-        if !truthy(document) {
-            return Err(invalid("Invalid JSON body", None));
-        }
-        let snapshot =
-            normalize_snapshot(document, &SnapshotOverrides::default(), host.now_ms())
-                .ok_or_else(|| invalid("models must include a non-empty models array", None))?;
-        let size = json_stringify(&json!(snapshot)).len();
-        if size > SAFE_KV_BYTES {
-            return Err(GatewayError::new(
-                413,
-                format!("models snapshot too large ({size} bytes; max {MAX_KV_BYTES})."),
-                Some("invalid_request_error"),
-            ));
-        }
-        for _ in 0..3 {
-            let current = state::read_json(store, &catalog_store::codex_snapshot_key()).await?;
-            let runtime = state::read_json(store, &catalog_store::runtime_config_key()).await?;
-            let previous = current
-                .as_ref()
-                .and_then(|row| state::parse_full_snapshot(&row.value));
-            let next = snapshot.merge_prompt_cache(previous.as_ref());
-            let old_runtime = runtime
-                .as_ref()
-                .and_then(|row| normalize_runtime_config(&row.value));
-            let default = next.preserve_default(
-                old_runtime
-                    .as_ref()
-                    .and_then(|r| r["default_model"].as_str()),
-            );
-            let next_runtime = build_runtime_config(
-                &next,
-                default.as_deref(),
-                old_runtime
-                    .as_ref()
-                    .and_then(|r| r["default_reasoning_effort"].as_str()),
-                host.now_ms(),
-            )
-            .map_err(runtime_error)?;
-            let revision = host.unique_id();
-            if store
-                .commit(AtomicTransition {
-                    checks: vec![
-                        state::check(catalog_store::codex_snapshot_key(), current.as_ref()),
-                        state::check(catalog_store::runtime_config_key(), runtime.as_ref()),
-                    ],
-                    mutations: vec![
-                        RecordMutation::Put {
-                            key: catalog_store::codex_snapshot_key(),
-                            record: StoredRecord::json(&revision, json!(next), None),
-                        },
-                        RecordMutation::Put {
-                            key: catalog_store::runtime_config_key(),
-                            record: StoredRecord::json(&revision, next_runtime, None),
-                        },
-                    ],
-                })
-                .await?
-                == CommitOutcome::Committed
-            {
-                return Ok(AdminCatalogResponse::json(
-                    json!({"ok":true,"stored":true,"count":snapshot.models.len(),"source":snapshot.source,"updated_at_ms":snapshot.updated_at_ms,"client_version":snapshot.client_version}),
-                    false,
-                ));
+    async fn admin_save_models<S:QueryStore,H:CatalogHost>(&self,store:&S,host:&H,document:&SourceJson)->Result<AdminCatalogResponse,SourceRequestError>{
+        if !truthy(document){return Err(invalid("Invalid JSON body",None));}
+        let snapshot=normalize_snapshot(document,&SnapshotOverrides::default(),host.now_ms()).ok_or_else(||invalid("models must include a non-empty models array",None))?;
+        let size=source::canonical(&json_source(&snapshot)).map_err(lift)?.as_str().len();
+        if size>SAFE_KV_BYTES{return Err(lift(GatewayError::new(413,format!("models snapshot too large ({size} bytes; max {MAX_KV_BYTES})."),Some("invalid_request_error"))));}
+        for _ in 0..3{
+            let current=state::read_source_control(store,&catalog_store::codex_snapshot_key()).await.map_err(lift)?;
+            let runtime=state::read_source_control(store,&catalog_store::runtime_config_key()).await.map_err(lift)?;
+            let previous=current.as_ref().and_then(|r|state::parse_full_snapshot(&r.document));let next=snapshot.merge_prompt_cache(previous.as_ref());
+            let old_runtime=runtime.as_ref().and_then(|r|normalize_runtime_config(&r.document));
+            let old_default=old_runtime.as_ref().and_then(default_model);let old_effort=old_runtime.as_ref().and_then(default_reasoning_effort);let default=next.preserve_default(old_default.as_ref());
+            let next_runtime=build_runtime_config(&next,default.as_ref(),old_effort.as_ref(),host.now_ms()).map_err(runtime_error)?;
+            let revision=host.unique_id();
+            if store.commit(AtomicTransition{
+                checks:vec![state::check(catalog_store::codex_snapshot_key(),current.as_ref().map(|r|&r.record)),state::check(catalog_store::runtime_config_key(),runtime.as_ref().map(|r|&r.record))],
+                mutations:vec![RecordMutation::Put{key:catalog_store::codex_snapshot_key(),record:encode_source_control_record(&revision,&json_source(&next),None).map_err(lift)?},RecordMutation::Put{key:catalog_store::runtime_config_key(),record:encode_source_control_record(&revision,&next_runtime,None).map_err(lift)?}],
+            }).await.map_err(lift)?==CommitOutcome::Committed{
+                return Ok(AdminCatalogResponse::json(json_source(&json!({"ok":true,"stored":true,"count":snapshot.models.len(),"source":snapshot.source,"updated_at_ms":snapshot.updated_at_ms,"client_version":snapshot.client_version})),false));
             }
         }
-        Err(persist_error(
-            "Deno KV is not available; cannot persist Codex models",
-        ))
+        Err(lift(persist_error("Deno KV is not available; cannot persist Codex models")))
     }
-
-    async fn admin_save_whitelist<S: QueryStore, H: CatalogHost>(
-        &self,
-        store: &S,
-        host: &H,
-        document: &Value,
-    ) -> Result<AdminCatalogResponse, GatewayError> {
-        if !document.is_object() && !document.is_array() {
-            return Err(invalid("Invalid JSON body", None));
+    async fn admin_save_whitelist<S:QueryStore,H:CatalogHost>(&self,store:&S,host:&H,document:&SourceJson)->Result<AdminCatalogResponse,SourceRequestError>{
+        if source::entries(document).is_none()&&source::array(document).is_none(){return Err(invalid("Invalid JSON body",None));}
+        let raw=source::member(document,"model_ids").as_ref().and_then(source::array).ok_or_else(||invalid("model_ids must be an array",None))?;
+        if raw.iter().any(|v|source::string(v).is_none()){return Err(invalid("model_ids must contain only strings",None));}
+        let ids=normalize_whitelist_ids(&raw);let minimal=object(vec![("model_ids",json_source(&ids))]);
+        if source::canonical(&minimal).map_err(lift)?.as_str().len()>SAFE_KV_BYTES{return Err(lift(GatewayError::new(413,format!("model_ids payload too large (max {MAX_KV_BYTES} bytes)."),Some("invalid_request_error"))));}
+        let now=host.now_ms();let row=object(vec![("model_ids",json_source(&ids)),("updated_at_ms",json_source(&now))]);
+        if store.commit(AtomicTransition{checks:vec![],mutations:vec![RecordMutation::Put{key:state::whitelist_key(),record:encode_source_control_record(host.unique_id(),&row,None).map_err(lift)?}]}).await.map_err(lift)?==CommitOutcome::Committed{
+            return Ok(AdminCatalogResponse::json(object(vec![("ok",json_source(&true)),("stored",json_source(&true)),("model_ids",json_source(&ids)),("updated_at_ms",json_source(&host.now_ms()))]),false));
         }
-        let raw = document
-            .get("model_ids")
-            .and_then(Value::as_array)
-            .ok_or_else(|| invalid("model_ids must be an array", None))?;
-        if raw.iter().any(|value| !value.is_string()) {
-            return Err(invalid("model_ids must contain only strings", None));
-        }
-        let ids = normalize_whitelist_ids(raw);
-        if json_stringify(&json!({"model_ids":ids})).len() > SAFE_KV_BYTES {
-            return Err(GatewayError::new(
-                413,
-                format!("model_ids payload too large (max {MAX_KV_BYTES} bytes)."),
-                Some("invalid_request_error"),
-            ));
-        }
-        let now = host.now_ms();
-        if store
-            .commit(AtomicTransition {
-                checks: vec![],
-                mutations: vec![RecordMutation::Put {
-                    key: state::whitelist_key(),
-                    record: StoredRecord::json(
-                        host.unique_id(),
-                        json!({"model_ids":ids,"updated_at_ms":now}),
-                        None,
-                    ),
-                }],
-            })
-            .await?
-            == CommitOutcome::Committed
-        {
-            return Ok(AdminCatalogResponse::json(
-                json!({"ok":true,"stored":true,"model_ids":ids,"updated_at_ms":host.now_ms()}),
-                false,
-            ));
-        }
-        Err(persist_error(
-            "Deno KV is not available; cannot persist model whitelist",
-        ))
+        Err(lift(persist_error("Deno KV is not available; cannot persist model whitelist")))
     }
 
     async fn admin_refresh<S: QueryStore, H: CatalogHost>(
@@ -369,13 +208,13 @@ impl CatalogRuntime {
         lithos_value["refreshed"] =
             json!(lithos.as_ref().and_then(|s| s.updated_at_ms) != old_lithos);
         Ok(AdminCatalogResponse::json(
-            json!({"ok":true,"data":{
+            json_source(&json!({"ok":true,"data":{
                 "openrouter":{"upstream_models":router.as_ref().map(|s|s.models.len()).unwrap_or(0),"updated_at_ms":router.as_ref().and_then(|s|s.updated_at_ms),"refreshed":router.as_ref().and_then(|s|s.updated_at_ms) != old_router},
                 "openlux":provider_summary(self.cached_provider(&current,CatalogProvider::Openlux).as_ref()),
                 "surplus":provider_summary(surplus.as_ref()),
                 "lithos":lithos_value,
                 "claude_code":{"models":claude.as_ref().map(|s|s.models.len()).unwrap_or(0),"updated_at_ms":claude.as_ref().and_then(|s|s.updated_at_ms),"status":if claude.as_ref().is_some_and(|s|!s.stale){"available"}else{"unavailable"},"stale":claude.as_ref().is_some_and(|s|s.stale)}
-            }}),
+            }})),
             true,
         ))
     }
@@ -423,5 +262,17 @@ impl CatalogRuntime {
             }
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod source_error_tests {
+    use super::*;
+    #[test]
+    fn runtime_error_keeps_opaque_model_units_and_original_status_mapping() {
+        let message=gateway_core::js_string::JsString16::from_units("runtime config default model is absent from the catalog: ".encode_utf16().chain([0xd800]).collect());
+        let error=runtime_error(SourceRequestError::new(503,message.clone(),"server_error",Some("runtime_config_invalid"),None));
+        assert_eq!(error.status,409);assert_eq!(source::string(&member(&member(error.body(),"error"),"message")),Some(message));assert_eq!(member(&member(error.body(),"error"),"code"),json_source("runtime_config_invalid"));assert!(error.body().deserialize::<Value>().is_err());
+        let large=runtime_error(lift(GatewayError::new(503,"runtime config is too large",Some("runtime_config_invalid"))));assert_eq!(large.status,413);
     }
 }

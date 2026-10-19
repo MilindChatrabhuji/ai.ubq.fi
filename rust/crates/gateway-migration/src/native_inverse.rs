@@ -17,8 +17,9 @@ fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeValue, Gateway
         .as_ref()
         .map(|m| m.transform)
         .unwrap_or(crate::inverse::transform_for_new(&parts(&row.key)?));
-    let value = crate::inverse::inverse_value(
+    let value = crate::inverse::inverse_value_for_key(
         transform,
+        &row.key,
         &row.record,
         row.mapping.as_ref().map(|m| &m.source),
     )?;
@@ -50,7 +51,7 @@ fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeValue, Gateway
 pub(crate) async fn export<S: QueryStore>(
     store: &S,
     now_ms: i64,
-) -> Result<(NativeCapture, Vec<CustodyRecord>), GatewayError> {
+) -> Result<(NativeCapture, Vec<CustodyRecord>), MigrationError> {
     let (manifest, rows, controls) = crate::inverse::export_rows(store, now_ms).await?;
     let old = manifest
         .native_revision
@@ -119,13 +120,13 @@ pub(crate) async fn export<S: QueryStore>(
 pub async fn export_native_latest<S: QueryStore>(
     store: &S,
     now_ms: i64,
-) -> Result<NativeCapture, GatewayError> {
+) -> Result<NativeCapture, MigrationError> {
     let (capture, controls) = export(store, now_ms).await?;
     if !controls.is_empty() {
-        return Err(GatewayError::unavailable(
+        return Err(MigrationError::from(GatewayError::unavailable(
             "Native latest inverse requires separate current Rust control custody",
             "migration_control_custody_required",
-        ));
+        )));
     }
     Ok(capture)
 }
@@ -141,7 +142,7 @@ pub async fn export_native_rollback_bundle<S: QueryStore>(
     store: &S,
     now_ms: i64,
     artifacts: ArtifactContext,
-) -> Result<NativeRollbackBundle, GatewayError> {
+) -> Result<NativeRollbackBundle, MigrationError> {
     crate::inverse::validate_artifacts(&artifacts)?;
     let (source, rust_controls) = export(store, now_ms).await?;
     Ok(NativeRollbackBundle {

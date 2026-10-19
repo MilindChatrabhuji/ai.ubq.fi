@@ -201,6 +201,12 @@ pub async fn error_diagnostics(
 pub struct Host;
 
 impl ObservabilityHost for Host {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        crate::source_collator::shared()
+    }
+
     fn now_ms(&self) -> i64 {
         crate::storage::now_ms().unwrap_or(i64::MAX)
     }
@@ -225,6 +231,12 @@ impl ObservabilityHost for Host {
 }
 
 impl ObservabilityHost for RequestHost {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        crate::source_collator::shared()
+    }
+
     async fn backfill_paid_usage(
         &self,
         limit: u32,

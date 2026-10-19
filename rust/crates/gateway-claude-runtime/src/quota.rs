@@ -75,7 +75,7 @@ pub struct PoolProof {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct QuotaState {
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(with = "proof_map")]
+    #[serde(default, with = "proof_map")]
     pub pool_proofs: Option<BTreeMap<JsString16, PoolProof>>,
     pub windows: BTreeMap<String, QuotaWindow>,
     pub standard: BTreeMap<String, StandardWindow>,
@@ -219,7 +219,7 @@ mod proof_map {
     pub fn deserialize<'de, D: serde::Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<BTreeMap<JsString16, PoolProof>>, D::Error> {
-        let value = SourceJson::deserialize(deserializer)?;
+        let value = <SourceJson as Deserialize>::deserialize(deserializer)?;
         if value.as_str() == "null" {
             return Ok(None);
         }
