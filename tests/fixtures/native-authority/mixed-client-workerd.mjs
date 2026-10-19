@@ -299,8 +299,8 @@ async function runReviewCases({ setup, control, evidence, callFor, restart, deni
     if (mode === "delivery") await call("recordDeliveryObservation", { handle, observation: "delivered" });
     if (mode === "start") assert.equal((await call("recordTransportStarted", { handle, provider })).kind, "started");
     if (mode === "provider") {
-      const response = await providerSuccess();
-      await call("recordCodexAttemptSignal", { handle, signal: "success", response });
+      await providerSuccess();
+      await call("recordCodexAttemptSignal", { handle, signal: "success" });
     }
     await refused(call("recordApiDispatchCancellation", { handle }));
     const state = await evidence(id);
@@ -591,7 +591,8 @@ async function runReviewCases({ setup, control, evidence, callFor, restart, deni
     await call("selectCodexAccount", { handle });
     await call("refreshCodexAdmission", { handle });
     await call("markApiDispatch", { handle, provider: "chatgpt_codex" });
-    await call("recordCodexAttemptSignal", { handle, signal: "success", response: await providerSuccess() });
+    await providerSuccess();
+    await call("recordCodexAttemptSignal", { handle, signal: "success" });
     assert.equal((await evidence(id)).transport, null);
     await call("recordSemanticTerminal", { handle, outcome: "completed", usage: { input_tokens: 3, cached_input_tokens: null, output_tokens: 2 } });
     const state = await evidence(id);

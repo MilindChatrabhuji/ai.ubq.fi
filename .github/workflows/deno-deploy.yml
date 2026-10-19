@@ -233,6 +233,23 @@ jobs:
       - name: Complete native and full Bun gates
         shell: bash
         run: sh scripts/verify.sh --native-kv-binding="$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
+      - name: Verify retained mixed-client runtime evidence
+        if: ${{ success() && needs.scope.outputs.needs_worker_runtime == 'true' }}
+        run: |
+          cd .tmp/native-authority-evidence
+          sha256sum --check SHA256SUMS
+      - name: Upload mixed-client runtime evidence
+        if: ${{ success() && needs.scope.outputs.needs_worker_runtime == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ai-ubq-fi-native-authority-${{ github.sha }}
+          path: |
+            .tmp/native-authority-evidence/mixed-runtime-result.json
+            .tmp/native-authority-evidence/worker-runtime-receipt.json
+            .tmp/native-authority-evidence/SHA256SUMS
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
       - name: Package immutable source, dependencies and native KV/permissions
         if: ${{ needs.scope.outputs.needs_artifact == 'true' }}
         shell: bash
