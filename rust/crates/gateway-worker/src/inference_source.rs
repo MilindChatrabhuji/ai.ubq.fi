@@ -45,41 +45,29 @@ fn unavailable() -> GatewayError {
     )
 }
 
-/// Only the existing numeric billing fragment enters the scalar cost helper.
-/// The authoritative catalog row and opaque model identifier never become Value.
+/// Retain authoritative pricing data and the existing Messages cost requirement.
 pub(crate) fn pricing_metadata(
     rows: &[gateway_core::source_json::SourceJson],
     model: &gateway_core::model::ModelId,
     require_provider_cost: bool,
-) -> Option<serde_json::Value> {
-    use gateway_core::source_serialization as source;
+) -> Result<Option<gateway_core::source_json::SourceJson>, GatewayError> {
+    use gateway_core::{
+        js_string::JsString16, source_json::SourceJson, source_serialization as source,
+    };
     let row = rows.iter().find(|row| {
         source::member(row, "id")
             .and_then(|id| source::string(&id))
             .is_some_and(|id| id == *model.as_js_string())
     });
-    let Some(row) = row else {
-        return require_provider_cost.then(|| serde_json::json!({"require_provider_cost":true}));
+    if !require_provider_cost {
+        return Ok(row.cloned());
+    }
+    let key = JsString16::from_utf8("require_provider_cost");
+    let mut fields = match row {
+        Some(row) => row.object_entries()?,
+        None => Vec::new(),
     };
-    let mut fields = serde_json::Map::new();
-    for name in [
-        "input_price_per_token",
-        "output_price_per_token",
-        "cache_read_price_per_token",
-        "cache_write_price_per_token",
-        "require_provider_cost",
-    ] {
-        if let Some(value) = source::member(row, name)
-            .and_then(|value| value.deserialize::<serde_json::Value>().ok())
-        {
-            fields.insert(name.into(), value);
-        }
-    }
-    if require_provider_cost {
-        fields.insert(
-            "require_provider_cost".into(),
-            serde_json::Value::Bool(true),
-        );
-    }
-    Some(serde_json::Value::Object(fields))
+    fields.retain(|(name, _)| name != &key);
+    fields.push((key, SourceJson::from_serializable(&true)?));
+    Ok(Some(source::object_keys(fields)?))
 }

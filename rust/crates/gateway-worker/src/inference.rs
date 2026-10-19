@@ -413,7 +413,7 @@ pub async fn run(
                 &surplus_models,
                 &prepared.decode.upstream_model,
                 prepared.url.ends_with("/messages"),
-            ),
+            )?,
         });
         let event_stream = headers.iter().any(|(name, value)| {
             name.eq_ignore_ascii_case("content-type") && value.contains("text/event-stream")
