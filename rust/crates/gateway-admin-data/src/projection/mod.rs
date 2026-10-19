@@ -1,5 +1,7 @@
 //! Source: src/quota-projection.ts at dc6be2c3; caller supplies locale comparison explicitly.
 mod refill;
+mod source;
+pub use source::project_quota_source;
 
 use crate::{json_number, number, positive, present, text};
 use serde_json::{Value, json};
@@ -132,20 +134,24 @@ pub fn group_paid_fallback_usage_rollups(rollups: &[Value], compare: LocaleCompa
     result
 }
 
+fn summarize_windows(all_buckets: &[Value], now_ms: f64) -> Vec<Value> {
+    WINDOW_DAYS.iter().map(|days| {
+        let start=((now_ms-f64::from(*days)*24.0*HOUR_MS)/HOUR_MS).floor()*HOUR_MS;
+        let buckets:Vec<&Value>=all_buckets.iter().filter(|row|number(row,"bucket_start_at_ms").is_some_and(|v|v>=start)).collect();
+        let sum=|field| buckets.iter().map(|row|number(row,field).unwrap_or(f64::NAN)).sum::<f64>();
+        let count=sum("request_count"); let quota=sum("quota_sum");
+        let distinct:BTreeSet<u64>=buckets.iter().filter_map(|row|number(row,"bucket_start_at_ms").map(|v|if v==0.0{0}else{v.to_bits()})).collect();
+        let mut output=json!({"window_days":days,"bucket_count":distinct.len(),"first_bucket_start_at_ms":buckets.first().map(|v|present(v,"bucket_start_at_ms")),"last_bucket_start_at_ms":buckets.last().map(|v|present(v,"bucket_start_at_ms"))});
+        for field in ["request_count","quota_sum","spend_microcredits","input_tokens","cached_input_tokens","output_tokens"] { output[field]=json_number(Some(sum(field))); }
+        output["avg_quota_per_request"]=json_number((count>0.0).then_some(quota/count));
+        output["quota_per_hour"]=json_number(Some(quota/(f64::from(*days)*24.0)));
+        output
+    }).collect()
+}
+
 pub fn summarize_paid_fallback_usage(series: &[Value], now_ms: f64) -> Vec<Value> {
     series.iter().map(|series| {
-        let windows:Vec<Value> = WINDOW_DAYS.iter().map(|days| {
-            let start=((now_ms-f64::from(*days)*24.0*HOUR_MS)/HOUR_MS).floor()*HOUR_MS;
-            let buckets:Vec<&Value>=series["buckets"].as_array().into_iter().flatten().filter(|row|number(row,"bucket_start_at_ms").is_some_and(|v|v>=start)).collect();
-            let sum=|field| buckets.iter().map(|row|number(row,field).unwrap_or(f64::NAN)).sum::<f64>();
-            let count=sum("request_count"); let quota=sum("quota_sum");
-            let distinct:BTreeSet<u64>=buckets.iter().filter_map(|row|number(row,"bucket_start_at_ms").map(|v|if v==0.0{0}else{v.to_bits()})).collect();
-            let mut output=json!({"window_days":days,"bucket_count":distinct.len(),"first_bucket_start_at_ms":buckets.first().map(|v|present(v,"bucket_start_at_ms")),"last_bucket_start_at_ms":buckets.last().map(|v|present(v,"bucket_start_at_ms"))});
-            for field in ["request_count","quota_sum","spend_microcredits","input_tokens","cached_input_tokens","output_tokens"] { output[field]=json_number(Some(sum(field))); }
-            output["avg_quota_per_request"]=json_number((count>0.0).then_some(quota/count));
-            output["quota_per_hour"]=json_number(Some(quota/(f64::from(*days)*24.0)));
-            output
-        }).collect();
+        let windows = summarize_windows(series["buckets"].as_array().map_or(&[],Vec::as_slice),now_ms);
         json!({"model":present(series,"model"),"provider":present(series,"provider"),"windows":windows})
     }).collect()
 }
@@ -156,7 +162,23 @@ pub fn project_paid_fallback_runway(
     now_ms: f64,
     history: Option<&[Value]>,
 ) -> Vec<Value> {
-    if text(usage, "provider") != Some("metered") {
+    project_runway_numbers(
+        text(usage, "provider") == Some("metered"),
+        usage["windows"].as_array().map_or(&[], Vec::as_slice),
+        quota,
+        now_ms,
+        history,
+    )
+}
+
+fn project_runway_numbers(
+    metered: bool,
+    windows: &[Value],
+    quota: &Value,
+    now_ms: f64,
+    history: Option<&[Value]>,
+) -> Vec<Value> {
+    if !metered {
         return vec![];
     }
     let unlimited = quota["unlimited_quota"] == true;
@@ -174,7 +196,7 @@ pub fn project_paid_fallback_runway(
             .map(|v| v.max(0.0))
             .or_else(|| positive(number(quota, "total_granted")))
     };
-    usage["windows"].as_array().into_iter().flatten().map(|window| {
+    windows.iter().map(|window| {
         let avg=positive(number(window,"avg_quota_per_request")); let burn=positive(number(window,"quota_per_hour"));
         let requests=balance.zip(avg).map(|(b,a)|(b/a).floor()); let time=balance.zip(burn).map(|(b,r)|(b/r*HOUR_MS).trunc());
         let forecast=if unlimited {refill::empty()}else{refill::project(quota,balance,burn,history,now_ms)};
@@ -182,6 +204,18 @@ pub fn project_paid_fallback_runway(
         out["percent_per_request_vs_balance"]=json_number(balance.filter(|v|*v>0.0).zip(avg).map(|(b,a)|a/b*100.0));
         out["percent_per_request_vs_baseline"]=json_number(baseline.filter(|v|*v>0.0).zip(avg).map(|(b,a)|a/b*100.0)); out
     }).collect()
+}
+
+fn model_projection_numbers(
+    metered: bool,
+    paid: bool,
+    windows: &[Value],
+    quota: &Value,
+    now_ms: f64,
+    history: Option<&[Value]>,
+    window_days: u32,
+) -> Value {
+    json!({"quota_source":if metered{json!("metered")}else{Value::Null},"usage_source":if paid{"paid_fallback"}else{"observability"},"usage":windows.iter().filter(|w|w["window_days"]==window_days).cloned().collect::<Vec<_>>(),"estimates":project_runway_numbers(metered,windows,quota,now_ms,history).into_iter().filter(|w|w["window_days"]==window_days).collect::<Vec<_>>()})
 }
 
 /// Returns only the pure portion of the admin response; host-owned I/O telemetry is separate.
@@ -198,6 +232,25 @@ pub fn project_quota(
         &group_paid_fallback_usage_rollups(rollups.unwrap_or(&[]), compare),
         now_ms,
     );
-    let models:Vec<Value>=usage.iter().map(|entry|json!({"model":entry["model"],"provider":entry["provider"],"quota_source":if entry["provider"]=="metered"{json!("metered")}else{Value::Null},"usage_source":if entry["provider"]=="metered" || entry["provider"]=="surplus"{ "paid_fallback" }else{"observability"},"usage":entry["windows"].as_array().into_iter().flatten().filter(|w|w["window_days"]==window_days).cloned().collect::<Vec<_>>(),"estimates":project_paid_fallback_runway(entry,&quota,now_ms,history).into_iter().filter(|w|w["window_days"]==window_days).collect::<Vec<_>>()})).collect();
+    let models: Vec<Value> = usage
+        .iter()
+        .map(|entry| {
+            let metered = entry["provider"] == "metered";
+            let numbers = model_projection_numbers(
+                metered,
+                metered || entry["provider"] == "surplus",
+                entry["windows"].as_array().map_or(&[], Vec::as_slice),
+                &quota,
+                now_ms,
+                history,
+                window_days,
+            );
+            let mut out = json!({"model":entry["model"],"provider":entry["provider"]});
+            for (key, value) in numbers.as_object().expect("numeric projection object") {
+                out[key] = value.clone();
+            }
+            out
+        })
+        .collect();
     json!({"snapshot_at_ms":json_number(Some(now_ms)),"window_days":window_days,"quota":public_quota_view(&quota),"models":models,"rollup_scan":if rollups.is_some(){"ok"}else{"unavailable"},"balance_history_scan":if history.is_some(){"ok"}else{"unavailable"}})
 }
