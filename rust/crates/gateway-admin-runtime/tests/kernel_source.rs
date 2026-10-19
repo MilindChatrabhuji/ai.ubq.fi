@@ -91,7 +91,8 @@ impl QueryStore for Store {
         })
     }
 }
-impl gateway_authority::AuthorityClock for Store {
+struct Clock;
+impl gateway_authority::AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(NOW)
     }
@@ -358,8 +359,7 @@ fn nonreset_admin_preserves_actual_index_and_cas_while_live_retention_remains_or
         input(selector(&label, "repo", true)),
     ))
     .unwrap();
-    let authority =
-        gateway_authority::Authority::with_clock(store.clone(), store.clone(), store.clone());
+    let authority = gateway_authority::Authority::with_clock(store.clone(), store.clone(), Clock);
     let reservation = run(authority.reserve_kernel(
         "owner",
         "repo",
@@ -453,8 +453,7 @@ fn positive_mapless_source_view_is_not_a_writable_or_live_bound_window() {
     let limit = body::member(&public, "limit").unwrap();
     assert!(body::member(&limit, "reservations").is_none());
     let state = store.rows.borrow().clone();
-    let authority =
-        gateway_authority::Authority::with_clock(store.clone(), store.clone(), store.clone());
+    let authority = gateway_authority::Authority::with_clock(store.clone(), store.clone(), Clock);
     assert!(
         run(authority.reserve_kernel(
             "owner",
@@ -627,8 +626,7 @@ fn inherited_active_org_index_is_not_discarded_by_source_repo_policy_creation() 
         input(selector(&org, "org", true)),
     ))
     .unwrap();
-    let authority =
-        gateway_authority::Authority::with_clock(store.clone(), store.clone(), store.clone());
+    let authority = gateway_authority::Authority::with_clock(store.clone(), store.clone(), Clock);
     let reservation = run(authority.reserve_kernel(
         "owner",
         "repo",
