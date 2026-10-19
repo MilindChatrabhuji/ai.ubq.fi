@@ -9,6 +9,12 @@ mod inverse;
 mod native_capture;
 mod native_custody;
 mod native_inverse;
+pub mod operational;
+mod profile_bindings;
+mod profile_coupling;
+mod profile_reset;
+pub mod profile_runtime;
+mod profile_validate;
 mod projection;
 
 pub use capture::{PrivateCapture, SourceEntry};
@@ -86,6 +92,7 @@ fn private_source_key(p: &[Value]) -> bool {
     starts(p, &["uos_ai", "migration"])
         || starts(p, &["uos_ai", "authority"])
         || starts(p, &["uos_ai", "auth", "session_revision_index"])
+        || starts(p, &["uos_ai", "native_live"])
         || starts(
             p,
             &["uos_ai", "codex_live_calls", "v1", "pending_retirement"],

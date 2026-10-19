@@ -348,7 +348,7 @@ fn actual_tls_terminal_404_retires_before_failure_close() {
 }
 
 #[test]
-fn actual_pipelined_close_before_dial_makes_zero_upstream_connections() {
+fn actual_source_version_8_pipelined_close_before_dial_makes_zero_upstream_connections() {
     let (_, tls) = configs();
     let calls = Arc::new(AtomicUsize::new(0));
     let service = NativeLiveService {
@@ -361,7 +361,10 @@ fn actual_pipelined_close_before_dial_makes_zero_upstream_connections() {
         server_name: ServerName::try_from("127.0.0.1").unwrap(),
     };
     let (address, bridge) = start(service);
-    let request = request(address);
+    let mut request = request(address);
+    request
+        .headers_mut()
+        .insert("sec-websocket-version", "8".parse().unwrap());
     let mut raw = b"GET /v1/native/live HTTP/1.1\r\n".to_vec();
     for (name, value) in request.headers() {
         raw.extend_from_slice(format!("{name}: {}\r\n", value.to_str().unwrap()).as_bytes());
