@@ -3,15 +3,17 @@ use crate::{ObservabilityHost, ledger::ErrorObservation, store};
 use gateway_core::{
     GatewayError,
     js_string::JsString16,
+    source_control::{
+        decode_source_control_record, encode_source_control_record, source_json_tree,
+    },
     source_json::SourceJson,
     state::{RecordKey, RecordMutation, StoredRecord},
-    value::{PortableValue, ValueEncoding},
 };
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-fn trim(value: &JsString16) -> JsString16 {
+pub(crate) fn trim(value: &JsString16) -> JsString16 {
     let whitespace = |v: &u16| char::from_u32(u32::from(*v)).is_some_and(store::js_whitespace);
     let units = value.as_units();
     let start = units
@@ -70,7 +72,7 @@ fn fields(value: &SourceJson) -> Result<Option<BTreeMap<String, SourceJson>>, Ga
     }
     Ok(Some(fields))
 }
-fn number(value: Option<&SourceJson>, fallback: f64) -> f64 {
+pub(crate) fn number(value: Option<&SourceJson>, fallback: f64) -> f64 {
     value
         .and_then(|v| v.deserialize::<f64>().ok())
         .filter(|n| n.is_finite())
@@ -196,17 +198,27 @@ impl RequestLogRecord {
 }
 /// This accessor belongs only to the request/error record schema, never arbitrary history or quota.
 pub fn record_source_json(row: &StoredRecord) -> Result<SourceJson, GatewayError> {
-    match row.value_encoding {
-        ValueEncoding::Json => SourceJson::from_serializable(row.json_value()?),
-        ValueEncoding::ProfileV2 => row.profile_v2_source_json(),
-        ValueEncoding::ProfileV1 | ValueEncoding::SourceGraphV1 => Err(store::error(
-            "Request/error record requires explicit Json or ProfileV2 encoding",
-        )),
-    }
+    decode_source_control_record(row)
 }
+
 pub fn merge_request_fields(
     existing: Option<&RequestLogRecord>,
     patch: &Value,
+    key_id: &str,
+    request_id: &JsString16,
+    created: f64,
+) -> Result<RequestLogRecord, GatewayError> {
+    merge_request_fields_source(
+        existing,
+        &SourceJson::from_serializable(patch)?,
+        key_id,
+        request_id,
+        created,
+    )
+}
+pub fn merge_request_fields_source(
+    existing: Option<&RequestLogRecord>,
+    patch: &SourceJson,
     key_id: &str,
     request_id: &JsString16,
     created: f64,
@@ -215,10 +227,8 @@ pub fn merge_request_fields(
         Some(v) => fields(&v.source_json()?)?.expect("typed request object"),
         None => BTreeMap::new(),
     };
-    if let Some(patch) = patch.as_object() {
-        for (key, value) in patch {
-            values.insert(key.clone(), SourceJson::from_serializable(value)?);
-        }
+    if let Some(patch) = fields(patch)? {
+        values.extend(patch);
     }
     values.insert("id".into(), SourceJson::from_serializable(request_id)?);
     values.insert("key_id".into(), SourceJson::from_serializable(key_id)?);
@@ -240,25 +250,17 @@ pub fn put_record<H: ObservabilityHost>(
     document: &SourceJson,
     expiry: i64,
 ) -> Result<RecordMutation, GatewayError> {
-    let mut values = Vec::new();
-    for (name, value) in document.object_entries()? {
-        let name = name.try_utf8()?;
-        let leaf = if value.as_str().starts_with('"') {
-            PortableValue::StringUtf16(value.deserialize::<JsString16>()?)
-        } else {
-            PortableValue::from_json(&value.deserialize::<Value>()?)
-        };
-        values.push((name, leaf));
-    }
-    let value = PortableValue::Object(values);
-    let revision = store::uuid(host)?;
-    let record = if let Some(json) = value.to_json_lossless() {
-        StoredRecord::json(revision, json, Some(expiry))
-    } else {
-        StoredRecord::profile_v2(revision, value, Some(expiry))?
-    };
+    // Preserve the existing request/error family's lossless scalar-number shape.
+    // This is the retained observation row, never a request transcript shadow.
+    let document = source_json_tree(document)?
+        .to_json_lossless()
+        .map(|value| SourceJson::from_serializable(&value))
+        .transpose()?
+        .unwrap_or_else(|| document.clone());
+    let record = encode_source_control_record(store::uuid(host)?, &document, Some(expiry))?;
     Ok(RecordMutation::Put { key, record })
 }
+
 pub fn error_document(input: &ErrorObservation) -> Result<SourceJson, GatewayError> {
     #[derive(Serialize)]
     struct ErrorRecord<'a> {
@@ -266,8 +268,8 @@ pub fn error_document(input: &ErrorObservation) -> Result<SourceJson, GatewayErr
         route: &'a str,
         status: u16,
         provider: &'a str,
-        model: &'a Option<String>,
-        reasoning: &'a Option<String>,
+        model: &'a Option<JsString16>,
+        reasoning: &'a Option<JsString16>,
         stream: Option<bool>,
         terminal_type: JsString16,
         failure_kind: JsString16,
@@ -312,4 +314,37 @@ pub fn error_document(input: &ErrorObservation) -> Result<SourceJson, GatewayErr
         deno_revision: &input.deno_revision,
         version: 1,
     })
+}
+
+/// Complete source v1 error-log shape validation; preserve original extra fields.
+/// This named reader grants neither key custody nor a live operation.
+pub fn admin_error_record_source(row: &StoredRecord) -> Result<SourceJson, GatewayError> {
+    let document = record_source_json(row)?;
+    let object = crate::replay_values::SourceObject::parse(&document)?;
+    let field = |name: &str| {
+        object
+            .get(name)
+            .ok_or_else(|| store::error("Incomplete admin error record"))
+    };
+    if field("version")?.deserialize::<f64>()? != 1.0 {
+        return Err(store::error("Invalid admin error version"));
+    }
+    for name in [
+        "request_id",
+        "route",
+        "provider",
+        "terminal_type",
+        "failure_kind",
+    ] {
+        field(name)?.deserialize::<JsString16>()?;
+    }
+    for name in ["model", "reasoning", "git_sha", "deno_revision"] {
+        field(name)?.deserialize::<Option<JsString16>>()?;
+    }
+    for name in ["status", "created_at_ms", "latency_ms"] {
+        field(name)?.deserialize::<f64>()?;
+    }
+    field("stream")?.deserialize::<Option<bool>>()?;
+    field("delivery_outcome")?.deserialize::<gateway_core::lifecycle::DeliveryOutcome>()?;
+    Ok(document)
 }
