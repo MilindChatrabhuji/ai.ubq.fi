@@ -316,7 +316,11 @@ impl StreamDecoder {
                 self.plan.decode,
                 ResponseDecode::Responses | ResponseDecode::ResponsesToChat
             ) {
-                crate::source::set(&mut event.data,"sequence_number",crate::source::generated(&self.sequence));
+                crate::source::set(
+                    &mut event.data,
+                    "sequence_number",
+                    crate::source::generated(&self.sequence),
+                );
                 self.sequence += 1;
             }
         }

@@ -12,7 +12,7 @@ fn plan(stream: bool) -> DecodePlan {
         response_id: "resp_fixture".into(),
         created_at: 1,
         stream,
-        request: json!({}),
+        request: gateway_core::source_json::SourceJson::from_serializable(&json!({})).unwrap(),
         tool_names: ToolMap::new(),
         reasoning_summary: None,
     }
@@ -42,12 +42,12 @@ fn buffered_error_only_retains_source502_envelope_and_error_settlement() {
     let decoded = decode_response(&plan(false), 200, &headers(), &frames(&[error])).unwrap();
     assert_eq!(decoded.status, 502);
     assert_eq!(
-        decoded.body,
+        scalar(&decoded.body),
         json!({"error":{"message":"Try again later.","type":"invalid_request_error","code":"provider_busy"}})
     );
     assert_eq!(decoded.terminal, Some(SemanticTerminal::Error));
     assert_eq!(decoded.events.len(), 1);
-    assert_eq!(decoded.events[0].data["type"], "error");
+    assert_eq!(scalar(&decoded.events[0].data)["type"], "error");
     assert_eq!(decoded.headers["Content-Type"], "application/json");
     assert!(decoded.usage.is_none());
 }
@@ -65,7 +65,10 @@ fn created_before_error_is_not_misreported_as_completed_response() {
     .unwrap();
     assert_eq!(decoded.status, 502);
     assert_eq!(decoded.terminal, Some(SemanticTerminal::Error));
-    assert_eq!(decoded.body["error"]["message"], "Terminal failure.");
+    assert_eq!(
+        scalar(&decoded.body)["error"]["message"],
+        "Terminal failure."
+    );
     assert_eq!(decoded.events.len(), 2);
 }
 
@@ -86,7 +89,7 @@ fn streaming_flat_and_nested_errors_preserve_actual_events_and_original_status()
         assert_eq!(decoded.terminal, Some(SemanticTerminal::Error));
         assert_eq!(decoded.body, decoded.events[0].data);
         for (key, value) in error.as_object().unwrap() {
-            assert_eq!(decoded.body[key], *value);
+            assert_eq!(scalar(&decoded.body)[key], *value);
         }
         assert_eq!(decoded.headers["Content-Type"], "text/event-stream");
     }
@@ -105,10 +108,10 @@ fn source_default_error_fields_are_used_for_buffered_nested_terminal() {
     assert_eq!(decoded.status, 502);
     assert_eq!(decoded.terminal, Some(SemanticTerminal::Error));
     assert_eq!(
-        decoded.body,
+        scalar(&decoded.body),
         json!({"error":{"message":"Upstream Responses stream ended unexpectedly.","type":"invalid_request_error","code":"server_error"}})
     );
-    assert_eq!(decoded.events[0].data["error"], error["error"]);
+    assert_eq!(scalar(&decoded.events[0].data)["error"], error["error"]);
 }
 
 #[test]
@@ -133,8 +136,14 @@ fn first_completed_terminal_survives_a_later_error_in_both_client_modes() {
         let decoded = decode_response(&plan(stream), 200, &headers(), &bytes).unwrap();
         assert_eq!(decoded.status, 200);
         assert_eq!(decoded.terminal, Some(SemanticTerminal::Completed));
-        assert_eq!(decoded.body, terminal["response"]);
+        assert_eq!(scalar(&decoded.body), terminal["response"]);
         assert_eq!(decoded.events.len(), 1);
         assert_eq!(decoded.usage, terminal["response"].get("usage").cloned());
     }
+}
+
+fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+    value
+        .deserialize()
+        .expect("This frozen regression fixture has scalar text")
 }

@@ -41,8 +41,16 @@ pub(crate) fn response_event(kind: &str, response: SourceJson) -> crate::types::
     ]))
 }
 
-pub(crate) fn item_event(kind: &str,index: usize,item: SourceJson) -> crate::types::ProviderEvent {
-    crate::types::ProviderEvent::responses_source(s::object(vec![("type",s::text(kind)),("output_index",s::generated(&index)),("item",item)]))
+pub(crate) fn item_event(
+    kind: &str,
+    index: usize,
+    item: SourceJson,
+) -> crate::types::ProviderEvent {
+    crate::types::ProviderEvent::responses_source(s::object(vec![
+        ("type", s::text(kind)),
+        ("output_index", s::generated(&index)),
+        ("item", item),
+    ]))
 }
 
 #[cfg(test)]
@@ -58,14 +66,25 @@ mod tests {
             provider: UpstreamProvider::Lithos,
             surface: ClientSurface::Responses,
             decode: ResponseDecode::ChatToResponses(crate::ChatProfile::Lithos),
-            model: "test".into(), upstream_model: "test".into(), response_id: "resp_test".into(),
-            created_at: 1, stream: true, request: request.clone(),
-            tool_names: ToolMap::new(), reasoning_summary: None,
+            model: "test".into(),
+            upstream_model: "test".into(),
+            response_id: "resp_test".into(),
+            created_at: 1,
+            stream: true,
+            request: request.clone(),
+            tool_names: ToolMap::new(),
+            reasoning_summary: None,
         };
         let body = envelope(&plan, "completed");
-        assert_eq!(json::string(&s::get(&body, "instructions")).unwrap(), JsString16::from_units(vec![0xd800]));
+        assert_eq!(
+            json::string(&s::get(&body, "instructions")).unwrap(),
+            JsString16::from_units(vec![0xd800])
+        );
         assert_eq!(s::get(&body, "tools"), s::get(&request, "tools"));
-        assert_eq!(s::get(&body, "tool_choice"), s::get(&request, "tool_choice"));
+        assert_eq!(
+            s::get(&body, "tool_choice"),
+            s::get(&request, "tool_choice")
+        );
         assert!(body.deserialize::<serde_json::Value>().is_err());
         let event = response_event("response.completed", body.clone());
         assert_eq!(event.field("response"), Some(body));

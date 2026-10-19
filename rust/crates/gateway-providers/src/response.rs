@@ -1,14 +1,14 @@
 //! Buffered response validation and translation. Transport success is not semantic completion.
+use crate::source as s;
 use crate::{
     tools,
     types::*,
     usage,
     writer::{ResponseWriter, envelope, finish_disposition},
 };
+use gateway_core::source_json::SourceJson;
 use gateway_core::{GatewayError, lifecycle::SemanticTerminal, provider::UpstreamProvider};
 use serde_json::{Value, json};
-use crate::source as s;
-use gateway_core::source_json::SourceJson;
 pub fn normalize_chat_completion(value: &Value, plan: &DecodePlan) -> Result<Value, GatewayError> {
     let id = value["id"]
         .as_str()
@@ -122,7 +122,16 @@ pub fn chat_completion_to_responses(
         _ => "failed",
     };
     let mut body = envelope(plan, status);
-    s::set(&mut body,"created_at",s::generated(&completion.get("created").cloned().unwrap_or(json!(plan.created_at))));
+    s::set(
+        &mut body,
+        "created_at",
+        s::generated(
+            &completion
+                .get("created")
+                .cloned()
+                .unwrap_or(json!(plan.created_at)),
+        ),
+    );
     let mut output = vec![];
     for (choice_index, choice) in completion["choices"]
         .as_array()
@@ -171,17 +180,33 @@ pub fn chat_completion_to_responses(
             ));
         }
     }
-    s::set(&mut body,"output",s::array(&output));
-    s::set(&mut body,"usage",s::generated(&usage::chat_to_responses(&completion["usage"],profile)));
+    s::set(&mut body, "output", s::array(&output));
+    s::set(
+        &mut body,
+        "usage",
+        s::generated(&usage::chat_to_responses(&completion["usage"], profile)),
+    );
     if let Some(incomplete) = incomplete {
-        s::set(&mut body,"incomplete_details",s::generated(&json!({"reason":incomplete})));
+        s::set(
+            &mut body,
+            "incomplete_details",
+            s::generated(&json!({"reason":incomplete})),
+        );
     }
     if let Some(error) = error {
-        s::set(&mut body,"error",s::generated(&json!({"code":error,"message":format!("Upstream stopped generating: {error}")})));
+        s::set(
+            &mut body,
+            "error",
+            s::generated(
+                &json!({"code":error,"message":format!("Upstream stopped generating: {error}")}),
+            ),
+        );
     }
     body
 }
-pub fn response_to_chat(payload: &Value,plan: &DecodePlan) -> Result<SourceJson,GatewayError> {crate::source_response::to_chat(&s::generated(payload),plan)}
+pub fn response_to_chat(payload: &Value, plan: &DecodePlan) -> Result<SourceJson, GatewayError> {
+    crate::source_response::to_chat(&s::generated(payload), plan)
+}
 fn replay_chat(completion: &Value, plan: &DecodePlan, profile: ChatProfile) -> Vec<ProviderEvent> {
     let mut writer = ResponseWriter::new(plan.clone());
     let mut delta = completion["choices"][0]["message"].clone();
@@ -329,7 +354,9 @@ pub fn decode_response(
         // The decoder stops at the first terminal. An error must not fall back to
         // an earlier response.created payload or the generic completed sentinel.
         if plan.surface == ClientSurface::Responses
-            && let Some(event) = events.iter().find(|event| event.type_name().as_deref()==Some("error"))
+            && let Some(event) = events
+                .iter()
+                .find(|event| event.type_name().as_deref() == Some("error"))
         {
             let body = if plan.stream {
                 output_headers.insert("Content-Type".into(), "text/event-stream".into());
@@ -365,7 +392,7 @@ pub fn decode_response(
         if plan.surface == ClientSurface::Chat
             && let Some(usage) = decoder.observed_usage().and_then(usage::responses_to_chat)
         {
-            s::set(&mut body,"usage",s::generated(&usage));
+            s::set(&mut body, "usage", s::generated(&usage));
         }
         if plan.stream {
             output_headers.insert("Content-Type".into(), "text/event-stream".into());
@@ -375,7 +402,7 @@ pub fn decode_response(
                 .terminal_observed()
                 .then_some(SemanticTerminal::Completed)
         });
-        let usage = crate::source_collector::usage(&s::get(&body,"usage"));
+        let usage = crate::source_collector::usage(&s::get(&body, "usage"));
         return Ok(DecodedResponse {
             status,
             headers: output_headers,
@@ -398,7 +425,11 @@ pub fn decode_response(
         return Ok(DecodedResponse {
             status,
             headers: output_headers,
-            body: s::generated(&if value["error"].is_object() {value} else {json!({"error":{"message":format!("Upstream request failed ({status})."),"type":"server_error","code":"upstream_error","param":null}})}),
+            body: s::generated(&if value["error"].is_object() {
+                value
+            } else {
+                json!({"error":{"message":format!("Upstream request failed ({status})."),"type":"server_error","code":"upstream_error","param":null}})
+            }),
             events: vec![],
             terminal: Some(SemanticTerminal::Error),
             usage: None,
@@ -445,7 +476,9 @@ pub fn decode_response(
                 return Err(cerebras_empty());
             }
             let body = chat_completion_to_responses(&completion, plan, profile);
-            if s::is(&s::get(&body,"status"),"completed") && !crate::source_policy::response_has_answer(&body) {
+            if s::is(&s::get(&body, "status"), "completed")
+                && !crate::source_policy::response_has_answer(&body)
+            {
                 return Err(GatewayError::new(
                     502,
                     "Upstream response completed with no translated semantic output.",
@@ -457,12 +490,12 @@ pub fn decode_response(
                 events = replay_chat(&completion, plan, profile);
             }
             if plan.decode == ResponseDecode::AnthropicChatToResponses
-                && s::is(&s::get(&body,"status"),"completed")
+                && s::is(&s::get(&body, "status"), "completed")
             {
                 native_replay = value["choices"][0].get("message").cloned();
             }
             if plan.surface == ClientSurface::Chat {
-                crate::source_response::to_chat(&body,plan)?
+                crate::source_response::to_chat(&body, plan)?
             } else {
                 body
             }
@@ -470,11 +503,11 @@ pub fn decode_response(
         ResponseDecode::AnthropicToResponses => {
             let (body, translated) = decode_anthropic(&value, plan)?;
             events = if plan.stream { translated } else { vec![] };
-            if s::is(&s::get(&body,"status"),"completed") {
+            if s::is(&s::get(&body, "status"), "completed") {
                 native_replay = Some(json!({"role":"assistant","content":value["content"]}));
             }
             if plan.surface == ClientSurface::Chat {
-                crate::source_response::to_chat(&body,plan)?
+                crate::source_response::to_chat(&body, plan)?
             } else {
                 body
             }
@@ -510,7 +543,7 @@ pub fn decode_response(
         )
         .then_some(SemanticTerminal::Completed)
     });
-    let usage = crate::source_collector::usage(&s::get(&body,"usage"));
+    let usage = crate::source_collector::usage(&s::get(&body, "usage"));
     Ok(DecodedResponse {
         status,
         headers: output_headers,
@@ -537,8 +570,20 @@ fn cerebras_empty() -> GatewayError {
     )
     .with_type("server_error")
 }
-fn terminal_for(value: &SourceJson) -> Option<SemanticTerminal> {match s::control(&s::get(value,"status")).as_deref() {Some("completed")=>Some(SemanticTerminal::Completed),Some("incomplete")=>Some(SemanticTerminal::Incomplete),Some("failed")=>Some(SemanticTerminal::Failed),_=>None}}
-fn collect_chat_events(events: &[ProviderEvent],plan: &DecodePlan) -> Result<SourceJson,GatewayError> {crate::source_response::collect(events,plan)}
+fn terminal_for(value: &SourceJson) -> Option<SemanticTerminal> {
+    match s::control(&s::get(value, "status")).as_deref() {
+        Some("completed") => Some(SemanticTerminal::Completed),
+        Some("incomplete") => Some(SemanticTerminal::Incomplete),
+        Some("failed") => Some(SemanticTerminal::Failed),
+        _ => None,
+    }
+}
+fn collect_chat_events(
+    events: &[ProviderEvent],
+    plan: &DecodePlan,
+) -> Result<SourceJson, GatewayError> {
+    crate::source_response::collect(events, plan)
+}
 
 pub(crate) fn native_response_id(id: &str, fallback: &str) -> String {
     let clean = id

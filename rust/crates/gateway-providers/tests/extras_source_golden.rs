@@ -370,7 +370,7 @@ fn image_scalar_error_order_and_child_identity_follow_source() {
 fn systemone_default_and_exact_error_envelopes_follow_source() {
     let request = json!({"state":{},"questions":{"go":{"type":"noul"}}});
     let prepared = extras::prepare_systemone(&request, &PrepareOptions::default()).unwrap();
-    assert_eq!(prepared.body["model"], "~typesafe/jev-latest");
+    assert_eq!(scalar(&prepared.body)["model"], "~typesafe/jev-latest");
     for value in [Value::Null, json!([])] {
         error(
             extras::prepare_systemone(&value, &PrepareOptions::default()).unwrap_err(),
@@ -443,4 +443,10 @@ fn multipart_scalar_strings_follow_source_grammar_and_fail_before_file_validatio
         "invalid_request_error",
         Some(Some("moderation")),
     );
+}
+
+fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+    value
+        .deserialize()
+        .expect("This frozen regression fixture has scalar text")
 }

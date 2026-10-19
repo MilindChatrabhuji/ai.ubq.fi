@@ -28,6 +28,35 @@ fn text_encoder_len(value: &[u16]) -> usize {
         .sum()
 }
 
+pub(crate) fn oversized(
+    path: &str,
+    original_bytes: usize,
+    call_id: Option<&JsString16>,
+) -> gateway_schema::source_request::SourceRequestError {
+    let call_note = call_id
+        .map(|id| {
+            crate::source::concat(&[
+                &JsString16::from_utf8(" (tool call "),
+                id,
+                &JsString16::from_utf8(")"),
+            ])
+        })
+        .unwrap_or_default();
+    let message = crate::source::concat(&[
+        &JsString16::from_utf8(&format!("input item {path}")),
+        &call_note,
+        &JsString16::from_utf8(&format!(
+            " carries {original_bytes} bytes; this route forwards at most {FORWARD_LIMIT} bytes per message under {FORWARD_VERSION}, and the request set truncation 'disabled', so the gateway will not reduce it. Reduce the payload or send truncation 'auto' to allow the declared reduction."
+        )),
+    ]);
+    gateway_schema::source_request::SourceRequestError::new(
+        400,
+        message,
+        "invalid_request_error",
+        Some("context_length_exceeded"),
+        Some(Some(JsString16::from_utf8(path))),
+    )
+}
 pub(crate) fn bound_source(
     text: &JsString16,
     path: &str,
@@ -36,21 +65,27 @@ pub(crate) fn bound_source(
     reject: bool,
     elisions: &mut Vec<Elision>,
 ) -> crate::source::Result<JsString16> {
+    bound_source_limit(text, path, call_id, kind, reject, elisions, FORWARD_LIMIT)
+}
+pub(crate) fn bound_source_limit(
+    text: &JsString16,
+    path: &str,
+    call_id: Option<&JsString16>,
+    kind: &str,
+    reject: bool,
+    elisions: &mut Vec<Elision>,
+    limit: usize,
+) -> crate::source::Result<JsString16> {
     let original_bytes = text_encoder_len(text.as_units());
-    if original_bytes <= FORWARD_LIMIT {
+    if original_bytes <= limit {
         return Ok(text.clone());
     }
     if reject {
-        let call_note = call_id.map(|id| crate::source::concat(&[&JsString16::from_utf8(" (tool call "), id, &JsString16::from_utf8(")")])).unwrap_or_default();
-        let message = crate::source::concat(&[
-            &JsString16::from_utf8(&format!("input item {path}")), &call_note,
-            &JsString16::from_utf8(&format!(" carries {original_bytes} bytes; this route forwards at most {FORWARD_LIMIT} bytes per message under {FORWARD_VERSION}, and the request set truncation 'disabled', so the gateway will not reduce it. Reduce the payload or send truncation 'auto' to allow the declared reduction.")),
-        ]);
-        return Err(gateway_schema::source_request::SourceRequestError::new(400, message, "invalid_request_error", Some("context_length_exceeded"), Some(Some(JsString16::from_utf8(path)))));
+        return Err(oversized(path, original_bytes, call_id));
     }
     // Source utf8Head starts with a code-unit budget, not a UTF8 byte offset.
-    let mut head = utf16_head(text.as_units(), FORWARD_LIMIT);
-    while !head.is_empty() && text_encoder_len(head) > FORWARD_LIMIT {
+    let mut head = utf16_head(text.as_units(), limit);
+    while !head.is_empty() && text_encoder_len(head) > limit {
         head = utf16_head(head, (head.len() as f64 * 0.9).floor() as usize);
     }
     loop {
@@ -59,7 +94,7 @@ pub(crate) fn bound_source(
         let marker = format!(
             "\n[gateway: {FORWARD_VERSION} elided {omitted} bytes omitted; the model did not receive the elided bytes; this route forwards at most {FORWARD_LIMIT} bytes per message because the provider counts forwarded payloads as text tokens]"
         );
-        if head.is_empty() || head_bytes + marker.len() <= FORWARD_LIMIT {
+        if head.is_empty() || head_bytes + marker.len() <= limit {
             let mut units = head.to_vec();
             units.extend(marker.encode_utf16());
             elisions.push(Elision {
@@ -76,12 +111,27 @@ pub(crate) fn bound_source(
     }
 }
 
-pub fn responses_messages(raw: &Value) -> Result<(Vec<gateway_core::source_json::SourceJson>, Vec<Elision>), GatewayError> {
-    crate::source_chat::messages(&crate::source::generated(raw)).map_err(crate::source::scalar_error)
+pub fn responses_messages(
+    raw: &Value,
+) -> Result<(Vec<gateway_core::source_json::SourceJson>, Vec<Elision>), GatewayError> {
+    crate::source_chat::messages(&crate::source::generated(raw))
+        .map_err(crate::source::scalar_error)
 }
-pub fn project_responses(raw: &Value, model: &str, stream: bool, profile: ChatProfile) -> Result<ChatProjection, GatewayError> {
-    let projection=crate::source_chat::project(&crate::source::generated(raw),model,stream,profile).map_err(crate::source::scalar_error)?;
-    Ok(ChatProjection{body:projection.body,tool_names:projection.names,elisions:projection.elisions,warnings:projection.warnings})
+pub fn project_responses(
+    raw: &Value,
+    model: &str,
+    stream: bool,
+    profile: ChatProfile,
+) -> Result<ChatProjection, GatewayError> {
+    let projection =
+        crate::source_chat::project(&crate::source::generated(raw), model, stream, profile)
+            .map_err(crate::source::scalar_error)?;
+    Ok(ChatProjection {
+        body: projection.body,
+        tool_names: projection.names,
+        elisions: projection.elisions,
+        warnings: projection.warnings,
+    })
 }
 pub fn project_effort(value: &str, profile: ChatProfile) -> Result<String, GatewayError> {
     let effort = value.trim().to_lowercase();
