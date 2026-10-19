@@ -5,10 +5,6 @@ import { progressiveBody } from "./direct.ts";
 
 async function catalogCases(context: MatrixContext): Promise<void> {
   const headers = { authorization: `Bearer ${context.clientToken ?? "fixture-access"}` };
-  const ordinary = await responseObject(await fetch(context.url("/v1/models"), { headers }));
-  assert.equal(ordinary.object, "list");
-  assert(!("models" in ordinary));
-  assert(Array.isArray(ordinary.data) && ordinary.data.some((value) => object(value).id === MATRIX_MODELS.codex));
   const native = await responseObject(await fetch(context.url("/v1/models?client_version=0.163.0"), { headers }));
   assert(Array.isArray(native.models));
   const model = native.models.map(object).find((value) => value.slug === MATRIX_MODELS.codex);
@@ -20,6 +16,10 @@ async function catalogCases(context: MatrixContext): Promise<void> {
     "Nonempty source tiers cannot be hard-coded away"
   );
   assert(levels.map(object).some((level) => level.effort === "none"));
+  const ordinary = await responseObject(await fetch(context.url("/v1/models"), { headers }));
+  assert.equal(ordinary.object, "list");
+  assert(!("models" in ordinary));
+  assert(Array.isArray(ordinary.data) && ordinary.data.some((value) => object(value).id === MATRIX_MODELS.codex));
   context.cases.push("matrix_codex_official_and_exact_version_catalogues_preserve_source_tiers");
 }
 
