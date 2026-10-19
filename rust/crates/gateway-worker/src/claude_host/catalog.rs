@@ -14,7 +14,9 @@ use gateway_catalog_runtime::{
     ProviderBinding,
 };
 use gateway_claude_runtime::ClaudePoolHost;
-use gateway_core::{GatewayError, state::RevisionCheck};
+use gateway_core::{
+    GatewayError, js_string::JsString16, source_json::SourceJson, state::RevisionCheck,
+};
 use gateway_schema::catalog::ProviderCatalog;
 use std::collections::BTreeMap;
 
@@ -85,6 +87,11 @@ struct AccountCatalog<'a> {
     generation: StateSnapshot,
 }
 impl CatalogHost for AccountCatalog<'_> {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        crate::source_collator::shared()
+    }
     fn now_ms(&self) -> i64 {
         self.host.platform.now_ms()
     }
@@ -215,7 +222,7 @@ async fn page(
         .map_err(|_| super::invalid("Claude catalog URL is invalid."))?;
     url.query_pairs_mut().append_pair("limit", "100");
     if let Some(cursor) = after_id {
-        url.query_pairs_mut().append_pair("after_id", &cursor);
+        append_cursor(&mut url, &cursor);
     }
     current(store, platform, account, generation).await?;
     let cancellation = platform.cancellation.child()?;
@@ -288,7 +295,7 @@ fn cancelled() -> GatewayError {
 pub(super) async fn prime(
     host: &Host,
     account: &AccountBinding,
-    models: Vec<serde_json::Value>,
+    models: Vec<SourceJson>,
     fetched_at_ms: i64,
 ) -> Result<bool, GatewayError> {
     let generation = super::generation();
@@ -314,4 +321,40 @@ pub(super) async fn prime(
     crate::catalog::service()
         .cache_validated_claude(&host.store, &adapter, &identity, models, fetched_at_ms)
         .await
+}
+
+/// The fixed query append is the source URLSearchParams USVString boundary.
+/// Keep exact cursor units for loop identity; replace unpaired units only here.
+pub(super) fn append_cursor(url: &mut worker::Url, cursor: &JsString16) {
+    url.query_pairs_mut()
+        .append_pair("after_id", &String::from_utf16_lossy(cursor.as_units()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cursor_identity_is_exact_until_the_query_usv_boundary() {
+        let cursors = [
+            JsString16::from_units(vec![0xd800]),
+            JsString16::from_units(vec![0xdc00]),
+            JsString16::from_units(vec![0xfffd]),
+        ];
+        let identities = cursors
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(identities.len(), 3);
+        for cursor in &cursors {
+            let before = cursor.clone();
+            let mut url = worker::Url::parse("https://api.anthropic.com/v1/models").unwrap();
+            append_cursor(&mut url, cursor);
+            assert_eq!(cursor, &before);
+            assert_eq!(url.query(), Some("after_id=%EF%BF%BD"));
+        }
+        let mut url = worker::Url::parse("https://api.anthropic.com/v1/models").unwrap();
+        append_cursor(&mut url, &JsString16::from_units(vec![0xd83d, 0xde00]));
+        assert_eq!(url.query(), Some("after_id=%F0%9F%98%80"));
+    }
 }

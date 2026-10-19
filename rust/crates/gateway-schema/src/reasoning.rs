@@ -61,10 +61,10 @@ impl ModelReasoning {
                     control::normalized(Some(v))
                 }
             });
-        if let Some(default) = &default_level {
-            if !levels.contains(default) {
-                levels.push(default.clone());
-            }
+        if let Some(default) = &default_level
+            && !levels.contains(default)
+        {
+            levels.push(default.clone());
         }
         let mut wire_efforts = Vec::<(JsString16, SourceJson)>::new();
         if let Some(wires) = record

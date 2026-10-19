@@ -58,14 +58,15 @@ pub fn compact_snapshot(snapshot: &ModelSnapshot) -> Result<SourceJson, GatewayE
             "runtime config requires a non-empty Codex model catalog",
         ));
     }
-    if crate::util::js_trim(&snapshot.source).is_empty() || snapshot.updated_at_ms <= 0 {
+    let source_label = c::trim(&snapshot.source);
+    if source_label.as_units().is_empty() || snapshot.updated_at_ms <= 0 {
         return Err(error(
             "runtime config requires valid Codex catalog metadata",
         ));
     }
     let mut value = c::object(vec![
         ("models", c::json(&models)),
-        ("source", c::json(crate::util::js_trim(&snapshot.source))),
+        ("source", c::json(&source_label)),
         ("updated_at_ms", c::json(&snapshot.updated_at_ms)),
     ]);
     if let Some(version) = snapshot

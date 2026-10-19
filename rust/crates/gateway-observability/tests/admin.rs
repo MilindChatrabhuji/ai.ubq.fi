@@ -36,6 +36,11 @@ struct AdminHost {
     raw: Vec<u8>,
 }
 impl ObservabilityHost for AdminHost {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        self.base.source_string_collator()
+    }
     fn now_ms(&self) -> i64 {
         self.base.now_ms()
     }
@@ -225,35 +230,16 @@ fn projection_distinguishes_failed_scans_and_retains_both_ends_of_long_balance_h
         );
     }
     let response = run(runtime.quota_projection_response(30, 365)).unwrap();
-    assert_eq!(
-        response.body.as_json().unwrap()["balance_history"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
-    );
-    assert_eq!(
-        response.body.as_json().unwrap()["balance_history_scan"],
-        "ok"
-    );
-    assert_eq!(
-        response.body.as_json().unwrap()["retention"]["balance_history_bucket_ms"],
-        25 * 3600000
-    );
+    let body: Value = serde_json::from_slice(&response.body.to_bytes().unwrap()).unwrap();
+    assert_eq!(body["balance_history"].as_array().unwrap().len(), 2);
+    assert_eq!(body["balance_history_scan"], "ok");
+    assert_eq!(body["retention"]["balance_history_bucket_ms"], 25 * 3600000);
     memory.unavailable.set(true);
     let response = run(runtime.quota_projection_response(30, 365)).unwrap();
-    assert_eq!(
-        response.body.as_json().unwrap()["rollup_scan"],
-        "unavailable"
-    );
-    assert_eq!(
-        response.body.as_json().unwrap()["balance_history_scan"],
-        "unavailable"
-    );
-    assert_eq!(
-        response.body.as_json().unwrap()["ledger_growth"]["scan"],
-        "unavailable"
-    );
+    let body: Value = serde_json::from_slice(&response.body.to_bytes().unwrap()).unwrap();
+    assert_eq!(body["rollup_scan"], "unavailable");
+    assert_eq!(body["balance_history_scan"], "unavailable");
+    assert_eq!(body["ledger_growth"]["scan"], "unavailable");
 }
 #[test]
 fn resampling_keeps_newest_observation_without_changing_its_time() {
