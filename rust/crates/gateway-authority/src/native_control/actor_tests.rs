@@ -33,9 +33,10 @@ fn run<F: Future>(future: F) -> F::Output {
 struct Store {
     rows: Arc<Mutex<BTreeMap<String, StoredRecord>>>,
     now: Arc<AtomicI64>,
-    race: Arc<Mutex<Option<(RecordKey, Option<StoredRecord>)>>>,
+    race: Arc<Mutex<PendingRace>>,
     commit_time: Arc<AtomicI64>,
 }
+type PendingRace = Option<(RecordKey, Option<StoredRecord>)>;
 impl Default for Store {
     fn default() -> Self {
         Self {
