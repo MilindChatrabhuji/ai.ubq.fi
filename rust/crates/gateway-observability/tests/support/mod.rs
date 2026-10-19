@@ -68,10 +68,10 @@ impl AuthorityStore for Memory {
             let key = match mutation {
                 RecordMutation::Put { key, .. } | RecordMutation::Delete { key } => key,
             };
-            !checks.contains(&key.0) || !writes.insert(key.0.clone())
+            !writes.insert(key.0.clone())
         }) {
             return Err(GatewayError::unavailable(
-                "Fixture requires one unique checked mutation like the actual Worker store",
+                "Fixture requires one final mutation per key like the actual Worker store",
                 "fixture_invalid_transition",
             ));
         }
