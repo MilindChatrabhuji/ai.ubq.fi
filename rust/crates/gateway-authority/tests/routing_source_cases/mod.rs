@@ -1,3 +1,4 @@
+mod live_selection;
 use super::support::*;
 use gateway_authority::routing::*;
 use gateway_core::identity::{
