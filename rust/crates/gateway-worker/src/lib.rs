@@ -23,6 +23,7 @@ mod host;
 mod image_host;
 mod inference;
 mod inference_capture;
+mod inference_lifecycle;
 mod lifecycle;
 mod live_host;
 mod live_http;

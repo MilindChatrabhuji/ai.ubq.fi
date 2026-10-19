@@ -24,14 +24,10 @@ fn usage(row: TokenLog) -> PaidUsage {
     }
 }
 
-pub async fn lookup(
+pub(crate) async fn stored_attempt(
     store: &RemoteAuthorityStore,
-    env: &worker::Env,
     reservation: &PaidReservation,
-) -> Result<Option<PaidUsage>, GatewayError> {
-    if reservation.provider == PaidProvider::Surplus {
-        return Ok(None);
-    }
+) -> Result<PaidAttempt, GatewayError> {
     let row = store
         .read(&gateway_authority::keys::paid_attempt(
             &reservation.key_id.0,
@@ -41,11 +37,38 @@ pub async fn lookup(
         .ok_or_else(|| unavailable("The paid attempt is unavailable."))?;
     let attempt: PaidAttempt = serde_json::from_value(row.json_value()?.clone())
         .map_err(|_| unavailable("The paid attempt is invalid."))?;
-    if attempt.v != 1 || attempt.reservation != *reservation {
+    if attempt.v != 3 || attempt.reservation != *reservation {
         return Err(unavailable(
             "The billing lookup does not match its admitted attempt.",
         ));
     }
+    Ok(attempt)
+}
+
+pub(crate) async fn terminal_usage(
+    store: &RemoteAuthorityStore,
+    reservation: &PaidReservation,
+    usage: Option<&gateway_core::source_usage::UsageTokens>,
+    pricing: Option<&Value>,
+) -> Result<Option<PaidUsage>, GatewayError> {
+    if reservation.provider != PaidProvider::Surplus {
+        return Ok(None);
+    }
+    let attempt = stored_attempt(store, reservation).await?;
+    Ok(gateway_authority::paid::surplus_usage_from_source(
+        &attempt, usage, pricing,
+    ))
+}
+
+pub async fn lookup(
+    store: &RemoteAuthorityStore,
+    env: &worker::Env,
+    reservation: &PaidReservation,
+) -> Result<Option<PaidUsage>, GatewayError> {
+    if reservation.provider == PaidProvider::Surplus {
+        return Ok(None);
+    }
+    let attempt = stored_attempt(store, reservation).await?;
     let LookupPlan::Openlux(mut plan) = plan_lookup(
         reservation.provider,
         attempt.provider_request_id.as_deref(),

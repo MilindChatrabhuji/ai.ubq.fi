@@ -36,7 +36,16 @@ pub struct Capture {
     trace: TraceRecorder,
     trace_valid: Cell<bool>,
     finished: Cell<bool>,
+    terminal_request: RefCell<Option<TerminalRequest>>,
+    provider_request_id: RefCell<Option<String>>,
     client: RefCell<ClientWire>,
+}
+#[derive(Clone)]
+struct TerminalRequest {
+    context: gateway_core::identity::RequestContext,
+    model: String,
+    reasoning: Option<String>,
+    prompt_cache_key_present: bool,
 }
 struct ClientWire {
     status: u16,
@@ -71,6 +80,8 @@ impl Capture {
             trace: TraceRecorder::default(),
             trace_valid: Cell::new(true),
             finished: Cell::new(false),
+            terminal_request: RefCell::new(None),
+            provider_request_id: RefCell::new(None),
             client: RefCell::new(ClientWire {
                 status: 500,
                 stream: false,
@@ -84,6 +95,180 @@ impl Capture {
                 body_bytes: 0,
             }),
         })
+    }
+    pub async fn begin(
+        &self,
+        context: &gateway_core::identity::RequestContext,
+        model: &str,
+        raw: &serde_json::Value,
+        stream: bool,
+    ) {
+        if self.terminal_request.borrow().is_some() {
+            return;
+        }
+        let reasoning = raw
+            .pointer("/reasoning/effort")
+            .or_else(|| raw.get("reasoning_effort"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        let prompt_cache_key_present = raw
+            .get("prompt_cache_key")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|key| !gateway_schema::util::js_trim(key).is_empty());
+        *self.terminal_request.borrow_mut() = Some(TerminalRequest {
+            context: context.clone(),
+            model: model.into(),
+            reasoning: reasoning.clone(),
+            prompt_cache_key_present,
+        });
+        if let Some(key) = &context.key_id {
+            let record = serde_json::json!({"id":context.request_id.0,"key_id":key.0,"route":context.route,"path":crate::normalized_path(&self.request.path()),"method":self.request.method().to_string(),"created_at_ms":context.started_at_ms,"status_code":0,"model":model,"stream":stream,"reasoning":reasoning});
+            if let Err(error) = self.runtime.record_request_log(&key.0, &record).await {
+                worker::console_error!(
+                    "Request log creation remains unavailable: {}",
+                    error.envelope.error.message
+                );
+            }
+        }
+    }
+
+    async fn record_terminal(
+        &self,
+        observation: TransportObservation,
+        usage: Option<&serde_json::Value>,
+        paid: Option<&gateway_authority::paid::PaidAttempt>,
+    ) {
+        let Some(request) = self.terminal_request.borrow().clone() else {
+            return;
+        };
+        let (status, provider, stream, observed_terminal) = {
+            let wire = self.client.borrow();
+            (
+                wire.status,
+                wire.provider.clone(),
+                wire.stream,
+                wire.terminal.clone(),
+            )
+        };
+        let extracted = gateway_core::source_usage::extract_usage_tokens(usage);
+        let completed = source_completed(observation);
+        let mut event = gateway_observability::prompt::PromptEvent {
+            provider: Some(provider.clone()),
+            model: Some(request.model.clone()),
+            route: request.context.route.clone(),
+            status,
+            completed,
+            usage_telemetry_status: "missing".into(),
+            input_tokens: None,
+            cached_input_tokens: None,
+            cache_write_input_tokens: None,
+            cache_write_tokens_present: false,
+            prompt_cache_key_present: request.prompt_cache_key_present,
+            prompt_cache_mode: None,
+            fallback_reason: None,
+        };
+        event.set_source_usage(extracted.as_ref());
+        let _telemetry = self
+            .runtime
+            .record_prompt_telemetry(&event, env!("UOS_RUST_BUILD_GIT_SHA"))
+            .await;
+        let _analytics = self
+            .runtime
+            .record_prompt_analytics(&event, env!("UOS_RUST_BUILD_GIT_SHA"))
+            .await;
+        if let Err(error) = self
+            .runtime
+            .record_terminal_usage_rollup(gateway_observability::ledger::TerminalUsageRollup {
+                model: Some(&request.model),
+                provider: Some(&provider),
+                request_id: &self.request_id,
+                request_created_at_ms: Some(request.context.started_at_ms as f64),
+                usage: extracted.as_ref(),
+            })
+            .await
+        {
+            worker::console_error!(
+                "Terminal usage rollup remains unavailable: {}",
+                error.envelope.error.message
+            );
+        }
+        let error_observation = async {
+            let at = now_ms()?;
+            let terminal = observation
+                .semantic_terminal
+                .map(|terminal| {
+                    match terminal {
+                        SemanticTerminal::Completed => "response.completed",
+                        SemanticTerminal::Failed => "response.failed",
+                        SemanticTerminal::Incomplete => "response.incomplete",
+                        SemanticTerminal::Error => "error",
+                    }
+                    .to_owned()
+                })
+                .or(observed_terminal)
+                .or_else(|| match observation.reader_termination {
+                    Some(ReaderTermination::ReadError) => Some("error".into()),
+                    Some(ReaderTermination::Deadline) => Some("deadline".into()),
+                    Some(ReaderTermination::Eof) if stream => Some("eof".into()),
+                    _ => None,
+                });
+            let failure_kind = match observation.reader_termination {
+                Some(ReaderTermination::ReadError) => Some("gateway_stream_read_error".into()),
+                Some(ReaderTermination::Deadline) => Some("gateway_timeout".into()),
+                _ => None,
+            };
+            self.runtime
+                .record_admin_error(&gateway_observability::ledger::ErrorObservation {
+                    request_id: self.request_id.clone(),
+                    route: request.context.route.clone(),
+                    status,
+                    provider: provider.clone(),
+                    model: Some(request.model.clone()),
+                    reasoning: request.reasoning.clone(),
+                    stream: Some(stream),
+                    terminal_type: terminal,
+                    failure_kind,
+                    delivery_outcome: observation.delivery,
+                    created_at_ms: at,
+                    latency_ms: at.saturating_sub(request.context.started_at_ms).max(0),
+                    git_sha: Some(env!("UOS_RUST_BUILD_GIT_SHA").into()),
+                    deno_revision: Some(env!("UOS_RUST_BUILD_DEPLOYMENT_ID").into()),
+                })
+                .await
+        }
+        .await;
+        if let Err(error) = error_observation {
+            worker::console_error!(
+                "Administrative error observation remains unavailable: {}",
+                error.envelope.error.message
+            );
+        }
+        if let Some(key) = &request.context.key_id {
+            let result = async {
+                let at = now_ms()?;
+                let mut patch = serde_json::json!({"status_code":status,"provider":provider,"completed_at_ms":at,"latency_ms":at.saturating_sub(request.context.started_at_ms).max(0),"model":request.model,"reasoning":request.reasoning,"input_tokens":extracted.as_ref().and_then(|usage|usage.input_tokens),"output_tokens":extracted.as_ref().and_then(|usage|usage.output_tokens),"provider_request_id":self.provider_request_id.borrow().clone()});
+                if let Some(paid) = paid {
+                    let billing = match paid.billing_state { gateway_core::lifecycle::BillingState::Pending => "pending", gateway_core::lifecycle::BillingState::Settled => "reconciled", gateway_core::lifecycle::BillingState::NotBilled => "not_billed", gateway_core::lifecycle::BillingState::Unresolved => "unresolved" };
+                    patch["billing_status"] = serde_json::json!(billing);
+                    patch["provider_request_id"] = serde_json::json!(paid.provider_request_id);
+                    patch["provider_quota"] = serde_json::json!(paid.provider_quota);
+                    patch["quota_per_credit"] = serde_json::json!(paid.quota_per_credit);
+                    patch["spend_microcredits"] = serde_json::json!(paid.spend_microcredits);
+                    patch["paid_fallback_window_reset_at_ms"] = serde_json::json!(paid.reservation.window_reset_at_ms);
+                } else if matches!(provider.as_str(), "surplus" | "metered") { patch["billing_status"] = serde_json::json!("unresolved"); }
+                self.runtime.update_request_log(&key.0, request.context.started_at_ms, &self.request_id, &patch).await
+            }.await;
+            if let Err(error) = result {
+                worker::console_error!(
+                    "Request terminal log remains unavailable: {}",
+                    error.envelope.error.message
+                );
+            }
+        }
+    }
+
+    pub fn correlate(&self, provider_request_id: Option<&str>) {
+        *self.provider_request_id.borrow_mut() = provider_request_id.map(str::to_owned);
     }
     pub fn start(&self, provider: UpstreamProvider) -> Option<AttemptTrace> {
         self.client.borrow_mut().provider =
@@ -153,7 +338,12 @@ impl Capture {
             }
         }
     }
-    pub async fn finish(&self, observation: TransportObservation) {
+    pub async fn finish(
+        &self,
+        observation: TransportObservation,
+        usage: Option<&serde_json::Value>,
+        paid: Option<&gateway_authority::paid::PaidAttempt>,
+    ) {
         if self.finished.replace(true) {
             return;
         }
@@ -164,12 +354,14 @@ impl Capture {
                 error.envelope.error.message
             );
         }
+        self.record_terminal(observation, usage, paid).await;
         self.trace.dispose();
     }
     pub async fn failure(&self, error: &GatewayError, cancelled: bool) {
         if self.finished.replace(true) {
             return;
         }
+        self.client.borrow_mut().status = error.status;
         let internal = FailureObservation {
             status: error.status,
             stream: None,
@@ -188,6 +380,8 @@ impl Capture {
                 error.envelope.error.message
             );
         }
+        self.record_terminal(TransportObservation::default(), None, None)
+            .await;
         self.trace.dispose();
     }
     pub async fn immediate(&self, status: u16, body: &[u8]) {
@@ -198,7 +392,8 @@ impl Capture {
             wire.parser = None;
         }
         self.bytes(body);
-        self.finish(TransportObservation::default()).await;
+        self.finish(TransportObservation::default(), None, None)
+            .await;
     }
     async fn persist(&self, observation: TransportObservation) -> Result<(), GatewayError> {
         let (internal, client) = {
@@ -235,7 +430,7 @@ impl Capture {
                         _ => None,
                     })
             };
-            let completed = observation.semantic_terminal == Some(SemanticTerminal::Completed);
+            let completed = source_completed(observation);
             let failure = match observation.reader_termination {
                 Some(ReaderTermination::ReadError) => Some("gateway_stream_read_error".into()),
                 Some(ReaderTermination::Deadline) => Some("gateway_timeout".into()),
@@ -302,6 +497,18 @@ impl Capture {
         Ok(())
     }
 }
+fn source_completed(observation: TransportObservation) -> bool {
+    observation.semantic_terminal == Some(SemanticTerminal::Completed)
+        && !matches!(
+            observation.reader_termination,
+            Some(
+                ReaderTermination::ReadError
+                    | ReaderTermination::Cancelled
+                    | ReaderTermination::Deadline
+            )
+        )
+}
+
 fn field(value: &SourceJson, name: &str) -> Option<SourceJson> {
     value
         .object_entries()
@@ -441,6 +648,24 @@ pub fn upstream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observed_completion_never_hides_a_reader_failure() {
+        let mut observation = TransportObservation {
+            semantic_terminal: Some(SemanticTerminal::Completed),
+            reader_termination: Some(ReaderTermination::Eof),
+            ..Default::default()
+        };
+        assert!(source_completed(observation));
+        for end in [
+            ReaderTermination::ReadError,
+            ReaderTermination::Cancelled,
+            ReaderTermination::Deadline,
+        ] {
+            observation.reader_termination = Some(end);
+            assert!(!source_completed(observation));
+        }
+    }
 
     fn wire() -> ClientWire {
         ClientWire {
