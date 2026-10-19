@@ -4,7 +4,9 @@ use crate::{
     source as s, source_tools,
     types::*,
 };
-use gateway_core::{model::ModelId,js_string::JsString16, source_json::SourceJson, source_serialization as json};
+use gateway_core::{
+    js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as json,
+};
 
 pub(crate) struct Projection {
     pub body: SourceJson,

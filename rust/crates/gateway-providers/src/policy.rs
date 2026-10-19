@@ -1,6 +1,12 @@
 //! Routing policy only. Authoritative pool/credential/paid admission remains external.
-use gateway_core::{provider::{PaidProvider,UpstreamProvider},model::ModelId,source_json::SourceJson,js_string::JsString16,source_serialization as source};
 use crate::source as s;
+use gateway_core::{
+    js_string::JsString16,
+    model::ModelId,
+    provider::{PaidProvider, UpstreamProvider},
+    source_json::SourceJson,
+    source_serialization as source,
+};
 use serde_json::Value;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HopFailure {
@@ -112,36 +118,53 @@ pub fn chat_has_answer(value: &Value) -> bool {
 /// Lithos refusal windows are per rung, not one deadline per original request model.
 #[derive(Clone, Debug, Default)]
 pub struct LithosWindows {
-    deadlines: std::collections::BTreeMap<String, i64>,
+    deadlines: std::collections::BTreeMap<ModelId, i64>,
 }
-pub fn lithos_ladder(model: &str) -> Vec<String> {
-    let canonical = lithos_canonical(model);
-    let model = canonical.as_str();
-    let family = if model.starts_with("deepseek-ai/DeepSeek-V4.1-Flash") {
+pub fn lithos_ladder(model: &ModelId) -> Vec<ModelId> {
+    let model = lithos_canonical(model);
+    let family = if s::starts(model.as_js_string(), "deepseek-ai/DeepSeek-V4.1-Flash") {
         "deepseek-ai/DeepSeek-V4.1-Flash"
-    } else if model.starts_with("moonshotai/Kimi-K3") {
+    } else if s::starts(model.as_js_string(), "moonshotai/Kimi-K3") {
         "moonshotai/Kimi-K3"
     } else {
         return vec![];
     };
-    if model == format!("{family}-ultra") {
-        vec![format!("{family}-fast"), family.into()]
-    } else if model == format!("{family}-fast") {
-        vec![family.into()]
+    if model.matches_scalar(&format!("{family}-ultra")) {
+        vec![
+            ModelId::from_scalar(&format!("{family}-fast")),
+            ModelId::from_scalar(family),
+        ]
+    } else if model.matches_scalar(&format!("{family}-fast")) {
+        vec![ModelId::from_scalar(family)]
     } else {
         vec![]
     }
 }
-fn lithos_canonical(model: &str) -> String {
+fn lithos_canonical(model: &ModelId) -> ModelId {
+    let value = s::trim(model.as_js_string());
     crate::request::LITHOS_MODELS
         .iter()
-        .find(|known| known.eq_ignore_ascii_case(model.trim()))
-        .copied()
-        .unwrap_or(model.trim())
-        .to_owned()
+        .find(|known| {
+            let literal = known.encode_utf16().collect::<Vec<_>>();
+            value.as_units().len() == literal.len()
+                && value.as_units().iter().zip(literal).all(|(&left, right)| {
+                    let lower = |unit: u16| {
+                        if (65..=90).contains(&unit) {
+                            unit + 32
+                        } else {
+                            unit
+                        }
+                    };
+                    lower(left) == lower(right)
+                })
+        })
+        .map_or_else(
+            || ModelId::from_source(value),
+            |known| ModelId::from_scalar(known),
+        )
 }
 impl LithosWindows {
-    pub fn refuse(&mut self, rung: &str, now: i64, wait_ms: i64) {
+    pub fn refuse(&mut self, rung: &ModelId, now: i64, wait_ms: i64) {
         if wait_ms > 0
             && let Some(deadline) = now.checked_add(wait_ms)
         {
@@ -152,13 +175,16 @@ impl LithosWindows {
             *row = (*row).max(deadline);
         }
     }
-    pub fn select(&self, model: &str, now: i64) -> String {
+    pub fn select(&self, model: &ModelId, now: i64) -> ModelId {
         let canonical = lithos_canonical(model);
-        let model = canonical.as_str();
-        std::iter::once(model.to_owned())
-            .chain(lithos_ladder(model))
-            .find(|r| self.deadlines.get(r).is_none_or(|d| *d <= now))
-            .unwrap_or_else(|| model.to_owned())
+        std::iter::once(canonical.clone())
+            .chain(lithos_ladder(&canonical))
+            .find(|rung| {
+                self.deadlines
+                    .get(rung)
+                    .is_none_or(|deadline| *deadline <= now)
+            })
+            .unwrap_or(canonical)
     }
 }
 #[derive(Clone, Copy, Debug)]
@@ -228,27 +254,50 @@ pub struct PaidRoutingPlan {
     pub codex_enabled: bool,
     pub surplus_billing: Option<SourceJson>,
 }
-fn supports_endpoint(row:Option<&SourceJson>,endpoint:&str)->bool {
-    row.and_then(|row|source::array(&s::get(row,"supported_endpoint_types"))).is_some_and(|values|values.iter().any(|value|s::is(value,endpoint)))
+fn supports_endpoint(row: Option<&SourceJson>, endpoint: &str) -> bool {
+    row.and_then(|row| source::array(&s::get(row, "supported_endpoint_types")))
+        .is_some_and(|values| values.iter().any(|value| s::is(value, endpoint)))
 }
-fn valid_price(value:&SourceJson)->Option<f64>{source::number(value).filter(|value|value.is_finite()&&*value>=0.0)}
-fn flash_paid_id(model:&ModelId)->bool {
+fn valid_price(value: &SourceJson) -> Option<f64> {
+    source::number(value).filter(|value| value.is_finite() && *value >= 0.0)
+}
+fn flash_paid_id(model: &ModelId) -> bool {
     // Only the finite ASCII slug grammar is observed; an opaque vendor prefix remains untouched.
-    let units=model.as_js_string().as_units().rsplit(|&unit|unit==47).next().unwrap_or_default();
-    let Ok(slug)=String::from_utf16(units) else {return false;};let slug=slug.to_lowercase();
-    let Some(rest)=slug.strip_prefix("deepseek-v") else {return false;};let Some((version,tail))=rest.split_once("-flash")else{return false;};
-    !version.is_empty()&&version.chars().all(|c|c.is_ascii_digit()||c=='.')&&(tail.is_empty()||tail.strip_prefix('-').is_some_and(|d|(d.len()==4||d.len()==8)&&d.chars().all(|c|c.is_ascii_digit())))
+    let units = model
+        .as_js_string()
+        .as_units()
+        .rsplit(|&unit| unit == 47)
+        .next()
+        .unwrap_or_default();
+    let Ok(slug) = String::from_utf16(units) else {
+        return false;
+    };
+    let slug = slug.to_lowercase();
+    let Some(rest) = slug.strip_prefix("deepseek-v") else {
+        return false;
+    };
+    let Some((version, tail)) = rest.split_once("-flash") else {
+        return false;
+    };
+    !version.is_empty()
+        && version.chars().all(|c| c.is_ascii_digit() || c == '.')
+        && (tail.is_empty()
+            || tail.strip_prefix('-').is_some_and(|d| {
+                (d.len() == 4 || d.len() == 8) && d.chars().all(|c| c.is_ascii_digit())
+            }))
 }
-fn row_matches(row:&SourceJson,model:&ModelId)->bool {source::string(&s::get(row,"id")).is_some_and(|id|id==*model.as_js_string())}
+fn row_matches(row: &SourceJson, model: &ModelId) -> bool {
+    source::string(&s::get(row, "id")).is_some_and(|id| id == *model.as_js_string())
+}
 pub fn resolve_paid_route(input: &PaidRoutingInput) -> PaidRoutingPlan {
     let surplus = input
         .surplus_catalog
         .as_ref()
-        .and_then(|a| a.iter().find(|row|row_matches(row,&input.model)));
+        .and_then(|a| a.iter().find(|row| row_matches(row, &input.model)));
     let openlux = input
         .openlux_catalog
         .as_ref()
-        .and_then(|a| a.iter().find(|row|row_matches(row,&input.model)));
+        .and_then(|a| a.iter().find(|row| row_matches(row, &input.model)));
     let pinned = match input.synthetic_hop {
         Some(DeepseekHop::Surplus) => Some(PaidProvider::Surplus),
         Some(DeepseekHop::Openlux) => Some(PaidProvider::Metered),
@@ -267,17 +316,27 @@ pub fn resolve_paid_route(input: &PaidRoutingInput) -> PaidRoutingPlan {
             && pinned == Some(PaidProvider::Metered)
             && supports_endpoint(openlux, "openai"));
     let surplus_route = supports_endpoint(surplus, &input.endpoint_type);
-    let surplus_billing=surplus.and_then(|row|{
-        let input_price=valid_price(&s::get(row,"input_price_per_token"))?;let output_price=valid_price(&s::get(row,"output_price_per_token"))?;
-        let mut value=s::object(vec![("input_price_per_token",s::generated(&input_price)),("output_price_per_token",s::generated(&output_price))]);
-        for key in ["cache_read_price_per_token","cache_write_price_per_token"]{if let Some(price)=source::member(row,key){s::set(&mut value,key,price);}}Some(value)
+    let surplus_billing = surplus.and_then(|row| {
+        let input_price = valid_price(&s::get(row, "input_price_per_token"))?;
+        let output_price = valid_price(&s::get(row, "output_price_per_token"))?;
+        let mut value = s::object(vec![
+            ("input_price_per_token", s::generated(&input_price)),
+            ("output_price_per_token", s::generated(&output_price)),
+        ]);
+        for key in ["cache_read_price_per_token", "cache_write_price_per_token"] {
+            if let Some(price) = source::member(row, key) {
+                s::set(&mut value, key, price);
+            }
+        }
+        Some(value)
     });
     let surplus_ok = (input.surplus_enabled
         || (verified_hop && pinned == Some(PaidProvider::Surplus)))
         && input.surplus_configured
         && surplus_route
         && surplus_billing.is_some()
-        && (!input.request_uses_tools || surplus.is_some_and(|row|s::boolean(&s::get(row,"supports_tools"))==Some(true)));
+        && (!input.request_uses_tools
+            || surplus.is_some_and(|row| s::boolean(&s::get(row, "supports_tools")) == Some(true)));
     let openlux_ok = (input.openlux_enabled
         || (verified_hop && pinned == Some(PaidProvider::Metered)))
         && input.openlux_configured
@@ -320,12 +379,42 @@ pub fn paid_entry(plan: &PaidRoutingPlan) -> PaidEntry {
         PaidEntry::CodexPrimary
     }
 }
-pub fn validate_flash_effort(raw:&Value)->Result<(),gateway_core::GatewayError>{validate_source_flash_effort(&s::generated(raw)).map_err(s::scalar_error)}
-pub fn validate_source_flash_effort(raw:&SourceJson)->Result<(),gateway_schema::source_request::SourceRequestError>{
-    let effort=source::string(&s::path(raw,&["reasoning","effort"])).filter(|value|!s::trim(value).as_units().is_empty()).or_else(||source::string(&s::get(raw,"reasoning_effort")).filter(|value|!s::trim(value).as_units().is_empty()));
-    if let Some(effort)=effort && !["low","high","max"].iter().any(|level|s::trim(&effort).as_units().iter().copied().eq(level.encode_utf16())) {
-        return Err(gateway_schema::source_request::SourceRequestError::new(400,s::concat(&[&JsString16::from_utf8("The model 'ubiquity/deepseek-flash' supports reasoning efforts low, high, max; '"),&effort,&JsString16::from_utf8("' is not supported.")]),"invalid_request_error",Some("unsupported_reasoning_effort"),Some(Some(JsString16::from_utf8("reasoning.effort")))));
-    }Ok(())
+pub fn validate_flash_effort(raw: &Value) -> Result<(), gateway_core::GatewayError> {
+    validate_source_flash_effort(&s::generated(raw)).map_err(s::scalar_error)
+}
+pub fn validate_source_flash_effort(
+    raw: &SourceJson,
+) -> Result<(), gateway_schema::source_request::SourceRequestError> {
+    let effort = source::string(&s::path(raw, &["reasoning", "effort"]))
+        .filter(|value| !s::trim(value).as_units().is_empty())
+        .or_else(|| {
+            source::string(&s::get(raw, "reasoning_effort"))
+                .filter(|value| !s::trim(value).as_units().is_empty())
+        });
+    if let Some(effort) = effort
+        && !["low", "high", "max"].iter().any(|level| {
+            s::trim(&effort)
+                .as_units()
+                .iter()
+                .copied()
+                .eq(level.encode_utf16())
+        })
+    {
+        return Err(gateway_schema::source_request::SourceRequestError::new(
+            400,
+            s::concat(&[
+                &JsString16::from_utf8(
+                    "The model 'ubiquity/deepseek-flash' supports reasoning efforts low, high, max; '",
+                ),
+                &effort,
+                &JsString16::from_utf8("' is not supported."),
+            ]),
+            "invalid_request_error",
+            Some("unsupported_reasoning_effort"),
+            Some(Some(JsString16::from_utf8("reasoning.effort"))),
+        ));
+    }
+    Ok(())
 }
 pub fn deepseek_plan(configured: &[DeepseekHop], ubiquity_enabled: bool) -> Vec<DeepseekHop> {
     if !ubiquity_enabled {

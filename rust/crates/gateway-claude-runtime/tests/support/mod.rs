@@ -205,7 +205,7 @@ pub struct Host {
 }
 impl Host {
     pub fn new(store: &Store) -> Self {
-        Self{store:store.clone(),random:Cell::new(50),catalog_calls:Cell::new(0),catalog_action:RefCell::default(),catalog:RefCell::new(ProviderCatalog{models:vec![json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["low","high","Custom"]})],updated_at_ms:Some(NOW),configured:true,available:true,stale:false}),workspace_calls:Cell::new(0),workspace_action:RefCell::default(),workspace:RefCell::new(WorkspaceResponse{status:200,body:json!({"data":[{"id":"wrkspc_first","name":"Other"},{"id":"wrkspc_default","name":"Default"}]}).to_string()}),accepted:RefCell::default(),health:RefCell::default(),fail_telemetry:Cell::new(false)}
+        Self{store:store.clone(),random:Cell::new(50),catalog_calls:Cell::new(0),catalog_action:RefCell::default(),catalog:RefCell::new(ProviderCatalog{models:vec![gateway_core::source_json::SourceJson::from_serializable(&json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["low","high","Custom"]})).unwrap()],updated_at_ms:Some(NOW),configured:true,available:true,stale:false}),workspace_calls:Cell::new(0),workspace_action:RefCell::default(),workspace:RefCell::new(WorkspaceResponse{status:200,body:json!({"data":[{"id":"wrkspc_first","name":"Other"},{"id":"wrkspc_default","name":"Default"}]}).to_string()}),accepted:RefCell::default(),health:RefCell::default(),fail_telemetry:Cell::new(false)}
     }
 }
 impl WebAuthnCrypto for Host {
@@ -338,7 +338,7 @@ pub fn selected(
         host,
         SelectionInput {
             key_id: KEY,
-            model: MODEL,
+            model: &MODEL.into(),
             raw,
             selection: None,
         },

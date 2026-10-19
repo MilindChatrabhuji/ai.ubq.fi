@@ -12,7 +12,9 @@ use gateway_catalog_runtime::{ProviderBinding, state::checks_current};
 use gateway_core::{
     GatewayError,
     js_string::JsString16,
+    model::ModelId,
     source_json::SourceJson,
+    source_serialization as source,
     state::{AuthorityStore, RevisionCheck},
 };
 use gateway_providers::{AuthMaterial, Headers};
@@ -70,7 +72,7 @@ impl ClaudePoolSession {
         host: &H,
         input: SelectionInput<'_>,
     ) -> Result<PoolSelection, GatewayError> {
-        if !gateway_providers::anthropic::is_claude(input.model)
+        if !gateway_providers::anthropic::is_claude_model(input.model)
             || !ProviderSelection::enabled(input.selection, "claude_code")
         {
             return Ok(PoolSelection::NotApplicable);
@@ -191,20 +193,22 @@ impl ClaudePoolSession {
                     )
                     .await?;
                 if !catalog.stale
-                    && let Some(row) = catalog
-                        .models
-                        .iter()
-                        .find(|r| r.get("id").and_then(Value::as_str) == Some(input.model))
+                    && let Some(row) = catalog.models.iter().find(|r| {
+                        source::member(r, "id")
+                            .and_then(|value| source::string(&value))
+                            .is_some_and(|id| &ModelId::from_source(id) == input.model)
+                    })
                 {
                     options.supports_disabled_thinking =
-                        row.get("supports_disabled_thinking") == Some(&Value::Bool(true));
+                        source::member(row, "supports_disabled_thinking")
+                            .is_some_and(|value| value.as_str() == "true");
                     options.native_reasoning_efforts = Some(
-                        row.get("supported_reasoning_levels")
-                            .and_then(Value::as_array)
+                        source::member(row, "supported_reasoning_levels")
+                            .as_ref()
+                            .and_then(source::array)
                             .map(|a| {
                                 a.iter()
-                                    .filter_map(Value::as_str)
-                                    .map(str::to_owned)
+                                    .filter_map(|value| source::string(&value))
                                     .collect()
                             })
                             .unwrap_or_default(),
@@ -214,11 +218,12 @@ impl ClaudePoolSession {
                         .as_ref()
                         .is_some_and(|a| !a.is_empty());
                 }
-                let effort = gateway_core::source_serialization::string(effort)
-                    .and_then(|value| value.try_utf8().ok());
-                if !(effort.as_deref() == Some("none") && options.supports_disabled_thinking
-                    || effort.as_deref().is_some_and(|e| {
-                        e != "none"
+                let effort = gateway_core::source_serialization::string(effort);
+                if !(effort.as_ref().is_some_and(|effort| {
+                    effort.as_units().iter().copied().eq("none".encode_utf16())
+                }) && options.supports_disabled_thinking
+                    || effort.as_ref().is_some_and(|e| {
+                        !e.as_units().iter().copied().eq("none".encode_utf16())
                             && options
                                 .native_reasoning_efforts
                                 .as_ref()
@@ -267,7 +272,7 @@ impl ClaudePoolSession {
             generation,
             options,
             key_id: input.key_id.into(),
-            model: input.model.into(),
+            model: input.model.clone(),
             raw: input.raw.clone(),
             disabled: effort
                 .as_ref()
@@ -283,11 +288,11 @@ impl ClaudePoolSession {
         host: &H,
         selected: &SelectedAccount,
         key_id: &str,
-        model: &str,
+        model: &ModelId,
         raw: &SourceJson,
     ) -> Result<(), GatewayError> {
         if selected.key_id != key_id
-            || selected.model != model
+            || &selected.model != model
             || &selected.raw != raw
             || !selected.generation.is_current()
         {

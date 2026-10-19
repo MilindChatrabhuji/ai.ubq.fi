@@ -1,7 +1,7 @@
 //! Exact provider-bound request construction. The caller supplies account/discovery capabilities.
 use crate::types::*;
-use gateway_core::{source_json::SourceJson,model::ModelId};
 use gateway_core::{GatewayError, provider::UpstreamProvider};
+use gateway_core::{model::ModelId, source_json::SourceJson};
 use serde_json::Value;
 pub const LITHOS_MODELS: [&str; 8] = [
     "deepseek-ai/DeepSeek-V4.1-Flash",
@@ -39,12 +39,24 @@ pub fn canonical_model(
     }
 }
 /// Source model identity is retained; only the finite direct-provider matcher observes scalar aliases.
-pub fn canonical_source_model(provider: UpstreamProvider,model: &ModelId,allowed:&[ModelId])->Option<ModelId> {
-    let model=ModelId::from_source(crate::source::trim(model.as_js_string()));
+pub fn canonical_source_model(
+    provider: UpstreamProvider,
+    model: &ModelId,
+    allowed: &[ModelId],
+) -> Option<ModelId> {
+    let model = ModelId::from_source(crate::source::trim(model.as_js_string()));
     match provider {
-        UpstreamProvider::Deepseek|UpstreamProvider::Lithos|UpstreamProvider::Cerebras => model.as_js_string().try_utf8().ok().and_then(|model|canonical_model(provider,&model,&[])).map(|model|ModelId::from_scalar(&model)),
-        UpstreamProvider::Openrouter => allowed.iter().find(|candidate|**candidate==model).cloned(),
-        _=>(!model.as_js_string().as_units().is_empty()).then_some(model),
+        UpstreamProvider::Deepseek | UpstreamProvider::Lithos | UpstreamProvider::Cerebras => model
+            .as_js_string()
+            .try_utf8()
+            .ok()
+            .and_then(|model| canonical_model(provider, &model, &[]))
+            .map(|model| ModelId::from_scalar(&model)),
+        UpstreamProvider::Openrouter => allowed
+            .iter()
+            .find(|candidate| **candidate == model)
+            .cloned(),
+        _ => (!model.as_js_string().as_units().is_empty()).then_some(model),
     }
 }
 pub(crate) fn bearer_headers(secret: &str, accept: &str) -> Headers {
