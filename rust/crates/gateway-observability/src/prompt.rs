@@ -60,8 +60,9 @@ impl PromptEvent {
         self.input_tokens = usage.and_then(|usage| usage.input_tokens);
         self.cached_input_tokens = usage.and_then(|usage| usage.cached_input_tokens);
         self.cache_write_input_tokens = usage.and_then(|usage| usage.cache_write_input_tokens);
+        // The terminal gate reports a normalized non-null count, not raw field presence.
         self.cache_write_tokens_present =
-            usage.is_some_and(|usage| usage.cache_write_tokens_present());
+            usage.is_some_and(|usage| usage.cache_write_input_tokens.is_some());
     }
 }
 pub(crate) fn known_release(release: &str) -> Option<String> {
