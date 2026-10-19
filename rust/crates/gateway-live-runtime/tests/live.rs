@@ -68,6 +68,9 @@ impl AuthorityStore for Store {
         if (put && self.fail_put.get()) || (!put && self.fail_delete.get()) {
             return Err(unavailable());
         }
+        if change.mutations.iter().any(|mutation| matches!(mutation, RecordMutation::Put { record, .. } if record.revision.is_empty())) {
+            return Err(unavailable());
+        }
         let mut rows = self.rows.borrow_mut();
         if change.checks.iter().any(|check| {
             rows.get(&check.key.0).map(|v| &v.revision) != check.expected_revision.as_ref()
@@ -76,9 +79,7 @@ impl AuthorityStore for Store {
         }
         for mutation in change.mutations {
             match mutation {
-                RecordMutation::Put { key, mut record } => {
-                    self.revision.set(self.revision.get() + 1);
-                    record.revision = self.revision.get().to_string();
+                RecordMutation::Put { key, record } => {
                     rows.insert(key.0, record);
                 }
                 RecordMutation::Delete { key } => {
@@ -259,8 +260,20 @@ fn input() -> LiveCreateInput {
 }
 fn fixture() -> (Rc<Store>, LiveRuntime<Store>, Host) {
     let store = Rc::new(Store::default());
-    let runtime = LiveRuntime::new(store.clone());
+    let runtime = runtime_for(store.clone());
     (store, runtime, Host::default())
+}
+
+fn runtime_for(store: Rc<Store>) -> LiveRuntime<Store> {
+    let counter = store.clone();
+    LiveRuntime::new(
+        store,
+        Rc::new(move || {
+            let next = counter.revision.get() + 1;
+            counter.revision.set(next);
+            Ok(format!("live-fixture-{next}"))
+        }),
+    )
 }
 fn create(runtime: &LiveRuntime<Store>, host: &Host) {
     assert_eq!(
@@ -525,7 +538,7 @@ fn failed_mapping_write_preserves_success_and_location() {
 fn mapping_persists_across_runtime_restart_and_expires_absolutely() {
     let (store, runtime, host) = fixture();
     create(&runtime, &host);
-    let restarted = LiveRuntime::new(store);
+    let restarted = runtime_for(store);
     assert!(
         run(restarted.prepare_sideband(&principal(), "rtc_created", " WebSocket ", &host)).is_ok()
     );
@@ -673,7 +686,7 @@ fn delete_failure_marker_survives_restart_and_related_event_resumes_it() {
         .unwrap()
         .unwrap();
     assert_eq!(marker.expires_at_ms, None);
-    let restarted = LiveRuntime::new(store.clone());
+    let restarted = runtime_for(store.clone());
     assert_eq!(
         run(restarted.prepare_sideband(&principal(), "rtc_created", "websocket", &host))
             .err()
@@ -718,7 +731,7 @@ fn marker_unknown_write_never_becomes_false_retired_and_restart_stays_closed() {
         run(part.retirement.on_handshake_rejection(404, host.now.get())),
         RetirementOutcome::Unknown
     );
-    let restarted = LiveRuntime::new(store.clone());
+    let restarted = runtime_for(store.clone());
     assert_eq!(
         run(restarted.prepare_sideband(&principal(), "rtc_created", "websocket", &host))
             .err()
@@ -785,6 +798,50 @@ fn authenticated_principal_methods_match_source() {
             gateway_auth::crypto::sha256_hex(b"synthetic-bearer")
         )
     );
+}
+
+#[test]
+fn caller_mints_revisions_and_failed_revision_source_never_claims_retirement() {
+    let (store, runtime, host) = fixture();
+    create(&runtime, &host);
+    let key = mapping_key("rtc_created");
+    let original = run(store.read(&key)).unwrap().unwrap();
+    assert_eq!(original.revision, "live-fixture-1");
+    assert!(
+        run(store.commit(AtomicTransition {
+            checks: vec![],
+            mutations: vec![RecordMutation::Put {
+                key: key.clone(),
+                record: StoredRecord::json("", json!({}), None)
+            }]
+        }))
+        .is_err()
+    );
+    assert_eq!(run(store.read(&key)).unwrap().unwrap(), original);
+    let broken = LiveRuntime::new(store.clone(), Rc::new(|| Ok(String::new())));
+    let part = prepared(&broken, &host);
+    assert_eq!(
+        run(part.retirement.on_handshake_rejection(404, 10_000)),
+        RetirementOutcome::Unknown
+    );
+    assert!(
+        run(store.read(&retirement_key("rtc_created")))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(run(store.read(&key)).unwrap().unwrap(), original);
+    assert_eq!(
+        run(broken.prepare_sideband(&principal(), "rtc_created", "websocket", &host))
+            .err()
+            .unwrap()
+            .status,
+        404
+    );
+    assert_eq!(
+        run(broken.create_call(&principal(), input(), &host, &false)).status,
+        201
+    );
+    assert_eq!(run(store.read(&key)).unwrap().unwrap(), original);
 }
 
 #[test]
