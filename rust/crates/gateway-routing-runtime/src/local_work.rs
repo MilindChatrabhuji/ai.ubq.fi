@@ -59,6 +59,7 @@ pub struct LocalProviderAdmission<S, I, C, H> {
 /// Sealed owned inputs for the genuine source-aware session constructor only.
 /// These are not a public plan, body replacement or another admission.
 pub(crate) struct LocalProviderParts<S, I, C, H> {
+    pub(crate) admission: crate::currentness::OriginalRoutingAdmission,
     pub(crate) store: S,
     pub(crate) tokens: I,
     pub(crate) clock: C,
@@ -588,9 +589,19 @@ impl<
             clock,
             host,
             input,
-            ..
+            digest,
+            nonce,
+            api,
+            kernel,
         } = self.original;
         Ok(LocalProviderParts {
+            admission: crate::currentness::OriginalRoutingAdmission::capture(
+                2,
+                digest,
+                api,
+                kernel,
+                Some(nonce),
+            ),
             store,
             tokens,
             clock,
