@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 const MESSAGE: &str = "Gateway observed a provider failure for this incident group.";
-const TTL: i64 = model::PAYLOAD_TTL;
 const FIELDS: &[&str] = &[
     "version",
     "incident_id",
@@ -288,7 +287,79 @@ pub struct IncidentEvidence<'a> {
     pub ciphertext_sha256: &'a str,
     pub observed_at_ms: i64,
 }
+pub(crate) struct IndexPublication {
+    pub checks: Vec<gateway_core::state::RevisionCheck>,
+    pub mutations: Vec<gateway_core::state::RecordMutation>,
+}
+pub(crate) struct NewCaptureIndex<'a> {
+    pub fingerprint: &'a str,
+    pub git_sha: &'a str,
+    pub ciphertext_sha256: &'a str,
+}
 impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+    pub(crate) async fn new_capture_index_publication(
+        &self,
+        binding: &NewCaptureIndex<'_>,
+        manifest: &crate::replay_model::Manifest,
+        manifest_key: &RecordKey,
+    ) -> Result<Option<IndexPublication>, GatewayError> {
+        if !model::digest(binding.fingerprint) || !model::digest(binding.ciphertext_sha256) {
+            return Err(store::error("New replay index binding is invalid"));
+        }
+        let key = key(binding.fingerprint);
+        let Some(previous) = self.store.read(&key).await? else {
+            return Ok(None);
+        };
+        let source = read_json_record(&previous)?;
+        let row = IndexRow::parse(&source)?;
+        let mut document = SourceObject::parse(&source)?;
+        document.set(
+            "failing_revision",
+            &full_sha(binding.git_sha).then_some(binding.git_sha),
+        )?;
+        let mut provenance = SourceObject::parse(
+            document
+                .get("provenance")
+                .ok_or_else(|| store::error("Incident provenance missing"))?,
+        )?;
+        provenance.set("captured_at_ms", &manifest.captured_at_ms)?;
+        document.set("provenance", &provenance.source_json()?)?;
+        document.set(
+            "evidence_ref",
+            &EvidenceRef {
+                r#ref: format!("capture:{}", manifest.capture_id),
+                digest: Some(binding.ciphertext_sha256.into()),
+            },
+        )?;
+        document.set("evidence_expires_at_ms", &manifest.expires_at_ms)?;
+        let document = document.source_json()?;
+        IndexRow::parse(&document)?;
+        let mut mutations = vec![crate::replay_values::put_json(
+            self.host.as_ref(),
+            key.clone(),
+            &document,
+            None,
+        )?];
+        if manifest.expires_at_ms > store::now(self.host.as_ref())? as f64 {
+            mutations.push(store::put(
+                self.host.as_ref(),
+                store::key(json!([
+                    "uos_ai",
+                    "sentinel_incident",
+                    "v1",
+                    "capture_ref",
+                    row.incident_id,
+                    manifest.fingerprint
+                ])),
+                json!({"version":1,"manifest_key":store::parts(manifest_key)?}),
+                Some(manifest.expires_at_ms as i64),
+            )?)
+        }
+        Ok(Some(IndexPublication {
+            checks: vec![store::check(&key, Some(&previous))],
+            mutations,
+        }))
+    }
     pub async fn record_incident_index(
         &self,
         input: &IncidentObservation,

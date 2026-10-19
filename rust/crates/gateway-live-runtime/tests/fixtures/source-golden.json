@@ -1,0 +1,116 @@
+{
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/v1/live",
+      "result": {
+        "kind": "call"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/live/rtc_a%2Fb",
+      "result": {
+        "kind": "sideband",
+        "callId": "rtc_a/b"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/live/%",
+      "result": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/live/%ED%A0%80",
+      "result": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/live/a/b",
+      "result": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/live/%2e",
+      "result": null
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/live",
+      "result": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/live/rtc_x",
+      "result": {
+        "kind": "sideband",
+        "callId": "rtc_x"
+      }
+    }
+  ],
+  "locations": [
+    {
+      "location": "https://host/rtc_first/other/00000000-0000-0000-0000-000000000000?x",
+      "id": "00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "location": "/rtc_",
+      "id": null
+    },
+    {
+      "location": "/rtc_hello/other?x",
+      "id": "rtc_hello"
+    },
+    {
+      "location": "/foo",
+      "id": null
+    },
+    {
+      "location": "/12345678-abcd-ABCD-1234-123456789ABC",
+      "id": "12345678-abcd-ABCD-1234-123456789ABC"
+    }
+  ],
+  "sessions": [
+    {
+      "session": "{\"model\":\"voice-model\",\"unknown\":{\"keep\":true}}",
+      "body": "{\"sdp\":\"sdp-offer\",\"session\":{\"model\":\"voice-model\",\"unknown\":{\"keep\":true}}}"
+    },
+    {
+      "session": "{\"z\":1,\"2\":\"two\",\"0\":\"zero\",\"z\":9007199254740993,\"negative\":-0,\"infinity\":1e400,\"text\":\"\\ud800\"}",
+      "body": "{\"sdp\":\"sdp-offer\",\"session\":{\"0\":\"zero\",\"2\":\"two\",\"z\":9007199254740992,\"negative\":0,\"infinity\":null,\"text\":\"\\ud800\"}}"
+    },
+    {
+      "session": "{\"model\":\"voice-model\",\"session\":{\"a\":[0,1e-7,1e21,true,null,\"\\udc00\"]}}",
+      "body": "{\"sdp\":\"sdp-offer\",\"session\":{\"model\":\"voice-model\",\"session\":{\"a\":[0,1e-7,1e+21,true,null,\"\\udc00\"]}}}"
+    }
+  ],
+  "headers": [
+    {
+      "input": {},
+      "result": {
+        "content-type": "application/json",
+        "openai-alpha": "quicksilver=v2",
+        "originator": "codex_cli_rs",
+        "user-agent": "fixture-user-agent"
+      }
+    },
+    {
+      "input": {
+        "openai-alpha": "  source-alpha  ",
+        "authorization": "client-synthetic",
+        "x-session-id": "s",
+        "thread-id": "  ",
+        "x-oai-attestation": "attestation"
+      },
+      "result": {
+        "content-type": "application/json",
+        "openai-alpha": "source-alpha",
+        "originator": "codex_cli_rs",
+        "user-agent": "fixture-user-agent",
+        "x-oai-attestation": "attestation",
+        "x-session-id": "s"
+      }
+    }
+  ]
+}

@@ -1,13 +1,13 @@
 import { acquireDeployLock } from "./deploy-lock.ts";
 import { assertBunConvertedStore } from "./assert-bun-store.ts";
 import { prepareBunRuntime } from "./bun-runtime.ts";
-import { command as runCommand } from "./io.ts";
+import { command as runCommand, digest } from "./io.ts";
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { missing } from "./io.ts";
 const readTextFile = (path: string): Promise<string> => readFile(path, "utf8");
 // Run from the VPS repository root after the candidate's required CI has passed.
 import { pruneReleases } from "./release-retention.ts";
-import { ImmutableVpsReleaseStore, type VpsPayloadPreparation } from "./vps-release-store.ts";
+import { bindPreparedVpsPayload, ImmutableVpsReleaseStore, type VpsPayloadPreparation } from "./vps-release-store.ts";
 import { readVpsPins } from "./vps-release-journal.ts";
 import { assertPublicRelease, ensureCaddyIngressReady, healthServesRelease, PUBLIC_HEALTH_URL, reloadCaddyIngress } from "./vps-ingress.ts";
 const canonicalRoot = "/home/codex/repos/ubiquity/ai.ubq.fi";
@@ -70,6 +70,44 @@ const releaseStore = new ImmutableVpsReleaseStore(canonicalRoot, (program, args)
 const selector = (): Promise<string | null> => releaseStore.selector();
 const checkedPrevious = (selected: string): Promise<Previous> => releaseStore.checkedPrevious(selected);
 const checkedPreviousRelease = (sha: string, selected: string): Promise<Previous> => releaseStore.checkedPreviousRelease(sha, selected);
+
+/**
+ * A TypeScript-only release can reuse the selected immutable release's already
+ * verified dependency and native-KV payload. Reuse is limited to an unchanged
+ * lockfile and native input manifest; any mismatch falls back to a fresh build.
+ */
+export const reusablePreparedPayload = async (): Promise<VpsPayloadPreparation | undefined> => {
+  try {
+    const current = await selector();
+    if (current === null) return undefined;
+    const root = await realpath(`${canonicalRoot}/.data/${current}`);
+    const manifest: unknown = JSON.parse(await readTextFile(`${root}/.uos-release.json`));
+    if (!isRecord(manifest) || manifest.platform !== process.platform || manifest.architecture !== process.arch || !isRecord(manifest.native_kv))
+      return undefined;
+    const native = manifest.native_kv;
+    if (
+      typeof native.provenance_sha256 !== "string" ||
+      !/^[0-9a-f]{64}$/.test(native.provenance_sha256) ||
+      typeof native.inputs_sha256 !== "string" ||
+      typeof native.inputs_manifest !== "string"
+    )
+      return undefined;
+    const inputs = `${canonicalRoot}/${native.inputs_manifest}`;
+    if (digest(await readFile(inputs)) !== native.inputs_sha256) return undefined;
+    const dependencies = `${root}/node_modules`;
+    const nativeDirectory = `${root}/.native/kv`;
+    if (!(await exists(dependencies)) || !(await exists(nativeDirectory))) return undefined;
+    const lockSha256 = digest(await readFile(`${root}/bun.lock`));
+    if (lockSha256 !== digest(await readFile(`${canonicalRoot}/bun.lock`))) return undefined;
+    return bindPreparedVpsPayload({
+      dependencies,
+      dependencyLockSha256: lockSha256,
+      nativeArtifact: { artifactDirectory: nativeDirectory, expectedProvenanceSha256: native.provenance_sha256, inputsManifest: inputs },
+    });
+  } catch {
+    return undefined;
+  }
+};
 
 async function readRecovery(): Promise<Recovery | null> {
   if (!(await exists(recoveryPath))) return null;
@@ -366,4 +404,8 @@ export async function deploy(preparePayload?: VpsPayloadPreparation): Promise<vo
   }
 }
 
-if (import.meta.main) await deploy();
+if (import.meta.main) {
+  const preparePayload = await reusablePreparedPayload();
+  if (preparePayload) console.log(JSON.stringify({ prepared_payload: "reused", source: "selected-release" }));
+  await deploy(preparePayload);
+}

@@ -15,8 +15,8 @@ use gateway_core::{
 };
 use gateway_providers::{AuthMaterial, PrepareOptions};
 use gateway_routing_runtime::{
-    AttemptFailure, ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest,
-    PublishedCredential, RefreshOutcome, RoutingHost, direct_credential,
+    ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest, PublishedCredential,
+    RefreshOutcome, RoutingHost, direct_credential,
 };
 use serde_json::Value;
 use worker::Env;

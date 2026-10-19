@@ -1,4 +1,6 @@
-import type { Kv, KvEntryMaybe } from "#kv";
+import { parseCodexResetRedemptionRecord, parseAccountDayRecord } from "../codex/banked-reset.ts";
+import { CODEX_MANUAL_RESET_PREFIX, parseManualResetIntent } from "../codex/manual-reset-state.ts";
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
 // KV migration target validation, split out of src/kv_migration.ts.
 
 import {
@@ -196,6 +198,42 @@ const auditCodexModelSnapshot = async (kv: Kv, errors: string[]): Promise<void> 
   }
 };
 
+const validResetDailyEntry = (key: KvKey, value: unknown): boolean => {
+  const accountDay = key[2] === "account_day";
+  if (!accountDay && key[2] !== "global_day") return false;
+  const expectedLength = accountDay ? 6 : 5;
+  if (key[3] !== "v1" || key.length !== expectedLength) return false;
+  if (accountDay && (typeof key[4] !== "string" || !/^[a-f0-9]{64}$/.test(key[4]))) return false;
+  const dayKey = key[expectedLength - 1];
+  return typeof dayKey === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dayKey) && parseAccountDayRecord(value, dayKey) !== null;
+};
+export const auditCodexResetRedemptions = async (kv: Kv, errors: string[]): Promise<void> => {
+  for await (const entry of kv.list({ prefix: ["uos_ai", "codex_reset_redemption"] })) {
+    const key = entry.key;
+    if (key[2] === "v1") {
+      const record = parseCodexResetRedemptionRecord(entry.value);
+      if (key.length !== 5 || typeof key[3] !== "string" || typeof key[4] !== "string" || !record) {
+        errors.push("codex reset redemption is malformed");
+        continue;
+      }
+      if (key[3] !== record.account_id_hash || key[4] !== record.quota_generation) errors.push("codex reset redemption is malformed");
+      continue;
+    }
+    if (!validResetDailyEntry(key, entry.value)) errors.push("codex reset daily budget is malformed");
+  }
+};
+
+export const auditManualResetIntents = async (kv: Kv, errors: string[]): Promise<void> => {
+  for await (const entry of kv.list({ prefix: CODEX_MANUAL_RESET_PREFIX })) {
+    const intent = parseManualResetIntent(entry.value);
+    if (entry.key.length !== 4 || typeof entry.key[3] !== "string" || !intent) {
+      errors.push("codex manual reset intent is malformed");
+      continue;
+    }
+    if (entry.key[3] !== intent.account_id_hash) errors.push("codex manual reset intent is malformed");
+  }
+};
+
 /** Reports reset usage rows whose key or explicit boolean setting is malformed. */
 const auditCodexResetUsage = async (kv: Kv, errors: string[]): Promise<void> => {
   for await (const entry of kv.list({ prefix: CODEX_RESET_USAGE_PREFIX })) {
@@ -263,6 +301,8 @@ export const validateKvMigrationTarget = async (kv: Kv): Promise<KvMigrationVali
   }
   await auditCodexModelSnapshot(kv, errors);
   await auditCodexResetUsage(kv, errors);
+  await auditManualResetIntents(kv, errors);
+  await auditCodexResetRedemptions(kv, errors);
 
   const knownSettings = await readKvMigrationSettings(kv);
   if (normalizeRuntimeConfig(knownSettings[8].value) === null) {

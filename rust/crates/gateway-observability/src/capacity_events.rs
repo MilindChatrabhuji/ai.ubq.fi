@@ -267,14 +267,27 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             }
         }
         if kind == "reset_event" {
-            let derivation=async{let mut fences=Vec::new();for row in store::scan(self.store.as_ref(),store::key(json!(["uos_ai","codex_reset_shadow_decision","v1"])),false,at,usize::MAX).await?{if let Some(v)=parse_shadow(row.record.json_value()?){fences.extend(v["fences"].as_array().expect("source fences").iter().cloned());}}
-                let mut derived=Vec::new();for row in store::scan(self.store.as_ref(),store::key(json!(["uos_ai","codex_reset_redemption","v1"])),false,at,usize::MAX).await?{let v=row.record.json_value()?;if !valid_redemption(v)||v["state"]!="verified"||!store::safe_i64(&v["verified_at_ms"]).is_some_and(|t|t>=cutoff&&t<=at){continue}if let Some(fence)=fences.iter().find(|f|f["account_id_hash"]==v["account_id_hash"]&&f["quota_generation"]==v["quota_generation"]){if matches!(store::safe_i64(&fence["slot"]),Some(1|2)){derived.push(json!({"v":1,"event_id":v["idempotency_key_hash"],"slot":fence["slot"],"observed_at_ms":v["verified_at_ms"]}));}}}Ok(derived)
+            let derivation:Result<Vec<Value>,GatewayError>=async {
+                let mut fences=Vec::new();
+                for row in store::scan(self.store.as_ref(),store::key(json!(["uos_ai","codex_reset_shadow_decision","v1"])),false,at,usize::MAX).await? {
+                    if let Some(value)=parse_shadow(row.record.json_value()?){fences.extend(value["fences"].as_array().expect("source fences").iter().cloned());}
+                }
+                let mut derived=Vec::new();
+                for row in store::scan(self.store.as_ref(),store::key(json!(["uos_ai","codex_reset_redemption","v1"])),false,at,usize::MAX).await? {
+                    let value=row.record.json_value()?;
+                    if !valid_redemption(value)||value["state"]!="verified"||!store::safe_i64(&value["verified_at_ms"]).is_some_and(|t|t>=cutoff&&t<=at){continue;}
+                    if let Some(fence)=fences.iter().find(|f|f["account_id_hash"]==value["account_id_hash"]&&f["quota_generation"]==value["quota_generation"])
+                        && matches!(store::safe_i64(&fence["slot"]),Some(1|2)) {
+                        derived.push(json!({"v":1,"event_id":value["idempotency_key_hash"],"slot":fence["slot"],"observed_at_ms":value["verified_at_ms"]}));
+                    }
+                }
+                Ok(derived)
             }.await;
             for event in derivation.unwrap_or_else(|_: GatewayError| Vec::new()) {
                 let id = event["event_id"].as_str().unwrap_or("").to_owned();
-                if !events.contains_key(&id) {
+                if let std::collections::btree_map::Entry::Vacant(entry) = events.entry(id) {
                     let _ = self.record_capacity_reset_event(&event).await;
-                    events.insert(id, event);
+                    entry.insert(event);
                 }
             }
         }

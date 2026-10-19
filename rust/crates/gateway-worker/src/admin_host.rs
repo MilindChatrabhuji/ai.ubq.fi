@@ -78,6 +78,21 @@ impl Capabilities {
 }
 
 impl RuntimeCapabilities for Capabilities {
+    async fn claude(
+        &self,
+        request: gateway_admin_runtime::capabilities::ClaudeRequest,
+        context: Context,
+    ) -> Result<AuthResponse, GatewayError> {
+        self.measured_body_bytes(&context)?;
+        crate::claude_host::admin(
+            &self.catalog_host.store,
+            &self.catalog_host.platform,
+            &self.observations,
+            request,
+            context,
+        )
+        .await
+    }
     async fn native(
         &self,
         request: gateway_admin_runtime::capabilities::NativeRequest,

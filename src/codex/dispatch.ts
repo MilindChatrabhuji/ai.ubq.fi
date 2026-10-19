@@ -235,10 +235,16 @@ const routingErrorType = (status: 401 | 404 | 429 | 503): string => {
   return "invalid_request_error";
 };
 
+/** Keep a weekly upstream reset from becoming a multi-day client sleep. */
+export const CODEX_CLIENT_RETRY_AFTER_MAX_SECONDS = 60;
+
+export const codexRetryAfterSeconds = (retryAtMs: number, nowMs = Date.now()): number =>
+  Math.min(CODEX_CLIENT_RETRY_AFTER_MAX_SECONDS, Math.max(1, Math.ceil((retryAtMs - nowMs) / 1000)));
+
 const routingErrorResponse = (status: 401 | 404 | 429 | 503, message: string, code: string, retryAtMs: number | null = null): Response => {
   const headers = new Headers({ "Content-Type": "application/json" });
   if ((status === 429 || status === 503) && retryAtMs !== null) {
-    headers.set("Retry-After", String(Math.max(1, Math.ceil((retryAtMs - Date.now()) / 1000))));
+    headers.set("Retry-After", String(codexRetryAfterSeconds(retryAtMs)));
   }
   const response = new Response(
     JSON.stringify({

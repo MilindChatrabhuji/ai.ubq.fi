@@ -19,7 +19,7 @@ fn row(store: &Memory, key: RecordKey, value: Value, expiry: Option<i64>) {
     store
         .rows
         .borrow_mut()
-        .insert(key.0, StoredRecord::json("fixture".into(), value, expiry));
+        .insert(key.0, StoredRecord::json("fixture", value, expiry));
 }
 fn manifest(at: i64) -> model::Manifest {
     model::Manifest {
@@ -68,7 +68,7 @@ fn capture(store: &Memory, at: i64) -> model::Manifest {
     store.rows.borrow_mut().insert(
         model::chunk_key(&m.capture_id, 0).0,
         StoredRecord::profile_v2(
-            "chunk".into(),
+            "chunk",
             PortableValue::Binary {
                 kind: "Uint8Array".into(),
                 bytes,
@@ -205,7 +205,8 @@ fn safe_incident_group_retries_preserves_first_identity_and_surrogate_extensions
             .json_value()
             .unwrap()
             .to_string()
-            .trim_end_matches('}')
+            .strip_suffix('}')
+            .unwrap()
     ))
     .unwrap();
     let mut fields = Vec::new();
@@ -222,7 +223,7 @@ fn safe_incident_group_retries_preserves_first_identity_and_surrogate_extensions
     }
     store.rows.borrow_mut().insert(
         first.key.0.clone(),
-        StoredRecord::profile_v2("extension".into(), PortableValue::Object(fields), None).unwrap(),
+        StoredRecord::profile_v2("extension", PortableValue::Object(fields), None).unwrap(),
     );
     let second = run(runtime.record_incident_index(&observation(90))).unwrap();
     assert_eq!(first.incident_id, second.incident_id);

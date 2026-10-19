@@ -237,11 +237,7 @@
     {
       "name": "invalid-utf8",
       "status": 429,
-      "bytes": [
-        255,
-        123,
-        125
-      ],
+      "bytes": [255, 123, 125],
       "retry": "60",
       "now": 1800000000000,
       "expected": null

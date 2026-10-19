@@ -1,4 +1,5 @@
 import "./network.js";
+import { appendManualResetControl } from "./admin-reset.js";
 import {
   buildBackendUrl,
   formatAuthSessionLabel,
@@ -24,7 +25,6 @@ import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
 import { toast } from "./toast.js?v=passport-design-20260922";
 import { createSupervisorView } from "./admin-supervisor.js?v=20261001-supervisor-v4";
-
 const STORAGE_KEYS = {
   rememberToken: AUTH_STORAGE_KEYS.rememberToken,
   token: AUTH_STORAGE_KEYS.token,
@@ -1341,13 +1341,12 @@ let codexResetSettingsRevision = 0;
 const codexResetSaving = new Set();
 let codexResetSettingsTarget = "";
 let codexResetSettingsToken = "";
-
 let codexOverageSettings = [];
 let codexOverageSettingsRevision = 0;
 const codexOverageSaving = new Set();
 let codexOverageSettingsTarget = "";
 let codexOverageSettingsToken = "";
-
+const refreshResetPanels = () => Promise.all([loadProviders(), loadProviderCapacity()]);
 const renderCodexCapacitySource = (source, provider = null) => {
   // The capacity list is a role="list" container, and aria-allowed-role rejects listitem on article.
   const row = document.createElement("div");
@@ -1374,17 +1373,18 @@ const renderCodexCapacitySource = (source, provider = null) => {
   label.dataset.check = "";
   const copy = document.createElement("span");
   const count = setting?.available_count;
-  copy.textContent = "Use banked resets";
+  copy.textContent = "Automatic resets";
   const countLabel = document.createElement("small");
   countLabel.textContent = Number.isSafeInteger(count) && count >= 0 ? count + " available" : "Count unavailable";
   const input = document.createElement("input");
   input.type = "checkbox";
   input.setAttribute("role", "switch");
-  input.setAttribute("aria-label", "Use banked resets for " + title.textContent);
+  input.setAttribute("aria-label", "Automatic resets for " + title.textContent);
   input.checked = setting?.enabled === true;
   input.disabled = !setting || codexResetSaving.has(setting.account_id_hash);
   label.append(copy, input, countLabel);
   header.append(label);
+  appendManualResetControl(header, setting, title.textContent, apiUrl, getAdminToken, refreshResetPanels);
   input.addEventListener("change", async () => {
     if (!setting) return;
     const target = apiUrl("/admin/providers");

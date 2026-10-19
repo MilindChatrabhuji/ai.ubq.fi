@@ -40,6 +40,7 @@ pub enum ActiveTransitionReason {
     CredentialInvalid,
     AccountRemovedOrReplaced,
     ModelUnavailable,
+    ManualReset,
 }
 
 /// Version 1 shape mirrors the existing durable active-account record.
@@ -111,5 +112,18 @@ impl TryFrom<i64> for MicrocreditLimit {
             1..=MAX_SAFE_INTEGER => Ok(Self::Bounded(Microcredits::try_from(value)?)),
             _ => Err("a paid limit must be -1 or a positive safe integer"),
         }
+    }
+}
+
+#[cfg(test)]
+mod manual_reset_tests {
+    use super::ActiveTransitionReason;
+
+    #[test]
+    fn manual_reset_transition_reason_roundtrips() -> Result<(), serde_json::Error> {
+        let reason: ActiveTransitionReason = serde_json::from_str(r#""manual_reset""#)?;
+        assert_eq!(reason, ActiveTransitionReason::ManualReset);
+        assert_eq!(serde_json::to_string(&reason)?, r#""manual_reset""#);
+        Ok(())
     }
 }

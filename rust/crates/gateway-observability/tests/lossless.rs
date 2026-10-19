@@ -187,7 +187,10 @@ fn source_created_time_signed_zero_keeps_two_distinct_tuple_keys() {
             panic!("source timestamp")
         };
         signs.push(created.is_sign_negative());
-        assert_eq!(record.expires_at_ms, Some(1001));
+        assert_eq!(
+            record.expires_at_ms,
+            Some(gateway_observability::ledger::REQUEST_RETENTION_MS)
+        );
     }
     signs.sort();
     assert_eq!(signs, vec![false, true]);

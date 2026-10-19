@@ -40,9 +40,40 @@ fn view(
 pub fn unavailable_claude(at: i64) -> Value {
     json!({"source":"claude_code","label":"Claude subscription","state":"unavailable","source_observed_at_ms":null,"snapshot_at_ms":at,"failure_kind":"not_configured","failure_status":null,"credential_kind":null,"workspace_id":null,"windows":{"five_hour":null,"seven_day":null},"standard":[],"blocked_until_ms":null,"cooldown_until_ms":null,"last_error":null})
 }
+fn quota_math_view(source: &gateway_core::source_json::SourceJson) -> Value {
+    let Ok(source) = crate::replay_values::SourceObject::parse(source) else {
+        return Value::Null;
+    };
+    let mut value = json!({});
+    for name in [
+        "windows",
+        "standard",
+        "representative_claim",
+        "blocked_until_ms",
+        "block_window",
+        "cooldown_until_ms",
+        "updated_at_ms",
+    ] {
+        value[name] = source
+            .get(name)
+            .and_then(|v| v.deserialize::<Value>().ok())
+            .unwrap_or(Value::Null)
+    }
+    value["last_error"] = source
+        .get("last_error")
+        .filter(|v| v.as_str() != "null")
+        .and_then(|v| crate::replay_values::SourceObject::parse(v).ok())
+        .and_then(|v| v.select(&["kind", "status", "at_ms"]).ok())
+        .and_then(|v| v.deserialize::<Value>().ok())
+        .unwrap_or(Value::Null);
+    value
+}
 pub fn claude_source(account: &ClaudeAccountReadback, health: &Value, at: i64) -> Value {
-    let empty = Value::Null;
-    let quota = account.quota.as_ref().unwrap_or(&empty);
+    let quota = account
+        .quota
+        .as_ref()
+        .map(quota_math_view)
+        .unwrap_or(Value::Null);
     let blocked = store::safe_i64(&quota["blocked_until_ms"]).is_some_and(|t| t > at);
     let cooling = store::safe_i64(&quota["cooldown_until_ms"]).is_some_and(|t| t > at);
     let failing = blocked || cooling || !quota["last_error"].is_null();
@@ -411,6 +442,36 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             .cloned()
             .unwrap_or_else(|| unavailable_claude(at));
         body["claude_accounts"] = json!(accounts);
+        let mut source_accounts = Vec::new();
+        for (account, value) in inventory
+            .claude
+            .accounts
+            .iter()
+            .zip(body["claude_accounts"].as_array().expect("account array"))
+        {
+            let error = account
+                .quota
+                .as_ref()
+                .and_then(|q| crate::replay_values::SourceObject::parse(q).ok())
+                .and_then(|q| q.get("last_error").cloned());
+            let mut document = crate::replay_values::SourceObject::parse(
+                &gateway_core::source_json::SourceJson::from_serializable(value)?,
+            )?;
+            document.set("last_error", &error)?;
+            source_accounts.push(document.source_json()?);
+        }
+        let source_active = inventory
+            .claude
+            .accounts
+            .iter()
+            .position(|a| {
+                Some(a.account_id.as_str()) == inventory.claude.active_account_id.as_deref()
+            })
+            .and_then(|i| source_accounts.get(i))
+            .cloned()
+            .unwrap_or(gateway_core::source_json::SourceJson::from_serializable(
+                &unavailable_claude(at),
+            )?);
         body["claude_history"] = self.claude_capacity_history(at).await;
         body["prompt_cache"] = self.prompt_analytics(&[]).await?;
         body["ledger_growth"] = self.ledger_growth(at).await;
@@ -426,7 +487,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 |a, b| self.host.compare_labels(a, b)
             )?);
         }
-        Ok(AuthResponse::json(200, body))
+        let mut document = crate::replay_values::SourceObject::parse(
+            &gateway_core::source_json::SourceJson::from_serializable(&body)?,
+        )?;
+        document.set("claude_accounts", &source_accounts)?;
+        document.set("claude", &source_active)?;
+        Ok(AuthResponse::source_json(200, document.source_json()?))
     }
     pub async fn capacity_rollups_response(
         &self,
