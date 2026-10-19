@@ -9,11 +9,13 @@ use gateway_admin_runtime::{
 };
 use gateway_auth::AuthHost;
 use gateway_catalog_runtime::ProviderBinding;
-use gateway_core::{GatewayError, model::ModelId, source_json::SourceJson, state::RevisionCheck};
-use gateway_providers::{AuthMaterial, Headers, PrepareOptions};
+use gateway_core::{
+    GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
+    source_serialization as source, state::RevisionCheck,
+};
+use gateway_providers::{Headers, PrepareOptions};
 use gateway_schema::{catalog::ProviderCatalog, selection::ProviderSelection};
 use serde::Serialize;
-use serde_json::Value;
 use std::{cmp::Ordering, future::Future};
 
 #[derive(Clone, Debug, Default)]
@@ -63,16 +65,14 @@ impl SelectedAccount {
     pub fn replay_scope(&self) -> &str {
         &self.replay_scope
     }
-    /// Base transport identity/client fields remain adapter-owned; Claude credentials and proven flags do not.
+    /// Copy proven capabilities only. Actual auth must be derived by the host
+    /// from this same immutable binding at its preparation/header boundary.
+    /// This method grants no credential validity or transport authorization.
     pub fn prepare_options(&self, mut base: PrepareOptions) -> PrepareOptions {
-        base.auth = self.options.auth.clone();
         base.supports_native_effort = self.options.supports_native_effort;
         base.supports_disabled_thinking = self.options.supports_disabled_thinking;
         base.native_reasoning_efforts = self.options.native_reasoning_efforts.clone();
         base
-    }
-    pub fn auth_material(&self) -> AuthMaterial {
-        self.options.auth.clone()
     }
 }
 
@@ -135,7 +135,7 @@ pub struct AcceptedObservation {
     pub account_id: String,
     pub account_cohort_id: String,
     pub credential_kind: String,
-    pub workspace_id: Option<String>,
+    pub workspace_id: Option<JsString16>,
     pub source_observed_at_ms: Option<i64>,
     pub sampled_at_ms: i64,
     pub response_status: Option<u16>,
@@ -144,8 +144,10 @@ pub struct AcceptedObservation {
 }
 impl AcceptedObservation {
     /// Source JSON number spelling also supports m19's integer timestamp DTO.
-    pub fn source_value(&self) -> Value {
-        crate::quota::source_value(self)
+    pub fn source_value(&self) -> SourceJson {
+        SourceJson::from_serializable(self)
+            .and_then(|value| source::canonical(&value))
+            .expect("finite source Claude observation")
     }
 }
 
