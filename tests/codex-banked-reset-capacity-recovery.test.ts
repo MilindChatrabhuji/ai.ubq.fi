@@ -563,7 +563,7 @@ test("a capacity observation that is not fresh never fabricates a probe identity
   }
 });
 
-test("an overage-allowed account routes the capacity exhaustion as a bounded probe without materializing a block", async () => {
+test("an overage-allowed account serves capacity exhaustion without a reset probe lease", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
@@ -591,8 +591,8 @@ test("an overage-allowed account routes the capacity exhaustion as a bounded pro
     const selected = await selectCodexRoutingAccountsStrong(singlePool, singlePool.accounts, now + 2, LUNA);
     assert.equal(selected.kind, "eligible");
     const probeAccount = selected.accounts[0];
-    assert.equal(probeAccount.probeRequired, true);
-    assert.equal(probeAccount.probeCircuit, "quota");
+    assert.equal(probeAccount.probeRequired, false);
+    assert.equal(probeAccount.probeCircuit, null);
     assert.equal(probeAccount.quotaHeadroom, 0);
     // The capacity-100% evidence must neither materialize nor block a class.
     const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
@@ -601,7 +601,8 @@ test("an overage-allowed account routes the capacity exhaustion as a bounded pro
 
     const claimed = await claimCodexRoutingProbe(singlePool, probeAccount, now + 5);
     assert.ok(claimed);
-    assert.equal(claimed.probeCircuit, "quota");
+    assert.equal(claimed.probeRequired, false);
+    assert.equal(claimed.probeCircuit, null);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -671,7 +672,7 @@ test("one subscription's overage allowance never changes its sibling's blocked i
     assert.equal(selected.kind, "eligible");
     assert.equal(selected.accounts.length, 1);
     assert.equal(selected.accounts[0].auth.account_id, "one");
-    assert.equal(selected.accounts[0].probeRequired, true);
+    assert.equal(selected.accounts[0].probeRequired, false);
     assert.equal(selected.blockedAccounts.length, 1);
     assert.equal(selected.blockedAccounts[0].auth.account_id, "two");
     assert.equal(selected.blockedAccounts[0].quotaResetAtMs, resetAtMs);
