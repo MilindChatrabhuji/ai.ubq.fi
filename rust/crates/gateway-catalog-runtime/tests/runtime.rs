@@ -6,8 +6,8 @@ use gateway_catalog_runtime::{
 };
 use gateway_core::{
     GatewayError,
-    source_json::SourceJson,
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
+    source_json::SourceJson,
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
         StoredRecord,
@@ -231,7 +231,9 @@ impl Host {
     }
 }
 impl CatalogHost for Host {
-    fn source_string_collator(&self)->Arc<dyn gateway_schema::aliases::SourceStringCollator>{Arc::new(source_catalog::Collator::captured())}
+    fn source_string_collator(&self) -> Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        Arc::new(source_catalog::Collator::captured())
+    }
     fn now_ms(&self) -> i64 {
         self.store.now.get()
     }
@@ -685,7 +687,10 @@ fn claude_failure_retains_ids_and_withdraws_reasoning_permissions() {
     let first = run(runtime.refresh_provider(&store, &host, CatalogProvider::ClaudeCode, false))
         .unwrap()
         .unwrap();
-    assert_eq!(first.models[0].deserialize::<Value>().unwrap()["supports_disabled_thinking"], true);
+    assert_eq!(
+        first.models[0].deserialize::<Value>().unwrap()["supports_disabled_thinking"],
+        true
+    );
     assert_eq!(
         first.models[0].deserialize::<Value>().unwrap()["supported_reasoning_levels"],
         json!(["high", "arbitrary"])
@@ -700,9 +705,24 @@ fn claude_failure_retains_ids_and_withdraws_reasoning_permissions() {
         .unwrap()
         .unwrap();
     assert!(stale.stale);
-    assert_eq!(stale.models[0].deserialize::<Value>().unwrap()["id"], "claude-sonnet-5");
-    assert!(stale.models[0].deserialize::<Value>().unwrap().get("supports_disabled_thinking").is_none());
-    assert!(stale.models[0].deserialize::<Value>().unwrap().get("supported_reasoning_levels").is_none());
+    assert_eq!(
+        stale.models[0].deserialize::<Value>().unwrap()["id"],
+        "claude-sonnet-5"
+    );
+    assert!(
+        stale.models[0]
+            .deserialize::<Value>()
+            .unwrap()
+            .get("supports_disabled_thinking")
+            .is_none()
+    );
+    assert!(
+        stale.models[0]
+            .deserialize::<Value>()
+            .unwrap()
+            .get("supported_reasoning_levels")
+            .is_none()
+    );
     host.provider(CatalogProvider::ClaudeCode, "claude-owner-2");
     let published = host.published.borrow().clone();
     assert!(
@@ -770,7 +790,10 @@ fn anonymous_surplus_uses_the_same_cache_across_credential_changes() {
             run(runtime.refresh_provider(&store, &host, CatalogProvider::Surplus, false))
                 .unwrap()
                 .unwrap();
-        assert_eq!(snapshot.models[0].deserialize::<Value>().unwrap()["id"], "cached-model");
+        assert_eq!(
+            snapshot.models[0].deserialize::<Value>().unwrap()["id"],
+            "cached-model"
+        );
         let publication = host.published.borrow().clone();
         assert!(
             run(runtime.load_state(&store, &publication, store.now.get()))
@@ -797,10 +820,17 @@ fn explicit_anonymous_requests_do_not_coalesce_and_newer_results_win() {
         run(runtime.refresh_anonymous_surplus(&store, &host, false))
             .unwrap()
             .unwrap()
-            .models[0].deserialize::<Value>().unwrap()["id"],
+            .models[0]
+            .deserialize::<Value>()
+            .unwrap()["id"],
         "new"
     );
-    assert_eq!(run(first).unwrap().unwrap().models[0].deserialize::<Value>().unwrap()["id"], "new");
+    assert_eq!(
+        run(first).unwrap().unwrap().models[0]
+            .deserialize::<Value>()
+            .unwrap()["id"],
+        "new"
+    );
     assert_eq!(host.requests.borrow().len(), 2);
 }
 #[test]
@@ -820,7 +850,9 @@ fn anonymous_surplus_failure_retains_cache_and_honors_retry_and_cancellation() {
         run(runtime.refresh_anonymous_surplus(&store, &host, false))
             .unwrap()
             .unwrap()
-            .models[0].deserialize::<Value>().unwrap()["id"],
+            .models[0]
+            .deserialize::<Value>()
+            .unwrap()["id"],
         "retained"
     );
     run(runtime.refresh_anonymous_surplus(&store, &host, false)).unwrap();
@@ -846,7 +878,12 @@ fn validated_claude_metadata_uses_current_source_fences_and_the_existing_memo() 
     let binding = ProviderBinding {
         identity: "validated-owner".into(),
     };
-    let rows = vec![SourceJson::from_serializable(&json!({"id":"claude-validated","supported_reasoning_levels":["high"]})).unwrap()];
+    let rows = vec![
+        SourceJson::from_serializable(
+            &json!({"id":"claude-validated","supported_reasoning_levels":["high"]}),
+        )
+        .unwrap(),
+    ];
     assert!(
         run(runtime.cache_validated_claude(&store, &host, &binding, rows, store.now.get()))
             .unwrap()
@@ -854,7 +891,10 @@ fn validated_claude_metadata_uses_current_source_fences_and_the_existing_memo() 
     let cached = run(runtime.refresh_provider(&store, &host, CatalogProvider::ClaudeCode, false))
         .unwrap()
         .unwrap();
-    assert_eq!(cached.models[0].deserialize::<Value>().unwrap()["id"], "claude-validated");
+    assert_eq!(
+        cached.models[0].deserialize::<Value>().unwrap()["id"],
+        "claude-validated"
+    );
     assert!(host.requests.borrow().is_empty());
     host.provider(CatalogProvider::ClaudeCode, "replacement-owner");
     assert!(
@@ -894,7 +934,9 @@ fn validation_publication_cannot_be_overwritten_by_an_older_inflight_refresh() {
         .unwrap()
     );
     assert_eq!(
-        run(pending).unwrap().unwrap().models[0].deserialize::<Value>().unwrap()["id"],
+        run(pending).unwrap().unwrap().models[0]
+            .deserialize::<Value>()
+            .unwrap()["id"],
         "claude-validated"
     );
 }
@@ -926,7 +968,10 @@ fn openrouter_empty_failure_retains_cache_and_ambiguous_matches_are_unknown() {
     ];
     assert!(providers::match_openrouter(&rows, &"model".into()).is_none());
     assert_eq!(
-        providers::match_openrouter(&rows, &"a/model".into()).unwrap().deserialize::<Value>().unwrap()["context_window_tokens"],
+        providers::match_openrouter(&rows, &"a/model".into())
+            .unwrap()
+            .deserialize::<Value>()
+            .unwrap()["context_window_tokens"],
         1
     );
     let store = Store::new();
@@ -939,7 +984,10 @@ fn openrouter_empty_failure_retains_cache_and_ambiguous_matches_are_unknown() {
     let retained = run(runtime.refresh_provider(&store, &host, CatalogProvider::Openrouter, false))
         .unwrap()
         .unwrap();
-    assert_eq!(retained.models[0].deserialize::<Value>().unwrap()["id"], "a/model");
+    assert_eq!(
+        retained.models[0].deserialize::<Value>().unwrap()["id"],
+        "a/model"
+    );
     run(runtime.refresh_provider(&store, &host, CatalogProvider::Openrouter, false)).unwrap();
     assert_eq!(host.requests.borrow().len(), 2);
 }
@@ -1058,8 +1106,14 @@ fn overlapping_forced_provider_refreshes_keep_the_newer_publication() {
         .unwrap()
         .unwrap();
     let first = run(first).unwrap().unwrap();
-    assert_eq!(second.models[0].deserialize::<Value>().unwrap()["id"], "newer");
-    assert_eq!(first.models[0].deserialize::<Value>().unwrap()["id"], "newer");
+    assert_eq!(
+        second.models[0].deserialize::<Value>().unwrap()["id"],
+        "newer"
+    );
+    assert_eq!(
+        first.models[0].deserialize::<Value>().unwrap()["id"],
+        "newer"
+    );
 }
 
 #[test]

@@ -8,7 +8,9 @@ mod versioned;
 pub use host::*;
 pub use state::CatalogState;
 
-use gateway_core::{GatewayError, query::QueryStore, source_json::SourceJson, source_serialization as source};
+use gateway_core::{
+    GatewayError, query::QueryStore, source_json::SourceJson, source_serialization as source,
+};
 use gateway_schema::{catalog::ProviderCatalog, catalog_cache::CatalogResponse};
 use std::{
     cell::RefCell,
@@ -425,7 +427,10 @@ impl CatalogRuntime {
                 .map_err(|_| unavailable("Provider model discovery did not return JSON"))?;
             let (rows, next) = providers::parse_page(provider, &parsed)?;
             for row in rows {
-                if let Some(old) = all.iter_mut().find(|old| source::member(old,"id").as_ref().and_then(source::string) == source::member(&row,"id").as_ref().and_then(source::string)) {
+                if let Some(old) = all.iter_mut().find(|old| {
+                    source::member(old, "id").as_ref().and_then(source::string)
+                        == source::member(&row, "id").as_ref().and_then(source::string)
+                }) {
                     *old = row;
                 } else {
                     all.push(row);
