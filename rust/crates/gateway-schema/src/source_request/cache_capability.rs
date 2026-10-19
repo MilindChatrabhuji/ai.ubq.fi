@@ -1,8 +1,7 @@
 //! One source-aware selected-model cache capability policy; payloads never enter scalar Value.
 use super::{SourceRequestError, value::Value as View};
-use crate::prompt_cache::{CODEX_PROVIDER, normalize_capabilities};
+use crate::prompt_cache::CODEX_PROVIDER;
 use gateway_core::{js_string::JsString16, source_json::SourceJson};
-use serde_json::Value;
 fn refusal(model: &JsString16, prefix: &str, param: &str) -> SourceRequestError {
     let mut units = prefix.encode_utf16().collect::<Vec<_>>();
     units.extend_from_slice(model.as_units());
@@ -72,11 +71,12 @@ fn contains_breakpoint(value: &View) -> bool {
 }
 pub fn validate_known_unsupported_prompt_cache(
     model: &JsString16,
-    prompt_cache: Option<&Value>,
+    prompt_cache: Option<&SourceJson>,
     raw: &SourceJson,
     normalized_input: &[SourceJson],
     input_key: &str,
 ) -> Result<(), SourceRequestError> {
+    let prompt_cache = prompt_cache.map(|value| View::from_source(value.clone()));
     let body = View::from_source(raw.clone());
     let input = normalized_input
         .iter()
@@ -95,7 +95,7 @@ pub fn validate_known_unsupported_prompt_cache(
             param,
         )
     };
-    if prompt_cache == Some(&Value::Bool(false)) {
+    if prompt_cache.as_ref() == Some(&View::Bool(false)) {
         let param = [
             "prompt_cache_key",
             "prompt_cache_options",
@@ -114,14 +114,14 @@ pub fn validate_known_unsupported_prompt_cache(
         }
         return Ok(());
     }
-    let capabilities = normalize_capabilities(prompt_cache);
+    let capabilities = super::cache_metadata::normalize_capabilities(prompt_cache.as_ref());
     let Some(controls) = capabilities
         .as_ref()
         .and_then(|v| v.get("providers"))
-        .and_then(Value::as_array)
+        .and_then(View::as_array)
         .and_then(|ps| {
             ps.iter()
-                .find(|p| p.get("id").and_then(Value::as_str) == Some(CODEX_PROVIDER))
+                .find(|p| p.get("id").and_then(View::as_str) == Some(CODEX_PROVIDER))
         })
         .and_then(|p| p.get("controls"))
     else {
@@ -130,10 +130,10 @@ pub fn validate_known_unsupported_prompt_cache(
     let mode_unsupported = |mode: &str| {
         controls
             .get("modes")
-            .and_then(Value::as_array)
+            .and_then(View::as_array)
             .is_some_and(|m| !m.iter().any(|v| v.as_str() == Some(mode)))
     };
-    if body.get("prompt_cache_key").is_some() && controls.get("key") == Some(&Value::Bool(false)) {
+    if body.get("prompt_cache_key").is_some() && controls.get("key") == Some(&View::Bool(false)) {
         return Err(unsupported("prompt_cache_key"));
     }
     let options = body.get("prompt_cache_options").filter(|v| v.is_object());
@@ -152,7 +152,7 @@ pub fn validate_known_unsupported_prompt_cache(
         }
     });
     if let Some(("implicit", param)) = requested
-        && (controls.get("implicit") == Some(&Value::Bool(false)) || mode_unsupported("implicit"))
+        && (controls.get("implicit") == Some(&View::Bool(false)) || mode_unsupported("implicit"))
     {
         return Err(unsupported(param));
     }
@@ -170,7 +170,7 @@ pub fn validate_known_unsupported_prompt_cache(
     ] {
         if let (Some(value), Some(allowed)) = (
             raw.and_then(View::as_text),
-            allowed.and_then(Value::as_array),
+            allowed.and_then(View::as_array),
         ) && !allowed.iter().any(|v| {
             v.as_str().is_some_and(|text| {
                 value
@@ -185,7 +185,7 @@ pub fn validate_known_unsupported_prompt_cache(
         }
     }
     for (param, kind) in markers {
-        if controls.get("explicit_breakpoints") == Some(&Value::Bool(false))
+        if controls.get("explicit_breakpoints") == Some(&View::Bool(false))
             || mode_unsupported("explicit")
         {
             return Err(unsupported(&param));
@@ -198,7 +198,7 @@ pub fn validate_known_unsupported_prompt_cache(
         if let Some(allowed) = controls
             .get("breakpoint_block_types")
             .and_then(|v| v.get(endpoint))
-            .and_then(Value::as_array)
+            .and_then(View::as_array)
             && !kind.is_some_and(|k| {
                 allowed.iter().any(|v| {
                     v.as_str()
@@ -210,7 +210,7 @@ pub fn validate_known_unsupported_prompt_cache(
         }
     }
     if let Some(("explicit", param)) = requested
-        && (controls.get("explicit_breakpoints") == Some(&Value::Bool(false))
+        && (controls.get("explicit_breakpoints") == Some(&View::Bool(false))
             || mode_unsupported("explicit"))
     {
         return Err(unsupported(param));
