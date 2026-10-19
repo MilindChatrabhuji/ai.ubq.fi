@@ -613,6 +613,10 @@ mod tests {
             .unwrap();
             let finished = writer.rows.borrow();
             assert_eq!(finished.len(), 1);
+            println!(
+                "ROUTING_WRITER_CUSTODY_FIXTURE={}",
+                json!({"v": version, "phase": "finished", "rows": finished.iter().map(|(key, record)| json!({"key":RecordKey(key.clone()),"record":record})).collect::<Vec<_>>()})
+            );
             let session = finished.get(&journal::key("custody-request").0).unwrap();
             assert_eq!(
                 session.expires_at_ms,
