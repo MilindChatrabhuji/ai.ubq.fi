@@ -51,6 +51,19 @@ pub struct PromptEvent {
     pub prompt_cache_mode: Option<String>,
     pub fallback_reason: Option<String>,
 }
+impl PromptEvent {
+    /// Map one already-extracted shared usage result; this does not parse or validate raw upstream JSON.
+    pub fn set_source_usage(&mut self, usage: Option<&gateway_core::source_usage::UsageTokens>) {
+        self.usage_telemetry_status = usage
+            .map_or("missing", |usage| usage.status.as_str())
+            .into();
+        self.input_tokens = usage.and_then(|usage| usage.input_tokens);
+        self.cached_input_tokens = usage.and_then(|usage| usage.cached_input_tokens);
+        self.cache_write_input_tokens = usage.and_then(|usage| usage.cache_write_input_tokens);
+        self.cache_write_tokens_present =
+            usage.is_some_and(|usage| usage.cache_write_tokens_present());
+    }
+}
 pub(crate) fn known_release(release: &str) -> Option<String> {
     let s = store::trim(release);
     (s.len() >= 7 && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))

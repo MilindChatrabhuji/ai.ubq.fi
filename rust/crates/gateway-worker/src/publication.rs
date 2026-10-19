@@ -15,13 +15,8 @@ pub async fn handle(
     mut request: Request,
     env: &Env,
     receiver: Option<&PublicationReceiver>,
+    native: &crate::native_host::NativeBindings,
 ) -> Result<Response, GatewayError> {
-    let receiver = receiver.ok_or_else(|| {
-        GatewayError::unavailable(
-            "The native publication receiver is not configured.",
-            "native_publication_unavailable",
-        )
-    })?;
     bounded_headers(
         &request,
         HeaderLimits {
@@ -35,6 +30,25 @@ pub async fn handle(
     let path = request.path();
     let raw_body = request_bytes(&mut request, NATIVE_MAX_BODY_BYTES).await?;
     let store = RemoteAuthorityStore::from_env(env)?;
+    #[derive(serde::Deserialize)]
+    struct Operation {
+        operation: String,
+    }
+    if serde_json::from_slice::<Operation>(&raw_body)
+        .ok()
+        .is_some_and(|value| value.operation == "managed_access_publish")
+    {
+        return crate::native_authority::managed_publication(
+            &request, env, native, &store, &raw_body,
+        )
+        .await;
+    }
+    let receiver = receiver.ok_or_else(|| {
+        GatewayError::unavailable(
+            "The native publication receiver is not configured.",
+            "native_publication_unavailable",
+        )
+    })?;
     let response = receiver
         .handle(
             &store,
