@@ -17,6 +17,7 @@ pub enum NativeCapability {
     ConfigurationPublish,
     AccessPublish,
     OwnerRenewal,
+    LiveSideband,
 }
 
 #[derive(Clone)]
@@ -24,9 +25,9 @@ pub struct NativeTransportIdentity {
     key_id: String,
     owner_id: String,
     owner_epoch: String,
-    key: [u8; 32],
+    pub(crate) key: [u8; 32],
     key_fingerprint: String,
-    capabilities: BTreeSet<NativeCapability>,
+    pub(crate) capabilities: BTreeSet<NativeCapability>,
 }
 
 impl std::fmt::Debug for NativeTransportIdentity {

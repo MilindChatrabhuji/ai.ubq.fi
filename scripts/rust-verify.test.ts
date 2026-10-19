@@ -1,19 +1,27 @@
 import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   executeRustPlan,
   parseRustArguments,
-  planRustVerification,
+  planRustVerification as planRustVerificationForHost,
   runCommand,
+  rustNativeTarget,
+  rustSourceTarget,
+  rustToolPath,
   rustVerificationEnvironment,
   verifyWorkerArtifact,
   type RustCommand,
+  type RustStage,
 } from "./rust-verify.ts";
 
 const temporary = mkdtempSync(join(tmpdir(), "uos-rust-gate-contract-"));
+const linux = { platform: "linux", arch: "arm64" };
+const darwin = { platform: "darwin", arch: "arm64" };
+const planRustVerification = (root: string, paths: readonly string[], stage: RustStage, complete = false, host = linux) =>
+  planRustVerificationForHost(root, paths, stage, complete, host);
 afterAll(() => {
   rmSync(temporary, { recursive: true, force: true });
 });
@@ -50,6 +58,85 @@ test("Rust source selects its real Cargo reverse dependencies without a native c
       .filter((command) => command.argv[0] === "cargo" && command.argv[1] !== "fmt")
       .every((command) => command.argv.includes("--locked") && command.argv.includes("--offline"))
   );
+});
+
+test("native command and test targets follow the actual supported host while WASM stays portable", () => {
+  const root = fixture();
+  const paths = ["rust/crates/gateway-core/src/lib.rs"];
+  for (const [host, expected] of [
+    [linux, "aarch64-unknown-linux-gnu"],
+    [darwin, "aarch64-apple-darwin"],
+  ] as const) {
+    assert.equal(rustNativeTarget(host), expected);
+    const native = planRustVerification(root, paths, "native", false, host);
+    const compiled = native.commands.filter((command) => command.argv.includes("--target"));
+    assert.equal(compiled.length, 4);
+    assert.ok(compiled.every((command) => command.argv[command.argv.indexOf("--target") + 1] === expected));
+    assert.ok(native.commands.some((command) => command.testListing));
+    const wasm = planRustVerification(root, paths, "wasm", false, host);
+    assert.ok(wasm.commands.filter((command) => command.argv.includes("--target")).every((command) => command.argv.includes("wasm32-unknown-unknown")));
+    assert.ok(!wasm.packages.includes("gateway-native"));
+  }
+  for (const host of [
+    { platform: "darwin", arch: "x64" },
+    { platform: "linux", arch: "x64" },
+    { platform: "win32", arch: "arm64" },
+  ])
+    assert.throws(() => planRustVerification(root, paths, "native", false, host), /supported Darwin or Linux ARM64/);
+});
+
+test("Mac tools bind to the prepared toolchain and cannot fall back to ambient binaries or escaped links", () => {
+  const task = mkdtempSync(join(temporary, "prepared-"));
+  const bin = join(task, "rustup/toolchains/1.98.1-aarch64-apple-darwin/bin");
+  const tools = join(task, "tools/bin");
+  const ambient = mkdtempSync(join(temporary, "ambient-"));
+  for (const directory of [bin, tools]) mkdirSync(directory, { recursive: true });
+  for (const name of ["rustc", "rustdoc", "cargo"]) writeFileSync(join(bin, name), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  for (const directory of [tools, ambient]) writeFileSync(join(directory, "worker-build"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  const environment = rustVerificationEnvironment(
+    {
+      HOME: "/fixture-account",
+      PATH: `${ambient}:${tools}:/usr/bin:/bin`,
+      RUSTUP_HOME: join(task, "rustup"),
+      CARGO_HOME: join(task, "cargo"),
+      CARGO_TARGET_DIR: join(task, "target"),
+      XDG_CACHE_HOME: join(task, "cache"),
+    },
+    darwin
+  );
+  assert.equal(environment.RUSTC, join(bin, "rustc"));
+  assert.equal(environment.RUSTDOC, join(bin, "rustdoc"));
+  assert.equal(environment.RUSTUP_TOOLCHAIN, "1.98.1-aarch64-apple-darwin");
+  assert.ok(!environment.PATH.split(":").includes(ambient));
+  assert.equal(rustToolPath("cargo", environment, darwin), join(bin, "cargo"));
+  assert.equal(rustToolPath("worker-build", environment, darwin), join(tools, "worker-build"));
+  rmSync(join(tools, "worker-build"));
+  assert.throws(() => rustToolPath("worker-build", environment, darwin), /no ambient tool fallback/);
+  symlinkSync(join(ambient, "worker-build"), join(tools, "worker-build"));
+  assert.throws(() => rustToolPath("worker-build", environment, darwin), /no ambient tool fallback/);
+  assert.equal(rustToolPath("cargo", environment, linux), "cargo");
+});
+
+test("source identities cannot share Mac build-script provenance targets", () => {
+  const sha = "1".repeat(40);
+  const tree = "2".repeat(40);
+  const target = rustSourceTarget(temporary, sha, tree);
+  assert.notEqual(target, rustSourceTarget(temporary, "3".repeat(40), tree));
+  assert.notEqual(target, rustSourceTarget(temporary, sha, "4".repeat(40)));
+  assert.throws(() => rustSourceTarget(temporary, "HEAD", tree), /full source\/tree identity/);
+  assert.throws(() => rustSourceTarget("relative", sha, tree), /absolute path/);
+});
+
+test("the actual Worker build launcher reaches dotenv refusal on the supported host before any compiler", () => {
+  const root = mkdtempSync(join(temporary, "launcher-"));
+  mkdirSync(join(root, "ops"));
+  const script = join(root, "ops/rust-worker-build.sh");
+  copyFileSync(join(import.meta.dir, "../ops/rust-worker-build.sh"), script);
+  writeFileSync(join(root, ".env"), "");
+  const result = Bun.spawnSync(["/bin/bash", script], { cwd: root, env: { PATH: "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe" });
+  assert.equal(result.exitCode, 1);
+  const expected = process.arch === "arm64" ? /isolated build checkout without automatically discovered dotenv/ : /prepared Darwin or Linux ARM64 host/;
+  assert.match(result.stderr.toString(), expected);
 });
 
 test("package-local changes stay scoped while lock/tooling changes select every member", () => {
@@ -215,6 +302,16 @@ test("a native companion cannot enter the Worker dependency closure", () => {
   assert.throws(() => planRustVerification(root, ["rust/crates/gateway-worker/src/lib.rs"], "wasm"), /native-only package/);
 });
 
+test("a native-only test dependency stays outside the Worker library but remains an affected-test edge", () => {
+  const root = fixture();
+  writeFileSync(
+    join(root, "rust/crates/gateway-worker/Cargo.toml"),
+    '[package]\nname="gateway-worker"\n[dependencies]\ngateway-core={path="../gateway-core"}\n[target.\'cfg(not(target_arch = "wasm32"))\'.dev-dependencies]\ngateway-native={path="../gateway-native"}\n'
+  );
+  assert.deepEqual(planRustVerification(root, ["rust/crates/gateway-worker/src/lib.rs"], "wasm").packages, ["gateway-worker"]);
+  assert.deepEqual(planRustVerification(root, ["rust/crates/gateway-native/src/lib.rs"], "native").packages, ["gateway-native", "gateway-worker"]);
+});
+
 test("isolated Rust children preserve account HOME and isolate ambient Git configuration", () => {
   const source = {
     HOME: "/home/build-account",
@@ -228,13 +325,13 @@ test("isolated Rust children preserve account HOME and isolate ambient Git confi
     GIT_CONFIG_NOSYSTEM: "0",
     UNLISTED_CREDENTIAL_PROBE: "fixture-only",
   };
-  const environment = rustVerificationEnvironment(source);
+  const environment = rustVerificationEnvironment(source, linux);
   assert.equal(environment.HOME, source.HOME);
   assert.equal(environment.GIT_CONFIG_NOSYSTEM, "1");
   assert.equal(environment.GIT_CONFIG_GLOBAL, "/dev/null");
   assert.equal(environment.GIT_CONFIG_SYSTEM, "/dev/null");
   assert.equal(environment.CARGO_NET_OFFLINE, "true");
   assert.equal(environment.UNLISTED_CREDENTIAL_PROBE, undefined);
-  assert.throws(() => rustVerificationEnvironment({ ...source, HOME: undefined }), /explicit inherited absolute HOME/);
-  assert.throws(() => rustVerificationEnvironment({ ...source, HOME: "relative-home" }), /explicit inherited absolute HOME/);
+  assert.throws(() => rustVerificationEnvironment({ ...source, HOME: undefined }, linux), /explicit inherited absolute HOME/);
+  assert.throws(() => rustVerificationEnvironment({ ...source, HOME: "relative-home" }, linux), /explicit inherited absolute HOME/);
 });
