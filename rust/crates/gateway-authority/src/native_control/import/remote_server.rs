@@ -122,14 +122,22 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         self.require_import_phase_peer(peer, body)?;
         let request = Request::parse(body)?;
         let result = match &request.command {
-            Command::CustodyTerminal { started, publication_revision } => {
-                let terminal = self.current_custody_terminal(started, publication_revision).await?;
-                ResultData::CustodyTerminal { started: started.clone(), publication_revision: publication_revision.clone(), terminal: Box::new(terminal) }
+            Command::CustodyTerminal {
+                started,
+                publication_revision,
+            } => {
+                let terminal = self
+                    .current_custody_terminal(started, publication_revision)
+                    .await?;
+                ResultData::CustodyTerminal {
+                    started: started.clone(),
+                    publication_revision: publication_revision.clone(),
+                    terminal: Box::new(terminal),
+                }
             }
             Command::Admit { metadata } => {
                 let (_, state, _) = self.import_phase_snapshot(metadata, None, None).await?;
-                ResultData::CustodyTerminal { .. } => return Err(unavailable()),
-            ResultData::Admit { state }
+                ResultData::Admit { state }
             }
             Command::FinishCurrent { state } => {
                 self.import_phase_snapshot(&state.metadata, Some(state), None)
@@ -228,8 +236,11 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         };
         self.require_import_phase_peer(peer, body)?;
         if let ResultData::CustodyTerminal { started, .. } = &result {
-            if self.time(0)? >= started.deadline_ms { return Err(unavailable()); }
-            let reply = Reply::new(result); reply.validate_for(&request)?;
+            if self.time(0)? >= started.deadline_ms {
+                return Err(unavailable());
+            }
+            let reply = Reply::new(result);
+            reply.validate_for(&request)?;
             return serde_json::to_vec(&reply).map_err(|_| unavailable());
         }
         let state = match &result {
@@ -251,21 +262,50 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
     }
     // Current terminal ONLY: the overwritten Started revision is deliberately
     // request-correlated DATA, not historical proof or a new stop capability.
-    async fn current_custody_terminal(&self, started: &ImportCustodyStartedWire, revision: &str) -> Result<ImportAuthorityTerminalData, GatewayError> {
+    async fn current_custody_terminal(
+        &self,
+        started: &ImportCustodyStartedWire,
+        revision: &str,
+    ) -> Result<ImportAuthorityTerminalData, GatewayError> {
         let key = rows::key("action", &started.action_ref);
-        let record = self.authority.store.read(&key).await?.ok_or_else(unavailable)?;
+        let record = self
+            .authority
+            .store
+            .read(&key)
+            .await?
+            .ok_or_else(unavailable)?;
         let document = gateway_core::source_control::decode_source_control_record(&record)?;
         let row: ImportActionRow = document.deserialize()?;
-        if row.v != 3 || row.kind != NativeImportKind::CodexAuth
-            || row.metadata.operation_id != started.operation_id || row.metadata.action_ref != started.action_ref
-            || row.facts.native_owner_id != started.native_owner_id || row.facts.account_id_hash != started.account_id_hash
-            || row.facts.source_native_generation != started.source_native_generation || row.facts.owner_revision != started.owner_revision
-            || row.facts.source_revision != started.source_revision || row.facts.normalized_revision != started.normalized_revision
-            || row.deadline_ms != started.deadline_ms { return Err(unavailable()); }
+        if row.v != 3
+            || row.kind != NativeImportKind::CodexAuth
+            || row.metadata.operation_id != started.operation_id
+            || row.metadata.action_ref != started.action_ref
+            || row.facts.native_owner_id != started.native_owner_id
+            || row.facts.account_id_hash != started.account_id_hash
+            || row.facts.source_native_generation != started.source_native_generation
+            || row.facts.owner_revision != started.owner_revision
+            || row.facts.source_revision != started.source_revision
+            || row.facts.normalized_revision != started.normalized_revision
+            || row.deadline_ms != started.deadline_ms
+        {
+            return Err(unavailable());
+        }
         let publication = row.publication.as_ref().ok_or_else(unavailable)?;
-        if publication.claim_ref != started.claim_ref || publication.publication_revision != revision { return Err(unavailable()); }
+        if publication.claim_ref != started.claim_ref
+            || publication.publication_revision != revision
+        {
+            return Err(unavailable());
+        }
         let state = remote_state::state_data(&row, record.revision);
-        let (_, terminal) = self.import_phase_terminal(&state, &started.claim_ref, revision, &publication.native_receipt_ref, &publication.publication_request_digest).await?;
+        let (_, terminal) = self
+            .import_phase_terminal(
+                &state,
+                &started.claim_ref,
+                revision,
+                &publication.native_receipt_ref,
+                &publication.publication_request_digest,
+            )
+            .await?;
         Ok(terminal)
     }
 
