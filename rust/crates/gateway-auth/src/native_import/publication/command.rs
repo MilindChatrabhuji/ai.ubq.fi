@@ -80,9 +80,6 @@ impl<'de> Deserialize<'de> for ImportCatalogData {
     }
 }
 
-/// DATA-only safe normalization for the fixed native publication component.
-/// Actual current-cache merge/default/config planning remains authority-owned.
-
 impl ImportCatalogData {
     pub fn disposition(&self) -> ImportCatalogDisposition {
         match self {
