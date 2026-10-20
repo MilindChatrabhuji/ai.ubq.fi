@@ -601,3 +601,6 @@ mod publication;
 
 #[path = "import_phase.rs"]
 mod phase;
+
+#[path = "import_completion.rs"]
+mod completion;

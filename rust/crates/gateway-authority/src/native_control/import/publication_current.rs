@@ -14,6 +14,89 @@ use gateway_auth::provider_credentials::{
 use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
 use serde_json::Value;
 
+/// Response DATA only. No serializer, permission constructor or stored schema.
+#[derive(Debug, PartialEq)]
+pub(crate) struct NativeImportModelsProjection {
+    pub(crate) count: usize,
+    pub(crate) source: gateway_core::js_string::JsString16,
+    pub(crate) updated_at_ms: i64,
+    pub(crate) client_version: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct NativeImportCompletionProjection {
+    pub(crate) account_count: usize,
+    pub(crate) account_ids: Vec<String>,
+    pub(crate) updated_at_ms: f64,
+    pub(crate) models: NativeImportModelsProjection,
+}
+
+/// Derive only from the same checked publication transaction. The wire owner
+/// must preserve the nullable version and source UTF16 when serializing DATA.
+pub(super) async fn completion_metadata<
+    S: AuthorityStore,
+    I: TokenSource,
+    C: NativeRenewalCancellation,
+>(
+    control: &NativeRenewalAuthority<'_, S, I, C>,
+    tx: &mut Transaction<'_, S, I>,
+    row: &ImportActionRow,
+    publication: &ImportPublicationDataV1,
+) -> Result<NativeImportCompletionProjection, GatewayError> {
+    verify(control, tx, row, publication).await?;
+    let source = tx
+        .read(&codex_source_pool_key())
+        .await?
+        .ok_or_else(unavailable)?;
+    let source = parse_codex_source_pool(&source)?.ok_or_else(unavailable)?;
+    let selected = source
+        .accounts
+        .get(usize::try_from(row.facts.slot).map_err(|_| unavailable())?)
+        .ok_or_else(unavailable)?;
+    let catalog: ModelSnapshot = tx
+        .read_source_control(&catalog_store::codex_snapshot_key())
+        .await?
+        .ok_or_else(super::publication_source::missing_catalog)?;
+    Ok(NativeImportCompletionProjection {
+        account_count: source.accounts.len(),
+        account_ids: source
+            .accounts
+            .iter()
+            .map(|account| account.account_id.clone())
+            .collect(),
+        updated_at_ms: selected.updated_at_ms,
+        models: NativeImportModelsProjection {
+            count: catalog.models.len(),
+            source: catalog.source,
+            updated_at_ms: catalog.updated_at_ms,
+            client_version: catalog.client_version,
+        },
+    })
+}
+
+#[cfg(test)]
+impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
+    NativeRenewalAuthority<'_, S, I, C>
+{
+    // Bounded real-transaction test entry; never a production proof constructor.
+    pub(in crate::native_control) async fn completion_metadata_fixture(
+        &self,
+        action_ref: &str,
+    ) -> Result<NativeImportCompletionProjection, GatewayError> {
+        let mut tx = self.authority.transaction(self.time(0)?)?;
+        let row: ImportActionRow = tx
+            .read_source_control(&rows::key("action", action_ref))
+            .await?
+            .ok_or_else(unavailable)?;
+        let publication = row.publication.as_ref().ok_or_else(unavailable)?;
+        let result = completion_metadata(self, &mut tx, &row, publication).await?;
+        if !tx.commit().await? {
+            return Err(unavailable());
+        }
+        Ok(result)
+    }
+}
+
 pub(in crate::native_control) struct VerifiedImportActorRevisions {
     actor: StoredNativeActor,
     config_revision: Option<String>,
