@@ -164,6 +164,15 @@ pub fn signature_input(
     nonce: &str,
     body: &[u8],
 ) -> Result<Vec<u8>, GatewayError> {
+    if body.len() > NATIVE_MAX_BODY_BYTES {
+        return Err(invalid("Invalid native authentication frame"));
+    }
+    let authority_limit = if path == NATIVE_RENEWAL_AUTHORITY_PATH {
+        crate::native_import::authority::new_request_limit(body)?
+            .unwrap_or(crate::native_control::NATIVE_AUTHORITY_MAX_BYTES)
+    } else {
+        crate::native_control::NATIVE_AUTHORITY_MAX_BYTES
+    };
     if !matches!(
         path,
         NATIVE_RPC_PATH
@@ -180,8 +189,7 @@ pub fn signature_input(
         || body.len() > NATIVE_MAX_BODY_BYTES
         || path == NATIVE_CONTROL_PATH
             && body.len() > crate::native_control::NATIVE_CONTROL_MAX_BYTES
-        || path == NATIVE_RENEWAL_AUTHORITY_PATH
-            && body.len() > crate::native_control::NATIVE_AUTHORITY_MAX_BYTES
+        || path == NATIVE_RENEWAL_AUTHORITY_PATH && body.len() > authority_limit
     {
         return Err(invalid("Invalid native authentication frame"));
     }

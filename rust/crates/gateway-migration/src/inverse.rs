@@ -8,6 +8,8 @@ use gateway_core::{
 };
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
+#[path = "native_import_custody.rs"]
+mod native_import_custody;
 
 fn source_profile_key(key: &RecordKey) -> Result<Vec<SourceJson>, GatewayError> {
     TupleKey::from_record_key(key)?
@@ -495,6 +497,7 @@ pub(crate) async fn export_rows<S: QueryStore>(
             mapping: None,
         });
     }
+    native_import_custody::validate(&all)?;
     Ok((manifest, entries, controls))
 }
 

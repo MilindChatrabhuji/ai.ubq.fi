@@ -113,6 +113,12 @@ impl PublicationReceiver {
             clock,
         })
     }
+    pub(crate) fn import_identity(&self) -> &NativeTransportIdentity {
+        &self.identity
+    }
+    pub(crate) fn import_inputs(&self) -> &ConfiguredPaidInputs {
+        &self.inputs
+    }
     pub async fn handle<S: AuthorityStore>(
         &self,
         store: &S,
