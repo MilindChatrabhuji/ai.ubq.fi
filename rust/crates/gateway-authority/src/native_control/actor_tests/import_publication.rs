@@ -168,29 +168,30 @@ fn normalized_publication_is_one_fixed_group_and_lost_reply_reconciles_without_s
             applied.publication.publication_request_digest,
             sha256_hex(&body)
         );
-        let rows = f.store.rows.lock().unwrap();
-        let changed = rows
-            .iter()
-            .filter(|(key, row)| before.get(*key) != Some(&serde_json::to_value(row).unwrap()))
-            .map(|(key, row)| {
-                assert_eq!(row.revision, "publication-one");
-                key.clone()
-            })
-            .collect::<BTreeSet<_>>();
-        assert_eq!(changed.len(), 9);
-        for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
-            assert!(!rows.contains_key(&keys::paid_control_observation(provider).0));
-        }
-        let source = &rows.get(&codex_source_pool_key().0).unwrap().value;
-        assert!(
-            source["accounts"]
-                .as_array()
-                .unwrap()
+        {
+            let rows = f.store.rows.lock().unwrap();
+            let changed = rows
                 .iter()
-                .all(|account| account["refresh_token"] == ""),
-            "access projection contains no refresh credential"
-        );
-        drop(rows);
+                .filter(|(key, row)| before.get(*key) != Some(&serde_json::to_value(row).unwrap()))
+                .map(|(key, row)| {
+                    assert_eq!(row.revision, "publication-one");
+                    key.clone()
+                })
+                .collect::<BTreeSet<_>>();
+            assert_eq!(changed.len(), 9);
+            for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
+                assert!(!rows.contains_key(&keys::paid_control_observation(provider).0));
+            }
+            let source = &rows.get(&codex_source_pool_key().0).unwrap().value;
+            assert!(
+                source["accounts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|account| account["refresh_token"] == ""),
+                "access projection contains no refresh credential"
+            );
+        }
         let after = f.snapshot();
         let tokens = f.authority.tokens.0.load(Ordering::SeqCst);
         let replay = control

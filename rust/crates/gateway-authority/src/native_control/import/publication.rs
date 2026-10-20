@@ -12,7 +12,7 @@ use gateway_auth::{
     crypto::sha256_hex,
     native::NATIVE_PUBLICATION_PATH,
     native_auth::{AuthenticatedNativeOwner, NativeCapability},
-    provider_credentials::{codex_credential_identity, codex_source_pool_key},
+    provider_credentials::codex_credential_identity,
 };
 use gateway_core::{
     provider::PaidProvider,
