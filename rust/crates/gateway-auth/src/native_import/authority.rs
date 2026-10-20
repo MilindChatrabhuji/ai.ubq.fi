@@ -111,6 +111,10 @@ pub enum ImportAuthorityClaimMode {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ImportAuthorityCommand {
+    CustodyTerminal {
+        started: ImportCustodyStartedWire,
+        publication_revision: String,
+    },
     Admit {
         metadata: NativeImportMetadata,
     },
@@ -164,6 +168,13 @@ impl ImportAuthorityRequestData {
             return Err(invalid());
         }
         match &self.command {
+            ImportAuthorityCommand::CustodyTerminal {
+                started,
+                publication_revision,
+            } => {
+                started.validate()?;
+                reference(publication_revision)?;
+            }
             ImportAuthorityCommand::Admit { metadata } => {
                 metadata.validate()?;
                 hash(&metadata.action_ref)?;
@@ -268,6 +279,11 @@ impl ImportAuthorityTerminalData {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ImportAuthorityResult {
+    CustodyTerminal {
+        started: ImportCustodyStartedWire,
+        publication_revision: String,
+        terminal: Box<ImportAuthorityTerminalData>,
+    },
     Admit {
         state: ImportAuthorityStateData,
     },
@@ -324,6 +340,24 @@ impl ImportAuthorityReplyData {
             return Err(invalid());
         }
         let valid = match (&request.command, &self.result) {
+            (
+                ImportAuthorityCommand::CustodyTerminal {
+                    started: a,
+                    publication_revision: x,
+                },
+                ImportAuthorityResult::CustodyTerminal {
+                    started: b,
+                    publication_revision: y,
+                    terminal,
+                },
+            ) => {
+                terminal.validate()?;
+                a == b
+                    && x == y
+                    && &terminal.publication_revision == x
+                    && &terminal.source_revision == x
+                    && &terminal.normalized_revision == x
+            }
             (
                 ImportAuthorityCommand::Admit { metadata },
                 ImportAuthorityResult::Admit { state },
@@ -584,6 +618,10 @@ pub fn import_authority_request_max_bytes() -> usize {
     let s = max_state();
     let r = "r".repeat(256);
     let commands = [
+        ImportAuthorityCommand::CustodyTerminal {
+            started: max_custody(),
+            publication_revision: r.clone(),
+        },
         ImportAuthorityCommand::Admit {
             metadata: s.metadata.clone(),
         },
@@ -626,6 +664,16 @@ pub fn import_authority_reply_max_bytes() -> usize {
     let s = max_state();
     let r = "r".repeat(256);
     let results = [
+        ImportAuthorityResult::CustodyTerminal {
+            started: max_custody(),
+            publication_revision: r.clone(),
+            terminal: Box::new({
+                let mut terminal = max_terminal();
+                terminal.source_revision = r.clone();
+                terminal.normalized_revision = r.clone();
+                terminal
+            }),
+        },
         ImportAuthorityResult::Admit { state: s.clone() },
         ImportAuthorityResult::FinishCurrent { state: s.clone() },
         ImportAuthorityResult::Claim {

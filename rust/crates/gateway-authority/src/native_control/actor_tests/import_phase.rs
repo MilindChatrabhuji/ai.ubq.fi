@@ -343,3 +343,6 @@ fn terminal_query_requires_exact_matching_guarded_group_and_rejects_foreign_repl
 #[cfg(unix)]
 #[path = "import_remote.rs"]
 mod actual_tls;
+
+#[path = "import_custody_terminal.rs"]
+mod custody_terminal;
