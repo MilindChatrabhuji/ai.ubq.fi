@@ -429,6 +429,28 @@ mod candidate_tests {
     }
 
     #[test]
+    fn profile_v2_runtime_uses_existing_lossless_fingerprint_envelope() {
+        use gateway_core::{source_control::{encode_source_control_record, decode_source_control_record}, source_json::SourceJson, source_serialization as source};
+        let identity = identity(); let owner = owner(&identity); let inputs = inputs();
+        let raw = SourceJson::parse(r#"{"model":"\ud800","reasoning":"none"}"#).unwrap();
+        let runtime = encode_source_control_record("planned-runtime", &raw, None).unwrap();
+        assert_eq!(runtime.value_encoding, gateway_core::value::ValueEncoding::ProfileV2);
+        let expected = source::object_keys(vec![
+            ("v".into(), SourceJson::from_serializable(&PAID_CONTROL_CONFIG_VERSION).unwrap()),
+            ("immutable".into(), SourceJson::from_serializable(&inputs.immutable_configuration).unwrap()),
+            ("runtime".into(), decode_source_control_record(&runtime).unwrap()),
+            ("surplus_binding".into(), SourceJson::from_serializable(&inputs.binding(PaidProvider::Surplus)).unwrap()),
+            ("openlux_discovery_binding".into(), SourceJson::from_serializable(&inputs.discovery_binding(PaidProvider::Metered)).unwrap()),
+            ("openlux_binding".into(), SourceJson::from_serializable(&inputs.binding(PaidProvider::Metered)).unwrap()),
+        ]).unwrap();
+        let actual = inputs.candidate_configuration(&identity, &owner, "g1", Some(&runtime), None).unwrap();
+        assert_eq!(actual.configuration_fingerprint, sha256_hex(expected.as_str().as_bytes()));
+        assert!(expected.as_str().contains("\\ud800"));
+        let literal = StoredRecord::json("planned-runtime", json!({"model":"\\ud800","reasoning":"none"}), None);
+        assert_ne!(actual.configuration_fingerprint, inputs.fingerprint(Some(&literal)).unwrap());
+    }
+
+    #[test]
     fn runtime_revision_changes_only_source_check_and_requires_fresh_generation() {
         let identity = identity();
         let owner = owner(&identity);
