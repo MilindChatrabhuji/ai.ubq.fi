@@ -135,8 +135,11 @@ pub fn authority_response_input(
     response: &[u8],
 ) -> Result<Vec<u8>, GatewayError> {
     signature_input(NATIVE_RENEWAL_AUTHORITY_PATH, key_id, 0, nonce, request)?;
+    let response_limit =
+        crate::native_import::authority::new_response_limit(request, status, response)?
+            .unwrap_or(NATIVE_CONTROL_MAX_BYTES);
     if !(200..=599).contains(&status)
-        || response.len() > NATIVE_CONTROL_MAX_BYTES
+        || response.len() > response_limit
         || status >= 400 && response.len() > NATIVE_CONTROL_ERROR_MAX_BYTES
     {
         return Err(invalid());
