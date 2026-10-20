@@ -89,6 +89,8 @@ try {
   assert.equal(health.status, 200, healthBody);
   assert(healthBody.includes(sha));
   const meta = JSON.parse(Buffer.from(health.headers.get("x-uos-fixture-import-metadata") ?? "", "base64url").toString());
+  assert.deepEqual(meta.path_controls, { absolute: true, parent_refused: true, relative_refused: true });
+  cases.push("wasm-posix-metadata-absolute-and-relative-controls-not-custody");
   cases.push("shipping-entrypoint-actual-public-normal-preparation");
   const admit = (
     await send(

@@ -250,7 +250,7 @@ pub(super) async fn initialize(
     let authority = Authority::with_clock(store.clone(), Tokens, Clock);
     let cfg = config(env);
     worker::console_error!(
-        "M52 fixture config production={} hosted={} absolute={}",
+        "M52 fixture config production={} hosted={} std_absolute={}",
         cfg.production,
         cfg.hosted,
         std::path::Path::new(HOME).is_absolute()
@@ -298,7 +298,12 @@ pub(super) async fn initialize(
         &Secret::new("fixture-import-new-access".into()),
         &Secret::new(String::new()),
     );
-    let meta = serde_json::json!({"metadata":prepared.metadata(),"account_id":account_id,"access_token":"fixture-import-new-access","access_generation":next.native_generation_hash,"native_source_generation":sha256_hex(b"physical-after-import"),"updated_at_ms":time});
+    let path_controls = serde_json::json!({
+        "absolute": RegisteredRenewalOwner::configured("absolute-control".into(), HOME.into()).is_ok(),
+        "relative_refused": RegisteredRenewalOwner::configured("relative-control".into(), "relative-profile".into()).is_err(),
+        "parent_refused": RegisteredRenewalOwner::configured("parent-control".into(), "../profile".into()).is_err()
+    });
+    let meta = serde_json::json!({"path_controls":path_controls,"metadata":prepared.metadata(),"account_id":account_id,"access_token":"fixture-import-new-access","access_generation":next.native_generation_hash,"native_source_generation":sha256_hex(b"physical-after-import"),"updated_at_ms":time});
     Ok(Some(gateway_auth::crypto::base64url(
         &serde_json::to_vec(&meta).map_err(|_| setup::invalid())?,
     )))
