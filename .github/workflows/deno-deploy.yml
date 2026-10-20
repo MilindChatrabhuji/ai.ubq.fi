@@ -102,7 +102,7 @@ jobs:
   rust-native:
     needs: scope
     if: ${{ needs.scope.outputs.needs_rust_native == 'true' }}
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
