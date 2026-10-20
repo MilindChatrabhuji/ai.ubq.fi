@@ -124,7 +124,7 @@ fn input(admin: bool) -> AdminInput {
     AdminInput {
         parameter: None,
         query: BTreeMap::from([("limit".into(), vec!["1".into()])]),
-        body: Value::Null,
+        body: SourceJson::from_serializable(&Value::Null).unwrap(),
         actor: AuthPrincipal {
             token: None,
             method: AuthMethod::AdminAllowlist,
