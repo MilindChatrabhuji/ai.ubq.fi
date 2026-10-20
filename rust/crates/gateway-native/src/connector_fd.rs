@@ -16,6 +16,7 @@ use std::{
         unix::net::UnixStream,
     },
     time::Duration,
+    sync::Arc,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -32,18 +33,18 @@ pub(crate) struct ReceivedFrame {
     pub(crate) frame: ControlFrame,
     pub(crate) descriptor: Option<OwnedFd>,
 }
-pub(crate) struct ControlEndpoint<'process> {
-    process: &'process ReceiveProcess,
+pub(crate) struct ControlEndpoint {
+    process: Arc<ReceiveProcess>,
     stream: Option<UnixStream>,
     side: Side,
     pending: Option<Pending>,
 }
-impl<'process> ControlEndpoint<'process> {
+impl ControlEndpoint {
     pub(crate) fn new(
         stream: UnixStream,
         side: Side,
         timeout: Duration,
-        process: &'process ReceiveProcess,
+        process: Arc<ReceiveProcess>,
     ) -> Result<Self, ControlError> {
         if timeout.is_zero() {
             return Err(ControlError::InvalidFrame);
@@ -138,7 +139,7 @@ impl<'process> ControlEndpoint<'process> {
     pub(crate) fn receive(&mut self) -> Result<ReceivedFrame, ControlError> {
         let result = (|| {
             let stream = self.stream.as_ref().ok_or(ControlError::Closed)?;
-            let (body, mut descriptors) = receive_packet(stream, self.process)?;
+            let (body, mut descriptors) = receive_packet(stream, &self.process)?;
             let frame = ControlFrame::decode(&body)?;
             if descriptors.len() > 1 {
                 return Err(ControlError::UnexpectedDescriptor);
@@ -355,8 +356,8 @@ pub(crate) struct ReceiveProcess {
     _private: (),
 }
 impl ReceiveProcess {
-    pub(crate) fn run(operation: impl FnOnce(&Self) -> Result<(), ControlError>) -> ! {
-        let process = Self { _private: () };
+    pub(crate) fn run(operation: impl FnOnce(&Arc<Self>) -> Result<(), ControlError>) -> ! {
+        let process = Arc::new(Self { _private: () });
         match operation(&process) {
             Ok(()) => std::process::exit(0),
             Err(error) => process.terminate(error),

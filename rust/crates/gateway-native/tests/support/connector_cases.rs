@@ -15,6 +15,7 @@ use std::{
         unix::net::UnixStream,
     },
     time::Duration,
+    sync::Arc,
 };
 
 fn connect(id: &str) -> ControlFrame {
@@ -38,17 +39,17 @@ fn cancel(id: &str) -> ControlFrame {
         connection_id: id.into(),
     }
 }
-fn endpoints(process: &ReceiveProcess) -> (ControlEndpoint<'_>, ControlEndpoint<'_>) {
+fn endpoints(process: &Arc<ReceiveProcess>) -> (ControlEndpoint, ControlEndpoint) {
     let (a, b) = UnixStream::pair().unwrap();
     (
         endpoint(a, Side::Parent, process),
         endpoint(b, Side::Connector, process),
     )
 }
-fn endpoint(stream: UnixStream, side: Side, process: &ReceiveProcess) -> ControlEndpoint<'_> {
-    ControlEndpoint::new(stream, side, Duration::from_secs(1), process).unwrap()
+fn endpoint(stream: UnixStream, side: Side, process: &Arc<ReceiveProcess>) -> ControlEndpoint {
+    ControlEndpoint::new(stream, side, Duration::from_secs(1), process.clone()).unwrap()
 }
-fn pending_parent(process: &ReceiveProcess) -> (ControlEndpoint<'_>, UnixStream) {
+fn pending_parent(process: &Arc<ReceiveProcess>) -> (ControlEndpoint, UnixStream) {
     let (local, mut raw) = UnixStream::pair().unwrap();
     raw.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
     let mut parent = endpoint(local, Side::Parent, process);
@@ -99,7 +100,7 @@ fn inject(stream: &UnixStream, data: &[u8], descriptors: Vec<OwnedFd>) {
 }
 
 pub(crate) fn real_owned_descriptor_transfers_once_and_outlives_terminal_control_channel(
-    process: &ReceiveProcess,
+    process: &Arc<ReceiveProcess>,
 ) {
     let (mut parent, mut peer) = endpoints(process);
     parent.send(connect("connection-1"), None).unwrap();
@@ -128,7 +129,7 @@ pub(crate) fn real_owned_descriptor_transfers_once_and_outlives_terminal_control
     );
 }
 
-pub(crate) fn finite_frames_roundtrip_and_exact_4096_byte_boundary(_process: &ReceiveProcess) {
+pub(crate) fn finite_frames_roundtrip_and_exact_4096_byte_boundary(_process: &Arc<ReceiveProcess>) {
     for frame in [
         connect("a"),
         cancel("a"),
@@ -183,7 +184,7 @@ pub(crate) fn finite_frames_roundtrip_and_exact_4096_byte_boundary(_process: &Re
 }
 
 pub(crate) fn unknown_fields_channels_versions_and_duplicate_fields_are_refused(
-    _process: &ReceiveProcess,
+    _process: &Arc<ReceiveProcess>,
 ) {
     for raw in [
         r#"{"operation":"connect","v":1,"channel":"other","action_ref":"a","connection_id":"c","authorization_ref":"r"}"#,
@@ -200,7 +201,7 @@ pub(crate) fn unknown_fields_channels_versions_and_duplicate_fields_are_refused(
     }
 }
 
-pub(crate) fn real_frame_at_limit_preserves_descriptor_ownership(process: &ReceiveProcess) {
+pub(crate) fn real_frame_at_limit_preserves_descriptor_ownership(process: &Arc<ReceiveProcess>) {
     let (mut parent, raw) = pending_parent(process);
     let mut body = connected("connection-1").encode().unwrap();
     body.resize(MAX_FRAME_BYTES, b' ');
@@ -211,7 +212,7 @@ pub(crate) fn real_frame_at_limit_preserves_descriptor_ownership(process: &Recei
     assert_closed(witness);
 }
 
-pub(crate) fn missing_connected_descriptor_refuses_and_closes(process: &ReceiveProcess) {
+pub(crate) fn missing_connected_descriptor_refuses_and_closes(process: &Arc<ReceiveProcess>) {
     let (mut parent, raw) = pending_parent(process);
     inject(
         &raw,
@@ -226,7 +227,7 @@ pub(crate) fn missing_connected_descriptor_refuses_and_closes(process: &ReceiveP
 }
 
 pub(crate) fn every_nonconnected_frame_refuses_and_closes_attached_descriptor(
-    process: &ReceiveProcess,
+    process: &Arc<ReceiveProcess>,
 ) {
     for frame in [
         connect("connection-1"),
@@ -253,7 +254,7 @@ pub(crate) fn every_nonconnected_frame_refuses_and_closes_attached_descriptor(
 }
 
 pub(crate) fn unmatched_connected_id_drops_the_actual_received_descriptor(
-    process: &ReceiveProcess,
+    process: &Arc<ReceiveProcess>,
 ) {
     let (mut parent, raw) = pending_parent(process);
     let (fd, witness) = descriptor_pair();
@@ -266,7 +267,7 @@ pub(crate) fn unmatched_connected_id_drops_the_actual_received_descriptor(
     assert_closed(witness);
 }
 
-pub(crate) fn late_rights_cannot_hide_behind_plain_header_prefix(process: &ReceiveProcess) {
+pub(crate) fn late_rights_cannot_hide_behind_plain_header_prefix(process: &Arc<ReceiveProcess>) {
     let (mut parent, mut raw) = pending_parent(process);
     let (fd, witness) = descriptor_pair();
     let bytes = packet(&connected("connection-1").encode().unwrap());
@@ -279,7 +280,7 @@ pub(crate) fn late_rights_cannot_hide_behind_plain_header_prefix(process: &Recei
     assert_closed(witness);
 }
 
-pub(crate) fn malformed_oversized_and_partial_frames_drop_owned_rights(process: &ReceiveProcess) {
+pub(crate) fn malformed_oversized_and_partial_frames_drop_owned_rights(process: &Arc<ReceiveProcess>) {
     let cases=[vec![0,0],vec![0,0,0,10,b'{',b'}'],packet(b"{}"),packet(br#"{"operation":"connected","v":1,"connection_id":"connection-1","url":"https://invalid"}"#),u32::try_from(MAX_FRAME_BYTES+1).unwrap().to_be_bytes().to_vec(),vec![0,0,0,0]];
     for bytes in cases {
         let (mut parent, raw) = pending_parent(process);
@@ -292,7 +293,7 @@ pub(crate) fn malformed_oversized_and_partial_frames_drop_owned_rights(process: 
     }
 }
 
-pub(crate) fn peer_eof_and_explicit_close_are_terminal_without_retry(process: &ReceiveProcess) {
+pub(crate) fn peer_eof_and_explicit_close_are_terminal_without_retry(process: &Arc<ReceiveProcess>) {
     let (mut parent, raw) = pending_parent(process);
     drop(raw);
     assert_eq!(parent.receive().unwrap_err(), ControlError::PeerClosed);
@@ -309,7 +310,7 @@ pub(crate) fn peer_eof_and_explicit_close_are_terminal_without_retry(process: &R
 }
 
 pub(crate) fn cancellation_ack_has_no_descriptor_and_both_endpoints_finish(
-    process: &ReceiveProcess,
+    process: &Arc<ReceiveProcess>,
 ) {
     let (mut parent, mut peer) = endpoints(process);
     parent.send(connect("id"), None).unwrap();
@@ -331,7 +332,7 @@ pub(crate) fn cancellation_ack_has_no_descriptor_and_both_endpoints_finish(
 }
 
 pub(crate) fn cancellation_on_each_side_refuses_late_connected_and_drops_fd(
-    process: &ReceiveProcess,
+    process: &Arc<ReceiveProcess>,
 ) {
     let (mut parent, mut peer) = endpoints(process);
     parent.send(connect("id"), None).unwrap();
@@ -357,7 +358,7 @@ pub(crate) fn cancellation_on_each_side_refuses_late_connected_and_drops_fd(
 }
 
 pub(crate) fn duplicate_pending_or_wrong_direction_frames_are_not_accepted(
-    process: &ReceiveProcess,
+    process: &Arc<ReceiveProcess>,
 ) {
     for (frame, expected) in [
         (connect("id"), ControlError::DuplicateId),
@@ -386,7 +387,7 @@ pub(crate) fn duplicate_pending_or_wrong_direction_frames_are_not_accepted(
 }
 
 pub(crate) fn terminal_endpoint_discards_queued_extra_frame_and_descriptor(
-    process: &ReceiveProcess,
+    process: &Arc<ReceiveProcess>,
 ) {
     let (mut parent, raw) = pending_parent(process);
     let (first, w1) = descriptor_pair();
@@ -402,7 +403,7 @@ pub(crate) fn terminal_endpoint_discards_queued_extra_frame_and_descriptor(
     assert_eq!(parent.receive().unwrap_err(), ControlError::Closed);
 }
 
-pub(crate) fn failed_send_consumes_fd_and_does_not_retry_after_peer_loss(process: &ReceiveProcess) {
+pub(crate) fn failed_send_consumes_fd_and_does_not_retry_after_peer_loss(process: &Arc<ReceiveProcess>) {
     let (mut parent, mut peer) = endpoints(process);
     parent.send(connect("id"), None).unwrap();
     peer.receive().unwrap();
@@ -419,7 +420,7 @@ pub(crate) fn failed_send_consumes_fd_and_does_not_retry_after_peer_loss(process
     assert_closed(witness);
 }
 
-pub(crate) fn local_invalid_shape_or_version_also_consumes_supplied_fd(process: &ReceiveProcess) {
+pub(crate) fn local_invalid_shape_or_version_also_consumes_supplied_fd(process: &Arc<ReceiveProcess>) {
     let (mut parent, _) = endpoints(process);
     let (fd, witness) = descriptor_pair();
     assert_eq!(
@@ -441,10 +442,10 @@ pub(crate) fn local_invalid_shape_or_version_also_consumes_supplied_fd(process: 
     );
     assert_closed(witness);
     let (a, _) = UnixStream::pair().unwrap();
-    assert!(ControlEndpoint::new(a, Side::Parent, Duration::ZERO, process).is_err());
+    assert!(ControlEndpoint::new(a, Side::Parent, Duration::ZERO, process.clone()).is_err());
 }
 
-pub(crate) fn connected_message_cannot_transfer_a_nonstream_descriptor(process: &ReceiveProcess) {
+pub(crate) fn connected_message_cannot_transfer_a_nonstream_descriptor(process: &Arc<ReceiveProcess>) {
     let (mut parent, raw) = pending_parent(process);
     let (a, _) = std::os::unix::net::UnixDatagram::pair().unwrap();
     inject(
@@ -460,7 +461,7 @@ pub(crate) fn connected_message_cannot_transfer_a_nonstream_descriptor(process: 
 }
 
 pub(crate) fn connected_message_also_rejects_an_actual_unconnected_stream(
-    process: &ReceiveProcess,
+    process: &Arc<ReceiveProcess>,
 ) {
     let (mut parent, raw) = pending_parent(process);
     let socket = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None).unwrap();

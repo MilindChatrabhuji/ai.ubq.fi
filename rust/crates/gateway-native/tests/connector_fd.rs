@@ -136,7 +136,7 @@ fn extra_and_kernel_truncated_ancillary_close_every_actual_descriptor() {
         }
         let body = br#"{"operation":"connected","v":1,"connection_id":"connection-1"}"#;
         let mut bytes = u32::try_from(body.len()).unwrap().to_be_bytes().to_vec();
-        bytes.extend_from_slice(&body);
+        bytes.extend_from_slice(body);
         let rights: Vec<_> = fds.iter().map(AsFd::as_fd).collect();
         let mut storage = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(16))];
         let mut ancillary = SendAncillaryBuffer::new(&mut storage);
