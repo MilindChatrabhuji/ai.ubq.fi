@@ -97,6 +97,12 @@ impl Peer {
                     _ => return false,
                 }
             };
+            stream.set_nonblocking(false).unwrap();
+            assert!(
+                !rustix::fs::fcntl_getfl(&stream)
+                    .unwrap()
+                    .contains(rustix::fs::OFlags::NONBLOCK)
+            );
             stream
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();
