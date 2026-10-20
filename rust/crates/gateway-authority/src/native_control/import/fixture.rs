@@ -43,7 +43,7 @@ mod tests {
     use super::*;
     #[test]
     fn marker_is_denial_only_and_both_actual_address_roles_are_loopback_gated() {
-        assert!(crate::NATIVE_IMPORT_FIXTURE_ENABLED);
+        assert!(std::hint::black_box(crate::NATIVE_IMPORT_FIXTURE_ENABLED));
         for peer in ["127.0.0.1:443", "[::1]:443"] {
             for local in ["127.0.0.1:3000", "[::1]:3000"] {
                 verify_addresses(peer.parse().unwrap(), local.parse().unwrap()).unwrap();

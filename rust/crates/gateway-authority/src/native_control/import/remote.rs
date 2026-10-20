@@ -138,7 +138,7 @@ impl<'a, C: NativeRenewalCancellation> RemoteImportAuthority<'a, C> {
         client.now()?;
         Ok(client)
     }
-    #[cfg(test)]
+    #[cfg(all(test, not(feature = "native-import-fixture")))]
     pub(in crate::native_control) fn fixture_connected(
         target: &str,
         socket: TcpStream,
