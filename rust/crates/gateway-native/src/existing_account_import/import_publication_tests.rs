@@ -14,7 +14,7 @@ fn command(limited: bool) -> ImportPublicationCommandData {
     ImportPublicationCommandData {
         operation: "codex_auth_import_publish".into(), v: 1, action_ref: "a".repeat(64), operation_id: "operation".into(),
         claim_ref: "claim".into(), native_owner_id: "owner".into(), owner_revision: "owner-r1".into(), source_revision: "source-r1".into(),
-        normalized_revision: "normalized-r1".into(), publication_revision: "publication-r1".into(), account_id_hash: "b".repeat(64),
+        normalized_revision: "normalized-r1".into(), publication_revision: "publication-r1".into(), account_id_hash: credentials.routing_account_hash.0,
         previous_native_source_generation: "c".repeat(64), native_source_generation: "d".repeat(64), access_generation: credentials.native_generation_hash,
         native_receipt_ref: "receipt-r1".into(), document: ImportAccessDocument {
             account_id: "synthetic-account".into(), access_token: "SYNTHETIC_ACCESS".into(), native_refreshed_at: None,
@@ -58,6 +58,7 @@ impl Peer {
             publication.publication.paid_control_config_revision = Some(retained);
         }
         let valid_reply = serde_json::to_vec(&publication).unwrap();
+        NativeImportPublication::parse_for(&valid_reply, &expected).expect("Canonical source-bound synthetic reply");
         if matches!(response, Response::LargeValid) { assert!(valid_reply.len() > 65_536); }
         let task = thread::spawn(move || {
             let (socket, _) = server.accept().ok()?;
