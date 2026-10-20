@@ -15,7 +15,7 @@ use gateway_core::GatewayError;
 use gateway_core::state::AuthorityStore;
 use rustix::fs::{AtFlags, FlockOperation, Mode, OFlags, flock, fsync, openat, renameat, statat};
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 use std::process::{Command, Stdio};
 use std::{
     fs::File,
@@ -27,7 +27,7 @@ use std::{
 const EPOCH: &str = ".uos-owner-runtime";
 const EPOCH_TEMP: &str = ".uos-owner-runtime.next";
 const EPOCH_LIMIT: u64 = 2048;
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 const SANDBOX_SHA: &str = "e3d7a792c58a5d3783d2f7274c82d70062393830d8cb1ded713ca554a470bd2f";
 const CODEX_SHA: &str = "8813367285524ac798dd96d1b071aea30d58708c7226fd236cd275cf1cfdee31";
 #[derive(Serialize, Deserialize)]
@@ -219,7 +219,7 @@ impl OwnedRuntime {
         let _ = binary;
         Err(fail())
     }
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "macos"))]
     fn spawn_owned(
         &mut self,
         executable: &PinnedExecutable,
@@ -391,7 +391,7 @@ impl OwnedRuntime {
     pub fn has_settled_owned_writer(&self) -> bool {
         self.settled && self.child.is_none()
     }
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "macos"))]
     pub(super) fn spawn_fixture(
         &mut self,
         executable: &Path,
@@ -449,7 +449,7 @@ fn read_epoch(directory: &File) -> Result<Option<Epoch>, GatewayError> {
     serde_json::from_slice(&bytes).map(Some).map_err(|_| fail())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 pub(super) fn fixture_stop(
     runtime: &mut OwnedRuntime,
     deadline: Instant,

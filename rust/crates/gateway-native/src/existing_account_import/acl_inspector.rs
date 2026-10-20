@@ -1,18 +1,24 @@
 //! Anchored Darwin metadata observation. No parent chdir or caller command/path protocol.
-use super::exclusive_owner::{Facts, PinnedExecutable, fail};
+#[cfg(target_os = "macos")]
+use super::exclusive_owner::Facts;
+use super::exclusive_owner::{PinnedExecutable, fail};
 use gateway_core::GatewayError;
+use std::{fs::File, time::Instant};
+#[cfg(target_os = "macos")]
 use std::{
-    fs::File,
     io::Read,
     os::{
         fd::AsFd,
         unix::{net::UnixStream, process::CommandExt},
     },
     process::{Child, Command, Stdio},
-    time::{Duration, Instant},
+    time::Duration,
 };
+#[cfg(target_os = "macos")]
 const LS_SHA256: &str = "a1cb6fd856f9414ada4cc9682f137c343261d777b8374df1abac7a931fb66f7a";
+#[cfg(target_os = "macos")]
 const OUTPUT_LIMIT: usize = 1024;
+#[cfg(target_os = "macos")]
 const HEADER_LIMIT: usize = 256;
 
 /// The sole parameterless helper entry. stdin must already be an anchored directory.
@@ -87,6 +93,7 @@ pub(super) fn observe(
         parse(&stdout, &before)
     }
 }
+#[cfg(target_os = "macos")]
 fn drain(stream: &mut UnixStream, bytes: &mut Vec<u8>) -> Result<bool, GatewayError> {
     let mut chunk = [0u8; 256];
     loop {
@@ -104,6 +111,7 @@ fn drain(stream: &mut UnixStream, bytes: &mut Vec<u8>) -> Result<bool, GatewayEr
         }
     }
 }
+#[cfg(target_os = "macos")]
 fn capture(
     child: &mut Child,
     out: &mut UnixStream,
@@ -130,6 +138,7 @@ fn capture(
         std::thread::sleep(Duration::from_millis(2));
     }
 }
+#[cfg(target_os = "macos")]
 fn number(text: &str) -> Result<u64, GatewayError> {
     if text.is_empty()
         || text.len() > 20
@@ -140,6 +149,7 @@ fn number(text: &str) -> Result<u64, GatewayError> {
     }
     text.parse().map_err(|_| fail())
 }
+#[cfg(target_os = "macos")]
 fn permissions(mode: u32) -> String {
     let mut output = String::from("d");
     for shift in [6, 3, 0] {
@@ -159,6 +169,7 @@ fn permissions(mode: u32) -> String {
     output
 }
 /// Every byte is consumed. xattr '@' is accepted only with NO subsequent ACE/output line.
+#[cfg(target_os = "macos")]
 pub(super) fn parse(output: &[u8], facts: &Facts) -> Result<(), GatewayError> {
     if output.len() > HEADER_LIMIT
         || output.first() != Some(&b'd')

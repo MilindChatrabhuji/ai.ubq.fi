@@ -1,4 +1,5 @@
-//! Actual task-owned OS observations. No real credentials/UID provisioning/Codex launch.
+//! Actual task-owned Darwin OS observations. No real credentials/UID provisioning/Codex launch.
+#![cfg(target_os = "macos")]
 use super::*;
 use super::{
     acl_inspector,
