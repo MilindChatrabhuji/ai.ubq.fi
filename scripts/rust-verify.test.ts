@@ -6,6 +6,8 @@ import { join } from "node:path";
 import {
   executeRustPlan,
   executeDarwinNativeTests,
+  executeDarwinNativeImportTests,
+  NATIVE_IMPORT_CASES,
   parseRustArguments,
   planRustVerification as planRustVerificationForHost,
   runCommand,
@@ -598,5 +600,105 @@ test("missing lib artifacts, missing exact cases, overbroad filtered inventory a
     };
     await assert.rejects(executeDarwinNativeTests(fixture.cwd, fixture.environment, "prelaunch", run), /missing|inventory mismatch|hash changed/);
     assert.ok(!fixture.calls.some((command) => !command.isolated && command.argv[0] === fixture.library.executable));
+  }
+});
+
+const importFixture = () => {
+  const fixture = nativeArtifacts();
+  const target = join(fixture.environment.CARGO_TARGET_DIR, "native-import-fixture-opt3");
+  const task = join(fixture.environment.RUSTUP_HOME, "..");
+  mkdirSync(join(task, "mac-bootstrap"), { recursive: true });
+  writeFileSync(join(task, "mac-bootstrap/check.sb"), "(version 1) (deny network*)");
+  const environment = { ...fixture.environment, TMPDIR: join(task, "tmp") };
+  mkdirSync(environment.TMPDIR, { recursive: true });
+  const directory = join(fixture.root, "rust/crates/gateway-native");
+  const make = (name: string, kind: string, test: boolean) => {
+    const source = kind === "lib" ? "src/lib.rs" : `src/bin/${name}.rs`;
+    const src = join(directory, source);
+    const runtimePath = kind === "example" ? `examples/${name}` : name;
+    const executable = join(target, "debug", test ? `deps/${name}-cargo-emitted` : runtimePath);
+    mkdirSync(join(src, ".."), { recursive: true });
+    mkdirSync(join(executable, ".."), { recursive: true });
+    writeFileSync(src, "// fixture\n");
+    writeFileSync(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    return {
+      reason: "compiler-artifact",
+      manifest_path: join(directory, "Cargo.toml"),
+      package_id: `path+file://${realpathSync(directory)}#0.1.0`,
+      target: { name, kind: [kind], src_path: src, doctest: true },
+      profile: { test, opt_level: "3", debug_assertions: true },
+      features: ["native-import-fixture"],
+      executable,
+    };
+  };
+  const library = make("gateway_native", "lib", true);
+  const built = ["uos-native-owner-inspect", "uos-native", "uos-native-supervisor", "uos-native-request", "uos-native-connector", "uos-native-import"].map(
+    (name) => make(name, "bin", false)
+  );
+  built.push(make("uos-native-import-fixture", "example", false), make("uos-native-connector-fixture", "example", false));
+  const calls: RustCommand[] = [];
+  const payloads: { argv: string[]; seconds: number; environment: Record<string, string> }[] = [];
+  const run: CommandRunner = (command, environment) => {
+    calls.push(command);
+    if (command.argv[0] === "git") return fixture.run(command, environment);
+    if (command.argv.includes("--no-run")) return Promise.resolve({ code: 0, stdout: fixture.json([library]), stderr: "" });
+    if (command.argv.includes("--message-format=json")) return Promise.resolve({ code: 0, stdout: fixture.json(built), stderr: "" });
+    if (command.argv.includes("--list"))
+      return Promise.resolve({ code: 0, stdout: NATIVE_IMPORT_CASES.map((item) => item.name + ": test\n").join(""), stderr: "" });
+    assert.equal(command.argv[0], "/usr/bin/python3");
+    assert.ok(command.ownedImportDriver);
+    payloads.push(JSON.parse(command.argv.at(-1) ?? ""));
+    return Promise.resolve({ code: 0, stdout: "test result: ok. 1 passed; 0 failed; 0 ignored;\n", stderr: "" });
+  };
+  return { ...fixture, environment, calls, payloads, run, library, built };
+};
+
+test("finite native import stage is Darwin/native only and never changes production Worker features", () => {
+  const fixture = nativeArtifacts();
+  const paths = ["rust/crates/gateway-native/src/lib.rs"];
+  const mac = planRustVerification(fixture.root, paths, "native", false, darwin);
+  assert.equal(mac.commands.filter((command) => command.nativeImportFixture).length, 1);
+  assert.equal(mac.commands.filter((command) => command.darwinNativeTests).length, 1);
+  assert.ok(!planRustVerification(fixture.root, paths, "native", false, linux).commands.some((command) => command.nativeImportFixture));
+  const wasm = planRustVerification(fixture.root, ["rust/crates/gateway-core/src/lib.rs"], "wasm", false, darwin);
+  assert.ok(!wasm.commands.some((command) => command.argv.includes("native-import-fixture")));
+  assert.deepEqual(wasm.commands.at(-1)?.argv, ["worker-build", "--release", "--locked"]);
+});
+
+test("finite optimized-debug import selector runs exactly11 cases with8 prelaunch2 loopback1 offline and verified role artifacts", async () => {
+  const fixture = importFixture();
+  const before = fixture.environment.CARGO_TARGET_DIR;
+  assert.equal(await executeDarwinNativeImportTests(fixture.cwd, fixture.environment, fixture.run), 11);
+  assert.equal(fixture.environment.CARGO_TARGET_DIR, before);
+  assert.equal(fixture.payloads.length, 11);
+  for (const [index, payload] of fixture.payloads.entries()) {
+    const expected = NATIVE_IMPORT_CASES[index];
+    assert.equal(payload.seconds, expected.seconds);
+    assert.ok(JSON.stringify(payload.argv).includes("--exact"));
+    assert.ok(payload.argv.includes(expected.name) || JSON.stringify(payload.argv).includes(expected.name));
+    assert.ok(!("UNLISTED_CREDENTIAL_PROBE" in payload.environment));
+    if (expected.boundary === "prelaunch") assert.equal(payload.argv[0], fixture.library.executable);
+    if (expected.boundary === "offline") assert.deepEqual(payload.argv.slice(0, 2), ["/usr/bin/sandbox-exec", "-f"]);
+  }
+  const compilation = fixture.calls.filter((command) => command.argv.includes("--message-format=json"));
+  assert.equal(compilation.length, 2);
+  assert.ok(
+    compilation.every(
+      (command) => command.argv[0] === "/usr/bin/sandbox-exec" && command.argv.includes("profile.test.opt-level=3") && !command.argv.includes("--release")
+    )
+  );
+});
+
+test("finite import selector refuses missing names, wrong optimized profile and failed cases without continuing", async () => {
+  for (const corrupt of ["inventory", "profile", "failure"] as const) {
+    const fixture = importFixture();
+    if (corrupt === "profile") fixture.library.profile.debug_assertions = false;
+    const run: CommandRunner = (command, environment) => {
+      if (corrupt === "inventory" && command.argv.includes("--list")) return Promise.resolve({ code: 0, stdout: "unrelated: test\n", stderr: "" });
+      if (corrupt === "failure" && command.ownedImportDriver) return Promise.resolve({ code: 7, stdout: "original failure retained", stderr: "" });
+      return fixture.run(command, environment);
+    };
+    await assert.rejects(executeDarwinNativeImportTests(fixture.cwd, fixture.environment, run), /Missing exact|optimized-debug|failed \(7\)/);
+    assert.equal(fixture.payloads.length, 0);
   }
 });

@@ -39,6 +39,8 @@ export type RustCommand = Readonly<{
   testListing?: boolean;
   testRun?: boolean;
   darwinNativeTests?: boolean;
+  nativeImportFixture?: boolean;
+  ownedImportDriver?: boolean;
 }>;
 export type CommandResult = Readonly<{ code: number; stdout: string; stderr: string }>;
 export type CommandRunner = (command: RustCommand, environment: Record<string, string>) => Promise<CommandResult>;
@@ -136,7 +138,11 @@ const testCommands = (names: readonly string[], target: string, cwd: string): Ru
     const argv = ["cargo", "test", "--locked", "--offline", "--target", target, "-p", name];
     // Darwin prelaunch tests install their own child profiles; nesting those
     // beneath the package-wide Seatbelt changes the policy being tested.
-    if (name === "gateway-native" && target === "aarch64-apple-darwin") return [{ argv, cwd, isolated: true, darwinNativeTests: true }];
+    if (name === "gateway-native" && target === "aarch64-apple-darwin")
+      return [
+        { argv, cwd, isolated: true, darwinNativeTests: true },
+        { argv: [...argv, "--features", "native-import-fixture"], cwd, isolated: true, nativeImportFixture: true },
+      ];
     return [
       { argv: [...argv, "--", "--list"], cwd, isolated: true, testListing: true },
       { argv, cwd, isolated: true, testRun: true },
@@ -238,9 +244,9 @@ export const runCommand: CommandRunner = async (command, environment) => {
   const argv = command.isolated ? testNetworkArgv(command.argv) : [...command.argv];
   const child = Bun.spawn(argv, { cwd: command.cwd, env: environment, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
   const control = { expired: false };
-  const stop = (): void => {
+  const stop = (signal: "SIGKILL" | "SIGTERM" = "SIGKILL"): void => {
     try {
-      process.kill(-child.pid, "SIGKILL");
+      process.kill(-child.pid, signal);
     } catch (error) {
       if (!(error instanceof Error) || !("code" in error) || error.code !== "ESRCH") throw error;
     }
@@ -249,8 +255,12 @@ export const runCommand: CommandRunner = async (command, environment) => {
     control.expired = true;
     stop();
   }, 1_800_000);
+  let escalation: ReturnType<typeof setTimeout> | undefined;
   const interrupt = (): void => {
-    stop();
+    if (command.ownedImportDriver) {
+      stop("SIGTERM");
+      escalation ??= setTimeout(stop, 15_000);
+    } else stop();
   };
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
@@ -259,6 +269,7 @@ export const runCommand: CommandRunner = async (command, environment) => {
     return { code: control.expired ? 124 : code, stdout, stderr };
   } finally {
     clearTimeout(timer);
+    clearTimeout(escalation);
     process.removeListener("SIGINT", interrupt);
     process.removeListener("SIGTERM", interrupt);
     stop();
@@ -491,14 +502,258 @@ export const executeDarwinNativeTests = async (
   return listed;
 };
 
+export const NATIVE_IMPORT_CASES = [
+  {
+    name: "existing_account_import::flow_tests::actual_existing_account_original_start_owned_child_custody_durability_and_publication",
+    boundary: "prelaunch",
+    seconds: 90,
+  },
+  {
+    name: "existing_account_import::flow_tests::negatives::actual_quiet_client_eof_before_and_after_started_never_writes_or_publishes",
+    boundary: "prelaunch",
+    seconds: 90,
+  },
+  {
+    name: "existing_account_import::flow_tests::negatives::actual_custodian_death_after_stop_closes_live_actor_without_late_effect",
+    boundary: "prelaunch",
+    seconds: 90,
+  },
+  {
+    name: "existing_account_import::flow_tests::negatives::actual_admin_revocation_before_native_write_refuses_the_same_started_claim",
+    boundary: "prelaunch",
+    seconds: 90,
+  },
+  {
+    name: "existing_account_import::flow_tests::negatives::actual_original_deadline_expiry_after_stop_never_renews_mutation_authority",
+    boundary: "prelaunch",
+    seconds: 90,
+  },
+  {
+    name: "existing_account_import::flow_tests::negatives::actual_revoked_publication_retains_native_receipt_but_never_source_success",
+    boundary: "prelaunch",
+    seconds: 90,
+  },
+  {
+    name: "existing_account_import::flow_tests::negatives::actual_lost_publication_reply_reconciles_only_the_same_native_receipt",
+    boundary: "prelaunch",
+    seconds: 90,
+  },
+  {
+    name: "existing_account_import::flow_tests::negatives::fixture_enabled_ordinary_entrypoints_refuse_before_reading_stdin",
+    boundary: "loopback",
+    seconds: 20,
+  },
+  {
+    name: "connector_policy::import_policy_tests::actual_import_profile_exact_names_fixed_ports_process_and_sibling_controls",
+    boundary: "prelaunch",
+    seconds: 30,
+  },
+  {
+    name: "existing_account_import::live_custody::tests::raw_stopped_replay_wrong_session_sequence_challenge_and_binding_are_not_live_custody",
+    boundary: "loopback",
+    seconds: 15,
+  },
+  {
+    name: "existing_account_import::custodian_runtime::tests::a_stopped_session_rejects_new_kernel_epoch_or_root_identity",
+    boundary: "offline",
+    seconds: 10,
+  },
+] as const;
+// Same accepted M44 all-exit cleanup. Process census is task cleanup only, never custody authority.
+const NATIVE_IMPORT_PROCESS = String.raw`import subprocess,json,os,signal,time,sys,tempfile,re
+payload=json.loads(sys.argv[1]);receipt={};p=None;owned={};interrupted=None
+def snapshot():
+ rows={}
+ for line in subprocess.check_output(['/bin/ps','-axo','pid=,ppid=,pgid=,lstart=,command='],text=True).splitlines():
+  parts=line.strip().split(None,8)
+  if len(parts)==9:rows[int(parts[0])]={'ppid':int(parts[1]),'pgid':int(parts[2]),'started':' '.join(parts[3:8]),'command':parts[8]}
+ return rows
+def observe():
+ rows=snapshot()
+ if p is not None and p.poll() is None and p.pid in rows and p.pid not in owned:owned[p.pid]=rows[p.pid]
+ changed=True
+ while changed:
+  changed=False
+  for pid,row in rows.items():
+   parent=rows.get(row['ppid']);prior=owned.get(row['ppid'])
+   if pid not in owned and parent is not None and prior is not None and parent['started']==prior['started'] and parent['pgid']==prior['pgid']:
+    owned[pid]=row;changed=True
+ return {pid:rows[pid] for pid,prior in owned.items() if pid in rows and rows[pid]['started']==prior['started'] and rows[pid]['pgid']==prior['pgid']}
+def stop_groups(current,sig):
+ for group in sorted({row['pgid'] for row in current.values()}):
+  try:os.killpg(group,sig)
+  except ProcessLookupError:pass
+  receipt.setdefault('settlement_signals',[]).append({'group':group,'signal':sig})
+def settle():
+ if p is None:return
+ current=observe()
+ if current:stop_groups(current,signal.SIGTERM)
+ until=time.monotonic()+3
+ while current and time.monotonic()<until:
+  p.poll();time.sleep(.05);current=observe()
+ if current:stop_groups(current,signal.SIGKILL)
+ if p.poll() is None:p.wait(timeout=5)
+ until=time.monotonic()+2
+ current=observe()
+ while current and time.monotonic()<until:
+  time.sleep(.05);current=observe()
+ receipt['owned_process_observations']=owned;receipt['owned_processes_remaining']=current
+ if current:raise RuntimeError('Owned task processes did not settle: '+repr(current))
+def interrupt(signum,_frame):
+ global interrupted
+ interrupted=signum
+ raise InterruptedError('Native flow driver received signal '+str(signum))
+old_handlers={sig:signal.signal(sig,interrupt) for sig in [signal.SIGINT,signal.SIGTERM]}
+output=tempfile.TemporaryFile()
+try:
+ p=subprocess.Popen(payload['argv'],cwd=payload['cwd'],env=payload['environment'],stdout=output,stderr=subprocess.STDOUT,start_new_session=True)
+ deadline=time.monotonic()+payload['seconds']
+ while p.poll() is None:
+  observe()
+  if time.monotonic()>=deadline:raise TimeoutError('Exact native import case deadline')
+  time.sleep(.1)
+ output.seek(0);text=output.read().decode();print(text,flush=True)
+ results=re.findall(r'test result: (.+)',text)
+ assert p.returncode==0 and len(results)==1 and results[0].startswith('ok. 1 passed; 0 failed; 0 ignored;'), 'Exact native import case failed'
+ receipt['status']='passed'
+except BaseException as error:receipt['status']='failed';receipt['error']=repr(error);raise
+finally:
+ for sig in old_handlers:signal.signal(sig,signal.SIG_IGN)
+ try:settle()
+ except BaseException as error:receipt['status']='failed';receipt['settlement_error']=repr(error)
+ output.seek(0)
+ if receipt.get('status')!='passed':print(output.read().decode(),flush=True)
+ output.close();receipt['exit']=None if p is None else p.returncode;receipt['interrupted_signal']=interrupted
+ if interrupted is not None:receipt['status']='failed'
+ print(json.dumps({'nativeImportProcess':receipt}),flush=True)
+ if receipt.get('status')!='passed' and 'error' not in receipt:raise RuntimeError('Owned native import cleanup failed')
+`;
+const importFixtureArtifacts = (stdout: string, cwd: string, target: string): CargoExecutable[] => {
+  const artifacts = cargoExecutables(stdout, cwd, target);
+  const manifest = realpathSync(join(cwd, "crates/gateway-native/Cargo.toml"));
+  for (const line of stdout.split("\n").filter((line) => line.trim() !== "")) {
+    const message = table(JSON.parse(line));
+    if (
+      message.reason !== "compiler-artifact" ||
+      !message.executable ||
+      typeof message.manifest_path !== "string" ||
+      realpathSync(message.manifest_path) !== manifest
+    )
+      continue;
+    const profile = table(message.profile);
+    if (!strings(message.features).includes("native-import-fixture") || profile.opt_level !== "3" || profile.debug_assertions !== true)
+      throw new Error("Native fixture must be optimized-debug with its exact feature, never production release");
+  }
+  return artifacts;
+};
+export const executeDarwinNativeImportTests = async (cwd: string, inherited: Record<string, string>, run: CommandRunner = runCommand): Promise<number> => {
+  if (run === runCommand && (process.platform !== "darwin" || process.arch !== "arm64")) throw new Error("Native import fixtures require Darwin ARM64");
+  const environment = rustVerificationEnvironment(inherited, { platform: "darwin", arch: "arm64" });
+  const checked = async (command: RustCommand): Promise<CommandResult> => {
+    console.log(JSON.stringify({ stage: "native-import-fixture", ...command }));
+    const result = await run(command, environment);
+    observeCommandResult(command, result);
+    return result;
+  };
+  const git = async (arg: string): Promise<string> => (await checked({ argv: ["git", "rev-parse", arg], cwd })).stdout.trim();
+  const source = await git("HEAD"),
+    tree = await git("HEAD^{tree}");
+  const sourceTarget = environment.CARGO_TARGET_DIR;
+  if (
+    !/^[a-f0-9]{40}$/.test(source) ||
+    !/^[a-f0-9]{40}$/.test(tree) ||
+    basename(sourceTarget) !== `${source}-${tree}` ||
+    basename(dirname(sourceTarget)) !== "exact-rust"
+  )
+    throw new Error("Native fixture target is not bound to source/tree identity");
+  const unchanged = async (): Promise<void> => {
+    const status = await checked({ argv: ["git", "status", "--porcelain", "--untracked-files=no"], cwd });
+    if (status.stdout.trim() || (await git("HEAD")) !== source || (await git("HEAD^{tree}")) !== tree)
+      throw new Error("Native fixture source changed or is dirty");
+  };
+  await unchanged();
+  environment.CARGO_TARGET_DIR = join(sourceTarget, "native-import-fixture-opt3");
+  const target = environment.CARGO_TARGET_DIR;
+  const offline = join(dirname(environment.RUSTUP_HOME), "mac-bootstrap/check.sb");
+  const profileHash = digest(readFileSync(offline));
+  if (!environment.TMPDIR || !inside(realpathSync(dirname(environment.RUSTUP_HOME)), realpathSync(environment.TMPDIR)))
+    throw new Error("Prepared task-local TMPDIR is required for native import fixtures");
+  const cargo = rustToolPath("cargo", environment, { platform: "darwin", arch: "arm64" });
+  const flags = [
+    "--locked",
+    "--offline",
+    "--config",
+    "profile.test.opt-level=3",
+    "--config",
+    "profile.dev.opt-level=3",
+    "-p",
+    "gateway-native",
+    "--features",
+    "native-import-fixture",
+  ];
+  const compile = async (argv: readonly string[]): Promise<CargoExecutable[]> => {
+    const result = await checked({ argv: ["/usr/bin/sandbox-exec", "-f", offline, cargo, ...argv], cwd });
+    return importFixtureArtifacts(result.stdout, cwd, target);
+  };
+  const tests = await compile(["test", ...flags, "--lib", "--no-run", "--message-format=json"]);
+  const library = nativeLibraryArtifact(
+    tests.filter((item) => item.test),
+    cwd
+  );
+  const names = ["uos-native-owner-inspect", "uos-native", "uos-native-supervisor", "uos-native-request", "uos-native-connector", "uos-native-import"];
+  const built = await compile([
+    "build",
+    ...flags,
+    "--example",
+    "uos-native-import-fixture",
+    "--example",
+    CONNECTOR_EXAMPLE,
+    ...names.flatMap((name) => ["--bin", name]),
+    "--message-format=json",
+  ]);
+  for (const name of [...names, "uos-native-import-fixture", CONNECTOR_EXAMPLE])
+    if (!built.some((item) => item.name === name && !item.test)) throw new Error("Missing exact native fixture role/guard artifact");
+  const artifacts = [...tests, ...built];
+  const verify = (): void => {
+    checkedArtifacts(artifacts, target);
+    if (digest(readFileSync(offline)) !== profileHash) throw new Error("Native fixture offline profile changed");
+  };
+  verify();
+  const listing = await checked({ argv: [library.executable, "--list"], cwd, isolated: true });
+  const inventory = nativeTestNames(listing.stdout);
+  if (NATIVE_IMPORT_CASES.some((item) => !inventory.includes(item.name))) throw new Error("Missing exact finite native import case");
+  console.log(
+    JSON.stringify({ nativeImportSource: source, tree, feature: "native-import-fixture", profile: "optimized-debug", artifacts, cases: NATIVE_IMPORT_CASES })
+  );
+  for (const item of NATIVE_IMPORT_CASES) {
+    verify();
+    const selected = [library.executable, "--exact", item.name, "--nocapture", "--test-threads=1"];
+    let argv: readonly string[] = selected;
+    if (item.boundary === "loopback") argv = testNetworkArgv(selected);
+    if (item.boundary === "offline") argv = ["/usr/bin/sandbox-exec", "-f", offline, ...selected];
+    const payload = {
+      argv,
+      cwd,
+      seconds: item.seconds,
+      environment: { HOME: environment.HOME, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", TMPDIR: environment.TMPDIR, LANG: "C", LC_ALL: "C", TZ: "UTC" },
+    };
+    await checked({ argv: ["/usr/bin/python3", "-c", NATIVE_IMPORT_PROCESS, JSON.stringify(payload)], cwd, ownedImportDriver: true });
+  }
+  verify();
+  await unchanged();
+  return NATIVE_IMPORT_CASES.length;
+};
+
 export const executeRustPlan = async (plan: RustPlan, environment: Record<string, string>, run: CommandRunner = runCommand): Promise<number> => {
   if (plan.packages.length === 0 || plan.commands.length === 0) throw new Error("Rust gate refuses an empty plan");
   let listedTests = 0;
   for (const command of plan.commands) {
     console.log(JSON.stringify({ stage: plan.stage, cwd: command.cwd, argv: command.argv }));
-    listedTests += command.darwinNativeTests
-      ? await executeDarwinNativeTests(command.cwd, environment, "package", run)
-      : observeCommandResult(command, await run(command, environment));
+    if (command.nativeImportFixture) listedTests += await executeDarwinNativeImportTests(command.cwd, environment, run);
+    else
+      listedTests += command.darwinNativeTests
+        ? await executeDarwinNativeTests(command.cwd, environment, "package", run)
+        : observeCommandResult(command, await run(command, environment));
   }
   return listedTests;
 };
