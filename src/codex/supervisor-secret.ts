@@ -247,7 +247,7 @@ const skipWhitespace = (text: string, from: number): number => {
 /** A credential key: where it starts, where its separator is, and whether it closed a quote. */
 type CredentialKey = { start: number; separator: number; quoted: boolean };
 
-/** Commas inside a call/parameter list, not commas separating hash entries. */
+/** Candidate parameter commas inside parentheses; Perl hash entries can occupy the same positions. */
 const parameterCommas = (text: string): ReadonlySet<number> => {
   const commas = new Set<number>();
   if (!text.includes("=>")) return commas;
@@ -267,12 +267,42 @@ const parameterCommas = (text: string): ReadonlySet<number> => {
   return commas;
 };
 
-/** A bare key in parameter position before `=>` is not a hash key. */
+const CALLBACK_BODY_LIMIT = 512;
+const CALLBACK_METHOD = /^([A-Za-z_$][\w$]*)((?:\.[A-Za-z_$][\w$]*(?:\(\))?)+)(?=\s*[,);])/;
+const CALLBACK_IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+const CALLBACK_DECLARATION = /^(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*/;
+const CALLBACK_CALL = /^([^(]+)\(([^()]*)\)$/;
+
+/** Only positively recognized ordinary callbacks bypass credential redaction. */
+const ordinaryCallbackBody = (text: string, key: CredentialKey): boolean => {
+  const parameter = text.slice(key.start, key.separator).trim();
+  if (!CALLBACK_IDENTIFIER.test(parameter)) return false;
+  const value = skipWhitespace(text, key.separator + 2);
+  const body = text.slice(value, value + CALLBACK_BODY_LIMIT);
+  const method = CALLBACK_METHOD.exec(body);
+  if (method) return method[1] === parameter && method[2].includes("()");
+  if (!body.startsWith("{")) return false;
+  const close = body.indexOf("}");
+  if (close < 0 || !/^\s*[,);]/.test(body.slice(close + 1))) return false;
+  const statements = body.slice(1, close).trim();
+  if (!statements.endsWith(";")) return false;
+  let usesParameter = false;
+  for (const statement of statements.slice(0, -1).split(";")) {
+    const call = CALLBACK_CALL.exec(statement.trim().replace(CALLBACK_DECLARATION, ""));
+    if (!call?.[1].split(".").every((part) => CALLBACK_IDENTIFIER.test(part.trim()))) return false;
+    const arguments_ = call[2].split(",").map((argument) => argument.trim());
+    if (!arguments_.every((argument) => CALLBACK_IDENTIFIER.test(argument))) return false;
+    usesParameter ||= arguments_.includes(parameter);
+  }
+  return usesParameter;
+};
+
+/** Parameter position alone also describes Perl hash/call entries; their values must stay covered. */
 const isArrowParameter = (text: string, key: CredentialKey, commas: ReadonlySet<number>): boolean => {
   if (key.quoted || !text.startsWith("=>", key.separator)) return false;
   let before = key.start - 1;
   while (before >= 0 && WHITESPACE.test(text[before])) before -= 1;
-  return text[before] === "(" || commas.has(before);
+  return (text[before] === "(" || commas.has(before)) && ordinaryCallbackBody(text, key);
 };
 
 const credentialKeys = (text: string): CredentialKey[] => {
