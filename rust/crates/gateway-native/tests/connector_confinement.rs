@@ -66,7 +66,10 @@ fn actual_separate_prelaunch_profiles_enforce_files_processes_and_network() {
     ] {
         assert_eq!(observed[key], false, "outsidecontrol {key}");
     }
-    for (name, read_allowed) in [("print-main-policy", true), ("print-connector-policy", false)] {
+    for (name, read_allowed) in [
+        ("print-main-policy", true),
+        ("print-connector-policy", false),
+    ] {
         let generated = run(name, &input, None);
         assert!(
             generated.status.success(),

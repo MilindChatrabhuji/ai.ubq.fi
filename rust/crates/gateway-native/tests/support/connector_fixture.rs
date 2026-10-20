@@ -1,6 +1,6 @@
 #![cfg(unix)]
-mod connector_cases;
 mod connector_bootstrap_cases;
+mod connector_cases;
 #[path = "../../src/connector_policy.rs"]
 mod connector_policy;
 #[path = "../../src/connector_worker.rs"]
