@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, statfs, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, rm, statfs, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +9,15 @@ const DATA = join(dirname(fileURLToPath(import.meta.url)), "rust-linux-guest");
 const ROOT = resolve(DATA, "../..");
 const HOSTS = new Set(["kernel.ubuntu.com", "cloud-images.ubuntu.com"]);
 const MAX_LOG = 8 * 1024 * 1024;
+const OVERLAY_BYTES = 8 * 1024 ** 3;
+export const ROOT_GROWTH_CONFIG = "growpart:\n  mode: auto\n  devices: [/]\n  ignore_growroot_disabled: false\nresize_rootfs: true\n";
+export function overlayResizeArgv(work: string, target: string, base: string, virtualBytes: unknown, freeBytes: number): string[] {
+  assert(isAbsolute(work) && resolve(work) === work && basename(work).startsWith("uos-linux-guest-"), "Expected private task directory");
+  assert(target === join(work, "overlay.qcow2") && target !== base, "Only the task overlay may be resized");
+  assert(typeof virtualBytes === "number" && virtualBytes > 0 && virtualBytes <= OVERLAY_BYTES, "Refuse shrinking the source disk");
+  assert(Number.isSafeInteger(freeBytes) && freeBytes >= OVERLAY_BYTES, "Overlay requires eight GiB of remaining ephemeral disk headroom");
+  return ["/usr/bin/qemu-img", "resize", "-f", "qcow2", target, String(OVERLAY_BYTES)];
+}
 const START = Date.now();
 const budget = (limit: number): number => {
   const remaining = 1_200_000 - (Date.now() - START);
@@ -381,7 +390,9 @@ async function preparePayload(input: Inputs, work: string, sourceSha: string): P
   await writeFile(join(payload, "meta-data"), `instance-id: uos-${expected.nonce}\nlocal-hostname: uos-capability-probe\n`);
   await writeFile(
     join(payload, "user-data"),
-    "#cloud-config\nusers: []\nssh_pwauth: false\nruncmd:\n  - [mkdir, -p, /mnt/uos-seed]\n  - [mount, -o, ro, /dev/disk/by-label/CIDATA, /mnt/uos-seed]\n  - [sh, /mnt/uos-seed/provision.sh]\n"
+    "#cloud-config\nusers: []\nssh_pwauth: false\n" +
+      ROOT_GROWTH_CONFIG +
+      "runcmd:\n  - [mkdir, -p, /mnt/uos-seed]\n  - [mount, -o, ro, /dev/disk/by-label/CIDATA, /mnt/uos-seed]\n  - [sh, /mnt/uos-seed/provision.sh]\n"
   );
   await checked(
     ["/usr/bin/genisoimage", "-output", join(work, "seed.iso"), "-volid", "CIDATA", "-joliet", "-rock", ...names, "payload.sha256", "meta-data", "user-data"],
@@ -456,6 +467,12 @@ async function main(): Promise<void> {
     assert(info.format === "qcow2" && !info["backing-filename"], "Unexpected root disk backing chain");
     await checked(["/usr/bin/qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", join(work, input.disk.name), join(work, "overlay.qcow2")], work);
     await copyFile("/usr/share/AAVMF/AAVMF_VARS.fd", join(work, "vars.fd"));
+    const overlay = join(work, "overlay.qcow2"),
+      metadata = await lstat(overlay),
+      remainingSpace = await statfs(work);
+    assert(metadata.isFile() && !metadata.isSymbolicLink() && metadata.nlink === 1 && metadata.uid === process.geteuid?.(), "Expected owned regular overlay");
+    await checked(overlayResizeArgv(work, overlay, join(work, input.disk.name), info["virtual-size"], remainingSpace.bavail * remainingSpace.bsize), work);
+    console.log("UOS_LINUX_GUEST_STAGE overlay-capacity:8589934592");
     console.log("UOS_LINUX_GUEST_STAGE qemu:start");
     const result = await executeProbe(qemuArgv(work, "/usr/share/AAVMF/AAVMF_CODE.fd"), expected, work, captureCommand);
     console.log("UOS_LINUX_GUEST_STAGE qemu:complete");

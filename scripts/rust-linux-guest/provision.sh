@@ -5,7 +5,7 @@ seed=/mnt/uos-seed
 state=/var/lib/uos-guest-probe
 failed() { printf '\nUOS_LINUX_GUEST_ERROR provisioning-failed\n'; systemctl poweroff --no-block || :; }
 trap failed EXIT
-for tool in python3 dpkg update-initramfs update-grub systemctl sha256sum; do command -v "$tool" >/dev/null; done
+for tool in python3 dpkg update-initramfs update-grub systemctl sha256sum findmnt df; do command -v "$tool" >/dev/null; done
 cd "$seed"
 sha256sum -c payload.sha256
 mkdir -p "$state"
@@ -14,6 +14,9 @@ cp expected.json receipt.py probe "$state/"
 chmod 700 "$state/probe"
 cat /proc/sys/kernel/random/boot_id > "$state/initial-boot-id"
 release=$(python3 -c 'import json; print(json.load(open("expected.json"))["kernelRelease"])')
+printf '\nUOS_LINUX_GUEST_ROOT_CAPACITY pre-dpkg\n'
+findmnt -n -o SOURCE,FSTYPE /
+df -k /
 dpkg -i "$seed/modules.deb" "$seed/kernel.deb"
 if test -f "/boot/initrd.img-$release"; then update-initramfs -u -k "$release"; else update-initramfs -c -k "$release"; fi
 mkdir -p /etc/default/grub.d
