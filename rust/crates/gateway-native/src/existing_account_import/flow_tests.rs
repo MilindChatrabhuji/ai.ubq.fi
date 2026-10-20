@@ -84,11 +84,11 @@ fn artifact(name:&str)->PathBuf {let path=std::env::current_exe().unwrap().paren
 
 #[derive(Default)]
 struct Traffic { authority:Mutex<Vec<Vec<u8>>>, models:AtomicUsize, oauth:AtomicUsize, drop_publication:AtomicBool,
-    accepted:[AtomicUsize;3], tls_complete:[AtomicUsize;3], requests:[AtomicUsize;3], phases:Mutex<Vec<&'static str>>, errors:Mutex<Vec<String>> }
+    accepted:[AtomicUsize;3], accepted_nonblocking:[AtomicUsize;3], tls_complete:[AtomicUsize;3], requests:[AtomicUsize;3], phases:Mutex<Vec<&'static str>>, errors:Mutex<Vec<String>> }
 impl Traffic {
     fn retain(&self, path:&Path) {
         let counts=|values:&[AtomicUsize;3]|values.iter().map(|n|n.load(Ordering::SeqCst)).collect::<Vec<_>>();
-        let value=serde_json::json!({"accepted":counts(&self.accepted),"tls_complete":counts(&self.tls_complete),"requests":counts(&self.requests),
+        let value=serde_json::json!({"accepted":counts(&self.accepted),"accepted_nonblocking":counts(&self.accepted_nonblocking),"tls_complete":counts(&self.tls_complete),"requests":counts(&self.requests),
             "closed_phases":self.phases.lock().unwrap().iter().take(64).copied().collect::<Vec<_>>(),"error_codes":self.errors.lock().unwrap().iter().take(64).cloned().collect::<Vec<_>>()});
         let mut file=fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(path).unwrap();file.write_all(&serde_json::to_vec(&value).unwrap()).unwrap();
     }
@@ -100,13 +100,13 @@ impl Servers {
         for role in 0..3 {
             let listener=TcpListener::bind((std::net::Ipv4Addr::LOCALHOST,0)).unwrap();addresses.push(listener.local_addr().unwrap());listener.set_nonblocking(true).unwrap();
             let stop=stop.clone();let traffic=traffic.clone();let store=store.clone();let home=home.clone();
-            joins.push(thread::spawn(move||{let mut tasks=Vec::new();while !stop.load(Ordering::Acquire){match listener.accept(){Ok((socket,_))=>{traffic.accepted[role as usize].fetch_add(1,Ordering::SeqCst);let store=store.clone();let home=home.clone();let traffic=traffic.clone();tasks.push(thread::spawn(move||{serve_tls(socket,role,store,&home,traffic)}));},Err(e)if e.kind()==std::io::ErrorKind::WouldBlock=>thread::sleep(Duration::from_millis(2)),Err(e)=>panic!("fixture listener {e}")}}for task in tasks{task.join().unwrap();}}));
+            joins.push(thread::spawn(move||{let mut tasks=Vec::new();while !stop.load(Ordering::Acquire){match listener.accept(){Ok((socket,_))=>{traffic.accepted[role as usize].fetch_add(1,Ordering::SeqCst);if rustix::fs::fcntl_getfl(&socket).unwrap().contains(rustix::fs::OFlags::NONBLOCK){traffic.accepted_nonblocking[role as usize].fetch_add(1,Ordering::SeqCst);}let store=store.clone();let home=home.clone();let traffic=traffic.clone();tasks.push(thread::spawn(move||{serve_tls(socket,role,store,&home,traffic)}));},Err(e)if e.kind()==std::io::ErrorKind::WouldBlock=>thread::sleep(Duration::from_millis(2)),Err(e)=>panic!("fixture listener {e}")}}for task in tasks{task.join().unwrap();}}));
         }
         Self{authority:addresses[0],models:addresses[1],oauth:addresses[2],stop,joins,traffic,structural_path:home.parent().unwrap().join("server-structural.json")}
     }
 }
 impl Drop for Servers { fn drop(&mut self){self.stop.store(true,Ordering::Release);for join in self.joins.drain(..){join.join().unwrap();}self.traffic.retain(&self.structural_path);} }
-fn tls(socket:TcpStream)->StreamOwned<ServerConnection,TcpStream>{socket.set_read_timeout(Some(Duration::from_secs(55))).unwrap();socket.set_write_timeout(Some(Duration::from_secs(5))).unwrap();let cert=include_bytes!("../../tests/fixtures/import-tls/leaf.der");let key=include_bytes!("../../tests/fixtures/import-tls/leaf.pk8.der");let config=ServerConfig::builder().with_no_client_auth().with_single_cert(vec![CertificateDer::from(cert.to_vec())],PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec()))).unwrap();StreamOwned::new(ServerConnection::new(Arc::new(config)).unwrap(),socket)}
+fn tls(socket:TcpStream)->StreamOwned<ServerConnection,TcpStream>{socket.set_nonblocking(false).unwrap();assert!(!rustix::fs::fcntl_getfl(&socket).unwrap().contains(rustix::fs::OFlags::NONBLOCK),"actual accepted fixture TLS socket must be blocking before handshake");socket.set_read_timeout(Some(Duration::from_secs(55))).unwrap();socket.set_write_timeout(Some(Duration::from_secs(5))).unwrap();let cert=include_bytes!("../../tests/fixtures/import-tls/leaf.der");let key=include_bytes!("../../tests/fixtures/import-tls/leaf.pk8.der");let config=ServerConfig::builder().with_no_client_auth().with_single_cert(vec![CertificateDer::from(cert.to_vec())],PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec()))).unwrap();StreamOwned::new(ServerConnection::new(Arc::new(config)).unwrap(),socket)}
 fn read_request(tls:&mut StreamOwned<ServerConnection,TcpStream>,traffic:&Traffic,role:usize,tls_recorded:&mut bool)->Option<(String,BTreeMap<String,String>,Vec<u8>)>{
     let mut bytes=Vec::new();loop{if let Some(end)=bytes.windows(4).position(|p|p==b"\r\n\r\n"){let text=std::str::from_utf8(&bytes[..end]).ok()?;let mut lines=text.split("\r\n");let path=lines.next()?.split_whitespace().nth(1)?.to_owned();let headers:BTreeMap<String,String>=lines.map(|line|line.split_once(':')).collect::<Option<Vec<_>>>()?.into_iter().map(|(k,v)|(k.to_ascii_lowercase(),v.trim().to_owned())).collect();let len:usize=headers.get("content-length").map(|v|v.parse().ok()).unwrap_or(Some(0))?;if len>gateway_publication::import_publication_max_bytes().max(gateway_auth::native::NATIVE_MAX_BODY_BYTES){return None;}if bytes.len()>=end+4+len{return Some((path,headers,bytes[end+4..end+4+len].to_vec()));}}
         let mut part=[0u8;8192];let read=tls.read(&mut part);
