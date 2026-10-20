@@ -54,6 +54,35 @@ pub struct AuthenticatedImportTerminal {
     terminal: ImportAuthorityTerminalData,
     observed_at_ms: i64,
 }
+/// A current matching terminal for request-correlated original B1 DATA.
+/// Never proves historical Started, physical custody, or permission to stop/write.
+/// ```compile_fail
+/// use gateway_authority::native_control::import::VerifiedCurrentImportTerminal;
+/// let forged:VerifiedCurrentImportTerminal=serde_json::from_str("{}").unwrap();
+/// ```
+pub struct VerifiedCurrentImportTerminal {
+    request: ImportCustodyStartedRequest,
+    publication_revision: String,
+    terminal: ImportAuthorityTerminalData,
+    observed_at_ms: i64,
+}
+impl VerifiedCurrentImportTerminal {
+    pub fn request(&self) -> &ImportCustodyStartedRequest {
+        &self.request
+    }
+    pub fn publication_revision(&self) -> &str {
+        &self.publication_revision
+    }
+    pub fn terminal(&self) -> &ImportAuthorityTerminalData {
+        &self.terminal
+    }
+    pub fn observed_at_ms(&self) -> i64 {
+        self.observed_at_ms
+    }
+    pub fn deadline_ms(&self) -> i64 {
+        self.request.deadline_ms
+    }
+}
 impl AuthenticatedImportTerminal {
     pub fn binding(&self) -> &NativeImportBinding {
         &self.binding
@@ -389,6 +418,37 @@ impl<'a, C: NativeRenewalCancellation> RemoteImportAuthority<'a, C> {
         Ok(VerifiedCurrentImportStarted {
             request: serde_json::from_slice(&bytes).map_err(|_| unavailable())?,
             verified_at_ms: reply.verified_at_ms,
+        })
+    }
+    pub fn verify_custody_terminal(
+        &self,
+        started: &ImportCustodyStartedRequest,
+        publication_revision: &str,
+    ) -> Result<VerifiedCurrentImportTerminal, GatewayError> {
+        if self.now()? >= started.deadline_ms {
+            return Err(unavailable());
+        }
+        let bytes = started.canonical_bytes()?;
+        let wire = ImportCustodyStartedWire::parse(&bytes)?;
+        let ResultData::CustodyTerminal {
+            started: echoed,
+            publication_revision: revision,
+            terminal,
+        } = self.exchange(Command::CustodyTerminal {
+            started: wire,
+            publication_revision: publication_revision.into(),
+        })?
+        else {
+            return Err(unavailable());
+        };
+        if self.now()? >= started.deadline_ms || echoed.bytes()? != bytes {
+            return Err(unavailable());
+        }
+        Ok(VerifiedCurrentImportTerminal {
+            request: serde_json::from_slice(&bytes).map_err(|_| unavailable())?,
+            publication_revision: revision,
+            terminal: *terminal,
+            observed_at_ms: self.now()?,
         })
     }
     pub fn observe_publication(

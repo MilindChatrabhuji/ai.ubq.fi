@@ -45,6 +45,8 @@ pub use remote::{
     AuthenticatedImportCatalogObservation, AuthenticatedImportTerminal, RemoteAdmittedImport,
     RemoteImportAuthority,
 };
+#[cfg(unix)]
+pub use remote::VerifiedCurrentImportTerminal;
 pub struct PreparedNativeImport {
     row: ImportActionRow,
 }
