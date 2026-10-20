@@ -3,6 +3,7 @@ mod support;
 use gateway_admin_data::profile::{CanonicalDates, to_source_profile};
 use gateway_core::{
     source_control::decode_source_control_record,
+    source_json::SourceJson,
     state::{AuthorityStore, RecordKey, StoredRecord},
     tuple_key::TupleKey,
     value::PortableValue,
@@ -153,8 +154,8 @@ fn exact_v1_v2_v3_null_normalized_and_limited_survive_real_restart_latest_invers
         );
         let bundle = run(export_native_rollback_bundle(&store, 2400, context())).unwrap();
         assert_eq!(
-            serde_json::to_value(&bundle.source).unwrap(),
-            serde_json::to_value(before).unwrap(),
+            SourceJson::from_serializable(&bundle.source).unwrap(),
+            SourceJson::from_serializable(&before).unwrap(),
             "{case}"
         );
         for (key, record) in &expected {
@@ -187,8 +188,8 @@ fn exact_v1_v2_v3_null_normalized_and_limited_survive_real_restart_latest_invers
         ))
         .unwrap();
         assert_eq!(
-            serde_json::to_value(run(export_native_latest(&restore, 2400)).unwrap()).unwrap(),
-            serde_json::to_value(&bundle.source).unwrap()
+            SourceJson::from_serializable(&run(export_native_latest(&restore, 2400)).unwrap()).unwrap(),
+            SourceJson::from_serializable(&bundle.source).unwrap()
         );
         assert!(
             expected
