@@ -665,8 +665,18 @@ function producer(value: ObjectValue, expected: string, cases: readonly string[]
   assert.deepEqual(value.cases, cases);
   assert(Array.isArray(value.changed_keys) && Array.isArray(value.deleted_keys));
 }
+export type FixtureTime = Readonly<{ origin: number; deadline: number; runtime: number; inverse: number }>;
+export function fixtureTime(origin: number): FixtureTime {
+  assert(Number.isSafeInteger(origin) && origin >= 1200 && Number.isSafeInteger(origin + 300_000), "Fixture time is outside its safe range.");
+  return Object.freeze({ origin, deadline: origin + 300_000, runtime: origin + 100, inverse: origin + 200 });
+}
+export function assertFixtureBudget(time: FixtureTime, now = Date.now()): void {
+  assert(Number.isSafeInteger(now) && now >= time.origin && now < time.deadline, "fixture_time_budget_expired");
+}
 async function actualCase(input: Manifest): Promise<ObjectValue> {
   const workspace = input.run_directory;
+  const time = fixtureTime(Date.now());
+  assertFixtureBudget(time);
   const cases: string[] = [];
   await writeFile(join(workspace, "allowed-task-path-probe"), "fixed harmless state-controller probe\n", { flag: "wx" });
   await assert.rejects(
@@ -682,8 +692,11 @@ async function actualCase(input: Manifest): Promise<ObjectValue> {
     let prepared: ObjectValue;
     let preparationFailure: Readonly<{ error: unknown }> | undefined;
     try {
-      prepared = await preparation.call({ v: 1, operation: "prepare_inputs", directory: join(workspace, "owners"), now_ms: 2200 }, "inputs_prepared");
+      assertFixtureBudget(time);
+      prepared = await preparation.call({ v: 1, operation: "prepare_inputs", directory: join(workspace, "owners"), now_ms: time.origin }, "inputs_prepared");
+      assertFixtureBudget(time);
       await preparation.close(true);
+      assertFixtureBudget(time);
     } catch (error) {
       preparationFailure = { error };
       throw error;
@@ -697,7 +710,9 @@ async function actualCase(input: Manifest): Promise<ObjectValue> {
     await privateFile(sourceFile, source);
     const sourceDirectory = join(workspace, "stopped-source");
     await mkdir(sourceDirectory);
+    assertFixtureBudget(time);
     await oracle(input, sourceDirectory, sourceFile, true);
+    assertFixtureBudget(time);
     const sourceDb = join(sourceDirectory, "restore-new.sqlite3");
     const stoppedHash = sha256(await readFile(sourceDb));
     verifyNativeRevision(sourceDb, source);
@@ -705,9 +720,12 @@ async function actualCase(input: Manifest): Promise<ObjectValue> {
     const sibling = join(workspace, "owners/managed-b/auth.json");
     const siblingHash = sha256(await readFile(sibling));
     const config = await configuration(input);
+    assertFixtureBudget(time);
     running = await start(input, config, 1);
+    assertFixtureBudget(time);
     native = new NativePort(input.native_fixture.path, workspace);
-    const candidate = await native.call({ v: 1, directory: prepared.directory, now_ms: 2300, capture: source }, "candidate", running.origin);
+    const candidate = await native.call({ v: 1, directory: prepared.directory, now_ms: time.runtime, capture: source }, "candidate", running.origin);
+    assertFixtureBudget(time);
     closed(candidate, ["operation", "capture", "adoption_receipt"]);
     capture(candidate.capture);
     assert(!JSON.stringify(candidate.capture).includes("synthetic-native-"), "Refresh-bearing source reached the common candidate.");
@@ -720,9 +738,12 @@ async function actualCase(input: Manifest): Promise<ObjectValue> {
     await privateFile(join(workspace, "adoption-receipt.json"), candidate.adoption_receipt);
     cases.push("actual_common_do_atomic_adoption_receipt");
     await running.stop();
+    assertFixtureBudget(time);
     running = await start(input, config, 2);
+    assertFixtureBudget(time);
     cases.push("actual_same_common_do_disk_restarted");
     const runtime = await native.call({ v: 1, operation: "exercise_runtime" }, "runtime_exercised", running.origin);
+    assertFixtureBudget(time);
     producer(runtime, "runtime_exercised", [
       "actual_adopted_api_authentication",
       "actual_post_restart_admission",
@@ -731,7 +752,9 @@ async function actualCase(input: Manifest): Promise<ObjectValue> {
       "actual_latest_shared_graph_write",
     ]);
     cases.push(...(runtime.cases as string[]));
+    assertFixtureBudget(time);
     const custody = await native.call({ v: 1, operation: "advance_managed_a" }, "managed_a_advanced", running.origin);
+    assertFixtureBudget(time);
     producer(custody, "managed_a_advanced", [
       "stale_owner_generation_refused",
       "actual_managed_a_current_projection",
@@ -746,7 +769,9 @@ async function actualCase(input: Manifest): Promise<ObjectValue> {
       native_sha256: input.native_fixture.sha256,
       native_nonce_capture_sha256: null,
     };
-    const inverse = await native.call({ v: 1, now_ms: 2400, artifacts }, "inverse", running.origin);
+    assertFixtureBudget(time);
+    const inverse = await native.call({ v: 1, now_ms: time.inverse, artifacts }, "inverse", running.origin);
+    assertFixtureBudget(time);
     closed(inverse, ["operation", "source", "rust_controls", "artifacts"]);
     assert.deepEqual(inverse.artifacts, artifacts);
     assert(Array.isArray(inverse.rust_controls));
@@ -762,12 +787,16 @@ async function actualCase(input: Manifest): Promise<ObjectValue> {
     cases.push("quiescent_latest_current_owner_inverse");
     const target = join(workspace, "latest-new-target");
     await mkdir(target);
+    assertFixtureBudget(time);
     await oracle(input, target, latest, true);
+    assertFixtureBudget(time);
     const targetDb = join(target, "restore-new.sqlite3");
     verifyNativeRevision(targetDb, inverse.source);
     const targetHash = sha256(await readFile(targetDb));
     cases.push("latest_new_bun_raw_revision_expiry_graph_counter_bytes_roundtrip");
+    assertFixtureBudget(time);
     await oracle(input, target, latest, false);
+    assertFixtureBudget(time);
     assert.equal(sha256(await readFile(targetDb)), targetHash);
     cases.push("occupied_target_refused_before_open_unchanged");
     const corrupt = join(workspace, "corrupt-existing-target");
@@ -775,12 +804,15 @@ async function actualCase(input: Manifest): Promise<ObjectValue> {
     const corruptPath = join(corrupt, "restore-new.sqlite3");
     await writeFile(corruptPath, "existing corrupt synthetic destination\n", { flag: "wx" });
     const corruptHash = sha256(await readFile(corruptPath));
+    assertFixtureBudget(time);
     await oracle(input, corrupt, latest, false);
+    assertFixtureBudget(time);
     assert.equal(sha256(await readFile(corruptPath)), corruptHash);
     cases.push("corrupt_existing_target_refused_before_open_not_parser_detection");
     assert.equal(sha256(await readFile(sourceDb)), stoppedHash);
     assert.equal(sha256(await readFile(sibling)), siblingHash);
     assert.equal(sha256(await readFile(sourceFile)), sha256(JSON.stringify(source, null, 2) + "\n"));
+    assertFixtureBudget(time);
     return {
       source_sha: input.source_sha,
       source_tree: input.source_tree,

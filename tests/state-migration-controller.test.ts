@@ -5,9 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   NativePort,
+  assertFixtureBudget,
   PRIVATE_WIRE_MAX_BYTES,
   compareLatest,
   decodeStoreMessage,
+  fixtureTime,
   manifest,
   privateLines,
   rawMember,
@@ -564,4 +566,25 @@ test("a real native phase error stays first and causal when private capture also
     await Promise.allSettled([fixture.port.close()]);
     rmSync(fixture.directory, { recursive: true, force: true });
   }
+});
+
+test("fixture time derives one immutable five-minute budget and ordered phase times", () => {
+  const origin = 1_800_000_000_000;
+  const time = fixtureTime(origin);
+  assert.deepEqual(time, { origin, deadline: origin + 300_000, runtime: origin + 100, inverse: origin + 200 });
+  assert(Object.isFrozen(time));
+  assert.throws(() => fixtureTime(1199));
+  assert.throws(() => fixtureTime(Number.MAX_SAFE_INTEGER));
+});
+test("fixture budget refuses expiry or clock reversal without refreshing its origin", () => {
+  const time = fixtureTime(1_800_000_000_000);
+  assertFixtureBudget(time, time.origin);
+  assertFixtureBudget(time, time.deadline - 1);
+  assert.throws(() => {
+    assertFixtureBudget(time, time.deadline);
+  }, /fixture_time_budget_expired/);
+  assert.throws(() => {
+    assertFixtureBudget(time, time.origin - 1);
+  }, /fixture_time_budget_expired/);
+  assert.equal(time.deadline - time.origin, 300_000);
 });
