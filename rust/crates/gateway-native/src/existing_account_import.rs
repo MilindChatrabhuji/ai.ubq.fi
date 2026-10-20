@@ -20,6 +20,7 @@ mod exclusive_owner;
 mod import_documents;
 mod import_endpoints;
 mod import_publication;
+mod import_process;
 mod live_custody;
 mod owner_runtime;
 mod prepare_flow;
