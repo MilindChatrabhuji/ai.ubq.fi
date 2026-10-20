@@ -8,6 +8,9 @@ use gateway_core::GatewayError;
 use std::{io::Read, net::{Shutdown, TcpStream}, os::unix::fs::MetadataExt,
     sync::{Arc, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
 
+#[cfg(feature = "native-import-fixture")]
+static FIXTURE_STARTUP_STAGE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
+
 pub(super) struct ActorCancellation {
     parent_dead: Arc<AtomicBool>,
     client: TcpStream,
@@ -38,19 +41,26 @@ impl PreparedImportActor {
     /// Fixed ActorBootstrap came from checked standard handles, not an accepted
     /// socket/config/PID constructor supplied by an HTTP caller.
     pub(super) fn from_stdio() -> Result<Self, GatewayError> {
+        #[cfg(feature = "native-import-fixture")] FIXTURE_STARTUP_STAGE.store(11, Ordering::Relaxed);
         let mut boot = ActorBootstrap::from_stdio()?;
+        #[cfg(feature = "native-import-fixture")] FIXTURE_STARTUP_STAGE.store(12, Ordering::Relaxed);
         let config = NativeDaemonConfig::read_import_stdin(boot.config.as_slice())?;
         let authority_config = NativeDaemonConfig::read_import_stdin(boot.config.as_slice())?;
         let publication_config = NativeDaemonConfig::read_import_stdin(boot.config.as_slice())?;
         boot.config.fill(0);
+        #[cfg(feature = "native-import-fixture")] FIXTURE_STARTUP_STAGE.store(13, Ordering::Relaxed);
         let renewal = config.owner_renewal.as_ref().ok_or_else(unavailable)?;
         let owner = renewal.owners().iter().find(|owner| owner.owner_id() == boot.native_owner_id).ok_or_else(unavailable)?;
+        #[cfg(feature = "native-import-fixture")] FIXTURE_STARTUP_STAGE.store(14, Ordering::Relaxed);
         let metadata = std::fs::symlink_metadata(owner.codex_home()).map_err(|_| unavailable())?;
         if !metadata.is_dir() || metadata.uid() != rustix::process::geteuid().as_raw()
             || metadata.mode() & 0o077 != 0 { return Err(unavailable()); }
+        #[cfg(feature = "native-import-fixture")] FIXTURE_STARTUP_STAGE.store(15, Ordering::Relaxed);
         let registered = RegisteredRenewalOwner::configured(owner.owner_id().into(), owner.codex_home().to_str().ok_or_else(unavailable)?.into())?;
         let store = ExistingAccountImportStore::configured(&registered, boot.account_id_hash.clone())?;
+        #[cfg(feature = "native-import-fixture")] FIXTURE_STARTUP_STAGE.store(16, Ordering::Relaxed);
         let nonces = SqliteNonceStore::open(&config.nonce_database)?;
+        #[cfg(feature = "native-import-fixture")] FIXTURE_STARTUP_STAGE.store(17, Ordering::Relaxed);
         let deadline = Instant::now() + Duration::from_secs(45);
         let parent_dead = Arc::new(AtomicBool::new(false));
         let cancellation = ActorCancellation { parent_dead: parent_dead.clone(), client: boot.client.try_clone().map_err(|_| unavailable())?, deadline };
@@ -65,6 +75,7 @@ impl PreparedImportActor {
             let _ = client_abort.shutdown(Shutdown::Both);
             let _ = custody_abort.shutdown(Shutdown::Both);
         });
+        #[cfg(feature = "native-import-fixture")] FIXTURE_STARTUP_STAGE.store(18, Ordering::Relaxed);
         Ok(Self { client: boot.client, custody: boot.custody, endpoints: boot.endpoints,
             identity: config.identity, authority_identity: authority_config.identity, publication_identity: publication_config.identity,
             origin: renewal.authority_origin().into(), native_owner_id: boot.native_owner_id, account_id_hash: boot.account_id_hash,
@@ -83,7 +94,12 @@ pub fn run_native_import() -> ! {
 #[cfg(feature = "native-import-fixture")]
 pub fn run_native_import_fixture() -> ! { exit_actor() }
 fn exit_actor() -> ! {
-    let code = if run_actor().is_ok() { 0 } else { 1 };
+    let code = if run_actor().is_ok() { 0 } else {
+        #[cfg(feature = "native-import-fixture")]
+        { i32::from(FIXTURE_STARTUP_STAGE.load(Ordering::Relaxed)) }
+        #[cfg(not(feature = "native-import-fixture"))]
+        { 1 }
+    };
     // Stderr is the actual custody channel; never contaminate its frames with
     // diagnostics or include credential-bearing errors in process output.
     std::process::exit(code)
