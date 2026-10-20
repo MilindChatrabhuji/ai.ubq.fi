@@ -10,18 +10,28 @@ use gateway_authority::native_control::RegisteredRenewalOwner;
 use std::{
     fs,
     io::Write,
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
+// These four cases mutate one shared TMPDIR ancestor. The production ACL
+// observation intentionally rejects metadata churn while inspecting that anchor.
+// Hold through Home cleanup so siblings cannot change its entries mid-observation.
+static FOUNDATION_FIXTURES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn assert_owned_canonical_directory(path: &Path) {
+    assert_eq!(fs::canonicalize(path).unwrap(), path);
+    let metadata = fs::symlink_metadata(path).unwrap();
+    assert!(metadata.is_dir() && !metadata.file_type().is_symlink());
+    assert_eq!(metadata.uid(), rustix::process::getuid().as_raw());
+}
 struct Home(PathBuf);
 impl Home {
     fn new() -> Self {
         static ID: AtomicU64 = AtomicU64::new(0);
         let base = fs::canonicalize(std::env::temp_dir()).unwrap();
-        assert!(base.starts_with("/private/tmp/ai-rust-wasm-20261018"));
+        assert_owned_canonical_directory(&base);
         let path = base.join(format!(
             "exclusive-owner-{}-{}",
             std::process::id(),
@@ -103,6 +113,7 @@ fn owner(home: &Home) -> ExclusiveManagedOwner {
 }
 #[test]
 fn actual_anchored_inspector_no_acl_preserves_parent_cwd_and_rejects_real_ace() {
+    let _fixture_family = FOUNDATION_FIXTURES.lock().unwrap();
     let home = Home::new();
     let file = fs::File::open(&home.0).unwrap();
     let (helper, hash) = helper();
@@ -144,6 +155,7 @@ fn actual_anchored_inspector_no_acl_preserves_parent_cwd_and_rejects_real_ace() 
 }
 #[test]
 fn full_numeric_header_parser_rejects_prefixes_acl_control_unknown_and_stat_mismatch() {
+    let _fixture_family = FOUNDATION_FIXTURES.lock().unwrap();
     let home = Home::new();
     let facts = Facts::read(&fs::File::open(&home.0).unwrap()).unwrap();
     let header = format!(
@@ -171,6 +183,7 @@ fn full_numeric_header_parser_rejects_prefixes_acl_control_unknown_and_stat_mism
 }
 #[test]
 fn actual_principal_path_inode_mode_and_executable_mismatches_never_grant_mutation() {
+    let _fixture_family = FOUNDATION_FIXTURES.lock().unwrap();
     let home = Home::new();
     let (store, registered) = home.store();
     let (helper, hash) = helper();
@@ -215,6 +228,7 @@ fn actual_principal_path_inode_mode_and_executable_mismatches_never_grant_mutati
 }
 #[test]
 fn insecure_nonsticky_parent_and_hardlinked_auth_refuse_runtime() {
+    let _fixture_family = FOUNDATION_FIXTURES.lock().unwrap();
     let home = Home::new();
     let owner = owner(&home);
     fs::hard_link(home.0.join("auth.json"), home.0.join("auth-copy")).unwrap();
@@ -335,7 +349,10 @@ fn controlled_async_writer_child() {
         "mandatory process-fork denial must also block the otherwise allowed executable"
     );
     let home = PathBuf::from(std::env::var_os("UOS_NATIVE_OWNER_TEST_DIRECTORY").unwrap());
-    assert!(home.starts_with("/private/tmp/ai-rust-wasm-20261018"));
+    // spawn_fixture clears ambient TMPDIR. The sealed fixture-only home came
+    // from the parent's canonical owned temp root, not a dated path spelling.
+    assert_owned_canonical_directory(home.parent().unwrap());
+    assert_owned_canonical_directory(&home);
     fs::write(home.join("writer-ready"), b"process-denial-observed").unwrap();
     // Bounded fixture lifetime (50s at5ms); the parent must actually stop/reap it well before this bound.
     for count in 0u64..10_000 {

@@ -214,6 +214,8 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let (release, paused) = std::sync::mpsc::sync_channel(1);
+        let received = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let server_received = received.clone();
         let server = std::thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             socket
@@ -233,13 +235,16 @@ mod tests {
                 let count = tls.read(&mut bytes).unwrap();
                 assert!(count > 0);
                 total += count;
+                server_received.store(total, std::sync::atomic::Ordering::Relaxed);
             }
             total
         });
         let mut socket = std::net::TcpStream::connect(address).unwrap();
+        let original_send_buffer = socket2::SockRef::from(&socket).send_buffer_size().unwrap();
         socket2::SockRef::from(&socket)
             .set_send_buffer_size(1024)
             .unwrap();
+        let forced_send_buffer = socket2::SockRef::from(&socket).send_buffer_size().unwrap();
         socket
             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
             .unwrap();
@@ -261,10 +266,26 @@ mod tests {
         assert_eq!(peer.pending, MAX_PAYLOAD_BYTES + 14);
         assert_eq!(peer.in_flight, Some(MAX_PAYLOAD_BYTES + 14));
         assert!(peer.send("x".repeat(MAX_PAYLOAD_BYTES)).is_err());
+        // Pressure is proved above; the independent drain phase uses the real
+        // original capacity rather than the fixture's artificial 1KiB limit.
+        let socket = &peer.socket.get_ref().sock;
+        let restore_result =
+            socket2::SockRef::from(socket).set_send_buffer_size(original_send_buffer);
+        let restored_send_buffer = socket2::SockRef::from(socket).send_buffer_size();
+        eprintln!(
+            "SYNTHETIC_TLS_DRAIN_BUFFER original={original_send_buffer} forced={forced_send_buffer} restore={restore_result:?} restored={restored_send_buffer:?}"
+        );
+        restore_result.unwrap();
+        restored_send_buffer.unwrap();
         release.send(()).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while peer.pending != 0 {
-            assert!(std::time::Instant::now() < deadline);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "TLS drain deadline: pending={} received={} original_buffer={original_send_buffer} forced_buffer={forced_send_buffer}",
+                peer.pending,
+                received.load(std::sync::atomic::Ordering::Relaxed)
+            );
             peer.pump().unwrap();
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
