@@ -20,6 +20,13 @@ use std::{
 };
 pub fn run_native_request() -> ! {
     ReceiveProcess::run(|process| {
+        crate::connector_policy::inherited_only_stdio()?;
+        let mode = rustix::fs::fstat(std::io::stdin())
+            .map_err(|_| ControlError::InvalidDescriptor)?
+            .st_mode;
+        if rustix::fs::FileType::from_raw_mode(mode) != rustix::fs::FileType::Fifo {
+            return Err(ControlError::InvalidDescriptor);
+        }
         let mut input = std::io::stdin().lock();
         let mut header = [0; 4];
         input.read_exact(&mut header).map_err(io_error)?;
@@ -37,6 +44,12 @@ pub fn run_native_request() -> ! {
         // No guess for the separate reverse authority origin/FD bootstrap.
         if config.owner_renewal.is_some() {
             return Err(ControlError::UnsupportedPlatform);
+        }
+        if rustix::net::sockopt::socket_type(std::io::stdout())
+            .map_err(|_| ControlError::InvalidDescriptor)?
+            != rustix::net::SocketType::STREAM
+        {
+            return Err(ControlError::InvalidDescriptor);
         }
         let mut client = TcpStream::from(
             std::io::stdout()
@@ -85,12 +98,7 @@ impl RequestConnector {
         process: Arc<ReceiveProcess>,
         completed: Arc<AtomicBool>,
     ) -> Result<Self, ControlError> {
-        if rustix::net::sockopt::socket_type(&control).map_err(|e| io_error(e.into()))?
-            != rustix::net::SocketType::STREAM
-        {
-            return Err(ControlError::InvalidDescriptor);
-        }
-        rustix::net::getpeername(&control).map_err(|e| io_error(e.into()))?;
+        crate::connector_policy::validate_unix_control(&control)?;
         Ok(Self {
             control: Mutex::new(Some(control)),
             process,

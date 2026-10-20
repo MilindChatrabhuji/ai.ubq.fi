@@ -1,5 +1,6 @@
 #![cfg(unix)]
 mod connector_cases;
+mod connector_bootstrap_cases;
 #[path = "../../src/connector_policy.rs"]
 mod connector_policy;
 #[path = "../../src/connector_worker.rs"]
@@ -36,17 +37,10 @@ fn policy_probe() {
         .is_err();
     let non443_denied =
         TcpStream::connect_timeout(&input.denied_tcp, Duration::from_millis(300)).is_err();
-    let permission443 = TcpStream::connect_timeout(
-        &"127.0.0.1:443".parse().unwrap(),
-        Duration::from_millis(300),
-    )
-    .err()
-    .map(|error| format!("{:?}", error.kind()))
-    .unwrap_or_else(|| "Connected".into());
     let thread_allowed = std::thread::spawn(|| 17).join().unwrap() == 17;
     println!(
         "{}",
-        serde_json::json!({"read_allowed":read_allowed,"outside_read_denied":outside_read_denied,"outside_write_denied":outside_write_denied,"exec_denied":exec_denied,"self_spawn_denied":self_spawn_denied,"non443_denied":non443_denied,"permission443":permission443,"thread_allowed":thread_allowed})
+        serde_json::json!({"read_allowed":read_allowed,"outside_read_denied":outside_read_denied,"outside_write_denied":outside_write_denied,"exec_denied":exec_denied,"self_spawn_denied":self_spawn_denied,"non443_denied":non443_denied,"thread_allowed":thread_allowed})
     );
 }
 fn print_policy(name: &str) {
@@ -86,6 +80,10 @@ use std::{
 };
 fn main() {
     let name = std::env::args().nth(1).expect("finite fixture case");
+    if name == "nonblocking443" {
+        connector_bootstrap_cases::nonblocking443();
+        return;
+    }
     if name == "probe-noop" {
         return;
     }

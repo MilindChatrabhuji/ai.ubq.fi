@@ -1,4 +1,6 @@
 #![cfg(target_os = "macos")]
+#[path = "support/connector_lifecycle_cases.rs"]
+mod lifecycle;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -64,14 +66,7 @@ fn actual_separate_prelaunch_profiles_enforce_files_processes_and_network() {
     ] {
         assert_eq!(observed[key], false, "outsidecontrol {key}");
     }
-    assert_eq!(
-        observed["permission443"], "ConnectionRefused",
-        "closed-loopback443 permission control; no successful443 reachability claim"
-    );
-    for (name, read_allowed, permission443) in [
-        ("print-main-policy", true, "PermissionDenied"),
-        ("print-connector-policy", false, "ConnectionRefused"),
-    ] {
+    for (name, read_allowed) in [("print-main-policy", true), ("print-connector-policy", false)] {
         let generated = run(name, &input, None);
         assert!(
             generated.status.success(),
@@ -101,7 +96,6 @@ fn actual_separate_prelaunch_profiles_enforce_files_processes_and_network() {
             assert_eq!(observed[key], true, "{name} {key}: {observed}");
         }
         assert_eq!(observed["read_allowed"], read_allowed);
-        assert_eq!(observed["permission443"], permission443);
         assert_eq!(observed["thread_allowed"], true);
     }
     fs::remove_dir_all(directory).unwrap();

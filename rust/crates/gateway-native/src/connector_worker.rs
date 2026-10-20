@@ -18,11 +18,13 @@ use std::{
 
 pub fn run_native_connector() -> ! {
     ReceiveProcess::run(|process| {
+        crate::connector_policy::inherited_only_stdio()?;
         let owned = std::io::stdin()
             .as_fd()
             .try_clone_to_owned()
             .map_err(io_error)?;
         let stream = UnixStream::from(owned);
+        crate::connector_policy::validate_unix_control(&stream)?;
         run_dial(stream, process.clone(), fixed_provider_dial)
     })
 }
