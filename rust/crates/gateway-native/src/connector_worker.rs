@@ -3,10 +3,9 @@ use crate::{
     connector_fd::{ControlEndpoint, ReceiveProcess, Side},
     connector_protocol::{ControlError, ControlFrame, WIRE_VERSION},
 };
-use socket2::SockRef;
+use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use std::{
     io,
-    mem::MaybeUninit,
     net::{TcpStream, ToSocketAddrs},
     os::{
         fd::{AsFd, OwnedFd},
@@ -63,7 +62,9 @@ pub(crate) fn run_dial(
         return Err(ControlError::WrongState);
     };
     let deadline = Instant::now() + Duration::from_secs(10);
-    stream.set_nonblocking(true).map_err(io_error)?;
+    if channel_events(&stream, Duration::ZERO)?.contains(PollFlags::HUP) {
+        return Err(ControlError::PeerClosed);
+    }
     let (tx, rx) = mpsc::sync_channel(1);
     // DNS may block inside libc. This process's control loop remains able to
     // exit the entire process on EOF/cancel/deadline; no resolver survives it.
@@ -74,35 +75,34 @@ pub(crate) fn run_dial(
         if Instant::now() >= deadline {
             return Err(ControlError::Io(io::ErrorKind::TimedOut));
         }
-        match SockRef::from(&stream).peek(&mut [MaybeUninit::uninit(); 1]) {
-            Ok(0) => return Err(ControlError::PeerClosed),
-            Ok(_) => {
-                stream.set_nonblocking(false).map_err(io_error)?;
-                let received = endpoint.receive()?;
-                return match received.frame {
-                    ControlFrame::Cancel {
-                        connection_id: id, ..
-                    } if id == connection_id => {
-                        endpoint.send(
-                            ControlFrame::Cancelled {
-                                v: WIRE_VERSION,
-                                connection_id,
-                            },
-                            None,
-                        )?;
-                        Err(ControlError::Cancelled)
-                    }
-                    _ => Err(ControlError::WrongState),
-                };
-            }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-            Err(error) => return Err(io_error(error)),
+        let events = channel_events(&stream, Duration::from_millis(2))?;
+        // Readability takes precedence over HUP: a valid final frame/rights can
+        // still be queued when the peer has already exited.
+        if events.contains(PollFlags::IN) {
+            let received = endpoint.receive()?;
+            return match received.frame {
+                ControlFrame::Cancel {
+                    connection_id: id, ..
+                } if id == connection_id => {
+                    endpoint.send(
+                        ControlFrame::Cancelled {
+                            v: WIRE_VERSION,
+                            connection_id,
+                        },
+                        None,
+                    )?;
+                    Err(ControlError::Cancelled)
+                }
+                _ => Err(ControlError::WrongState),
+            };
+        }
+        if events.intersects(PollFlags::HUP | PollFlags::ERR) {
+            return Err(ControlError::PeerClosed);
         }
         match rx.try_recv() {
             Ok(Ok(connected)) => {
                 resolver.join().map_err(|_| ControlError::Closed)?;
                 let descriptor: OwnedFd = connected.into();
-                stream.set_nonblocking(false).map_err(io_error)?;
                 return endpoint.send(
                     ControlFrame::Connected {
                         v: WIRE_VERSION,
@@ -112,7 +112,6 @@ pub(crate) fn run_dial(
                 );
             }
             Ok(Err(_)) => {
-                stream.set_nonblocking(false).map_err(io_error)?;
                 resolver.join().map_err(|_| ControlError::Closed)?;
                 return endpoint.send(
                     ControlFrame::Unavailable {
@@ -129,4 +128,18 @@ pub(crate) fn run_dial(
 }
 fn io_error(error: io::Error) -> ControlError {
     ControlError::Io(error.kind())
+}
+
+pub(crate) fn channel_events(
+    stream: &UnixStream,
+    wait: Duration,
+) -> Result<PollFlags, ControlError> {
+    let timeout = Timespec::try_from(wait).map_err(|_| ControlError::InvalidFrame)?;
+    let mut descriptors = [PollFd::new(stream, PollFlags::IN)];
+    poll(&mut descriptors, Some(&timeout)).map_err(|error| io_error(error.into()))?;
+    let events = descriptors[0].revents();
+    if events.contains(PollFlags::NVAL) {
+        return Err(ControlError::InvalidDescriptor);
+    }
+    Ok(events)
 }

@@ -6,10 +6,9 @@ use crate::{
     live_bridge::{LiveDialContext, NativeLiveConnector},
 };
 use gateway_auth::GatewayError;
-use socket2::SockRef;
+use rustix::event::PollFlags;
 use std::{
     io::{self, Read},
-    mem::MaybeUninit,
     net::TcpStream,
     os::{fd::AsFd, unix::net::UnixStream},
     sync::{
@@ -118,7 +117,6 @@ impl NativeLiveConnector for RequestConnector {
         .map_err(|_| unavailable())?;
         context.check()?;
         endpoint.send(frame, None).map_err(|_| unavailable())?;
-        control.set_nonblocking(true).map_err(|_| unavailable())?;
         loop {
             if let Err(error) = context.check() {
                 // Drop both local owned channel handles; the whole request
@@ -126,19 +124,24 @@ impl NativeLiveConnector for RequestConnector {
                 endpoint.close();
                 return Err(error);
             }
-            match SockRef::from(&control).peek(&mut [MaybeUninit::uninit(); 1]) {
-                Ok(0) => return Err(unavailable()),
-                Ok(_) => break,
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(2))
-                }
-                Err(_) => return Err(unavailable()),
+            let events =
+                crate::connector_worker::channel_events(&control, Duration::from_millis(2))
+                    .map_err(|_| unavailable())?;
+            if events.contains(PollFlags::IN) {
+                break;
+            }
+            if events.intersects(PollFlags::HUP | PollFlags::ERR) {
+                return Err(unavailable());
             }
         }
-        control.set_nonblocking(false).map_err(|_| unavailable())?;
-        control
-            .set_read_timeout(Some(context.remaining()?))
-            .map_err(|_| unavailable())?;
+        if let Err(error) = control.set_read_timeout(Some(context.remaining()?)) {
+            let ended = crate::connector_worker::channel_events(&control, Duration::ZERO)
+                .map_err(|_| unavailable())?
+                .contains(PollFlags::HUP);
+            if error.kind() != io::ErrorKind::InvalidInput || !ended {
+                return Err(unavailable());
+            }
+        }
         let received = endpoint.receive().map_err(|_| unavailable())?;
         context.check()?;
         if !matches!(received.frame, ControlFrame::Connected { .. }) {

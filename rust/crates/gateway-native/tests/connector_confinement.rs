@@ -51,7 +51,6 @@ fn actual_separate_prelaunch_profiles_enforce_files_processes_and_network() {
     fs::write(&allowed, b"synthetic-allowed").unwrap();
     fs::write(&outside, b"synthetic-outside").unwrap();
     let denied_tcp = TcpListener::bind("127.0.0.1:0").unwrap();
-    let _allowed443 = TcpListener::bind("127.0.0.1:443").expect("controlled port443 required");
     let input = json!({"allowed":allowed,"outside":outside,"replay":directory.join("replay"),"denied_tcp":denied_tcp.local_addr().unwrap()});
     let control = run("policy-probe", &input, None);
     assert!(control.status.success());
@@ -65,10 +64,13 @@ fn actual_separate_prelaunch_profiles_enforce_files_processes_and_network() {
     ] {
         assert_eq!(observed[key], false, "outsidecontrol {key}");
     }
-    assert_eq!(observed["allowed443"], true);
-    for (name, read_allowed, allowed443) in [
-        ("print-main-policy", true, false),
-        ("print-connector-policy", false, true),
+    assert_eq!(
+        observed["permission443"], "ConnectionRefused",
+        "closed-loopback443 permission control; no successful443 reachability claim"
+    );
+    for (name, read_allowed, permission443) in [
+        ("print-main-policy", true, "PermissionDenied"),
+        ("print-connector-policy", false, "ConnectionRefused"),
     ] {
         let generated = run(name, &input, None);
         assert!(
@@ -99,7 +101,7 @@ fn actual_separate_prelaunch_profiles_enforce_files_processes_and_network() {
             assert_eq!(observed[key], true, "{name} {key}: {observed}");
         }
         assert_eq!(observed["read_allowed"], read_allowed);
-        assert_eq!(observed["allowed443"], allowed443);
+        assert_eq!(observed["permission443"], permission443);
         assert_eq!(observed["thread_allowed"], true);
     }
     fs::remove_dir_all(directory).unwrap();
@@ -179,7 +181,16 @@ fn actual_request_worker_uses_inherited_client_and_one_persistent_replay_fence()
             .unwrap();
         socket.write_all(&request).unwrap();
         let mut bytes = Vec::new();
-        socket.read_to_end(&mut bytes).unwrap();
+        let read = socket.read_to_end(&mut bytes);
+        if let Err(error) = &read {
+            eprintln!("request read failed: {error}");
+            for _ in 0..2 {
+                line.clear();
+                output.read_line(&mut line).unwrap();
+                eprintln!("CHILD_EVENT {}", line.trim());
+            }
+        }
+        read.unwrap();
         let boundary = bytes
             .windows(4)
             .position(|b| b == b"\r\n\r\n")

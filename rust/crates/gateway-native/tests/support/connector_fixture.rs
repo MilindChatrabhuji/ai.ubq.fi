@@ -36,15 +36,17 @@ fn policy_probe() {
         .is_err();
     let non443_denied =
         TcpStream::connect_timeout(&input.denied_tcp, Duration::from_millis(300)).is_err();
-    let allowed443 = TcpStream::connect_timeout(
+    let permission443 = TcpStream::connect_timeout(
         &"127.0.0.1:443".parse().unwrap(),
         Duration::from_millis(300),
     )
-    .is_ok();
+    .err()
+    .map(|error| format!("{:?}", error.kind()))
+    .unwrap_or_else(|| "Connected".into());
     let thread_allowed = std::thread::spawn(|| 17).join().unwrap() == 17;
     println!(
         "{}",
-        serde_json::json!({"read_allowed":read_allowed,"outside_read_denied":outside_read_denied,"outside_write_denied":outside_write_denied,"exec_denied":exec_denied,"self_spawn_denied":self_spawn_denied,"non443_denied":non443_denied,"allowed443":allowed443,"thread_allowed":thread_allowed})
+        serde_json::json!({"read_allowed":read_allowed,"outside_read_denied":outside_read_denied,"outside_write_denied":outside_write_denied,"exec_denied":exec_denied,"self_spawn_denied":self_spawn_denied,"non443_denied":non443_denied,"permission443":permission443,"thread_allowed":thread_allowed})
     );
 }
 fn print_policy(name: &str) {
@@ -123,7 +125,9 @@ fn main() {
                 let blocked = name == "blocked-dns";
                 return connector_worker::run_dial(stream, process.clone(), move |_| {
                     if blocked { std::thread::sleep(Duration::from_secs(60)); return Err(std::io::ErrorKind::TimedOut.into()); }
-                    TcpStream::connect("127.0.0.1:443")
+                    let address: SocketAddr = std::env::args().nth(2).unwrap().parse().unwrap();
+                    assert!(address.ip().is_loopback());
+                    TcpStream::connect(address)
                 });
             }
             "retained-loopback" => {
@@ -134,7 +138,8 @@ fn main() {
                 assert!(parent.is_closed());
                 assert!(matches!(received.frame, ControlFrame::Connected { .. }));
                 let mut actual = TcpStream::from(received.descriptor.unwrap());
-                assert_eq!(actual.peer_addr().unwrap().port(), 443);
+                let expected: SocketAddr = std::env::args().nth(2).unwrap().parse().unwrap();
+                assert_eq!(actual.peer_addr().unwrap(), expected);
                 actual.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
                 actual.write_all(b"retained-fd").unwrap();
                 let mut bytes = [0; 8]; actual.read_exact(&mut bytes).unwrap(); assert_eq!(&bytes, b"complete");

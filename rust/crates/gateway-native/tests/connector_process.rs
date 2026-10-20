@@ -19,11 +19,17 @@ fn fixture() -> std::path::PathBuf {
 struct OwnedChild(Child);
 impl OwnedChild {
     fn start(name: &str, stream: UnixStream) -> Self {
+        Self::start_at(name, stream, None)
+    }
+    fn start_at(name: &str, stream: UnixStream, address: Option<std::net::SocketAddr>) -> Self {
         let fd: OwnedFd = stream.into();
+        let mut command = Command::new(fixture());
+        command.arg(name).env_clear();
+        if let Some(address) = address {
+            command.arg(address.to_string());
+        }
         Self(
-            Command::new(fixture())
-                .arg(name)
-                .env_clear()
+            command
                 .stdin(Stdio::from(fd))
                 .stdout(Stdio::null())
                 .stderr(Stdio::piped())
@@ -102,12 +108,12 @@ fn idle_production_connector_dies_without_dns_or_connect_when_parent_closes() {
 }
 #[test]
 fn actual_tcp_descriptor_outlives_dial_process_and_control_channel() {
-    let server = TcpListener::bind("127.0.0.1:443")
-        .expect("controlled port443 must be available; no privilege or alternateport workaround");
+    let server = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = server.local_addr().unwrap();
     server.set_nonblocking(true).unwrap();
     let (dial, receiver) = UnixStream::pair().unwrap();
-    let mut dial = OwnedChild::start("loopback-dial", dial);
-    let mut receiver = OwnedChild::start("retained-loopback", receiver);
+    let mut dial = OwnedChild::start_at("loopback-dial", dial, Some(address));
+    let mut receiver = OwnedChild::start_at("retained-loopback", receiver, Some(address));
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut actual = loop {
         match server.accept() {

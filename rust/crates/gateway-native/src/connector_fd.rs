@@ -35,6 +35,7 @@ pub(crate) struct ReceivedFrame {
 }
 pub(crate) struct ControlEndpoint {
     process: Arc<ReceiveProcess>,
+    peer_hung_up: bool,
     stream: Option<UnixStream>,
     side: Side,
     pending: Option<Pending>,
@@ -63,22 +64,43 @@ impl ControlEndpoint {
         )) {
             return Err(ControlError::UnsupportedPlatform);
         }
-        #[cfg(any(
-            target_os = "macos",
-            target_os = "ios",
-            target_os = "tvos",
-            target_os = "watchos",
-            target_os = "visionos",
-            target_os = "freebsd",
-            target_os = "dragonfly",
-            target_os = "netbsd"
-        ))]
-        sockopt::set_socket_nosigpipe(&stream, true).map_err(errno)?;
-        stream.set_read_timeout(Some(timeout)).map_err(io_error)?;
-        stream.set_write_timeout(Some(timeout)).map_err(io_error)?;
+        let mut peer_hung_up = crate::connector_worker::channel_events(&stream, Duration::ZERO)?
+            .contains(rustix::event::PollFlags::HUP);
+        if !peer_hung_up {
+            let configured = (|| {
+                #[cfg(any(
+                    target_os = "macos",
+                    target_os = "ios",
+                    target_os = "tvos",
+                    target_os = "watchos",
+                    target_os = "visionos",
+                    target_os = "freebsd",
+                    target_os = "dragonfly",
+                    target_os = "netbsd"
+                ))]
+                sockopt::set_socket_nosigpipe(&stream, true).map_err(errno)?;
+                stream.set_read_timeout(Some(timeout)).map_err(io_error)?;
+                stream.set_write_timeout(Some(timeout)).map_err(io_error)?;
+                Ok::<(), ControlError>(())
+            })();
+            if let Err(error) = configured {
+                // Darwin returns EINVAL for socket timeout options after peer
+                // close. Preserve queued final data/rights and let receive read
+                // the actual frame/EOF; never infer EOF from HUP alone.
+                if error == ControlError::Io(std::io::ErrorKind::InvalidInput)
+                    && crate::connector_worker::channel_events(&stream, Duration::ZERO)?
+                        .contains(rustix::event::PollFlags::HUP)
+                {
+                    peer_hung_up = true;
+                } else {
+                    return Err(error);
+                }
+            }
+        }
         cloexec(&stream)?;
         Ok(Self {
             process,
+            peer_hung_up,
             stream: Some(stream),
             side,
             pending: None,
@@ -104,6 +126,9 @@ impl ControlEndpoint {
         let result = (|| {
             if self.is_closed() {
                 return Err(ControlError::Closed);
+            }
+            if self.peer_hung_up {
+                return Err(ControlError::PeerClosed);
             }
             let body = frame.encode()?;
             descriptor_shape(&frame, descriptor.as_ref())?;
