@@ -390,6 +390,51 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
     })
 }
 
+/// Import-only own-publication adaptation. The private pair is issued only
+/// after exact action/operation/generation/source/config/runtime verification.
+/// No public revision override or ordinary/renewal currentness change.
+pub(in crate::native_control) async fn read_current_after_import_publication<
+    S: AuthorityStore,
+    I: TokenSource,
+>(
+    tx: &mut Transaction<'_, S, I>,
+    stored: &StoredNativeActor,
+    config: &AuthConfig,
+    verified: &super::import::VerifiedImportActorRevisions,
+) -> Result<CurrentNativeActor, GatewayError> {
+    if stored != verified.original_actor() {
+        return Err(fail());
+    }
+    if !verified.changes_configuration()
+        && (&stored.config_revision != verified.config_revision()
+            || &stored.runtime_revision != verified.runtime_revision())
+    {
+        return Err(fail());
+    }
+    let mut current = stored.clone();
+    current.config_revision = verified.config_revision().clone();
+    current.runtime_revision = verified.runtime_revision().clone();
+    let result = read_current(tx, &current, config).await?;
+    let selected = source_keys(stored)?;
+    let runtime = runtime_key();
+    let config_key = keys::paid_control_config();
+    let checks = tx
+        .checks()
+        .into_iter()
+        .filter(|check| check.key != runtime && selected.contains(&check.key))
+        .map(|mut check| {
+            if check.key == config_key {
+                check.expected_revision = stored.config_revision.clone();
+            }
+            check
+        })
+        .collect::<Vec<_>>();
+    if super::facts::checks_digest(&checks)? != verified.control_digest() {
+        return Err(fail());
+    }
+    Ok(result)
+}
+
 pub(crate) async fn read_current<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     stored: &StoredNativeActor,
