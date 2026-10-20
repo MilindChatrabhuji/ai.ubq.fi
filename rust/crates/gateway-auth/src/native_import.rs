@@ -1,5 +1,6 @@
 //! Native-only import authentication. Neither transport proof grants an effect.
 pub mod authority;
+pub mod publication;
 use crate::{
     GatewayError,
     crypto::{base64url, decode_base64url, sha256_hex},
