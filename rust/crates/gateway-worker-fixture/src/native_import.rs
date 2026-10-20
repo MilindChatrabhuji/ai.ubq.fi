@@ -270,20 +270,19 @@ pub(super) async fn initialize(
     };
     let actor = authenticate_admin_actor(&authority, &Host, &cfg, &auth, &context)
         .await
-        .map_err(|error| {
+        .inspect_err(|error| {
             worker::console_error!(
                 "M52 fixture actor error {}",
                 error.envelope.error.code.as_deref().unwrap_or("none")
             );
-            error
         })?;
-    let owner = RegisteredRenewalOwner::configured(OWNER.into(), HOME.into()).map_err(|error| {
-        worker::console_error!(
-            "M52 fixture owner error {}",
-            error.envelope.error.code.as_deref().unwrap_or("none")
-        );
-        error
-    })?;
+    let owner =
+        RegisteredRenewalOwner::configured(OWNER.into(), HOME.into()).inspect_err(|error| {
+            worker::console_error!(
+                "M52 fixture owner error {}",
+                error.envelope.error.code.as_deref().unwrap_or("none")
+            );
+        })?;
     let control = NativeRenewalAuthority::configured(&authority, id, &owner, &cfg, &Cancel);
     let prepared = control
         .prepare_import(
