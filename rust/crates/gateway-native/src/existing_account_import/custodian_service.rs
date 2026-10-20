@@ -26,8 +26,10 @@ pub(super) fn serve(
     let peer = Arc::new(Mutex::new(peer));
     let cancellation = OwnedPeerCancellation(peer.clone());
     let authority = super::import_endpoints::fixed_authority_client(authority_origin, authority_socket, identity, &cancellation, deadline)?;
+    #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE authority_client_ready");
     loop {
         let command = peer.lock().map_err(|_| unavailable())?.receive()?;
+        #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE command_received");
         if command.is_quiesce() {
             let fresh = authority.verify_started_custody(command.header().binding)?;
             {

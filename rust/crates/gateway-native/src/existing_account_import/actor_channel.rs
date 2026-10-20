@@ -119,8 +119,10 @@ impl OwnedImportChildChannel {
             return Err(unavailable());
         }
         endpoints.require_origin(registry.authority_origin())?;
+        #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE launch_configured");
         let actor = PinnedExecutable::verify(binary, digest)?;
         let sandbox = PinnedExecutable::verify(Path::new("/usr/bin/sandbox-exec"), SANDBOX_SHA)?;
+        #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE launch_artifacts_verified");
         let listener =
             TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).map_err(|_| unavailable())?;
         let actor_socket = TcpStream::connect(listener.local_addr().map_err(|_| unavailable())?)
@@ -139,6 +141,7 @@ impl OwnedImportChildChannel {
             account_id_hash: account_id_hash.into(),
         };
         boot.validate()?;
+        #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE launch_channel_ready");
         let profile = crate::connector_policy::import_actor(
             actor.path(),
             owner_root,
@@ -150,6 +153,7 @@ impl OwnedImportChildChannel {
             &boot.endpoints.addresses(),
         )
         .map_err(|_| unavailable())?;
+        #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE launch_profile_ready");
         client.set_nonblocking(false).map_err(|_| unavailable())?;
         actor_socket
             .set_nonblocking(false)
@@ -174,6 +178,7 @@ impl OwnedImportChildChannel {
             .stderr(Stdio::from(control))
             .spawn()
             .map_err(|_| unavailable())?;
+        #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE launch_child_spawned");
         let input = child.stdin.take().ok_or_else(unavailable)?;
         let mut this = Self {
             child: Some(child),
@@ -202,6 +207,7 @@ impl OwnedImportChildChannel {
                 .map_err(|_| unavailable())?;
             input.write_all(bytes).map_err(|_| unavailable())?;
         }
+        #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE launch_bootstrap_sent");
         this.check_live()?;
         Ok(this)
     }
@@ -344,7 +350,9 @@ impl Drop for OwnedImportChildChannel {
             if child.try_wait().ok().flatten().is_none() {
                 let _ = child.kill();
             }
-            let _ = child.wait();
+            let settled = child.wait();
+            #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE child_wait {:?}", settled.as_ref().map(|status| (status.code(), status.success())));
+            #[cfg(not(test))] let _ = settled;
         }
     }
 }

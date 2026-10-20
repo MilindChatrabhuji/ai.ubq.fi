@@ -176,7 +176,14 @@ fn request(store:&base::Store,home:&Path,account:String,address:std::net::Socket
     let packet=client.request(prepared,body,now(),&base64url(&[9;32])).unwrap();let metadata=packet.metadata().clone();
     let mut socket=TcpStream::connect(packet.endpoint()).unwrap();socket.set_read_timeout(Some(Duration::from_secs(50))).unwrap();socket.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
     let mut head=format!("POST {} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n",packet.path(),packet.body().len());for(k,v)in packet.headers(){head.push_str(&format!("{k}: {v}\r\n"));}head.push_str("\r\n");socket.write_all(head.as_bytes()).unwrap();socket.write_all(packet.body()).unwrap();
-    let mut response=Vec::new();socket.read_to_end(&mut response).unwrap();(response,metadata)
+    let mut response=Vec::new();
+    if let Err(error)=socket.read_to_end(&mut response) {
+        let path=home.parent().unwrap().join("partial-native-response.bin");
+        let mut saved=fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(path).unwrap();
+        saved.write_all(&response[..response.len().min(8192)]).unwrap();
+        panic!("native response read failed ({:?}); {} bytes observed, bounded private response retained",error.kind(),response.len());
+    }
+    (response,metadata)
 }
 #[test]
 fn actual_existing_account_original_start_owned_child_custody_durability_and_publication(){
