@@ -40,7 +40,7 @@ async fn proof<C: NativeRenewalCancellation>(
     .await
     .unwrap();
     let prepared = control
-        .prepare_import(
+        .prepare_import_legacy_v2_fixture(
             &actor,
             NativeImportTarget::ExistingAccount {
                 account_id_hash: hash.into(),

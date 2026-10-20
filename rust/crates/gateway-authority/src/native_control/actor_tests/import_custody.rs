@@ -121,12 +121,12 @@ impl Fixture {
             account_id_hash: self.hash.clone(),
         };
         let prepared = if v3 {
+            control.prepare_import(&actor, target).await.unwrap()
+        } else {
             control
-                .prepare_import_publication_fixture(&actor, target)
+                .prepare_import_legacy_v2_fixture(&actor, target)
                 .await
                 .unwrap()
-        } else {
-            control.prepare_import(&actor, target).await.unwrap()
         };
         let body = b"ORIGINAL_SYNTHETIC_CUSTODY_BODY";
         let admitted = control
@@ -533,7 +533,7 @@ fn request_data_has_exact_required_fields_version_and_existing_finite_domains() 
 }
 
 #[test]
-fn v3_required_null_action_and_actual_started_request_preserve_original_lifetime() {
+fn normal_v3_required_null_action_and_actual_started_request_preserve_original_lifetime() {
     run(async {
         let f = Fixture::new();
         let (proof, mut claim, data) = f.prepare_version(true, true).await;
@@ -581,7 +581,7 @@ fn v3_required_null_action_and_actual_started_request_preserve_original_lifetime
     });
 }
 #[test]
-fn ordinary_preparation_stays_v2_and_never_acquires_publication_by_default() {
+fn historical_v2_preparation_remains_lossless_without_publication_permission() {
     run(async {
         let f = Fixture::new();
         let (_, _, data) = f.prepare(true).await;

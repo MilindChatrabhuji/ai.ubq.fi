@@ -369,7 +369,7 @@ fn mismatched_terminal_pair_and_forged_receipt_replay_refuse_without_mutation() 
     });
 }
 #[test]
-fn public_v2_and_unstarted_v3_never_gain_publication_permission() {
+fn historical_v2_and_unstarted_normal_v3_never_gain_publication_permission() {
     run(async {
         for (start, v3) in [(true, false), (false, true)] {
             let f = Fixture::new();
