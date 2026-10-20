@@ -182,7 +182,10 @@ pub(crate) fn import_actor(
         if endpoint.port() == 0 || endpoint.ip().is_unspecified() || endpoint.ip().is_multicast() {
             return Err(ControlError::InvalidFrame);
         }
-        policy.push_str(&format!("(allow network-outbound (remote tcp \"{endpoint}\"))\n"));
+        // The supported Seatbelt TCP host grammar is only localhost or *.
+        // Do not silently widen unsupported external address filters to *.
+        if !endpoint.ip().is_loopback() { return Err(ControlError::UnsupportedPlatform); }
+        policy.push_str(&format!("(allow network-outbound (remote tcp \"localhost:{}\"))\n", endpoint.port()));
     }
     for (local, peer) in [(client_local, client_peer), (custody_local, custody_peer)] {
         if !local.ip().is_loopback() || !peer.ip().is_loopback() {
