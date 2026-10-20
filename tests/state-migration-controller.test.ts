@@ -284,20 +284,29 @@ test("cleanup reporting retains the primary error identity and every cleanup fai
   });
 });
 
-test("single-profile composition retains the original network boundary/child and adds only a task write restriction", async () => {
-  const { testNetworkArgv } = await import("../scripts/test-network.ts");
+test.if(process.platform === "darwin")(
+  "single-profile composition retains the original network boundary/child and adds only a task write restriction",
+  async () => {
+    const { testNetworkArgv } = await import("../scripts/test-network.ts");
+    const child = [process.execPath, "--no-env-file", "--no-install", "-e", "0"];
+    const original = testNetworkArgv(child);
+    const directory = "/private/tmp/ai-rust-wasm-20261018/state-controller-2101/unused-unit";
+    const combined = stateFixtureArgv(child, directory);
+    assert.deepEqual(combined.slice(0, 5), original.slice(0, 5));
+    const before: unknown = JSON.parse(original[5]);
+    const after: unknown = JSON.parse(combined[5]);
+    assert(Array.isArray(before) && Array.isArray(after));
+    assert.deepEqual(after.slice(0, 2), before.slice(0, 2));
+    assert.deepEqual(after.slice(3), before.slice(3));
+    assert.equal(after[2], String(before[2]) + `\n(deny file-write*)\n(allow file-write* (subpath ${JSON.stringify(directory)}))`);
+    assert.throws(() => stateFixtureArgv(child, "/tmp/foreign"));
+  }
+);
+
+test.if(process.platform !== "darwin")("single-profile composition rejects unsupported fixture hosts", () => {
   const child = [process.execPath, "--no-env-file", "--no-install", "-e", "0"];
-  const original = testNetworkArgv(child);
   const directory = "/private/tmp/ai-rust-wasm-20261018/state-controller-2101/unused-unit";
-  const combined = stateFixtureArgv(child, directory);
-  assert.deepEqual(combined.slice(0, 5), original.slice(0, 5));
-  const before: unknown = JSON.parse(original[5]);
-  const after: unknown = JSON.parse(combined[5]);
-  assert(Array.isArray(before) && Array.isArray(after));
-  assert.deepEqual(after.slice(0, 2), before.slice(0, 2));
-  assert.deepEqual(after.slice(3), before.slice(3));
-  assert.equal(after[2], String(before[2]) + `\n(deny file-write*)\n(allow file-write* (subpath ${JSON.stringify(directory)}))`);
-  assert.throws(() => stateFixtureArgv(child, "/tmp/foreign"));
+  assert.throws(() => stateFixtureArgv(child, directory), /This scoped controller requires its verified Mac fixture boundary\./);
 });
 
 test("private stream refuses a line beyond the original native32MiB wire bound", async () => {
