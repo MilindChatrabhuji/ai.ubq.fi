@@ -219,7 +219,10 @@ pub fn publication_response_input(
         request_nonce,
         request_body,
     )?;
-    if !(200..=599).contains(&status) || response_body.len() > 65_536 {
+    let response_limit =
+        crate::native_import::publication::new_reply_limit(request_body, status, response_body)?
+            .unwrap_or(65_536);
+    if !(200..=599).contains(&status) || response_body.len() > response_limit {
         return Err(invalid("Invalid native publication response frame"));
     }
     Ok(format!("uos-native-publication-response-v1\0POST\0{NATIVE_PUBLICATION_PATH}\0{key_id}\0{request_nonce}\0{}\0{status}\0{}",sha256_hex(request_body),sha256_hex(response_body)).into_bytes())
