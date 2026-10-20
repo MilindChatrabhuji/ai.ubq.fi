@@ -22,13 +22,14 @@ permissions:
 env:
   # All job wrappers must resolve the same push diff as the initial scope job.
   GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+  # PR author is stable across owner reruns; github.actor is the initiator.
+  # Global so every job's scope recomputation agrees with the scope job:
+  # Sentinel App PRs select the complete check set in all jobs, not only in scope.
+  GITHUB_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
 
 jobs:
   scope:
     runs-on: ubuntu-latest
-    env:
-      # PR author is stable across owner reruns; github.actor is the initiator.
-      GITHUB_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
     outputs:
       docs_only: ${{ steps.scope.outputs.docs_only }}
       needs_docs: ${{ steps.scope.outputs.needs_docs }}
