@@ -34,7 +34,7 @@ fn main() {
             "connected_message_also_rejects_an_actual_unconnected_stream" => connector_cases::connected_message_also_rejects_an_actual_unconnected_stream(process),
             "external-cardinality" => {
                 let stream = UnixStream::from(std::io::stdin().as_fd().try_clone_to_owned().unwrap());
-                let mut parent = ControlEndpoint::new(stream, Side::Parent, Duration::from_secs(1), process)?;
+                let mut parent = ControlEndpoint::new(stream, Side::Parent, Duration::from_secs(1), process.clone())?;
                 parent.send(ControlFrame::Connect { v: 1, channel: Channel::ProviderLive, action_ref: "action-1".into(), connection_id: "connection-1".into(), authorization_ref: "authority_1".into() }, None)?;
                 let error = parent.receive().unwrap_err();
                 assert!(matches!(error, ControlError::UnexpectedDescriptor | ControlError::AncillaryTruncated));
