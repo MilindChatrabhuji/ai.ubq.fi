@@ -116,57 +116,62 @@ fn original_import_v2_single_start_replay_unknown_and_no_forged_terminal() {
                 .unwrap()
                 .is_none()
         );
-        let rows = store.rows.lock().unwrap();
-        let operation = rows
-            .get(&crate::native_control::rows::key("operation", &proof.metadata().operation_id).0)
-            .unwrap();
-        assert_eq!(operation.value["phase"], "unknown");
-        assert!(operation.value["terminal"].is_null());
-        let action = rows
-            .get(&crate::native_control::rows::key("action", &proof.metadata().action_ref).0)
-            .unwrap();
-        assert_eq!(action.value["v"], 2);
-        assert_ne!(
-            action.value["facts"]["source_native_generation"],
-            action.value["facts"]["access_generation"]
-        );
-        let generation_id = crate::native_control::facts::digest(&(
-            "uos-native-renewal-generation-v1",
-            "native-owner",
-            &hash,
-            sha256_hex(b"physical-native-generation"),
-        ))
-        .unwrap();
-        let generation_key = crate::native_control::rows::key("generation", &generation_id);
-        let generation = rows.get(&generation_key.0).unwrap();
-        assert_eq!(
-            generation.value["operation_id"],
-            proof.metadata().operation_id
-        );
-        for (key, record) in [
-            (
-                crate::native_control::rows::key("operation", &proof.metadata().operation_id),
-                operation,
-            ),
-            (generation_key, generation),
-        ] {
-            crate::native_control::validate_native_control_custody(&key, record).unwrap();
-            assert!(
-                !serde_json::to_string(&record.value)
-                    .unwrap()
-                    .contains(&sha256_hex(b"SYNTHETIC_BODY"))
+        let forged = {
+            let rows = store.rows.lock().unwrap();
+            let operation = rows
+                .get(
+                    &crate::native_control::rows::key("operation", &proof.metadata().operation_id)
+                        .0,
+                )
+                .unwrap();
+            assert_eq!(operation.value["phase"], "unknown");
+            assert!(operation.value["terminal"].is_null());
+            let action = rows
+                .get(&crate::native_control::rows::key("action", &proof.metadata().action_ref).0)
+                .unwrap();
+            assert_eq!(action.value["v"], 2);
+            assert_ne!(
+                action.value["facts"]["source_native_generation"],
+                action.value["facts"]["access_generation"]
             );
-        }
-        let mut forged = operation.clone();
-        forged.value["phase"] = json!("published");
-        assert!(
-            crate::native_control::validate_native_control_custody(
-                &crate::native_control::rows::key("operation", &proof.metadata().operation_id),
-                &forged
-            )
-            .is_err()
-        );
-        drop(rows);
+            let generation_id = crate::native_control::facts::digest(&(
+                "uos-native-renewal-generation-v1",
+                "native-owner",
+                &hash,
+                sha256_hex(b"physical-native-generation"),
+            ))
+            .unwrap();
+            let generation_key = crate::native_control::rows::key("generation", &generation_id);
+            let generation = rows.get(&generation_key.0).unwrap();
+            assert_eq!(
+                generation.value["operation_id"],
+                proof.metadata().operation_id
+            );
+            for (key, record) in [
+                (
+                    crate::native_control::rows::key("operation", &proof.metadata().operation_id),
+                    operation,
+                ),
+                (generation_key, generation),
+            ] {
+                crate::native_control::validate_native_control_custody(&key, record).unwrap();
+                assert!(
+                    !serde_json::to_string(&record.value)
+                        .unwrap()
+                        .contains(&sha256_hex(b"SYNTHETIC_BODY"))
+                );
+            }
+            let mut forged = operation.clone();
+            forged.value["phase"] = json!("published");
+            assert!(
+                crate::native_control::validate_native_control_custody(
+                    &crate::native_control::rows::key("operation", &proof.metadata().operation_id),
+                    &forged
+                )
+                .is_err()
+            );
+            forged
+        };
         store.rows.lock().unwrap().insert(
             crate::native_control::rows::key("operation", &proof.metadata().operation_id).0,
             forged,
