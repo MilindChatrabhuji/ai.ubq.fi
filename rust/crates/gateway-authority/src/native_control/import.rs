@@ -41,6 +41,8 @@ mod remote_server;
 mod remote_tls;
 pub use effects::{NativeImportBinding, NativeImportClaim, NativeImportMode, NativeImportStart};
 #[cfg(unix)]
+pub use remote::VerifiedCurrentImportTerminal;
+#[cfg(unix)]
 pub use remote::{
     AuthenticatedImportCatalogObservation, AuthenticatedImportTerminal, RemoteAdmittedImport,
     RemoteImportAuthority,

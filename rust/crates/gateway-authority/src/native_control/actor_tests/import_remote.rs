@@ -346,3 +346,6 @@ fn lost_actual_start_reply_consumes_client_permit_and_cannot_repeat_effect() {
     assert_eq!(result.final_rows[&key.0]["value"]["phase"], "started");
     assert_eq!(result.bodies.len(), 4);
 }
+
+#[path = "import_remote_terminal.rs"]
+mod terminal;

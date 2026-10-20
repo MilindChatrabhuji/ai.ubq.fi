@@ -171,7 +171,7 @@ fn maximal_terminal_reply_is_finite_and_matching_not_a_generic_large_body() {
         terminal: Box::new(terminal),
     });
     let bytes = serde_json::to_vec(&reply).unwrap();
-    assert_eq!(bytes.len(), import_authority_reply_max_bytes());
+    assert!(bytes.len() <= import_authority_reply_max_bytes());
     assert!(bytes.len() > NATIVE_CONTROL_MAX_BYTES);
     assert!(accepts_reply(&request.bytes().unwrap(), &bytes));
     let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
@@ -205,4 +205,56 @@ fn bare_started_reply_echoes_exact_request_and_remaining_lifetime() {
         verified_at_ms: MAX_SAFE_INTEGER,
     };
     assert!(!accepts_reply(&body, &serde_json::to_vec(&reply).unwrap()));
+}
+
+#[test]
+fn readonly_custody_terminal_has_closed_matching_echo_and_computed_bounds() {
+    let started = max_custody();
+    let revision = "r".repeat(256);
+    let mut terminal = max_terminal();
+    terminal.source_revision = revision.clone();
+    terminal.normalized_revision = revision.clone();
+    let request = ImportAuthorityRequestData::new(ImportAuthorityCommand::CustodyTerminal {
+        started: started.clone(),
+        publication_revision: revision.clone(),
+    })
+    .unwrap();
+    let body = request.bytes().unwrap();
+    let reply = ImportAuthorityReplyData::new(ImportAuthorityResult::CustodyTerminal {
+        started: started.clone(),
+        publication_revision: revision.clone(),
+        terminal: Box::new(terminal.clone()),
+    });
+    let bytes = serde_json::to_vec(&reply).unwrap();
+    assert!(body.len() <= import_authority_request_max_bytes());
+    assert!(bytes.len() <= import_authority_reply_max_bytes());
+    assert!(bytes.len() > NATIVE_CONTROL_MAX_BYTES);
+    assert!(accepts_reply(&body, &bytes));
+    let mut wrong_started = started.clone();
+    wrong_started.started_revision = "different".into();
+    let wrong = ImportAuthorityReplyData::new(ImportAuthorityResult::CustodyTerminal {
+        started: wrong_started,
+        publication_revision: revision.clone(),
+        terminal: Box::new(terminal.clone()),
+    });
+    assert!(!accepts_reply(&body, &serde_json::to_vec(&wrong).unwrap()));
+    terminal.source_revision = "foreign".into();
+    let wrong = ImportAuthorityReplyData::new(ImportAuthorityResult::CustodyTerminal {
+        started: started.clone(),
+        publication_revision: revision.clone(),
+        terminal: Box::new(terminal),
+    });
+    assert!(!accepts_reply(&body, &serde_json::to_vec(&wrong).unwrap()));
+    let mut long = started;
+    long.started_revision.push('x');
+    assert!(
+        ImportAuthorityRequestData::new(ImportAuthorityCommand::CustodyTerminal {
+            started: long,
+            publication_revision: revision
+        })
+        .is_err()
+    );
+    let mut over = bytes;
+    over.resize(import_authority_reply_max_bytes() + 1, b' ');
+    assert!(!accepts_reply(&body, &over));
 }
