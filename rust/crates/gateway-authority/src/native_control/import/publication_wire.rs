@@ -125,7 +125,7 @@ mod tests {
         row.normalized_revision = maximum;
         let version = format!("{}.1.0", "0".repeat(30_000));
         let snapshot = SourceJson::from_serializable(
-            &json!({"models":[{"slug":"model"}],"client_version":version}),
+            &serde_json::json!({"models":[{"slug":"model"}],"client_version":version}),
         )
         .unwrap();
         assert!(snapshot.as_str().len() <= SNAPSHOT_MAX_BYTES);
@@ -153,7 +153,7 @@ mod tests {
             "mutations",
         ] {
             let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-            value[field] = json!("forbidden");
+            value[field] = serde_json::json!("forbidden");
             assert!(
                 ImportPublicationCommandData::parse(&serde_json::to_vec(&value).unwrap()).is_err()
             );
