@@ -1,7 +1,10 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  NativePort,
   PRIVATE_WIRE_MAX_BYTES,
   compareLatest,
   decodeStoreMessage,
@@ -11,6 +14,7 @@ import {
   settle,
   storeResponse,
   stateFixtureArgv,
+  throwCleanupFailures,
   verifyArtifactIdentity,
 } from "../tools/cloudflare/state-migration-conformance.ts";
 
@@ -176,6 +180,106 @@ test("settlement awaits an already terminated child and signals/reaps only the s
   assert.deepEqual(signals, ["SIGTERM"]);
   await settle(child);
   assert.deepEqual(signals, ["SIGTERM"]);
+});
+
+function lifecycleFixture(fails = false) {
+  const directory = mkdtempSync(join(tmpdir(), "uos-native-port-"));
+  const binary = join(directory, "fixture");
+  const script = fails
+    ? "printf '%s\\n' '{\"operation\":\"ready\"}'\nexit 7\n"
+    : "IFS= read -r line\nprintf '%s\\n' '{\"operation\":\"ready\"}'\nprintf '%131072d' 0 >&2\nwhile IFS= read -r line; do :; done\nexit 0\n";
+  writeFileSync(binary, "#!/bin/sh\necho $$ > fixture.pid\n" + script, { mode: 0o700 });
+  const port = new NativePort(binary, directory);
+  return { directory, port, pid: () => Number(readFileSync(join(directory, "fixture.pid"), "utf8").trim()) };
+}
+function processGone(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    assert(error instanceof Error && "code" in error && error.code === "ESRCH");
+    return true;
+  }
+}
+test("native close drains stderr once across concurrent/repeated calls and retains successful child exit", async () => {
+  const fixture = lifecycleFixture();
+  try {
+    await fixture.port.call({ v: 1 }, "ready");
+    const pid = fixture.pid();
+    await Promise.all([fixture.port.close(true), fixture.port.close(), fixture.port.close(true)]);
+    await fixture.port.close(true);
+    assert(processGone(pid), "The actual fixture child must be reaped.");
+  } finally {
+    await fixture.port.close();
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
+test("every asserting close rejects the actual nonzero exit even after a nonasserting close", async () => {
+  const fixture = lifecycleFixture(true);
+  try {
+    await fixture.port.call({ v: 1 }, "ready");
+    const pid = fixture.pid();
+    const deadline = Date.now() + 3000;
+    while (!processGone(pid)) {
+      assert(Date.now() < deadline, "The fixed nonzero fixture did not exit.");
+      await Bun.sleep(10);
+    }
+    await fixture.port.close();
+    for (let i = 0; i < 2; i++)
+      await assert.rejects(fixture.port.close(true), (error: unknown) => error instanceof assert.AssertionError && error.actual === 7);
+    assert(processGone(pid));
+  } finally {
+    await fixture.port.close();
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
+test("native cleanup settles a pending stdout reader and its actual owned process", async () => {
+  const fixture = lifecycleFixture();
+  try {
+    await fixture.port.call({ v: 1 }, "ready");
+    const pid = fixture.pid();
+    const pending = assert.rejects(fixture.port.call({ v: 1 }, "pending"), /closed before its phase receipt/);
+    await Bun.sleep(10);
+    await fixture.port.close();
+    await pending;
+    await fixture.port.close();
+    assert(processGone(pid), "Cleanup must settle the child before returning.");
+  } finally {
+    await fixture.port.close();
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
+test("cleanup reporting retains the primary error identity and every cleanup failure", () => {
+  const primary = new Error("original operation failure");
+  const native = new Error("native cleanup failure");
+  const worker = new Error("workerd cleanup failure");
+  const results: PromiseSettledResult<unknown>[] = [
+    { status: "rejected", reason: native },
+    { status: "fulfilled", value: undefined },
+    { status: "rejected", reason: worker },
+  ];
+  assert.throws(
+    () => {
+      throwCleanupFailures(results, { error: primary });
+    },
+    (error: unknown) =>
+      error instanceof AggregateError && error.cause === primary && error.errors[0] === primary && error.errors[1] === native && error.errors[2] === worker
+  );
+  assert.throws(
+    () => {
+      throwCleanupFailures(results.slice(0, 1));
+    },
+    (error: unknown) => error === native
+  );
+  assert.throws(
+    () => {
+      throwCleanupFailures(results);
+    },
+    (error: unknown) => error instanceof AggregateError && error.errors[0] === native && error.errors[1] === worker
+  );
+  assert.doesNotThrow(() => {
+    throwCleanupFailures([{ status: "fulfilled", value: undefined }], { error: primary });
+  });
 });
 
 test("single-profile composition retains the original network boundary/child and adds only a task write restriction", async () => {
