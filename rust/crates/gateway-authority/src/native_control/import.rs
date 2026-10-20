@@ -31,8 +31,20 @@ mod custody;
 mod custody_session;
 pub use custody_session::{ImportCustodyStartedRequest, VerifiedCurrentImportStarted};
 mod effects;
+mod remote_state;
 mod sources;
+use remote_state::ImportActionState;
+#[cfg(unix)]
+mod remote;
+mod remote_server;
+#[cfg(unix)]
+mod remote_tls;
 pub use effects::{NativeImportBinding, NativeImportClaim, NativeImportMode, NativeImportStart};
+#[cfg(unix)]
+pub use remote::{
+    AuthenticatedImportCatalogObservation, AuthenticatedImportTerminal, RemoteAdmittedImport,
+    RemoteImportAuthority,
+};
 pub struct PreparedNativeImport {
     row: ImportActionRow,
 }
@@ -58,25 +70,26 @@ pub struct AdmittedNativeImport {
 /// ```
 pub struct AuthenticatedNativeImport {
     body: VerifiedNativeImportBody,
-    row: ImportActionRow,
+    state: ImportActionState,
 }
 impl AuthenticatedNativeImport {
     pub fn metadata(&self) -> &NativeImportMetadata {
-        &self.row.metadata
+        self.state.metadata()
     }
     pub fn target(&self) -> &NativeImportTarget {
-        &self.row.target
+        self.state.target()
     }
     pub fn deadline_ms(&self) -> i64 {
-        self.row.deadline_ms
+        self.state.deadline_ms()
     }
     pub fn require_body(&self, body: &[u8], now: i64) -> Result<(), GatewayError> {
-        if now >= self.row.deadline_ms {
+        if now >= self.deadline_ms() {
             return Err(unavailable());
         }
         self.body.require_body(body, now)
     }
 }
+
 impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
     NativeRenewalAuthority<'_, S, I, C>
 {
@@ -256,14 +269,17 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             .await?;
         body.require_owner(self.identity, self.time(0)?)?;
         body.require_body(original_body, self.time(0)?)?;
-        Ok(AuthenticatedNativeImport { body, row })
+        Ok(AuthenticatedNativeImport {
+            body,
+            state: ImportActionState::Local(Box::new(row)),
+        })
     }
     pub async fn recheck_import(
         &self,
         proof: &AuthenticatedNativeImport,
     ) -> Result<(), GatewayError> {
         proof.body.require_owner(self.identity, self.time(0)?)?;
-        self.current_import(proof.metadata(), Some(&proof.row))
+        self.current_import(proof.metadata(), Some(proof.state.local()?))
             .await?;
         proof.body.require_owner(self.identity, self.time(0)?)
     }

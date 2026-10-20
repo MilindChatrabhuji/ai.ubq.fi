@@ -15,7 +15,7 @@ fn catalog() -> SourceJson {
     SourceJson::parse(r#"{"models":[{"slug":"model-a","supported_reasoning_levels":[{"effort":"none","description":"none"}]}]}"#).unwrap()
 }
 impl Fixture {
-    fn catalog_seed(&self) {
+    pub(super) fn catalog_seed(&self) {
         let source = catalog();
         let (snapshot, runtime) = catalog_store::normalized_snapshot_plan(
             &source,
@@ -55,7 +55,7 @@ impl Fixture {
             );
         }
     }
-    fn publication_wire(
+    pub(super) fn publication_wire(
         &self,
         started: &ImportCustodyStartedRequest,
         limited: bool,
@@ -99,7 +99,7 @@ impl Fixture {
             },
         }
     }
-    async fn publication_peer(&self, body: &[u8], salt: u8) -> AuthenticatedNativeOwner {
+    pub(super) async fn publication_peer(&self, body: &[u8], salt: u8) -> AuthenticatedNativeOwner {
         let now = self.store.now.load(Ordering::SeqCst);
         let nonce = base64url(&[salt; 32]);
         let time = now.to_string();
@@ -124,7 +124,7 @@ impl Fixture {
             .unwrap()
     }
 }
-fn synthetic_config<S, I, C>(
+pub(super) fn synthetic_config<S, I, C>(
     plan: &PreparedNativeImportPublication<'_, '_, S, I, C>,
 ) -> Option<PaidControlConfig>
 where
