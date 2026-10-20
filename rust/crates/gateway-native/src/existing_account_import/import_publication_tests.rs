@@ -17,7 +17,7 @@ fn command(limited: bool) -> ImportPublicationCommandData {
         normalized_revision: "normalized-r1".into(), publication_revision: "publication-r1".into(), account_id_hash: credentials.routing_account_hash.0,
         previous_native_source_generation: "c".repeat(64), native_source_generation: "d".repeat(64), access_generation: credentials.native_generation_hash,
         native_receipt_ref: "receipt-r1".into(), document: ImportAccessDocument {
-            account_id: "synthetic-account".into(), access_token: "SYNTHETIC_ACCESS".into(), native_refreshed_at: None,
+            account_id: "synthetic-account".into(), access_token: "SYNTHETIC_ACCESS".into(), updated_at_ms: 1_000.0, native_refreshed_at: None,
         }, catalog: if limited { ImportCatalogData::AuthenticatedLimited { upstream_status: 429 } } else {
             ImportCatalogData::Normalized { snapshot: SourceJson::parse(r#"{"models":[{"slug":"synthetic"}]}"#).unwrap(),
                 client_version: "0.163.0".into(), upstream_status: 200 }
