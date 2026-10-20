@@ -361,3 +361,6 @@ mod completion_wire;
 
 #[path = "import_catalog_seed.rs"]
 mod catalog_seed;
+
+#[path = "import_auth_timestamp.rs"]
+mod auth_timestamp;

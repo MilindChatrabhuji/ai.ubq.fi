@@ -84,6 +84,7 @@ impl Fixture {
             document: ImportAccessDocument {
                 account_id: "synthetic-account".into(),
                 access_token: "NEW_SYNTHETIC_ACCESS".into(),
+                updated_at_ms: 1_000_000.0,
                 native_refreshed_at: None,
             },
             catalog: if limited {
