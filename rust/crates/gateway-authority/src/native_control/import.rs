@@ -103,15 +103,17 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         actor: &NativeRenewalActor,
         target: NativeImportTarget,
     ) -> Result<PreparedNativeImport, GatewayError> {
-        self.prepare_import_version(actor, target, 2).await
+        self.prepare_import_version(actor, target, 3).await
     }
+    /// Explicit historical v2 constructor for legacy effect/custody regressions.
+    /// Production creates only new v3 rows and never rewrites historical rows.
     #[cfg(test)]
-    pub(in crate::native_control) async fn prepare_import_publication_fixture(
+    pub(in crate::native_control) async fn prepare_import_legacy_v2_fixture(
         &self,
         actor: &NativeRenewalActor,
         target: NativeImportTarget,
     ) -> Result<PreparedNativeImport, GatewayError> {
-        self.prepare_import_version(actor, target, 3).await
+        self.prepare_import_version(actor, target, 2).await
     }
     async fn prepare_import_version(
         &self,

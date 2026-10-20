@@ -58,7 +58,7 @@ fn prepare() -> (Fixture, NativeImportMetadata) {
         .await
         .unwrap();
         f.control()
-            .prepare_import_publication_fixture(
+            .prepare_import(
                 &actor,
                 NativeImportTarget::ExistingAccount {
                     account_id_hash: f.hash.clone(),

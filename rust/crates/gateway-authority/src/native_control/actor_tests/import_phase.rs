@@ -20,7 +20,7 @@ impl Fixture {
         .await
         .unwrap();
         self.control()
-            .prepare_import_publication_fixture(
+            .prepare_import(
                 &actor,
                 NativeImportTarget::ExistingAccount {
                     account_id_hash: self.hash.clone(),
