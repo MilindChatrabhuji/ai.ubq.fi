@@ -352,13 +352,23 @@ export async function settle(child: { exitCode: number | null; kill: (signal: No
     clearTimeout(timer);
   }
 }
-class NativePort {
+export function throwCleanupFailures(results: readonly PromiseSettledResult<unknown>[], primary?: Readonly<{ error: unknown }>): void {
+  const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+  if (failures.length === 0) return;
+  if (primary) throw new AggregateError([primary.error, ...failures], "State operation and cleanup failed.", { cause: primary.error });
+  if (failures.length === 1) throw failures[0];
+  throw new AggregateError(failures, "State cleanup failed.");
+}
+export class NativePort {
   private _child;
   private _lines;
+  private _stderr;
+  private _closing: Promise<{ results: PromiseSettledResult<unknown>[]; exit: PromiseSettledResult<number> }> | undefined;
   private _id = 0;
   constructor(binary: string, workspace: string) {
     this._child = Bun.spawn([binary], { cwd: workspace, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     this._lines = privateLines(this._child.stdout)[Symbol.asyncIterator]();
+    this._stderr = Promise.allSettled([new Response(this._child.stderr).text()]);
   }
   async call(command: unknown, expected: string, origin?: string): Promise<ObjectValue> {
     const raw = JSON.stringify(command);
@@ -399,19 +409,39 @@ class NativePort {
   }
   private _timer: ReturnType<typeof setTimeout> | undefined;
   async close(expectSuccess = false): Promise<void> {
-    await this._child.stdin.end();
-    if (expectSuccess) {
-      const timer = setTimeout(() => {
-        if (this._child.exitCode === null) this._child.kill("SIGTERM");
-      }, 3000);
+    const cleanup = await (this._closing ??= this._close(expectSuccess));
+    const results = [...cleanup.results];
+    if (expectSuccess && cleanup.exit.status === "fulfilled") {
       try {
-        assert.equal(await this._child.exited, 0, "Native fixture exited unsuccessfully.");
+        assert.equal(cleanup.exit.value, 0, "Native fixture exited unsuccessfully.");
+      } catch (error) {
+        results.push({ status: "rejected", reason: error });
+      }
+    }
+    throwCleanupFailures(results);
+  }
+  private async _close(graceful: boolean): Promise<{ results: PromiseSettledResult<unknown>[]; exit: PromiseSettledResult<number> }> {
+    const input = await Promise.allSettled([Promise.resolve().then(() => this._child.stdin.end())]);
+    const termination = await Promise.allSettled([this._settle(graceful)]);
+    const streams = await Promise.allSettled([this._lines.return(undefined), this._stderr]);
+    const [exit] = await Promise.allSettled([this._child.exited]);
+    return { results: [...input, ...termination, ...streams, ...(await this._stderr), exit], exit };
+  }
+  private async _settle(graceful: boolean): Promise<void> {
+    if (graceful && this._child.exitCode === null) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          this._child.exited,
+          new Promise<void>((resolveExit) => {
+            timer = setTimeout(resolveExit, 3000);
+          }),
+        ]);
       } finally {
         clearTimeout(timer);
       }
     }
     await settle(this._child);
-    await new Response(this._child.stderr).text();
   }
 }
 type Running = { origin: string; stop: () => Promise<void> };
@@ -557,14 +587,19 @@ async function actualCase(input: Manifest): Promise<ObjectValue> {
   cases.push("actual_task_write_allowed_outside_task_write_denied");
   let running: Running | undefined;
   let native: NativePort | undefined;
+  let failure: Readonly<{ error: unknown }> | undefined;
   try {
     const preparation = new NativePort(input.native_fixture.path, workspace);
     let prepared: ObjectValue;
+    let preparationFailure: Readonly<{ error: unknown }> | undefined;
     try {
       prepared = await preparation.call({ v: 1, operation: "prepare_inputs", directory: join(workspace, "owners"), now_ms: 2200 }, "inputs_prepared");
       await preparation.close(true);
+    } catch (error) {
+      preparationFailure = { error };
+      throw error;
     } finally {
-      await preparation.close();
+      throwCleanupFailures(await Promise.allSettled([preparation.close()]), preparationFailure);
     }
     closed(prepared, ["operation", "directory", "capture"]);
     capture(prepared.capture);
@@ -668,9 +703,11 @@ async function actualCase(input: Manifest): Promise<ObjectValue> {
       native_private_partition: "current_custody_only",
       processes_settled: true,
     };
+  } catch (error) {
+    failure = { error };
+    throw error;
   } finally {
-    if (native) await native.close();
-    if (running) await running.stop();
+    throwCleanupFailures(await Promise.allSettled([native?.close(), running?.stop()]), failure);
   }
 }
 async function load(path: string, expected: string): Promise<Manifest> {
