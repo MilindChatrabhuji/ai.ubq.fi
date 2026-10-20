@@ -15,6 +15,7 @@ struct SeedStore {
     fail_prune: Arc<AtomicBool>,
     race_generation: Arc<AtomicBool>,
     race_admin: Arc<AtomicBool>,
+    race_same_generation_revision: Arc<AtomicBool>,
     writes: Arc<AtomicUsize>,
     queries: Arc<AtomicUsize>,
 }
@@ -26,6 +27,7 @@ impl SeedStore {
             fail_prune: Arc::default(),
             race_generation: Arc::default(),
             race_admin: Arc::default(),
+            race_same_generation_revision: Arc::default(),
             writes: Arc::default(),
             queries: Arc::default(),
         }
@@ -33,9 +35,32 @@ impl SeedStore {
 }
 impl AuthorityStore for SeedStore {
     async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
+        if *key == catalog_store::auth_generation_key()
+            && self.writes.load(Ordering::SeqCst) > 0
+            && self
+                .race_same_generation_revision
+                .swap(false, Ordering::SeqCst)
+        {
+            self.inner
+                .rows
+                .lock()
+                .unwrap()
+                .get_mut(&key.0)
+                .unwrap()
+                .revision = "same-value-new-revision".into();
+        }
         self.inner.read(key).await
     }
     async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
+        // Match the existing real Worker canonical transition contract.
+        let mut checked = BTreeSet::new();
+        if transition
+            .checks
+            .iter()
+            .any(|check| !checked.insert(check.key.0.clone()))
+        {
+            return Err(fail());
+        }
         if !transition.mutations.is_empty() {
             self.writes.fetch_add(1, Ordering::SeqCst);
             if self.fail_write.load(Ordering::SeqCst) {
@@ -139,7 +164,7 @@ impl Fixture {
     }
 }
 #[test]
-fn actual_source_and_processed_seed_use_generation_value_and_prune_failure_stays_true() {
+fn actual_source_seed_has_unique_fences_generation_value_and_prune_failure_stays_true() {
     run(async {
         for fail_prune in [false, true] {
             let f = Fixture::new();
@@ -293,5 +318,34 @@ fn foreign_claim_publication_config_and_revocation_refuse_before_optional_writes
             assert!(f.seed_attempt(&store, &request).await.is_err());
             assert_eq!(store.writes.load(Ordering::SeqCst), 0);
         }
+    });
+}
+
+#[test]
+fn same_generation_value_at_foreign_revision_cannot_replace_original_seed_fence() {
+    run(async {
+        let f = Fixture::new();
+        let request = f.seed_request(false).await;
+        let store = SeedStore::new(&f.store);
+        store
+            .race_same_generation_revision
+            .store(true, Ordering::SeqCst);
+        assert!(!f.seed_attempt(&store, &request).await.unwrap());
+        assert!(
+            f.store
+                .read(&catalog_store::metadata_key("1.1.0"))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            f.store
+                .read(&catalog_store::auth_generation_key())
+                .await
+                .unwrap()
+                .unwrap()
+                .revision,
+            "same-value-new-revision"
+        );
     });
 }

@@ -38,7 +38,21 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> AuthorityS
         if self.control.time(self.created_at_ms)? >= self.deadline_ms {
             return Err(unavailable());
         }
-        transition.checks.extend(self.checks.clone());
+        // The schema publisher already fences auth-generation. Preserve one
+        // identical fence; never replace an original check with a newer view.
+        for captured in &self.checks {
+            if let Some(existing) = transition
+                .checks
+                .iter()
+                .find(|check| check.key == captured.key)
+            {
+                if existing.expected_revision != captured.expected_revision {
+                    return Err(unavailable());
+                }
+            } else {
+                transition.checks.push(captured.clone());
+            }
+        }
         self.control.authority.store.commit(transition).await
     }
 }
