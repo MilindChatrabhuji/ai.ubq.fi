@@ -47,7 +47,7 @@ fn hash(value: &str) -> Result<(), GatewayError> {
 }
 // Exact existing schema parser's Number/trim domain, now co-located with this
 // pure wire DTO. The schema-dependent normalizer remains in gateway-schema.
-fn valid_client_version(raw: &str) -> bool {
+pub(super) fn valid_client_version(raw: &str) -> bool {
     let whitespace = |c: char| matches!(c,'\u{0009}'..='\u{000d}'|'\u{0020}'|'\u{00a0}'|'\u{1680}'|'\u{2000}'..='\u{200a}'|'\u{2028}'|'\u{2029}'|'\u{202f}'|'\u{205f}'|'\u{3000}'|'\u{feff}');
     let parts = raw.trim_matches(whitespace).split('.').collect::<Vec<_>>();
     parts.len() == 3
