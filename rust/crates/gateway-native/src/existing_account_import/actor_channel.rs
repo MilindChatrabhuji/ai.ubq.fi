@@ -153,6 +153,13 @@ impl OwnedImportChildChannel {
             &boot.endpoints.addresses(),
         )
         .map_err(|_| unavailable())?;
+        #[cfg(test)]
+        for ancestor in std::fs::canonicalize(owner_root).map_err(|_| unavailable())?.ancestors().skip(1) {
+            let literal = serde_json::to_string(ancestor.to_str().ok_or_else(unavailable)?).map_err(|_| unavailable())?;
+            assert!(profile.lines().any(|line| line == format!("(allow file-read-data (literal {literal}))")), "actual import profile must grant only the reached literal ancestor directory read");
+            assert!(!profile.contains(&format!("(allow file-read* (subpath {literal}))")), "actual import profile must not widen ancestor subtree reads");
+            assert!(!profile.contains(&format!("(allow file-write* (subpath {literal}))")), "actual import profile must not grant ancestor subtree writes");
+        }
         #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE launch_profile_ready");
         client.set_nonblocking(false).map_err(|_| unavailable())?;
         actor_socket

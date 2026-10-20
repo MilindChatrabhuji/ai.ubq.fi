@@ -142,7 +142,14 @@ pub(crate) fn import_actor(
     custody_peer: SocketAddr,
     endpoints: &[SocketAddr; 3],
 ) -> Result<String, ControlError> {
+    let canonical_root = std::fs::canonicalize(root).map_err(|_| ControlError::InvalidFrame)?;
+    if canonical_root != root { return Err(ControlError::InvalidFrame); }
     let mut policy = base(binary)?;
+    // open_home deliberately opens each NOFOLLOW directory component. These
+    // literal directory reads permit that traversal, not ancestor subtrees.
+    for ancestor in canonical_root.ancestors().skip(1) {
+        policy.push_str(&format!("(allow file-read-data (literal {}))\n", quoted(ancestor)?));
+    }
     let root = quoted(root)?;
     let root: String = serde_json::from_str(&root).map_err(|_| ControlError::InvalidFrame)?;
     policy.push_str(&format!(
