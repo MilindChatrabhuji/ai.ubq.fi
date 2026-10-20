@@ -115,13 +115,14 @@ fn capture(
     loop {
         let out_done = drain(out, &mut stdout)?;
         let err_done = drain(err, &mut stderr)?;
-        if let Some(status) = child.try_wait().map_err(|_| fail())? {
-            if out_done && err_done {
-                if !status.success() || !stderr.is_empty() {
-                    return Err(fail());
-                }
-                return Ok(stdout);
+        if let Some(status) = child.try_wait().map_err(|_| fail())?
+            && out_done
+            && err_done
+        {
+            if !status.success() || !stderr.is_empty() {
+                return Err(fail());
             }
+            return Ok(stdout);
         }
         if Instant::now() >= deadline {
             return Err(fail());
@@ -130,7 +131,11 @@ fn capture(
     }
 }
 fn number(text: &str) -> Result<u64, GatewayError> {
-    if text.is_empty() || text.len() > 20 || !text.bytes().all(|b| b.is_ascii_digit()) {
+    if text.is_empty()
+        || text.len() > 20
+        || (text.len() > 1 && text.starts_with('0'))
+        || !text.bytes().all(|b| b.is_ascii_digit())
+    {
         return Err(fail());
     }
     text.parse().map_err(|_| fail())
@@ -156,6 +161,9 @@ fn permissions(mode: u32) -> String {
 /// Every byte is consumed. xattr '@' is accepted only with NO subsequent ACE/output line.
 pub(super) fn parse(output: &[u8], facts: &Facts) -> Result<(), GatewayError> {
     if output.len() > HEADER_LIMIT
+        || output.first() != Some(&b'd')
+        || output.len() < 2
+        || output.get(output.len().saturating_sub(2)) != Some(&b'.')
         || output.last() != Some(&b'\n')
         || output[..output.len().saturating_sub(1)]
             .iter()

@@ -152,6 +152,9 @@ fn full_numeric_header_parser_rejects_prefixes_acl_control_unknown_and_stat_mism
     acl_inspector::parse(header.as_bytes(), &facts).unwrap();
     for bytes in [
         header.trim_end().as_bytes().to_vec(),
+        format!(" {header}").into_bytes(),
+        header.replace(".\n", ". \n").into_bytes(),
+        header.replace(" 20 ", " 020 ").into_bytes(),
         format!("{header} 0: user:501 allow write\n").into_bytes(),
         format!("{header}\n").into_bytes(),
         header.replace("04:55", "99:99").into_bytes(),
