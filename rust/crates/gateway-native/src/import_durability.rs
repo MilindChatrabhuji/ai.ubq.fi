@@ -58,7 +58,16 @@ impl DurableNativeImport {
         self.credentials.routing_account_hash()
     }
 }
+#[cfg(feature = "native-import-fixture")]
+pub(super) static FIXTURE_HOME_OPEN_FAILURE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+#[cfg(feature = "native-import-fixture")]
+fn fixture_home_open_failure(error: rustix::io::Errno, component: usize) {
+    let base = match error.raw_os_error() { 1 => 64, 13 => 96, 2 => 128, _ => 160 };
+    FIXTURE_HOME_OPEN_FAILURE.store(base + u8::try_from(component.min(31)).expect("bounded diagnostic component"), std::sync::atomic::Ordering::Relaxed);
+}
 pub(super) fn open_home(home: &Path) -> Result<File, GatewayError> {
+    #[cfg(feature = "native-import-fixture")] FIXTURE_HOME_OPEN_FAILURE.store(0, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(feature = "native-import-fixture")] let mut component_index = 0usize;
     if !home.is_absolute() {
         return Err(unavailable());
     }
@@ -69,12 +78,16 @@ pub(super) fn open_home(home: &Path) -> Result<File, GatewayError> {
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
             Mode::empty(),
         )
-        .map_err(|_| unavailable())?,
+        .map_err(|_error| {
+            #[cfg(feature = "native-import-fixture")] fixture_home_open_failure(_error, 0);
+            unavailable()
+        })?,
     );
     for component in home.components() {
         match component {
             Component::RootDir => (),
             Component::Normal(name) => {
+                #[cfg(feature = "native-import-fixture")] { component_index += 1; }
                 directory = File::from(
                     openat(
                         &directory,
@@ -82,7 +95,10 @@ pub(super) fn open_home(home: &Path) -> Result<File, GatewayError> {
                         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                         Mode::empty(),
                     )
-                    .map_err(|_| unavailable())?,
+                    .map_err(|_error| {
+                        #[cfg(feature = "native-import-fixture")] fixture_home_open_failure(_error, component_index);
+                        unavailable()
+                    })?,
                 );
             }
             _ => return Err(unavailable()),

@@ -96,7 +96,11 @@ pub fn run_native_import_fixture() -> ! { exit_actor() }
 fn exit_actor() -> ! {
     let code = if run_actor().is_ok() { 0 } else {
         #[cfg(feature = "native-import-fixture")]
-        { i32::from(FIXTURE_STARTUP_STAGE.load(Ordering::Relaxed)) }
+        {
+            let stage = FIXTURE_STARTUP_STAGE.load(Ordering::Relaxed);
+            let open = super::durability::FIXTURE_HOME_OPEN_FAILURE.load(Ordering::Relaxed);
+            i32::from(if stage == 15 && open != 0 { open } else { stage })
+        }
         #[cfg(not(feature = "native-import-fixture"))]
         { 1 }
     };
