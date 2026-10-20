@@ -13,6 +13,7 @@ pub const SNAPSHOT_MAX_BYTES: usize = 60_000;
 pub struct ImportAccessDocument {
     pub account_id: String,
     pub access_token: String,
+    pub updated_at_ms: f64,
     #[serde(deserialize_with = "required_nullable")]
     pub native_refreshed_at: Option<String>,
 }
@@ -199,7 +200,8 @@ impl ImportPublicationCommandData {
         ] {
             hash(value)?;
         }
-        if self.document.account_id.trim().is_empty()
+        if !self.document.updated_at_ms.is_finite()
+            || self.document.account_id.trim().is_empty()
             || self.document.access_token.trim().is_empty()
             || serde_json::to_vec(&self.document)
                 .map_err(|_| unavailable())?
