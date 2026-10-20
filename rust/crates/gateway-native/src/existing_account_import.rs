@@ -11,11 +11,18 @@ use gateway_authority::{
 use gateway_core::{GatewayError, state::AuthorityStore};
 use std::{fs::File, path::Path};
 mod acl_inspector;
+mod actor_channel;
+mod custodian_runtime;
 #[path = "import_durability.rs"]
 mod durability;
 mod exclusive_owner;
+mod live_custody;
+mod import_documents;
 mod owner_runtime;
+mod validation;
 pub use exclusive_owner::ExclusiveManagedOwner;
+pub use custodian_runtime::CustodianRuntime;
+pub use live_custody::LiveImportCustody;
 pub use owner_runtime::{ExclusiveOwnerLease, OwnedRuntime};
 /// Fixed helper-only entry; it accepts no path, command, environment or arbitrary descriptor selector.
 pub fn owner_inspector_entry() -> Result<(), GatewayError> {

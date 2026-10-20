@@ -60,6 +60,8 @@ pub struct NativeImportContext<'a> {
     auth: NativeAuthImportData<'a>,
 }
 impl NativeImportContext<'_> {
+    pub(crate) fn deadline(&self) -> std::time::Instant { self.original.deadline() }
+    pub(crate) fn now_ms(&self) -> Result<i64, GatewayError> { self.original.now_ms() }
     pub fn auth_data(&self) -> &NativeAuthImportData<'_> {
         &self.auth
     }

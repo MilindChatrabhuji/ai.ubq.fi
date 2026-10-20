@@ -31,6 +31,8 @@ pub mod existing_account_import;
 #[cfg(unix)]
 pub mod http_server;
 #[cfg(unix)]
+mod import_custody_protocol;
+#[cfg(unix)]
 mod import_ingress;
 #[cfg(unix)]
 pub mod live_bridge;

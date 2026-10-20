@@ -130,3 +130,25 @@ pub(crate) fn validate_unix_control(
     }
     Ok(())
 }
+
+/// Credential mutation belongs only to the fixed native import child, never the inference connector.
+pub(crate) fn import_actor(binary: &Path, root: &Path, replay: &Path,
+    client_local: SocketAddr, client_peer: SocketAddr, custody_local: SocketAddr, custody_peer: SocketAddr,
+) -> Result<String, ControlError> {
+    let mut policy = base(binary)?;
+    let root = quoted(root)?;
+    let root: String = serde_json::from_str(&root).map_err(|_| ControlError::InvalidFrame)?;
+    policy.push_str(&format!("(allow file-read* (subpath {}))\n", serde_json::to_string(&root).map_err(|_| ControlError::InvalidFrame)?));
+    // Only auth and this protocol's fixed temporary/backup/receipt names are writable.
+    // The actor cannot alter the custodian's lock or dirty runtime epoch.
+    let literal = serde_json::to_string(&format!("{root}/auth.json")).map_err(|_| ControlError::InvalidFrame)?;
+    let escaped = root.replace('\\', "\\\\").replace('.', "\\.").replace('+', "\\+").replace('(', "\\(").replace(')', "\\)").replace('[', "\\[").replace(']', "\\]").replace('{', "\\{").replace('}', "\\}").replace('^', "\\^").replace('$', "\\$").replace('*', "\\*").replace('?', "\\?").replace('|', "\\|");
+    let pattern = format!("^{escaped}/\\.uos-import-[0-9a-f]{{64}}\\.(tmp|previous|receipt|receipt\\.tmp)$");
+    policy.push_str(&format!("(allow file-write* (literal {literal}) (regex #{}))\n", serde_json::to_string(&pattern).map_err(|_| ControlError::InvalidFrame)?));
+    policy.push_str(&format!("(allow file-read* file-write* (subpath {}))\n", quoted(replay)?));
+    for (local, peer) in [(client_local, client_peer), (custody_local, custody_peer)] {
+        if !local.ip().is_loopback() || !peer.ip().is_loopback() { return Err(ControlError::InvalidFrame); }
+        policy.push_str(&format!("(allow network-inbound network-outbound (require-all (local tcp \"localhost:{}\") (remote tcp \"localhost:{}\")))\n", local.port(), peer.port()));
+    }
+    Ok(policy)
+}
