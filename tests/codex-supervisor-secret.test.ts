@@ -21,6 +21,9 @@ test("credential-named arrow parameters do not redact their callbacks", () => {
     "tokens.map(token=>token.trim().length);",
     "visit(items, secret=>{ describe(secret); });",
     'visit("(", token=>token.trim());',
+    "tokens.map((token) => token.trim());",
+    "tokens.map((token, index) => token.trim());",
+    "tokens.map(({token}) => token.trim());",
   ];
   for (const text of callbacks) assert.deepEqual(redactSupervisorSecrets(text), { text, redactions: 0 });
   for (const text of [
@@ -32,6 +35,86 @@ test("credential-named arrow parameters do not redact their callbacks", () => {
   ]) {
     assert.equal(redactSupervisorSecrets(text).text.includes("zqsecretvalue"), false, text);
   }
+});
+
+for (const [position, wrap] of [
+  ["first hash entry", (value: string) => `my %config = (password => ${value}); done`],
+  ["subsequent hash entry", (value: string) => `my %config = (mode => 'safe', password => ${value}); done`],
+  ["first call argument", (value: string) => `configure(password=>${value}); done`],
+  ["subsequent call argument", (value: string) => `configure(mode => 'safe', password=>${value}); done`],
+  ["nested parenthesized entry", (value: string) => `configure(group => (password => ${value})); done`],
+  ["parenthesized entry without a declaration", (value: string) => `(password=>${value}); done`],
+] as const) {
+  for (const [kind, value] of [
+    ["quoted scalar", "'zqsecretvalue'"],
+    ["bare scalar", "zqsecretvalue"],
+    ["Perl scalar", "$zqsecretvalue"],
+    ["array", "['zqfirstsecretvalue', 'zqsecondsecretvalue']"],
+    ["hash reference", "{ first => 'zqfirstsecretvalue', second => 'zqsecondsecretvalue' }"],
+  ]) {
+    test(`Perl ${position} redacts ${kind} credentials`, () => {
+      const text = wrap(value);
+      const redacted = redactSupervisorSecrets(text);
+      assert.equal(redacted.text.includes("zq"), false, text);
+      assert.ok(redacted.redactions > 0, text);
+    });
+  }
+}
+
+test("ambiguous callback-like credential values remain redacted", () => {
+  const canary = "zqsecretvalue";
+  const firstCanary = "zqfirstsecretvalue";
+  const credential = "password";
+  for (const value of [
+    "passwordzqsecretvalue",
+    "password.zqsecretvalue",
+    "zqsecretvalue && password.trim()",
+    "password.trim()+'zqsecretvalue'",
+    "/*password.trim()*/'zqsecretvalue'",
+    "{ describe(password); value => 'zqsecretvalue' }",
+    "{ describe(password); value = 'zqsecretvalue'; }",
+    "{ describe(password); /* zqsecretvalue */ }",
+    "{ describe(password); nested => { value => 'zqsecretvalue' } }",
+    "{ describe($password); leak(zqsecretvalue); }",
+  ]) {
+    const text = `configure(password=>${value}); done`;
+    assert.equal(redactSupervisorSecrets(text).text.includes("zq"), false, text);
+  }
+  for (const text of [`('password'=>'${canary}')`, `(outer=>{password=>'${firstCanary}'}, token=>'zqsecondsecretvalue')`]) {
+    assert.equal(redactSupervisorSecrets(text).text.includes("zq"), false, text);
+  }
+  assert.equal(redactSupervisorSecrets("(token = 'zqsecretvalue') => token").text.includes("zq"), false);
+  // Bare-value spans end at whitespace; a method prefix must still not exempt the expression.
+  const expression = redactSupervisorSecrets(`configure(${credential}=>${credential}.trim() + '${canary}'); done`);
+  assert.ok(expression.redactions > 0);
+  assert.equal(expression.text.includes(`${credential}=>${credential}.trim()`), false);
+});
+
+test("Perl fat-comma credential values redact across key, separator and value record boundaries", () => {
+  for (const parts of [
+    ["my %config = (password => 'zqfirstsecretvalue", "zqsecondsecretvalue'); done"],
+    ["configure(mode => 'safe', api_key", " => ", "'zqsecretvalue'); done"],
+    ["my %config = (tokens", " => ['zqfirstsecretvalue',", "{ value => 'zqsecondsecretvalue' }]); done"],
+    ["configure(group => (", "password => { value => 'zqfirstsecretvalue',", "next => 'zqsecondsecretvalue' })); done"],
+  ]) {
+    const redacted = redactSupervisorSecretParts(parts);
+    assert.equal(redacted.length, parts.length);
+    assert.equal(
+      redacted.some((part) => part.text.includes("zq")),
+      false,
+      JSON.stringify(parts)
+    );
+    assert.ok(redacted.at(-1)?.text.endsWith(" done"), JSON.stringify(redacted));
+  }
+});
+
+test("repeated fat-comma values beyond callback lookahead remain bounded and redacted", () => {
+  const started = performance.now();
+  const entry = `password=>{${" ".repeat(600)}value=>'zqsecretvalue'},`;
+  const text = `configure(${entry.repeat(1_000)}); done`;
+  const redacted = redactSupervisorSecrets(text);
+  assert.equal(redacted.text.includes("zq"), false);
+  assert.ok(performance.now() - started < 2_000);
 });
 
 test("Perl, Ruby and Elixir string prefixes keep bracket characters inside their credential strings", () => {
@@ -88,7 +171,15 @@ test("closed credential values are redacted across records before their keys are
 });
 
 test("unclosed cross-record readings cannot consume later records", () => {
-  for (const text of ['api_keys: ["zqsecretvalue', 'password: "zqsecretvalue', "password: 'zqsecretvalue", "password: `zqsecretvalue"]) {
+  const canary = "zqsecretvalue";
+  for (const text of [
+    'api_keys: ["zqsecretvalue',
+    'password: "zqsecretvalue',
+    "password: 'zqsecretvalue",
+    "password: `zqsecretvalue",
+    `my %config = (password => '${canary}`,
+    `configure(password=>['${canary}`,
+  ]) {
     const parts = [text, "Working on the refresh loop"];
     assert.deepEqual(redactSupervisorSecretParts(parts), parts.map(redactSupervisorSecrets));
   }
