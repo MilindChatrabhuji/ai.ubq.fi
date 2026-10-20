@@ -230,4 +230,24 @@ mod import_profile_diagnostic {
         assert!(!result.status.success(), "fixed true target is not granted by the unchanged profile");
         eprintln!("PROFILE_RECONSTRUCTION_DIAGNOSTIC status={:?} stderr_bytes={}",result.status.code(),result.stderr.len());
     }
+    #[test]
+    #[ignore = "one fixed source-generated matcher diagnostic, not normal acceptance"]
+    fn source_generated_import_temp_rule_matcher() {
+        let output = std::path::Path::new("/private/tmp/ai-rust-wasm-20261018/native-safety-0403/profile-temp-matcher-v1");
+        fs::create_dir(output).unwrap();fs::set_permissions(output,fs::Permissions::from_mode(0o700)).unwrap();
+        let root=fs::canonicalize(output).unwrap();let replay=root.join("replay");fs::create_dir(&replay).unwrap();
+        let address=|port|SocketAddr::from((std::net::Ipv4Addr::LOCALHOST,port));
+        let profile=import_actor(std::path::Path::new("/usr/bin/touch"),&root,&replay,address(31001),address(31002),address(31003),address(31004),&[address(31005),address(31006),address(31007)]).unwrap();
+        let save=|name:&str,bytes:&[u8]|{let mut f=fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(root.join(name)).unwrap();f.write_all(bytes).unwrap();};
+        save("source-generated-profile.sb",profile.as_bytes());let mut rows=Vec::new();
+        for (kind,suffix) in [("positive","tmp"),("negative","tmpx")] {
+            let target=root.join(format!(".uos-import-{}.{}","f".repeat(64),suffix));assert!(!target.exists());
+            let result=Command::new("/usr/bin/sandbox-exec").args(["-p",&profile,"/usr/bin/touch"]).arg(&target).output().unwrap();
+            save(&format!("{kind}.stderr"),&result.stderr[..result.stderr.len().min(8192)]);
+            rows.push(serde_json::json!({"kind":kind,"exit":result.status.code(),"success":result.status.success(),"target_exists":target.exists(),"stderr_bytes":result.stderr.len()}));
+        }
+        save("result.json",&serde_json::to_vec(&serde_json::json!({"source_generated_not_retained_launch":true,"diagnostic_only_not_custody":true,"targets":rows})).unwrap());
+        eprintln!("MATCHER_DIAGNOSTIC fixed_positive_and_negative_complete");
+    }
+
 }
