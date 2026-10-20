@@ -3,13 +3,13 @@ use super::{
     DurableNativeImport, ExistingAccountImportStore, LiveImportCustody,
     actor_channel::InheritedCustodyChannel,
     durability,
-    import_publication::PreparedImportPublication,
+    import_publication::{PreparedImportPublication, ImportPublicationHttp, AuthenticatedImportPublicationReply},
     validation::{CatalogValidation, ImportValidation, ValidatedNativeImport, ValidationOutcome},
 };
 use crate::{import_custody_protocol::unavailable, native_import::NativeImportContext};
 use gateway_authority::native_control::{
     NativeRenewalCancellation,
-    import::{NativeImportClaim, NativeImportMode, RemoteImportAuthority},
+    import::{NativeImportClaim, NativeImportMode, RemoteImportAuthority, AuthenticatedImportTerminal},
 };
 use gateway_core::GatewayError;
 
@@ -22,7 +22,53 @@ pub(super) struct PreparedExistingImport<'a> {
     pub(super) receipt: DurableNativeImport,
     pub(super) publication: PreparedImportPublication<'a>,
 }
+/// Genuine native durability, a fresh matching authoritative terminal and the
+/// SAME live stopped peer's release exchange. No DATA/Boolean constructor.
+pub(super) struct VerifiedImportPublication<'a> {
+    prepared: PreparedExistingImport<'a>,
+    terminal: AuthenticatedImportTerminal,
+    reply: Option<AuthenticatedImportPublicationReply>,
+}
+impl VerifiedImportPublication<'_> {
+    pub(super) fn publication_revision(&self) -> &str { &self.terminal.terminal().publication_revision }
+    pub(super) fn native_receipt_ref(&self) -> &str { &self.terminal.terminal().native_receipt_ref }
+    pub(super) fn candidate(&self) -> &ValidatedNativeImport<'_> { &self.prepared.candidate }
+    pub(super) fn disposition(&self) -> gateway_authority::native_control::import::NativeImportPublicationDisposition {
+        self.reply.as_ref().map(|reply| reply.publication().disposition)
+            .unwrap_or(gateway_authority::native_control::import::NativeImportPublicationDisposition::AlreadyCurrent)
+    }
+}
 impl<'a> PreparedExistingImport<'a> {
+    pub(super) fn publish<C: NativeRenewalCancellation>(
+        mut self, authority: &RemoteImportAuthority<'_, C>, sender: &ImportPublicationHttp,
+        store: &ExistingAccountImportStore, context: &NativeImportContext<'_>,
+    ) -> Result<VerifiedImportPublication<'a>, GatewayError> {
+        let result = (|| {
+            authority.recheck_import_claim(&self.claim)?;
+            let reply = sender.publish(&self.publication, store, &mut self.custody, context, &self.receipt).ok();
+            // A lost/ambiguous publication reply may only reconcile the SAME
+            // native receipt and command. Never rewrite, refresh or mint Start.
+            let terminal = authority.observe_publication(&self.claim, self.publication.command().publication_revision.as_str(),
+                &self.receipt.receipt_ref(), &self.publication.request_digest())?;
+            self.publication.require_terminal(&terminal, &self.receipt, reply.as_ref())?;
+            context.check_document(context.original_proof(), context.original_proof().metadata(), context.original_body())?;
+            durability::recheck(store, &self.receipt)?;
+            self.custody.release_after_verified_terminal(&terminal, context)?;
+            context.check_document(context.original_proof(), context.original_proof().metadata(), context.original_body())?;
+            durability::recheck(store, &self.receipt)?;
+            // A fresh original-claim terminal check after actual live release
+            // closes the last cancellation/revocation/publication window.
+            let current = authority.observe_publication(&self.claim, self.publication.command().publication_revision.as_str(),
+                &self.receipt.receipt_ref(), &self.publication.request_digest())?;
+            self.publication.require_terminal(&current, &self.receipt, reply.as_ref())?;
+            context.check()?;
+            Ok((current, reply))
+        })();
+        match result {
+            Ok((terminal, reply)) => Ok(VerifiedImportPublication { prepared: self, terminal, reply }),
+            Err(error) => { let _ = authority.unknown_import(&self.claim); Err(error) }
+        }
+    }
     pub(super) fn prepare<C: NativeRenewalCancellation>(
         authority: &RemoteImportAuthority<'_, C>,
         context: &NativeImportContext<'a>,

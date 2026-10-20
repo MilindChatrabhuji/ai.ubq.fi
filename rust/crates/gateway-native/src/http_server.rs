@@ -86,6 +86,7 @@ impl NativeHttpService {
         self
     }
     pub fn serve(self, listener: TcpListener) -> Result<(), GatewayError> {
+        crate::require_production_artifact()?;
         let service = Arc::new(self);
         let active = Arc::new(AtomicUsize::new(0));
         for stream in listener.incoming() {
@@ -115,6 +116,7 @@ impl NativeHttpService {
         Ok(())
     }
     pub(crate) fn serve_connection(&self, stream: &mut TcpStream) -> Result<(), GatewayError> {
+        crate::require_production_artifact()?;
         if let Err(error) = self.handle(stream) {
             write_error(stream, error)?;
         }

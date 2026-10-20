@@ -131,8 +131,17 @@ pub struct PreparedNativeDaemonConfig {
     pub sources: Vec<SupervisorSourceConfig>,
     pub owner_renewal: Option<OwnerRenewalConfig>,
 }
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum NativeDaemonRole { Ordinary, Import }
 impl NativeDaemonConfig {
     pub fn read_stdin(input: impl Read) -> Result<PreparedNativeDaemonConfig, GatewayError> {
+        Self::read_for_role(input, NativeDaemonRole::Ordinary)
+    }
+    /// Fixed first-party import Child only. No wire flag or caller-selected capability.
+    pub(crate) fn read_import_stdin(input: impl Read) -> Result<PreparedNativeDaemonConfig, GatewayError> {
+        Self::read_for_role(input, NativeDaemonRole::Import)
+    }
+    fn read_for_role(input: impl Read, role: NativeDaemonRole) -> Result<PreparedNativeDaemonConfig, GatewayError> {
         let mut bytes = Vec::new();
         input
             .take(65_537)
@@ -151,6 +160,7 @@ impl NativeDaemonConfig {
             if let Some(renewal) = &config.owner_renewal {
                 renewal.validate()?;
             }
+            if role == NativeDaemonRole::Import && config.owner_renewal.is_none() { return Err(invalid()); }
             let mut prepared = Self {
                 v: 1,
                 listen: config.listen,
@@ -158,15 +168,16 @@ impl NativeDaemonConfig {
                 nonce_database: config.nonce_database,
                 sources: config.sources,
             }
-            .prepare(config.owner_renewal.is_some())?;
+            .prepare(config.owner_renewal.is_some(), role)?;
             prepared.owner_renewal = config.owner_renewal;
             Ok(prepared)
         } else {
             let config: Self = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-            config.prepare(false)
+            config.prepare(false, role)
         }
     }
-    fn prepare(self, owner_renewal: bool) -> Result<PreparedNativeDaemonConfig, GatewayError> {
+    fn prepare(self, owner_renewal: bool, role: NativeDaemonRole) -> Result<PreparedNativeDaemonConfig, GatewayError> {
+        if role == NativeDaemonRole::Import && !owner_renewal { return Err(invalid()); }
         if self.v != 1
             || !self.listen.ip().is_loopback()
             || !self.nonce_database.is_absolute()
@@ -194,11 +205,16 @@ impl NativeDaemonConfig {
             return Err(invalid());
         }
         let key: [u8; 32] = bytes.try_into().map_err(|_| invalid())?;
-        let mut capabilities = BTreeSet::from([NativeCapability::SupervisorRead]);
-        if owner_renewal {
-            capabilities.insert(NativeCapability::OwnerRenewal);
-            capabilities.insert(NativeCapability::AccessPublish);
-        }
+        let capabilities = if role == NativeDaemonRole::Import {
+            BTreeSet::from([NativeCapability::CodexAuthImport])
+        } else {
+            let mut ordinary = BTreeSet::from([NativeCapability::SupervisorRead]);
+            if owner_renewal {
+                ordinary.insert(NativeCapability::OwnerRenewal);
+                ordinary.insert(NativeCapability::AccessPublish);
+            }
+            ordinary
+        };
         let identity = NativeTransportIdentity::new(
             self.identity.key_id,
             self.identity.owner_id,

@@ -2,7 +2,7 @@
 use super::{DurableNativeImport, ExistingAccountImportStore, LiveImportCustody, durability, validation::{CatalogValidation, ValidatedNativeImport}};
 use crate::{import_custody_protocol::unavailable, native_import::NativeImportContext};
 use gateway_auth::{crypto::{Secret, sha256_hex}, provider_credentials::codex_credential_identity};
-use gateway_authority::native_control::import::{AuthenticatedNativeImport, ImportPublicationCommandData, NativeImportPublication};
+use gateway_authority::native_control::import::{AuthenticatedNativeImport, AuthenticatedImportTerminal, ImportPublicationCommandData, NativeImportPublication};
 use gateway_core::GatewayError;
 use gateway_publication::{ImportAccessDocument, ImportCatalogData};
 
@@ -47,6 +47,38 @@ impl<'a> PreparedImportPublication<'a> {
         durability::recheck(store, receipt)?;
         Ok(Self { original: proof, command, body })
     }
+    pub(super) fn require_terminal(
+        &self, terminal: &AuthenticatedImportTerminal, receipt: &DurableNativeImport,
+        reply: Option<&AuthenticatedImportPublicationReply>,
+    ) -> Result<(), GatewayError> {
+        let current = terminal.terminal();
+        let identity = codex_credential_identity(&receipt.credentials().account_id,
+            &receipt.credentials().access_token, &Secret::new(String::new()));
+        if terminal.binding() != receipt.binding()
+            || current.publication_revision != self.command.publication_revision
+            || current.native_receipt_ref != self.command.native_receipt_ref
+            || current.publication_request_digest != self.request_digest()
+            || current.native_source_generation != receipt.native_generation()
+            || current.access_generation != self.command.access_generation
+            || current.credential_version != identity.credential_version.0
+            || current.source_revision != self.command.publication_revision
+            || current.normalized_revision != self.command.publication_revision
+        { return Err(unavailable()); }
+        if let Some(reply) = reply {
+            let p = &reply.publication().publication;
+            if reply.request_digest() != self.request_digest()
+                || p.publication_revision != current.publication_revision
+                || p.native_receipt_ref != current.native_receipt_ref
+                || p.native_source_generation != current.native_source_generation
+                || p.access_generation != current.access_generation || p.credential_version != current.credential_version
+                || p.source_revision != current.source_revision || p.normalized_revision != current.normalized_revision
+                || p.catalog_revision != current.catalog_revision || p.runtime_revision != current.runtime_revision
+                || p.auth_generation_revision != current.auth_generation_revision
+                || p.paid_control_config_revision != current.paid_control_config_revision
+            { return Err(unavailable()); }
+        }
+        Ok(())
+    }
     pub(super) fn command(&self) -> &ImportPublicationCommandData { &self.command }
     pub(super) fn body(&self) -> &[u8] { &self.body }
     pub(super) fn request_digest(&self) -> String { sha256_hex(&self.body) }
@@ -73,6 +105,13 @@ impl ImportPublicationHttp {
     pub(super) fn from_connected(target: &str, socket: TcpStream, identity: NativeTransportIdentity) -> Result<Self, GatewayError> {
         Ok(Self { identity, transport: PrivateHttps::from_connected(target, NATIVE_PUBLICATION_PATH, socket, ureq::tls::RootCerts::WebPki)? })
     }
+    #[cfg(feature = "native-import-fixture")]
+    pub(super) fn from_fixture_connected(socket: TcpStream, identity: NativeTransportIdentity) -> Result<Self, GatewayError> {
+        if !socket.local_addr().map_err(|_| unavailable())?.ip().is_loopback()
+            || !socket.peer_addr().map_err(|_| unavailable())?.ip().is_loopback() { return Err(unavailable()); }
+        Ok(Self { identity, transport: PrivateHttps::from_connected("https://localhost/uos/native/publication", NATIVE_PUBLICATION_PATH,
+            socket, super::import_endpoints::validation_roots())? })
+    }
     #[cfg(test)]
     fn fixture(target: &str, socket: TcpStream, identity: NativeTransportIdentity, ca: &[u8]) -> Result<Self, GatewayError> {
         Ok(Self { identity, transport: PrivateHttps::from_connected(target, NATIVE_PUBLICATION_PATH, socket,
@@ -89,6 +128,7 @@ impl ImportPublicationHttp {
         }
         custody.check_live(store, proof, context.original_body(), context)?;
         durability::recheck(store, receipt)?;
+        if prepared.command.bytes()? != prepared.body() { return Err(unavailable()); }
         let reply = self.exchange_data(prepared.command(), context.deadline())?;
         context.check_document(proof, proof.metadata(), context.original_body())?;
         durability::recheck(store, receipt)?;

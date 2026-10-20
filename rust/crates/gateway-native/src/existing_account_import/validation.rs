@@ -17,6 +17,7 @@ pub(super) struct ValidatedNativeImport<'a> {
     pub(super) credentials: NativeCredentials,
     pub(super) catalog: CatalogValidation,
     pub(super) refreshed: bool,
+    pub(super) content_type: Option<String>,
 }
 
 use super::{ExistingAccountImportStore, LiveImportCustody, import_documents as document};
@@ -54,6 +55,11 @@ impl ImportValidation {
         let source = context.auth_data().auth().clone();
         let credentials = document::credentials(&source)?;
         if credentials.external_user_id.is_some() { return Err(unavailable()); }
+        match context.original_proof().target() {
+            gateway_auth::native_import::NativeImportTarget::ExistingAccount { account_id_hash }
+                if *account_id_hash == credentials.routing_account_hash() => (),
+            _ => return Err(unavailable()),
+        }
         let response = self.models(&credentials, context)?;
         if response.status == 401 {
             return Ok(ValidationOutcome::Original401(NeedsRefresh401 {
@@ -74,6 +80,9 @@ impl ImportValidation {
     fn finish<'a>(&self, original: &'a AuthenticatedNativeImport, source: SourceJson, credentials: NativeCredentials, response: PrivateResponse,
         refreshed: bool, context: &NativeImportContext<'_>) -> Result<ValidatedNativeImport<'a>, GatewayError> {
         context.check()?;
+        let content_type = if (200..300).contains(&response.status) {
+            response.headers.iter().find(|(name, _)| name.eq_ignore_ascii_case("content-type")).map(|(_, value)| value.clone())
+        } else { None };
         let catalog = if response.status == 429 { CatalogValidation::AuthenticatedLimited }
         else if (200..300).contains(&response.status) {
             let is_json = response.headers.iter().any(|(name, value)| name.eq_ignore_ascii_case("content-type") && value.contains("application/json"));
@@ -81,7 +90,7 @@ impl ImportValidation {
             let body = SourceJson::parse_bytes(&response.body).map_err(|_| invalid_catalog())?;
             normalized_catalog(&body, &self.client_version, response.status, context.now_ms()?)?
         } else { return Err(model_error(&response, &credentials)); };
-        Ok(ValidatedNativeImport { original, document: source, credentials, catalog, refreshed })
+        Ok(ValidatedNativeImport { original, document: source, credentials, catalog, refreshed, content_type })
     }
     /// A genuine original401 plus consumed original Start/live custody is required before the one dispatch.
     pub(super) fn refresh_once<'a>(&mut self, pending: NeedsRefresh401<'a>, custody: &mut LiveImportCustody<'_>, store: &ExistingAccountImportStore,

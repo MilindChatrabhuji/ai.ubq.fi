@@ -1,11 +1,11 @@
 //! Actor-local sealed live channel capability; wire stopped DATA cannot construct it.
 use super::{ExistingAccountImportStore, actor_channel::InheritedCustodyChannel};
 use crate::{
-    import_custody_protocol::{self as wire, Frame, Header, Stopped, unavailable},
+    import_custody_protocol::{self as wire, Frame, Header, Release, Stopped, unavailable},
     native_import::NativeImportContext,
 };
 use gateway_authority::native_control::import::{
-    AuthenticatedNativeImport, ImportCustodyStartedRequest, NativeImportBinding, NativeImportStart,
+    AuthenticatedNativeImport, AuthenticatedImportTerminal, ImportCustodyStartedRequest, NativeImportBinding, NativeImportStart,
 };
 use gateway_core::GatewayError;
 use std::{
@@ -28,6 +28,7 @@ pub struct LiveImportCustody<'a> {
     root_inode: u64,
     deadline: Instant,
     uncertain: bool,
+    released: bool,
     publication_ref: Option<String>,
     publication_digest: Option<String>,
 }
@@ -87,20 +88,54 @@ impl<'a> LiveImportCustody<'a> {
             root_inode: stopped.root_inode,
             deadline,
             uncertain: false,
+            released: false,
             publication_ref: None,
             publication_digest: None,
         })
     }
     pub(super) fn publication_reference(&mut self) -> Result<String, GatewayError> {
-        if self.uncertain { return Err(unavailable()); }
+        if self.uncertain || self.released { return Err(unavailable()); }
         if self.publication_ref.is_none() { self.publication_ref = Some(wire::random_ref()?); }
         self.publication_ref.clone().ok_or_else(unavailable)
     }
     pub(super) fn bind_publication(&mut self, digest: &str) -> Result<(), GatewayError> {
-        if self.uncertain || !wire::hash(digest) || self.publication_digest.as_deref().is_some_and(|original| original != digest) {
+        if self.uncertain || self.released || !wire::hash(digest) || self.publication_digest.as_deref().is_some_and(|original| original != digest) {
             return Err(unavailable());
         }
         self.publication_digest = Some(digest.into());
+        Ok(())
+    }
+    /// This is a live actual peer exchange after publication, not a historical
+    /// B1 recheck or a caller-created Published/Boolean completion input.
+    pub(super) fn release_after_verified_terminal(
+        &mut self,
+        terminal: &AuthenticatedImportTerminal,
+        context: &NativeImportContext<'_>,
+    ) -> Result<(), GatewayError> {
+        if self.uncertain || self.released || Instant::now() >= self.deadline
+            || terminal.binding() != self.binding()
+            || self.publication_ref.as_deref() != Some(terminal.terminal().publication_revision.as_str())
+            || self.publication_digest.as_deref() != Some(terminal.terminal().publication_request_digest.as_str())
+            || terminal.observed_at_ms() > context.now_ms()?
+        { return Err(unavailable()); }
+        context.check_document(context.original_proof(), context.original_proof().metadata(), context.original_body())?;
+        self.original_start.require_body(context.original_body(), context.now_ms()?)?;
+        self.uncertain = true;
+        let sequence = self.channel.next_sequence;
+        wire::send(&mut self.channel.socket, &Frame::ReleaseAfterVerifiedTerminal(Release {
+            v: 1, sequence, session_ref: self.channel.session_ref.clone(), challenge: self.challenge.clone(),
+            binding: wire::copy_binding(&self.binding)?, publication_revision: terminal.terminal().publication_revision.clone(),
+        }), self.deadline, Some(context))?;
+        let response = wire::receive(&mut self.channel.socket, self.deadline, Some(context))?;
+        let Frame::Released(header) = response else { return Err(unavailable()); };
+        if header.v != 1 || header.sequence != sequence || header.session_ref != self.channel.session_ref
+            || header.challenge != self.challenge || header.binding.canonical_bytes()? != self.binding.canonical_bytes()? {
+            return Err(unavailable());
+        }
+        context.check_document(context.original_proof(), context.original_proof().metadata(), context.original_body())?;
+        self.channel.next_sequence = sequence.checked_add(1).ok_or_else(unavailable)?;
+        self.released = true;
+        self.uncertain = false;
         Ok(())
     }
     pub(super) fn binding(&self) -> &NativeImportBinding {
@@ -113,7 +148,7 @@ impl<'a> LiveImportCustody<'a> {
         original_body: &[u8],
         context: &NativeImportContext<'_>,
     ) -> Result<(), GatewayError> {
-        if self.uncertain || Instant::now() >= self.deadline {
+        if self.uncertain || self.released || Instant::now() >= self.deadline {
             return Err(unavailable());
         }
         self.uncertain = true;

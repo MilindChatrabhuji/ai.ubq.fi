@@ -25,10 +25,13 @@ pub(super) struct Bootstrap {
     custody_local: SocketAddr,
     custody_peer: SocketAddr,
     endpoints: ImportEndpointData,
+    native_owner_id: String,
+    account_id_hash: String,
 }
 impl Bootstrap {
     fn validate(&self) -> Result<(), GatewayError> {
-        if self.v != 1
+        if self.native_owner_id.trim().is_empty() || self.native_owner_id.len() > 4096 || !wire::hash(&self.account_id_hash)
+            || self.v != 1
             || !wire::hash(&self.session_ref)
             || [
                 self.client_local,
@@ -50,7 +53,7 @@ fn bootstrap_max_bytes() -> usize {
     let local = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, u16::MAX, u32::MAX, u32::MAX));
     let remote = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0x7777,0x7777,0x7777,0x7777,0x7777,0x7777,0x7777,0x7777), u16::MAX, u32::MAX, u32::MAX));
     serde_json::to_vec(&Bootstrap { v: 1, session_ref: "f".repeat(64), client_local: local, client_peer: local,
-        custody_local: local, custody_peer: local, endpoints: ImportEndpointData { authority: remote, models: remote, oauth: remote } })
+        custody_local: local, custody_peer: local, native_owner_id: "\u{1}".repeat(4096), account_id_hash: "f".repeat(64), endpoints: ImportEndpointData { authority: remote, models: remote, oauth: remote } })
         .expect("Finite fixed TCP bootstrap shape").len()
 }
 /// A command obtained only by a live actual Child's retained opposite channel.
@@ -103,12 +106,18 @@ impl OwnedImportChildChannel {
         owner_root: &Path,
         replay_directory: &Path,
         endpoints: &ResolvedImportEndpoints,
-        authority_origin: &str,
+        native_owner_id: &str,
+        account_id_hash: &str,
     ) -> Result<Self, GatewayError> {
         if !cfg!(target_os = "macos") || daemon_config.is_empty() || daemon_config.len() > 65_536 {
             return Err(unavailable());
         }
-        endpoints.require_origin(authority_origin)?;
+        let config = crate::daemon_config::NativeDaemonConfig::read_import_stdin(daemon_config)?;
+        let registry = config.owner_renewal.as_ref().ok_or_else(unavailable)?;
+        if !registry.owners().iter().any(|owner| owner.owner_id() == native_owner_id && owner.codex_home() == owner_root) {
+            return Err(unavailable());
+        }
+        endpoints.require_origin(registry.authority_origin())?;
         let actor = PinnedExecutable::verify(binary, digest)?;
         let sandbox = PinnedExecutable::verify(Path::new("/usr/bin/sandbox-exec"), SANDBOX_SHA)?;
         let listener =
@@ -125,6 +134,8 @@ impl OwnedImportChildChannel {
             custody_local: actor_socket.local_addr().map_err(|_| unavailable())?,
             custody_peer: actor_socket.peer_addr().map_err(|_| unavailable())?,
             endpoints: endpoints.data()?,
+            native_owner_id: native_owner_id.into(),
+            account_id_hash: account_id_hash.into(),
         };
         boot.validate()?;
         let profile = crate::connector_policy::import_actor(
@@ -192,6 +203,19 @@ impl OwnedImportChildChannel {
         }
         this.check_live()?;
         Ok(this)
+    }
+    pub(super) fn settle_completed(&mut self) -> Result<(), GatewayError> {
+        loop {
+            let status = self.child.as_mut().ok_or_else(unavailable)?.try_wait().map_err(|_| unavailable())?;
+            if let Some(status) = status {
+                if !status.success() { return Err(unavailable()); }
+                self.child.take();
+                self.input.take();
+                return Ok(());
+            }
+            if Instant::now() >= self.deadline { return Err(unavailable()); }
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
     pub(super) fn deadline(&self) -> Instant {
         self.deadline
@@ -303,6 +327,10 @@ impl OwnedImportChildChannel {
         self.pending.take();
         Ok(())
     }
+    pub(super) fn released(&mut self, command: &ImportChildCommand) -> Result<(), GatewayError> {
+        if command.publication_revision().is_none() { return Err(unavailable()); }
+        self.reply(command, Frame::Released(command.header().copy_data()?))
+    }
     pub(super) fn refuse(&mut self, command: &ImportChildCommand) -> Result<(), GatewayError> {
         self.reply(command, Frame::Unknown(command.header().copy_data()?))
     }
@@ -330,6 +358,8 @@ pub(super) struct ActorBootstrap {
     pub(super) client: TcpStream,
     pub(super) custody: InheritedCustodyChannel,
     pub(super) endpoints: ImportEndpointData,
+    pub(super) native_owner_id: String,
+    pub(super) account_id_hash: String,
 }
 impl ActorBootstrap {
     // Only the fixed parameterless import role calls this, before any thread or FD clone.
@@ -381,6 +411,8 @@ impl ActorBootstrap {
             config,
             client,
             endpoints: boot.endpoints,
+            native_owner_id: boot.native_owner_id,
+            account_id_hash: boot.account_id_hash,
             custody: InheritedCustodyChannel {
                 socket,
                 session_ref: boot.session_ref,
@@ -399,4 +431,28 @@ fn bootstrap_part(input: &mut impl Read, maximum: usize) -> Result<Vec<u8>, Gate
     let mut bytes = vec![0; length];
     input.read_exact(&mut bytes).map_err(|_| unavailable())?;
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn bootstrap_bound_is_derived_and_unknown_peer_data_refuses() {
+        use std::net::{Ipv6Addr, SocketAddrV6};
+        let local = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, u16::MAX, u32::MAX, u32::MAX));
+        let mut peer = local; peer.set_port(u16::MAX - 1);
+        let remote = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0x7777,0x7777,0x7777,0x7777,0x7777,0x7777,0x7777,0x7777), u16::MAX, u32::MAX, u32::MAX));
+        let boot = Bootstrap { v: 1, session_ref: "f".repeat(64), client_local: local, client_peer: peer,
+            custody_local: local, custody_peer: peer, native_owner_id: "\u{1}".repeat(4096), account_id_hash: "f".repeat(64), endpoints: ImportEndpointData { authority: remote, models: remote, oauth: remote } };
+        boot.validate().unwrap();
+        let encoded = serde_json::to_vec(&boot).unwrap();
+        assert_eq!(encoded.len(), bootstrap_max_bytes());
+        let round_trip: Bootstrap = serde_json::from_slice(&encoded).unwrap(); round_trip.validate().unwrap();
+        let mut extra: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        extra["caller_destination"] = serde_json::json!("https://forbidden.invalid");
+        assert!(serde_json::from_value::<Bootstrap>(extra).is_err());
+        let mut over = std::io::Cursor::new(u32::try_from(bootstrap_max_bytes() + 1).unwrap().to_be_bytes());
+        assert!(bootstrap_part(&mut over, bootstrap_max_bytes()).is_err());
+        assert_eq!(over.position(), 4);
+    }
 }

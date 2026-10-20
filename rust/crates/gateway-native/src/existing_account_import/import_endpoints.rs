@@ -83,3 +83,67 @@ fn resolve(host: &str, port: u16) -> Result<SocketAddr, GatewayError> {
     (host, port).to_socket_addrs().map_err(|_| unavailable())?
         .find(|address| address.port() != 0 && !address.ip().is_unspecified() && !address.ip().is_multicast()).ok_or_else(unavailable)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{net::TcpListener, sync::atomic::{AtomicBool, Ordering}};
+    struct Cancellation(AtomicBool);
+    impl NativeRenewalCancellation for Cancellation { fn cancelled(&self) -> bool { self.0.load(Ordering::SeqCst) } }
+    #[test]
+    fn actual_fixed_role_sockets_are_distinct_and_cancellation_opens_none() {
+        let authority = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let models = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let oauth = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let data = || ImportEndpointData { authority: authority.local_addr().unwrap(), models: models.local_addr().unwrap(), oauth: oauth.local_addr().unwrap() };
+        let cancellation = Cancellation(AtomicBool::new(false));
+        let connected = data().connect(&cancellation, Instant::now() + Duration::from_secs(2)).unwrap();
+        assert_ne!(connected.authority.local_addr().unwrap(), connected.publication.local_addr().unwrap());
+        for (listener, socket) in [(&authority, &connected.authority), (&authority, &connected.publication), (&models, &connected.models), (&oauth, &connected.oauth)] {
+            let (accepted, peer) = listener.accept().unwrap();
+            assert_eq!(peer, socket.local_addr().unwrap()); assert_eq!(accepted.local_addr().unwrap(), socket.peer_addr().unwrap());
+        }
+        drop(connected);
+        cancellation.0.store(true, Ordering::SeqCst);
+        assert!(data().connect(&cancellation, Instant::now() + Duration::from_secs(2)).is_err());
+        for listener in [&authority, &models, &oauth] {
+            listener.set_nonblocking(true).unwrap();
+            assert!(matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock));
+        }
+    }
+    #[test]
+    fn closed_endpoint_data_rejects_mixed_fields_zero_ports_and_unfixed_origins() {
+        for origin in ["http://localhost/", "https://localhost/path", "https://user@localhost/", "https://localhost/?target=x", "https://localhost/#x"] {
+            assert!(checked_origin(origin).is_err());
+        }
+        let raw = r#"{"authority":"127.0.0.1:443","models":"127.0.0.1:443","oauth":"127.0.0.1:443","provider":"anything"}"#;
+        assert!(serde_json::from_str::<ImportEndpointData>(raw).is_err());
+        let data = ImportEndpointData { authority: "127.0.0.1:443".parse().unwrap(), models: "127.0.0.1:0".parse().unwrap(), oauth: "127.0.0.1:443".parse().unwrap() };
+        assert!(data.validate().is_err());
+    }
+}
+
+pub(super) fn fixed_authority_client<'a, C: NativeRenewalCancellation>(
+    origin: &str, socket: TcpStream, identity: gateway_auth::native_auth::NativeTransportIdentity,
+    cancellation: &'a C, deadline: Instant,
+) -> Result<gateway_authority::native_control::import::RemoteImportAuthority<'a, C>, GatewayError> {
+    let origin = checked_origin(origin)?;
+    #[cfg(feature = "native-import-fixture")]
+    {
+        if origin.host_str() != Some("localhost") { return Err(unavailable()); }
+        gateway_authority::native_control::import::RemoteImportAuthority::from_fixture_connected(socket, identity, cancellation, deadline)
+    }
+    #[cfg(not(feature = "native-import-fixture"))]
+    {
+        let target = origin.join(gateway_auth::native::NATIVE_RENEWAL_AUTHORITY_PATH).map_err(|_| unavailable())?;
+        gateway_authority::native_control::import::RemoteImportAuthority::from_connected(target.as_str(), socket, identity, cancellation, deadline)
+    }
+}
+pub(super) fn validation_roots() -> ureq::tls::RootCerts {
+    #[cfg(feature = "native-import-fixture")]
+    {
+        ureq::tls::RootCerts::new_with_certs(&[ureq::tls::Certificate::from_der(include_bytes!("../../tests/fixtures/import-tls/ca.der")).to_owned()])
+    }
+    #[cfg(not(feature = "native-import-fixture"))]
+    { ureq::tls::RootCerts::WebPki }
+}

@@ -13,6 +13,7 @@ use std::{fs::File, path::Path};
 mod acl_inspector;
 mod actor_channel;
 mod custodian_runtime;
+mod custodian_service;
 #[path = "import_durability.rs"]
 mod durability;
 mod exclusive_owner;
