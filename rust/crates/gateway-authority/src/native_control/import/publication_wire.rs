@@ -16,7 +16,7 @@ pub struct ImportAccessDocument {
     #[serde(deserialize_with = "required_nullable")]
     pub native_refreshed_at: Option<String>,
 }
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ImportCatalogData {
     Normalized {
@@ -28,6 +28,101 @@ pub enum ImportCatalogData {
         upstream_status: u16,
     },
 }
+// Internally tagged Deserialize buffers fields and cannot retain RawValue.
+// Decode this finite variant directly from the original SourceJson tree instead.
+impl<'de> Deserialize<'de> for ImportCatalogData {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Normalized {
+            kind: String,
+            snapshot: SourceJson,
+            client_version: String,
+            upstream_status: u16,
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Limited {
+            kind: String,
+            upstream_status: u16,
+        }
+        let raw = <SourceJson as Deserialize>::deserialize(deserializer)?;
+        let kind = gateway_core::source_serialization::member(&raw, "kind")
+            .and_then(|value| value.deserialize::<String>().ok())
+            .ok_or_else(|| serde::de::Error::custom("Missing import catalog kind"))?;
+        match kind.as_str() {
+            "normalized" => {
+                let value: Normalized = raw
+                    .deserialize()
+                    .map_err(|_| serde::de::Error::custom("Invalid normalized import catalog"))?;
+                if value.kind != kind {
+                    return Err(serde::de::Error::custom("Import catalog kind mismatch"));
+                }
+                Ok(Self::Normalized {
+                    snapshot: value.snapshot,
+                    client_version: value.client_version,
+                    upstream_status: value.upstream_status,
+                })
+            }
+            "authenticated_limited" => {
+                let value: Limited = raw
+                    .deserialize()
+                    .map_err(|_| serde::de::Error::custom("Invalid limited import catalog"))?;
+                if value.kind != kind {
+                    return Err(serde::de::Error::custom("Import catalog kind mismatch"));
+                }
+                Ok(Self::AuthenticatedLimited {
+                    upstream_status: value.upstream_status,
+                })
+            }
+            _ => Err(serde::de::Error::custom("Unsupported import catalog kind")),
+        }
+    }
+}
+
+/// DATA-only safe normalization for the fixed native publication component.
+/// Actual current-cache merge/default/config planning remains authority-owned.
+pub fn prepare_import_catalog(
+    snapshot: &SourceJson,
+    client_version: &str,
+    upstream_status: u16,
+    observed_at_ms: i64,
+) -> Result<ImportCatalogData, GatewayError> {
+    ImportCatalogDisposition::Normalized {
+        client_version: client_version.into(),
+        upstream_status,
+    }
+    .validate()?;
+    crate::validate_time(observed_at_ms)?;
+    let snapshot = gateway_schema::snapshot::normalize_snapshot(
+        snapshot,
+        &gateway_schema::snapshot::SnapshotOverrides {
+            source: Some("chatgpt_codex".into()),
+            client_version: Some(client_version.into()),
+            updated_at_ms: Some(observed_at_ms),
+        },
+        observed_at_ms,
+    )
+    .ok_or_else(unavailable)?;
+    let snapshot =
+        gateway_core::source_serialization::canonical(&SourceJson::from_serializable(&snapshot)?)?;
+    if snapshot.as_str().len() > SNAPSHOT_MAX_BYTES {
+        return Err(GatewayError::new(
+            413,
+            format!(
+                "models snapshot too large ({} bytes; max 65536).",
+                snapshot.as_str().len()
+            ),
+            Some("invalid_request_error"),
+        ));
+    }
+    Ok(ImportCatalogData::Normalized {
+        snapshot,
+        client_version: client_version.into(),
+        upstream_status,
+    })
+}
+
 impl ImportCatalogData {
     pub fn disposition(&self) -> ImportCatalogDisposition {
         match self {
@@ -208,6 +303,18 @@ mod tests {
                 upstream_status: 200,
             },
         }
+    }
+    #[test]
+    fn pure_safe_catalog_helper_retains_source_utf16_without_native_dependency() {
+        let raw = SourceJson::parse(r#"{"models":[{"slug":"\ud800"}]}"#).unwrap();
+        let catalog = prepare_import_catalog(&raw, "0.163.0", 200, 1_000_000).unwrap();
+        let ImportCatalogData::Normalized { snapshot, .. } = &catalog else {
+            panic!("normalized")
+        };
+        assert!(snapshot.as_str().contains("\\ud800"));
+        let mut row = command();
+        row.catalog = catalog;
+        ImportPublicationCommandData::parse(&row.bytes().unwrap()).unwrap();
     }
     #[test]
     fn exact_frame_and_component_boundaries_preserve_existing_thresholds() {

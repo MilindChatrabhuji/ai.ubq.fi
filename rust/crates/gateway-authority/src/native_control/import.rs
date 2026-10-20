@@ -18,7 +18,7 @@ pub use publication_data::{ImportCatalogDisposition, ImportPublicationDataV1};
 mod publication_wire;
 pub use publication_wire::{
     ImportAccessDocument, ImportCatalogData, ImportPublicationCommandData,
-    import_publication_max_bytes,
+    import_publication_max_bytes, prepare_import_catalog,
 };
 mod custody;
 mod custody_session;
