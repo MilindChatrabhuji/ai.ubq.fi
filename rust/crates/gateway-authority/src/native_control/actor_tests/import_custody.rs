@@ -95,6 +95,17 @@ impl Fixture {
         NativeImportClaim,
         ImportCustodyStartedRequest,
     ) {
+        self.prepare_version(start, false).await
+    }
+    async fn prepare_version(
+        &self,
+        start: bool,
+        v3: bool,
+    ) -> (
+        AuthenticatedNativeImport,
+        NativeImportClaim,
+        ImportCustodyStartedRequest,
+    ) {
         let token = session_setup(&self.store, true, true);
         let actor = actor::authenticate_admin_actor(
             &self.authority,
@@ -106,15 +117,17 @@ impl Fixture {
         .await
         .unwrap();
         let control = self.control();
-        let prepared = control
-            .prepare_import(
-                &actor,
-                NativeImportTarget::ExistingAccount {
-                    account_id_hash: self.hash.clone(),
-                },
-            )
-            .await
-            .unwrap();
+        let target = NativeImportTarget::ExistingAccount {
+            account_id_hash: self.hash.clone(),
+        };
+        let prepared = if v3 {
+            control
+                .prepare_import_publication_fixture(&actor, target)
+                .await
+                .unwrap()
+        } else {
+            control.prepare_import(&actor, target).await.unwrap()
+        };
         let body = b"ORIGINAL_SYNTHETIC_CUSTODY_BODY";
         let admitted = control
             .admit_import(header(&self.id, prepared.metadata(), body, 42).await)
@@ -122,15 +135,19 @@ impl Fixture {
             .unwrap();
         let proof = control.finish_import(admitted, body).await.unwrap();
         let mut claim = control.claim_import(&proof).await.unwrap();
-        if start {
-            assert!(
+        let original_started = if start {
+            Some(
                 control
                     .start_import(&mut claim, &proof)
                     .await
                     .unwrap()
-                    .is_some()
-            );
-        }
+                    .unwrap()
+                    .custody_request()
+                    .unwrap(),
+            )
+        } else {
+            None
+        };
         let binding = claim.binding();
         let key = crate::native_control::rows::key("operation", &binding.operation_id);
         let revision = self
@@ -156,6 +173,12 @@ impl Fixture {
             started_revision: revision,
             deadline_ms: proof.deadline_ms(),
         };
+        if let Some(actual) = original_started {
+            assert_eq!(
+                actual.canonical_bytes().unwrap(),
+                data.canonical_bytes().unwrap()
+            );
+        }
         (proof, claim, data)
     }
     async fn peer(&self, data: &ImportCustodyStartedRequest, salt: u8) -> AuthenticatedNativeOwner {
@@ -506,5 +529,69 @@ fn request_data_has_exact_required_fields_version_and_existing_finite_domains() 
         assert_eq!(fields.len(), 12);
         assert!(!fields.contains_key("token"));
         assert!(!fields.contains_key("path"));
+    });
+}
+
+#[test]
+fn v3_required_null_action_and_actual_started_request_preserve_original_lifetime() {
+    run(async {
+        let f = Fixture::new();
+        let (proof, mut claim, data) = f.prepare_version(true, true).await;
+        let key = crate::native_control::rows::key("action", &data.action_ref);
+        let row = f.store.rows.lock().unwrap().get(&key.0).unwrap().clone();
+        assert_eq!(row.value["v"], 3);
+        assert!(row.value.as_object().unwrap().contains_key("publication"));
+        assert!(row.value["publication"].is_null());
+        assert_eq!(data.deadline_ms, proof.deadline_ms());
+        crate::native_control::validate_native_control_custody(&key, &row).unwrap();
+        let peer = f.peer(&data, 70).await;
+        let snapshot = f.snapshot();
+        let observation = f
+            .control()
+            .verify_started_custody(&peer, &data)
+            .await
+            .unwrap();
+        assert_eq!(observation.deadline_ms(), data.deadline_ms);
+        assert_eq!(f.snapshot(), snapshot);
+        assert!(
+            f.control()
+                .start_import(&mut claim, &proof)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        for mutation in ["missing", "unknown", "partial"] {
+            let mut wrong = row.clone();
+            match mutation {
+                "missing" => {
+                    wrong.value.as_object_mut().unwrap().remove("publication");
+                }
+                "unknown" => {
+                    wrong.value["extra"] = json!(true);
+                }
+                _ => {
+                    wrong.value["publication"] = json!({"v":1});
+                }
+            }
+            assert!(
+                crate::native_control::validate_native_control_custody(&key, &wrong).is_err(),
+                "{mutation}"
+            );
+        }
+    });
+}
+#[test]
+fn ordinary_preparation_stays_v2_and_never_acquires_publication_by_default() {
+    run(async {
+        let f = Fixture::new();
+        let (_, _, data) = f.prepare(true).await;
+        let key = crate::native_control::rows::key("action", &data.action_ref);
+        let row = f.store.rows.lock().unwrap().get(&key.0).unwrap().clone();
+        assert_eq!(row.value["v"], 2);
+        assert!(!row.value.as_object().unwrap().contains_key("publication"));
+        let mut wrong = row.clone();
+        wrong.value["publication"] = json!(null);
+        assert!(crate::native_control::validate_native_control_custody(&key, &wrong).is_err());
+        crate::native_control::validate_native_control_custody(&key, &row).unwrap();
     });
 }

@@ -108,7 +108,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 .read_source_control(&rows::key("action", &request.action_ref))
                 .await?
                 .ok_or_else(unavailable)?;
-            if row.v != 2
+            if !row.unfinished()
                 || row.metadata.operation_id != request.operation_id
                 || row.metadata.action_ref != request.action_ref
                 || row.metadata.v != 1

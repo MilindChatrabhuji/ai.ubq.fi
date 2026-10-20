@@ -11,25 +11,21 @@ use gateway_auth::native_import::{
 };
 use gateway_core::{GatewayError, state::AuthorityStore};
 use serde::{Deserialize, Serialize};
+mod action;
+use action::ImportActionRow;
+mod publication_data;
+pub use publication_data::{ImportCatalogDisposition, ImportPublicationDataV1};
+mod publication_wire;
+pub use publication_wire::{
+    ImportAccessDocument, ImportCatalogData, ImportPublicationCommandData,
+    import_publication_max_bytes, prepare_import_catalog,
+};
 mod custody;
 mod custody_session;
 pub use custody_session::{ImportCustodyStartedRequest, VerifiedCurrentImportStarted};
 mod effects;
 mod sources;
 pub use effects::{NativeImportBinding, NativeImportClaim, NativeImportMode, NativeImportStart};
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ImportActionRow {
-    v: u8,
-    kind: NativeImportKind,
-    metadata: NativeImportMetadata,
-    target: NativeImportTarget,
-    actor: StoredNativeActor,
-    context: gateway_core::identity::RequestContext,
-    created_at_ms: i64,
-    deadline_ms: i64,
-    facts: sources::ImportFacts,
-}
 pub struct PreparedNativeImport {
     row: ImportActionRow,
 }
@@ -82,6 +78,22 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         actor: &NativeRenewalActor,
         target: NativeImportTarget,
     ) -> Result<PreparedNativeImport, GatewayError> {
+        self.prepare_import_version(actor, target, 2).await
+    }
+    #[cfg(test)]
+    pub(in crate::native_control) async fn prepare_import_publication_fixture(
+        &self,
+        actor: &NativeRenewalActor,
+        target: NativeImportTarget,
+    ) -> Result<PreparedNativeImport, GatewayError> {
+        self.prepare_import_version(actor, target, 3).await
+    }
+    async fn prepare_import_version(
+        &self,
+        actor: &NativeRenewalActor,
+        target: NativeImportTarget,
+        version: u8,
+    ) -> Result<PreparedNativeImport, GatewayError> {
         target.validate()?;
         if actor.scope() != NativeActorScope::Admin {
             return Err(unavailable());
@@ -91,7 +103,11 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             let mut tx = self.authority.transaction(now)?;
             let current = sources::read(self, &mut tx, actor.stored(), &target).await?;
             let reference = super::facts::digest(&(
-                "uos-native-import-action-v2",
+                if version == 2 {
+                    "uos-native-import-action-v2"
+                } else {
+                    "uos-native-import-action-v3"
+                },
                 actor.context(),
                 actor.policy_digest(),
                 &target,
@@ -100,7 +116,8 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             let key = rows::key("action", &reference);
             let prior: Option<ImportActionRow> = tx.read_source_control(&key).await?;
             let row = if let Some(row) = prior {
-                if row.v != 2
+                if row.v != version
+                    || !row.unfinished()
                     || row.actor != *actor.stored()
                     || row.context != *actor.context()
                     || row.target != target
@@ -117,7 +134,8 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 };
                 metadata.validate()?;
                 let row = ImportActionRow {
-                    v: 2,
+                    v: version,
+                    publication: None,
                     kind: target.kind(),
                     metadata,
                     target: target.clone(),
@@ -167,7 +185,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 .read_source_control(&rows::key("action", &metadata.action_ref))
                 .await?
                 .ok_or_else(unavailable)?;
-            if row.v != 2
+            if !row.unfinished()
                 || row.kind != NativeImportKind::CodexAuth
                 || row.kind != row.target.kind()
                 || row.metadata != *metadata

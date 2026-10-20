@@ -18,3 +18,9 @@ pub use wire::{
     ExpectedAccessPublication, PreparedPublicationCommand, PublicationDisposition,
     PublicationReceipt,
 };
+
+// Fixed import DATA construction reuses authority's existing schema dependency.
+pub use gateway_authority::native_control::import::{
+    ImportAccessDocument, ImportCatalogData, ImportPublicationCommandData,
+    import_publication_max_bytes, prepare_import_catalog,
+};
