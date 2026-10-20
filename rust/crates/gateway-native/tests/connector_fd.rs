@@ -151,7 +151,6 @@ fn extra_and_kernel_truncated_ancillary_close_every_actual_descriptor() {
             .unwrap(),
             bytes.len()
         );
-        drop(ancillary);
         drop(rights);
         drop(fds);
         let status = child.wait().unwrap();
