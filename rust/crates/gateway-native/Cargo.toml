@@ -15,7 +15,7 @@ serde_json.workspace = true
 time = { version = "=0.3.44", features = ["parsing", "formatting"] }
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "=1.1.5", features = ["net", "time", "fs"] }
+rustix = { version = "=1.1.5", features = ["net", "time", "fs", "process"] }
 getrandom = "=0.4.3"
 tungstenite = { version = "=0.28.0", default-features = false, features = ["handshake"] }
 socket2 = "=0.6.5"
@@ -38,3 +38,7 @@ libc = "=0.2.191"
 
 [lints]
 workspace = true
+
+[[example]]
+name = "uos-native-connector-fixture"
+path = "tests/support/connector_fixture.rs"
