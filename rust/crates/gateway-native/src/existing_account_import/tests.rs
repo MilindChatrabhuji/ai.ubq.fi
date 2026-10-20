@@ -61,6 +61,16 @@ impl Home {
 }
 impl Drop for Home {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!("PRESERVED_SYNTHETIC_OWNER_FIXTURE {}", self.0.display());
+            if let Ok(bytes) = fs::read(self.0.join(".uos-owner-fixture.stderr")) {
+                eprintln!(
+                    "OWNED_CHILD_DIAGNOSTIC {}",
+                    String::from_utf8_lossy(&bytes[..bytes.len().min(16384)])
+                );
+            }
+            return;
+        }
         fs::remove_dir_all(&self.0).unwrap();
     }
 }
