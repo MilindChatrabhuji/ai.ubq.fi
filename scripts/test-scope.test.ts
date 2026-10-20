@@ -329,7 +329,8 @@ describe("Sentinel complete CI check set", () => {
     expect(Object.values(jobs).every((job) => job.env?.GITHUB_EVENT_BEFORE === undefined)).toBe(true);
     const jobNames = Object.keys(jobs).sort((left, right) => left.localeCompare(right));
     expect(jobNames).toEqual(["darwin-native", "docs", "mac-containment", "native", "rust-native", "rust-wasm", "scope", "validate", "verify-artifact"]);
-    expect(jobs.scope.env?.GITHUB_PR_AUTHOR).toBe("${{ github.event.pull_request.user.login }}");
+    expect(workflow.env?.GITHUB_PR_AUTHOR).toBe("${{ github.event.pull_request.user.login }}");
+    expect(Object.values(jobs).every((job) => job.env?.GITHUB_PR_AUTHOR === undefined)).toBe(true);
     for (const output of [
       "needs_docs",
       "needs_validate",
