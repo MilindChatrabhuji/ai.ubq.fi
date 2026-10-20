@@ -1,7 +1,10 @@
 import { spyOn, test } from "bun:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { isResponsesCompaction, parseTurnMetadata } from "../lib/jev_compaction/codex_items.ts";
+import { isResponsesCompaction, parseCodexInput, parseTurnMetadata } from "../lib/jev_compaction/codex_items.ts";
+import { compact } from "../lib/jev_compaction/compact.ts";
+import { collectToolCalls } from "../lib/jev_compaction/state.ts";
+import type { JevAsker } from "../lib/jev_compaction/types.ts";
 import { deepSeekUpstreamModelFor } from "../src/deepseek/index.ts";
 import * as kv from "../src/kv.ts";
 import { isProviderEnabled, normalizeProviderSelection, normalizeSelectedProviderIds, type ProviderSelection } from "../src/provider/selection.ts";
@@ -128,6 +131,54 @@ test("compaction header controls follow the original source model and predicate 
 
 const digest = (text: string): string => createHash("sha256").update(text).digest("hex");
 
+async function originalQuestions(body: Record<string, unknown>, mode: "failure" | "partial"): Promise<string[]> {
+  const { COMPACTION_OPTIONS } = await import("../src/jev_compaction/compaction.ts");
+  const original = JSON.stringify(body.input);
+  const transcript = parseCodexInput(body.input);
+  assert(transcript);
+  assert.equal(transcript.messages.length, 12);
+  const calls = collectToolCalls(transcript.messages, COMPACTION_OPTIONS.preserveRecentMessages);
+  assert.deepEqual(
+    calls.map((call) => ({
+      id: call.id,
+      callId: call.tool_use_id,
+      tool: call.tool,
+      input: call.input,
+      callIndex: call.callIndex,
+      resultIndex: call.resultIndex,
+      pinned: call.pinned,
+    })),
+    [
+      { id: "t1", callId: "old_a", tool: "shell", input: { command: "read old evidence" }, callIndex: 2, resultIndex: 3, pinned: false },
+      { id: "t2", callId: "old_b", tool: "shell", input: { command: "read more old evidence" }, callIndex: 4, resultIndex: 5, pinned: false },
+    ]
+  );
+  for (const call of calls) {
+    const tool = transcript.messages[call.callIndex]?.toolUses[0];
+    const result = transcript.messages[call.resultIndex]?.toolResults?.[0];
+    assert(tool && result);
+    assert.equal(tool.tool_use_id, call.tool_use_id);
+    assert.equal(result.tool_use_id, call.tool_use_id);
+    assert.equal(result.text.length, 4900);
+    assert.equal(digest(result.text), "4103c9be01eb1089fdeb25375b6d644663e32e228b5ee1593e6a49399667d22d");
+  }
+  const batches: string[][] = [];
+  const asker: JevAsker = {
+    ask: (_state, questions) => {
+      const names = Object.keys(questions);
+      batches.push(names);
+      if (mode === "failure") return Promise.reject(new Error("controlled original-source decision failure"));
+      return Promise.resolve({ answers: Object.fromEntries(names.slice(1).map((name) => [name, { noul: 0.1 }])) });
+    },
+  };
+  await assert.rejects(compact(transcript.messages, asker, COMPACTION_OPTIONS), Error);
+  assert.deepEqual(batches, [["call_t1", "result_t1", "call_t2", "result_t2"]]);
+  assert.equal(JSON.stringify(body.input), original, "original parsing and compaction must preserve the exact request input");
+  const names = batches[0];
+  assert(names);
+  return [...names];
+}
+
 function observedMessages(input: unknown): Record<string, unknown>[] {
   assert(Array.isArray(input));
   return input.flatMap<Record<string, unknown>>((value: unknown) => {
@@ -157,7 +208,7 @@ function completedStream(id: string): Response {
   return new Response(stream, { headers: { "content-type": "text/event-stream", "x-uos-request-id": id } });
 }
 
-test("fallback setup uses the enabled original source waterfall and restores the original selection without changing header or quota requests", async () => {
+async function exerciseSetup(changeQuestions?: (names: string[]) => void): Promise<void> {
   const opener = spyOn(kv, "getKv").mockImplementation(() => {
     throw new Error("real KV access is forbidden");
   });
@@ -230,7 +281,9 @@ test("fallback setup uses the enabled original source waterfall and restores the
       assert.equal(isProviderEnabled("ubiquity", selection), true);
       assert.equal(providers[0], "lithos", "the actual source plan must reach the existing Lithos fixture rung");
       assert.equal(source.isDeepSeekWaterfallRetryStatus(429), true);
-      events.push({ kind: "matrix_compaction_jev", marker, model: "~typesafe/jev-latest", questions: ["call_t0", "call_t1", "result_t0", "result_t1"] });
+      const questions = await originalQuestions(body, marker.endsWith(":failure") ? "failure" : "partial");
+      changeQuestions?.(questions);
+      events.push({ kind: "matrix_compaction_jev", marker, model: "~typesafe/jev-latest", questions });
     } else {
       assert.equal(body.model, "deepseek-flash");
       assert.equal(body.stream, false);
@@ -266,4 +319,50 @@ test("fallback setup uses the enabled original source waterfall and restores the
     fetcher.mockRestore();
     opener.mockRestore();
   }
+}
+
+test("fallback setup retains exact original-source question pairs, waterfall, selection and request bytes", async () => {
+  await exerciseSetup();
+});
+
+test("exact source question names reject zero-based, missing, extra, swapped and regrouped pairs", async () => {
+  const faults: { name: string; change: (names: string[]) => void }[] = [
+    {
+      name: "zero-based ID",
+      change: (names) => {
+        names[0] = "call_t0";
+      },
+    },
+    {
+      name: "missing question",
+      change: (names) => {
+        names.pop();
+      },
+    },
+    {
+      name: "extra question",
+      change: (names) => {
+        names.push("call_t3");
+      },
+    },
+    {
+      name: "swapped call/result",
+      change: (names) => {
+        names.splice(0, 2, ...names.slice(0, 2).reverse());
+      },
+    },
+    {
+      name: "swapped tool pairs",
+      change: (names) => {
+        names.push(...names.splice(0, 2));
+      },
+    },
+    {
+      name: "regrouped names",
+      change: (names) => {
+        names.splice(0, 4, "call_t1", "call_t2", "result_t1", "result_t2");
+      },
+    },
+  ];
+  for (const fault of faults) await assert.rejects(exerciseSetup(fault.change), assert.AssertionError, fault.name);
 });

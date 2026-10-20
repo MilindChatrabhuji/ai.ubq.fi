@@ -388,8 +388,7 @@ async function compactionFailedFallback(context: MatrixContext, mode: "failure" 
     assert(typeof name === "string");
     names.push(name);
   }
-  names.sort((left, right) => left.localeCompare(right));
-  assert.deepEqual(names, ["call_t0", "call_t1", "result_t0", "result_t1"]);
+  assert.deepEqual(names, ["call_t1", "result_t1", "call_t2", "result_t2"]);
   const blockedMarker = `fixture:matrix:compaction:quota-${mode}`;
   const blocked = await post(client, "/v1/responses", { model: "deepseek-flash", input: blockedMarker, stream: false });
   assert.equal(blocked.status, 429, "The completed fallback must consume the key's sole dispatch allowance");
