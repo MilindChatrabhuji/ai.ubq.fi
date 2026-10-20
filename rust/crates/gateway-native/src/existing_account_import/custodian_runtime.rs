@@ -56,15 +56,11 @@ impl CustodianRuntime {
         &mut self, client: std::net::TcpStream, config: &[u8], actor: &std::path::Path, digest: &str,
         endpoints: super::import_endpoints::ResolvedImportEndpoints,
     ) -> Result<(), GatewayError> {
-        #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE config");
         let prepared = crate::daemon_config::NativeDaemonConfig::read_import_stdin(config)?;
         let registry = prepared.owner_renewal.as_ref().ok_or_else(unavailable)?;
         endpoints.require_origin(registry.authority_origin())?;
-        #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE configured");
         let authority_socket = std::net::TcpStream::connect_timeout(&endpoints.data()?.authority, Duration::from_secs(5)).map_err(|_| unavailable())?;
-        #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE authority_socket_ready");
         let peer = self.launch_actor(actor, digest, client, config, prepared.nonce_database.parent().ok_or_else(unavailable)?, &endpoints)?;
-        #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE actor_ready");
         super::custodian_service::serve(self, peer, registry.authority_origin(), authority_socket, prepared.identity)
     }
     #[cfg(all(test, feature = "native-import-fixture"))]

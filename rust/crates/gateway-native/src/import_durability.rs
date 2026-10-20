@@ -58,16 +58,7 @@ impl DurableNativeImport {
         self.credentials.routing_account_hash()
     }
 }
-#[cfg(feature = "native-import-fixture")]
-pub(super) static FIXTURE_HOME_OPEN_FAILURE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-#[cfg(feature = "native-import-fixture")]
-fn fixture_home_open_failure(error: rustix::io::Errno, component: usize) {
-    let base = match error.raw_os_error() { 1 => 64, 13 => 96, 2 => 128, _ => 160 };
-    FIXTURE_HOME_OPEN_FAILURE.store(base + u8::try_from(component.min(31)).expect("bounded diagnostic component"), std::sync::atomic::Ordering::Relaxed);
-}
 pub(super) fn open_home(home: &Path) -> Result<File, GatewayError> {
-    #[cfg(feature = "native-import-fixture")] FIXTURE_HOME_OPEN_FAILURE.store(0, std::sync::atomic::Ordering::Relaxed);
-    #[cfg(feature = "native-import-fixture")] let mut component_index = 0usize;
     if !home.is_absolute() {
         return Err(unavailable());
     }
@@ -78,16 +69,12 @@ pub(super) fn open_home(home: &Path) -> Result<File, GatewayError> {
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
             Mode::empty(),
         )
-        .map_err(|_error| {
-            #[cfg(feature = "native-import-fixture")] fixture_home_open_failure(_error, 0);
-            unavailable()
-        })?,
+        .map_err(|_| unavailable())?,
     );
     for component in home.components() {
         match component {
             Component::RootDir => (),
             Component::Normal(name) => {
-                #[cfg(feature = "native-import-fixture")] { component_index += 1; }
                 directory = File::from(
                     openat(
                         &directory,
@@ -95,10 +82,7 @@ pub(super) fn open_home(home: &Path) -> Result<File, GatewayError> {
                         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                         Mode::empty(),
                     )
-                    .map_err(|_error| {
-                        #[cfg(feature = "native-import-fixture")] fixture_home_open_failure(_error, component_index);
-                        unavailable()
-                    })?,
+                    .map_err(|_| unavailable())?,
                 );
             }
             _ => return Err(unavailable()),
@@ -424,16 +408,7 @@ pub(super) fn persist_live(
             Mode::RUSR | Mode::WUSR,
         )
         .map(File::from)
-        .map_err(|_error| {
-            #[cfg(feature = "native-import-fixture")]
-            if name == temp_name.as_str() {
-                let code = match _error.raw_os_error() { 1 => 241, 13 => 242, 17 => 243, _ => 244 };
-                // Diagnostic-only early nonzero exit preserves the original
-                // uncertain Started action and never grants custody or success.
-                std::process::exit(code);
-            }
-            unavailable()
-        })
+        .map_err(|_| unavailable())
     };
     // Every check rereads the physical source as well as the live authenticated issuer.
     // Temporary and backup effects never require weakening the one-link auth invariant.
