@@ -5,7 +5,7 @@ mod connector_cases;
 mod connector_policy;
 #[path = "../../src/connector_worker.rs"]
 mod connector_worker;
-use gateway_native::confinement;
+use gateway_native::{confinement, require_production_artifact};
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
