@@ -38,12 +38,14 @@ type Observer = (stream: "serial" | "stderr", chunk: Uint8Array) => void;
 export type Runner = (argv: string[], cwd: string, timeout?: number, observe?: Observer) => Promise<Result>;
 // Internal capture error: preserve partial output and the original cause after settlement.
 export class CommandFailure extends Error {
-  constructor(
-    readonly result: Result,
-    cause: unknown
-  ) {
+  #result: Result;
+  constructor(result: Result, cause: unknown) {
     super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.#result = result;
     this.name = "CommandFailure";
+  }
+  get result(): Result {
+    return this.#result;
   }
 }
 const digest = (value: string | Uint8Array): string => createHash("sha256").update(value).digest("hex");

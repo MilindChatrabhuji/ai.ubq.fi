@@ -186,6 +186,7 @@ test("timeout preserves public serial/stderr, original cause and exact signal af
     }),
     (error: unknown) => {
       assert(error instanceof CommandFailure);
+      assert(!Object.keys(error).includes("result"), "Generic errors must not publish captured command output");
       assert(error.cause instanceof Error && error.cause.message === "Command deadline exceeded");
       assert.equal(error.result.timedOut, true);
       assert.equal(error.result.signal, "SIGKILL");
