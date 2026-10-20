@@ -300,7 +300,7 @@ pub enum ImportAuthorityResult {
     },
     Terminal {
         state: ImportAuthorityStateData,
-        terminal: ImportAuthorityTerminalData,
+        terminal: Box<ImportAuthorityTerminalData>,
     },
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -654,7 +654,7 @@ pub fn import_authority_reply_max_bytes() -> usize {
                 terminal_state.action_revision = "r".repeat(256);
                 terminal_state
             },
-            terminal: max_terminal(),
+            terminal: Box::new(max_terminal()),
         },
     ];
     results

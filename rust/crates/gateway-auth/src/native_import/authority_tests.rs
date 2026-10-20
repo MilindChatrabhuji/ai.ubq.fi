@@ -168,7 +168,7 @@ fn maximal_terminal_reply_is_finite_and_matching_not_a_generic_large_body() {
     after.action_revision = terminal.publication_revision.clone();
     let reply = ImportAuthorityReplyData::new(ImportAuthorityResult::Terminal {
         state: after,
-        terminal,
+        terminal: Box::new(terminal),
     });
     let bytes = serde_json::to_vec(&reply).unwrap();
     assert_eq!(bytes.len(), import_authority_reply_max_bytes());
