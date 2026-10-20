@@ -479,7 +479,9 @@ enum IncomingRequest {
     Legacy(HttpRequest),
     Import(crate::import_ingress::ImportHead),
 }
-pub(crate) fn read_import_head(stream: &mut TcpStream) -> Result<crate::import_ingress::ImportHead, GatewayError> {
+pub(crate) fn read_import_head(
+    stream: &mut TcpStream,
+) -> Result<crate::import_ingress::ImportHead, GatewayError> {
     match read_request(stream)? {
         IncomingRequest::Import(head) => Ok(head),
         IncomingRequest::Legacy(_) => Err(invalid()),

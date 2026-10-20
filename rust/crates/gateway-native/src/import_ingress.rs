@@ -205,7 +205,9 @@ pub(crate) struct RemoteImportDocument {
     raw: NativeDocument,
 }
 impl RemoteImportDocument {
-    pub(crate) fn body(&self) -> &[u8] { &self.raw.0 }
+    pub(crate) fn body(&self) -> &[u8] {
+        &self.raw.0
+    }
 }
 pub(crate) fn read_remote_import<C: NativeRenewalCancellation>(
     stream: &mut TcpStream,
@@ -221,8 +223,10 @@ pub(crate) fn read_remote_import<C: NativeRenewalCancellation>(
     let header = admit_headers(head, identity, nonces, &metadata, original)?;
     let admitted = authority.admit_import(header)?;
     original.check()?;
-    if admitted.native_owner_id() != native_owner_id || admitted.account_id_hash() != account_id_hash
-        || !matches!(admitted.target(), gateway_auth::native_import::NativeImportTarget::ExistingAccount { account_id_hash: actual } if actual == account_id_hash) {
+    if admitted.native_owner_id() != native_owner_id
+        || admitted.account_id_hash() != account_id_hash
+        || !matches!(admitted.target(), gateway_auth::native_import::NativeImportTarget::ExistingAccount { account_id_hash: actual } if actual == account_id_hash)
+    {
         return Err(unavailable());
     }
     if head.kind != NativeImportKind::CodexAuth || head.path != head.kind.path() {
@@ -233,7 +237,11 @@ pub(crate) fn read_remote_import<C: NativeRenewalCancellation>(
     let proof = authority.finish_import(admitted, &raw.0)?;
     authority.recheck_import(&proof)?;
     original.check()?;
-    Ok(RemoteImportDocument { proof, metadata, raw })
+    Ok(RemoteImportDocument {
+        proof,
+        metadata,
+        raw,
+    })
 }
 struct NativeDocument(Vec<u8>);
 impl Drop for NativeDocument {
@@ -341,7 +349,10 @@ fn append(
     }
     Ok(())
 }
-pub(crate) fn write_result(stream: &mut TcpStream, result: NativeImportResult) -> Result<(), GatewayError> {
+pub(crate) fn write_result(
+    stream: &mut TcpStream,
+    result: NativeImportResult,
+) -> Result<(), GatewayError> {
     let body = serde_json::to_vec(&result.body).map_err(|_| unavailable())?;
     let mut response = format!("HTTP/1.1 {} Native\r\n", result.status);
     let mut content_type = false;

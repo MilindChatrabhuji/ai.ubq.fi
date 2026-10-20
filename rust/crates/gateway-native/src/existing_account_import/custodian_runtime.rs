@@ -4,7 +4,9 @@ use super::{
     actor_channel::{ImportChildCommand, OwnedImportChildChannel},
 };
 use crate::import_custody_protocol::{Header, unavailable};
-use gateway_authority::native_control::import::{VerifiedCurrentImportStarted, VerifiedCurrentImportTerminal};
+use gateway_authority::native_control::import::{
+    VerifiedCurrentImportStarted, VerifiedCurrentImportTerminal,
+};
 use gateway_core::GatewayError;
 use std::time::{Duration, Instant};
 
@@ -43,40 +45,90 @@ impl CustodianRuntime {
     /// Trusted host composition for ONE actual accepted loopback import client.
     /// OwnedRuntime already proves live actual Child custody; this accepts no
     /// PID, executable, command, new listener or uploaded native owner/root.
-    pub fn serve_import(&mut self, client: std::net::TcpStream, config: &[u8]) -> Result<(), GatewayError> {
+    pub fn serve_import(
+        &mut self,
+        client: std::net::TcpStream,
+        config: &[u8],
+    ) -> Result<(), GatewayError> {
         crate::require_production_artifact()?;
         let prepared = crate::daemon_config::NativeDaemonConfig::read_import_stdin(config)?;
         let registry = prepared.owner_renewal.as_ref().ok_or_else(unavailable)?;
-        let endpoints = super::import_endpoints::ResolvedImportEndpoints::resolve(registry.authority_origin())?;
-        let actor = std::env::current_exe().map_err(|_| unavailable())?.parent().ok_or_else(unavailable)?.join("uos-native-import");
-        let digest = gateway_auth::crypto::sha256_hex(&std::fs::read(&actor).map_err(|_| unavailable())?);
+        let endpoints =
+            super::import_endpoints::ResolvedImportEndpoints::resolve(registry.authority_origin())?;
+        let actor = std::env::current_exe()
+            .map_err(|_| unavailable())?
+            .parent()
+            .ok_or_else(unavailable)?
+            .join("uos-native-import");
+        let digest =
+            gateway_auth::crypto::sha256_hex(&std::fs::read(&actor).map_err(|_| unavailable())?);
         self.serve_from_artifact(client, config, &actor, &digest, endpoints)
     }
     fn serve_from_artifact(
-        &mut self, client: std::net::TcpStream, config: &[u8], actor: &std::path::Path, digest: &str,
+        &mut self,
+        client: std::net::TcpStream,
+        config: &[u8],
+        actor: &std::path::Path,
+        digest: &str,
         endpoints: super::import_endpoints::ResolvedImportEndpoints,
     ) -> Result<(), GatewayError> {
         let prepared = crate::daemon_config::NativeDaemonConfig::read_import_stdin(config)?;
         let registry = prepared.owner_renewal.as_ref().ok_or_else(unavailable)?;
         endpoints.require_origin(registry.authority_origin())?;
-        let authority_socket = std::net::TcpStream::connect_timeout(&endpoints.data()?.authority, Duration::from_secs(5)).map_err(|_| unavailable())?;
-        let peer = self.launch_actor(actor, digest, client, config, prepared.nonce_database.parent().ok_or_else(unavailable)?, &endpoints)?;
-        super::custodian_service::serve(self, peer, registry.authority_origin(), authority_socket, prepared.identity)
+        let authority_socket = std::net::TcpStream::connect_timeout(
+            &endpoints.data()?.authority,
+            Duration::from_secs(5),
+        )
+        .map_err(|_| unavailable())?;
+        let peer = self.launch_actor(
+            actor,
+            digest,
+            client,
+            config,
+            prepared.nonce_database.parent().ok_or_else(unavailable)?,
+            &endpoints,
+        )?;
+        super::custodian_service::serve(
+            self,
+            peer,
+            registry.authority_origin(),
+            authority_socket,
+            prepared.identity,
+        )
     }
     #[cfg(all(test, feature = "native-import-fixture"))]
     pub(super) fn serve_fixture(
-        &mut self, client: std::net::TcpStream, config: &[u8], actor: &std::path::Path, digest: &str,
+        &mut self,
+        client: std::net::TcpStream,
+        config: &[u8],
+        actor: &std::path::Path,
+        digest: &str,
         endpoints: super::import_endpoints::ResolvedImportEndpoints,
     ) -> Result<(), GatewayError> {
-        if actor.file_name().and_then(|name| name.to_str()) != Some("uos-native-import-fixture") { return Err(unavailable()); }
+        if actor.file_name().and_then(|name| name.to_str()) != Some("uos-native-import-fixture") {
+            return Err(unavailable());
+        }
         self.serve_from_artifact(client, config, actor, digest, endpoints)
     }
     pub(super) fn launch_actor(
-        &self, binary: &std::path::Path, digest: &str, client: std::net::TcpStream,
-        config: &[u8], replay: &std::path::Path, endpoints: &super::import_endpoints::ResolvedImportEndpoints,
+        &self,
+        binary: &std::path::Path,
+        digest: &str,
+        client: std::net::TcpStream,
+        config: &[u8],
+        replay: &std::path::Path,
+        endpoints: &super::import_endpoints::ResolvedImportEndpoints,
     ) -> Result<OwnedImportChildChannel, GatewayError> {
         let (owner, account, root) = self.runtime.custody_registry()?;
-        OwnedImportChildChannel::launch((binary, digest), client, config, root, replay, endpoints, (owner, account))
+        OwnedImportChildChannel::launch(
+            (binary, digest),
+            client,
+            config,
+            root,
+            replay,
+            endpoints,
+            (owner, account),
+        )
     }
     pub(super) fn open_import_session(
         &mut self,
@@ -142,7 +194,8 @@ impl CustodianRuntime {
         peer.require_pending(command)?;
         let header = command.header();
         let session = self.session.as_ref().ok_or_else(unavailable)?;
-        if !session.stopped || session.released
+        if !session.stopped
+            || session.released
             || header.session_ref != session.session_ref
             || header.challenge != session.challenge
             || header.binding.canonical_bytes()? != session.binding
@@ -153,7 +206,10 @@ impl CustodianRuntime {
         }
         peer.check_live()?;
         let snapshot = self.runtime.custody_snapshot(session.deadline)?;
-        same_snapshot(session.snapshot.as_ref().ok_or_else(unavailable)?, &snapshot)?;
+        same_snapshot(
+            session.snapshot.as_ref().ok_or_else(unavailable)?,
+            &snapshot,
+        )?;
         Ok(snapshot)
     }
     /// Consume a fresh CURRENT terminal only for this SAME already-stopped
@@ -168,16 +224,25 @@ impl CustodianRuntime {
         let header = command.header();
         let session = self.session.as_ref().ok_or_else(unavailable)?;
         let now = crate::http_server::now_ms()?;
-        if !session.stopped || session.released || Instant::now() >= session.deadline
-            || header.session_ref != session.session_ref || header.challenge != session.challenge
+        if !session.stopped
+            || session.released
+            || Instant::now() >= session.deadline
+            || header.session_ref != session.session_ref
+            || header.challenge != session.challenge
             || header.binding.canonical_bytes()? != session.binding
             || fresh.request().canonical_bytes()? != session.binding
             || command.publication_revision() != Some(fresh.publication_revision())
-            || fresh.observed_at_ms() > now || fresh.deadline_ms() <= now
+            || fresh.observed_at_ms() > now
+            || fresh.deadline_ms() <= now
             || fresh.deadline_ms() != header.binding.deadline_ms
-        { return Err(unavailable()); }
+        {
+            return Err(unavailable());
+        }
         let snapshot = self.runtime.custody_snapshot(session.deadline)?;
-        same_snapshot(session.snapshot.as_ref().ok_or_else(unavailable)?, &snapshot)?;
+        same_snapshot(
+            session.snapshot.as_ref().ok_or_else(unavailable)?,
+            &snapshot,
+        )?;
         peer.check_live()?;
         // Mark consumed BEFORE reply I/O; a lost reply never permits a restart,
         // second release, new stop, imported claim or ownership reconstruction.
@@ -186,7 +251,10 @@ impl CustodianRuntime {
     }
 }
 fn same_snapshot(expected: &KernelSnapshot, actual: &KernelSnapshot) -> Result<(), GatewayError> {
-    if expected.epoch != actual.epoch || expected.root_device != actual.root_device || expected.root_inode != actual.root_inode {
+    if expected.epoch != actual.epoch
+        || expected.root_device != actual.root_device
+        || expected.root_inode != actual.root_inode
+    {
         return Err(unavailable());
     }
     Ok(())
@@ -202,8 +270,28 @@ mod tests {
     use super::*;
     #[test]
     fn a_stopped_session_rejects_new_kernel_epoch_or_root_identity() {
-        let expected = KernelSnapshot { epoch: "a".repeat(64), root_device: 1, root_inode: 2 };
-        for actual in [KernelSnapshot { epoch: "b".repeat(64), root_device: 1, root_inode: 2 }, KernelSnapshot { epoch: "a".repeat(64), root_device: 3, root_inode: 2 }, KernelSnapshot { epoch: "a".repeat(64), root_device: 1, root_inode: 4 }] {
+        let expected = KernelSnapshot {
+            epoch: "a".repeat(64),
+            root_device: 1,
+            root_inode: 2,
+        };
+        for actual in [
+            KernelSnapshot {
+                epoch: "b".repeat(64),
+                root_device: 1,
+                root_inode: 2,
+            },
+            KernelSnapshot {
+                epoch: "a".repeat(64),
+                root_device: 3,
+                root_inode: 2,
+            },
+            KernelSnapshot {
+                epoch: "a".repeat(64),
+                root_device: 1,
+                root_inode: 4,
+            },
+        ] {
             assert!(same_snapshot(&expected, &actual).is_err());
         }
     }

@@ -205,9 +205,7 @@ fn read_exact(
                     std::io::ErrorKind::TimedOut
                         | std::io::ErrorKind::WouldBlock
                         | std::io::ErrorKind::Interrupted
-                ) =>
-            {
-            }
+                ) => {}
             Err(_) => return Err(unavailable()),
         }
     }
@@ -257,9 +255,7 @@ pub(crate) fn send(
                     std::io::ErrorKind::TimedOut
                         | std::io::ErrorKind::WouldBlock
                         | std::io::ErrorKind::Interrupted
-                ) =>
-            {
-            }
+                ) => {}
             Err(_) => return Err(unavailable()),
         }
     }

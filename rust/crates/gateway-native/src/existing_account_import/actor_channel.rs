@@ -1,5 +1,8 @@
 //! Safe fixed-role Child/bootstrap channel. Neither an accepted socket nor JSON is custody.
-use super::{exclusive_owner::PinnedExecutable, import_endpoints::{ImportEndpointData, ResolvedImportEndpoints}};
+use super::{
+    exclusive_owner::PinnedExecutable,
+    import_endpoints::{ImportEndpointData, ResolvedImportEndpoints},
+};
 use crate::import_custody_protocol::{
     self as wire, Frame, Header, HeaderView, Stopped, unavailable,
 };
@@ -30,7 +33,9 @@ pub(super) struct Bootstrap {
 }
 impl Bootstrap {
     fn validate(&self) -> Result<(), GatewayError> {
-        if self.native_owner_id.trim().is_empty() || self.native_owner_id.len() > 4096 || !wire::hash(&self.account_id_hash)
+        if self.native_owner_id.trim().is_empty()
+            || self.native_owner_id.len() > 4096
+            || !wire::hash(&self.account_id_hash)
             || self.v != 1
             || !wire::hash(&self.session_ref)
             || [
@@ -50,11 +55,37 @@ impl Bootstrap {
 }
 fn bootstrap_max_bytes() -> usize {
     use std::net::{Ipv6Addr, SocketAddrV6};
-    let local = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, u16::MAX, u32::MAX, u32::MAX));
-    let remote = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0x7777,0x7777,0x7777,0x7777,0x7777,0x7777,0x7777,0x7777), u16::MAX, u32::MAX, u32::MAX));
-    serde_json::to_vec(&Bootstrap { v: 1, session_ref: "f".repeat(64), client_local: local, client_peer: local,
-        custody_local: local, custody_peer: local, native_owner_id: "\u{1}".repeat(4096), account_id_hash: "f".repeat(64), endpoints: ImportEndpointData { authority: remote, models: remote, oauth: remote } })
-        .expect("Finite fixed TCP bootstrap shape").len()
+    let local = SocketAddr::V6(SocketAddrV6::new(
+        Ipv6Addr::LOCALHOST,
+        u16::MAX,
+        u32::MAX,
+        u32::MAX,
+    ));
+    let remote = SocketAddr::V6(SocketAddrV6::new(
+        Ipv6Addr::new(
+            0x7777, 0x7777, 0x7777, 0x7777, 0x7777, 0x7777, 0x7777, 0x7777,
+        ),
+        u16::MAX,
+        u32::MAX,
+        u32::MAX,
+    ));
+    serde_json::to_vec(&Bootstrap {
+        v: 1,
+        session_ref: "f".repeat(64),
+        client_local: local,
+        client_peer: local,
+        custody_local: local,
+        custody_peer: local,
+        native_owner_id: "\u{1}".repeat(4096),
+        account_id_hash: "f".repeat(64),
+        endpoints: ImportEndpointData {
+            authority: remote,
+            models: remote,
+            oauth: remote,
+        },
+    })
+    .expect("Finite fixed TCP bootstrap shape")
+    .len()
 }
 /// A command obtained only by a live actual Child's retained opposite channel.
 /// It is deliberately not a wire-deserializable authorization.
@@ -111,8 +142,14 @@ impl OwnedImportChildChannel {
         }
         let config = crate::daemon_config::NativeDaemonConfig::read_import_stdin(daemon_config)?;
         let registry = config.owner_renewal.as_ref().ok_or_else(unavailable)?;
-        if config.nonce_database.parent() != Some(replay_directory) { return Err(unavailable()); }
-        if !registry.owners().iter().any(|owner| owner.owner_id() == native_owner_id && owner.codex_home() == owner_root) {
+        if config.nonce_database.parent() != Some(replay_directory) {
+            return Err(unavailable());
+        }
+        if !registry
+            .owners()
+            .iter()
+            .any(|owner| owner.owner_id() == native_owner_id && owner.codex_home() == owner_root)
+        {
             return Err(unavailable());
         }
         endpoints.require_origin(registry.authority_origin())?;
@@ -146,11 +183,27 @@ impl OwnedImportChildChannel {
         )
         .map_err(|_| unavailable())?;
         #[cfg(test)]
-        for ancestor in std::fs::canonicalize(owner_root).map_err(|_| unavailable())?.ancestors().skip(1) {
-            let literal = serde_json::to_string(ancestor.to_str().ok_or_else(unavailable)?).map_err(|_| unavailable())?;
-            assert!(profile.lines().any(|line| line == format!("(allow file-read-data (literal {literal}))")), "actual import profile must grant only the reached literal ancestor directory read");
-            assert!(!profile.contains(&format!("(allow file-read* (subpath {literal}))")), "actual import profile must not widen ancestor subtree reads");
-            assert!(!profile.contains(&format!("(allow file-write* (subpath {literal}))")), "actual import profile must not grant ancestor subtree writes");
+        for ancestor in std::fs::canonicalize(owner_root)
+            .map_err(|_| unavailable())?
+            .ancestors()
+            .skip(1)
+        {
+            let literal = serde_json::to_string(ancestor.to_str().ok_or_else(unavailable)?)
+                .map_err(|_| unavailable())?;
+            assert!(
+                profile
+                    .lines()
+                    .any(|line| line == format!("(allow file-read-data (literal {literal}))")),
+                "actual import profile must grant only the reached literal ancestor directory read"
+            );
+            assert!(
+                !profile.contains(&format!("(allow file-read* (subpath {literal}))")),
+                "actual import profile must not widen ancestor subtree reads"
+            );
+            assert!(
+                !profile.contains(&format!("(allow file-write* (subpath {literal}))")),
+                "actual import profile must not grant ancestor subtree writes"
+            );
         }
         client.set_nonblocking(false).map_err(|_| unavailable())?;
         actor_socket
@@ -209,14 +262,23 @@ impl OwnedImportChildChannel {
     }
     pub(super) fn settle_completed(&mut self) -> Result<(), GatewayError> {
         loop {
-            let status = self.child.as_mut().ok_or_else(unavailable)?.try_wait().map_err(|_| unavailable())?;
+            let status = self
+                .child
+                .as_mut()
+                .ok_or_else(unavailable)?
+                .try_wait()
+                .map_err(|_| unavailable())?;
             if let Some(status) = status {
-                if !status.success() { return Err(unavailable()); }
+                if !status.success() {
+                    return Err(unavailable());
+                }
                 self.child.take();
                 self.input.take();
                 return Ok(());
             }
-            if Instant::now() >= self.deadline { return Err(unavailable()); }
+            if Instant::now() >= self.deadline {
+                return Err(unavailable());
+            }
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -263,9 +325,7 @@ impl OwnedImportChildChannel {
         let binding = h.binding.canonical_bytes()?;
         match (&self.binding, &self.challenge) {
             (Some(expected), Some(challenge))
-                if *expected == binding && challenge == h.challenge =>
-            {
-            }
+                if *expected == binding && challenge == h.challenge => {}
             (None, None) if matches!(frame, Frame::Quiesce(_) | Frame::Cancel(_)) => {
                 self.binding = Some(binding);
                 self.challenge = Some(h.challenge.into());
@@ -330,7 +390,9 @@ impl OwnedImportChildChannel {
         Ok(())
     }
     pub(super) fn released(&mut self, command: &ImportChildCommand) -> Result<(), GatewayError> {
-        if command.publication_revision().is_none() { return Err(unavailable()); }
+        if command.publication_revision().is_none() {
+            return Err(unavailable());
+        }
         self.reply(command, Frame::Released(command.header().copy_data()?))
     }
     pub(super) fn refuse(&mut self, command: &ImportChildCommand) -> Result<(), GatewayError> {
@@ -378,8 +440,9 @@ impl ActorBootstrap {
         }
         let mut input = stdin.lock();
         let config = bootstrap_part(&mut input, 65_536)?;
-        let boot: Bootstrap = serde_json::from_slice(&bootstrap_part(&mut input, bootstrap_max_bytes())?)
-            .map_err(|_| unavailable())?;
+        let boot: Bootstrap =
+            serde_json::from_slice(&bootstrap_part(&mut input, bootstrap_max_bytes())?)
+                .map_err(|_| unavailable())?;
         boot.validate()?;
         let stdout = std::io::stdout();
         let stderr = std::io::stderr();
@@ -441,19 +504,50 @@ mod tests {
     #[test]
     fn bootstrap_bound_is_derived_and_unknown_peer_data_refuses() {
         use std::net::{Ipv6Addr, SocketAddrV6};
-        let local = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, u16::MAX, u32::MAX, u32::MAX));
-        let mut peer = local; peer.set_port(u16::MAX - 1);
-        let remote = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0x7777,0x7777,0x7777,0x7777,0x7777,0x7777,0x7777,0x7777), u16::MAX, u32::MAX, u32::MAX));
-        let boot = Bootstrap { v: 1, session_ref: "f".repeat(64), client_local: local, client_peer: peer,
-            custody_local: local, custody_peer: peer, native_owner_id: "\u{1}".repeat(4096), account_id_hash: "f".repeat(64), endpoints: ImportEndpointData { authority: remote, models: remote, oauth: remote } };
+        let local = SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::LOCALHOST,
+            u16::MAX,
+            u32::MAX,
+            u32::MAX,
+        ));
+        let mut peer = local;
+        peer.set_port(u16::MAX - 1);
+        let remote = SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::new(
+                0x7777, 0x7777, 0x7777, 0x7777, 0x7777, 0x7777, 0x7777, 0x7777,
+            ),
+            u16::MAX,
+            u32::MAX,
+            u32::MAX,
+        ));
+        let boot = Bootstrap {
+            v: 1,
+            session_ref: "f".repeat(64),
+            client_local: local,
+            client_peer: peer,
+            custody_local: local,
+            custody_peer: peer,
+            native_owner_id: "\u{1}".repeat(4096),
+            account_id_hash: "f".repeat(64),
+            endpoints: ImportEndpointData {
+                authority: remote,
+                models: remote,
+                oauth: remote,
+            },
+        };
         boot.validate().unwrap();
         let encoded = serde_json::to_vec(&boot).unwrap();
         assert_eq!(encoded.len(), bootstrap_max_bytes());
-        let round_trip: Bootstrap = serde_json::from_slice(&encoded).unwrap(); round_trip.validate().unwrap();
+        let round_trip: Bootstrap = serde_json::from_slice(&encoded).unwrap();
+        round_trip.validate().unwrap();
         let mut extra: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
         extra["caller_destination"] = serde_json::json!("https://forbidden.invalid");
         assert!(serde_json::from_value::<Bootstrap>(extra).is_err());
-        let mut over = std::io::Cursor::new(u32::try_from(bootstrap_max_bytes() + 1).unwrap().to_be_bytes());
+        let mut over = std::io::Cursor::new(
+            u32::try_from(bootstrap_max_bytes() + 1)
+                .unwrap()
+                .to_be_bytes(),
+        );
         assert!(bootstrap_part(&mut over, bootstrap_max_bytes()).is_err());
         assert_eq!(over.position(), 4);
     }

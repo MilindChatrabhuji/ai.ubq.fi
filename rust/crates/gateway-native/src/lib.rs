@@ -27,11 +27,11 @@ mod native_request_process;
 #[cfg(unix)]
 pub use connector_supervisor::run_native_supervisor;
 #[cfg(unix)]
+pub use connector_worker::run_native_connector;
+#[cfg(unix)]
 pub use existing_account_import::import_process::run_native_import;
 #[cfg(all(unix, feature = "native-import-fixture"))]
 pub use existing_account_import::import_process::run_native_import_fixture;
-#[cfg(unix)]
-pub use connector_worker::run_native_connector;
 #[cfg(unix)]
 pub use native_request_process::run_native_request;
 pub mod access_publication;
@@ -46,6 +46,8 @@ pub mod existing_account_import;
 #[cfg(unix)]
 pub mod http_server;
 #[cfg(unix)]
+pub mod import_client;
+#[cfg(unix)]
 mod import_custody_protocol;
 #[cfg(unix)]
 mod import_ingress;
@@ -54,8 +56,6 @@ pub mod live_bridge;
 #[cfg(unix)]
 pub mod managed_publication_http;
 pub mod native_import;
-#[cfg(unix)]
-pub mod import_client;
 #[cfg(unix)]
 pub mod nonce_sqlite;
 pub mod owner_control;

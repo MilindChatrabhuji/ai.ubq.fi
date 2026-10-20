@@ -1,4 +1,8 @@
 #[cfg(unix)]
-fn main() { gateway_native::run_native_import() }
+fn main() {
+    gateway_native::run_native_import()
+}
 #[cfg(not(unix))]
-fn main() { std::process::exit(78) }
+fn main() {
+    std::process::exit(78)
+}
