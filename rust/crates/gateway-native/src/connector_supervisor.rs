@@ -157,6 +157,13 @@ fn launch(
     main_profile: &str,
     connector_profile: &str,
 ) -> Result<RequestChildren, ControlError> {
+    // Accept can inherit nonblocking state on Darwin. The owned client enters
+    // the existing timed HTTP parser in blocking mode, verified before spawn.
+    client.set_nonblocking(false).map_err(io_error)?;
+    let flags = rustix::fs::fcntl_getfl(&client).map_err(|error| io_error(error.into()))?;
+    if flags.contains(rustix::fs::OFlags::NONBLOCK) {
+        return Err(ControlError::InvalidDescriptor);
+    }
     let (main_control, dial_control) = UnixStream::pair().map_err(io_error)?;
     let mut dial_command = connector.command(connector_profile)?;
     let dial_fd: OwnedFd = dial_control.into();
