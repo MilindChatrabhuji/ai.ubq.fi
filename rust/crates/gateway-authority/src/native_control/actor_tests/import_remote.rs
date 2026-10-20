@@ -10,6 +10,7 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+#[cfg(not(feature = "native-import-fixture"))]
 const CA: &[u8] = include_bytes!("../../../../gateway-native/tests/fixtures/import-tls/ca.der");
 const CERT: &[u8] = include_bytes!("../../../../gateway-native/tests/fixtures/import-tls/leaf.der");
 const KEY: &[u8] =
@@ -245,15 +246,23 @@ fn peer(f: Fixture, fault: Fault) -> Peer {
     Peer { socket, task }
 }
 fn client<'a>(socket: TcpStream, cancel: &'a CancelNow) -> RemoteImportAuthority<'a, CancelNow> {
-    RemoteImportAuthority::fixture_connected(
+    #[cfg(feature = "native-import-fixture")]
+    let authority = RemoteImportAuthority::from_fixture_connected(
+        socket,
+        identity(),
+        cancel,
+        Instant::now() + Duration::from_secs(40),
+    );
+    #[cfg(not(feature = "native-import-fixture"))]
+    let authority = RemoteImportAuthority::fixture_connected(
         &format!("https://localhost{NATIVE_RENEWAL_AUTHORITY_PATH}"),
         socket,
         identity(),
         cancel,
         Instant::now() + Duration::from_secs(40),
         CA,
-    )
-    .unwrap()
+    );
+    authority.unwrap()
 }
 #[test]
 fn actual_tls_local_body_mac_original_claim_start_and_readonly_b1_agree() {

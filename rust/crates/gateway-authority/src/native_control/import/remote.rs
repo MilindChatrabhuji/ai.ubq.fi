@@ -111,7 +111,7 @@ impl<'a, C: NativeRenewalCancellation> RemoteImportAuthority<'a, C> {
             Roots::webpki(),
         )
     }
-    fn with_roots(
+    pub(super) fn with_roots(
         target: &str,
         socket: TcpStream,
         identity: NativeTransportIdentity,

@@ -2,6 +2,11 @@
 //! The store must atomically commit every check and mutation, durably, before returning.
 //! Independent records preserve history without a bounded whole-ledger snapshot.
 
+#[cfg(all(feature = "native-import-fixture", not(debug_assertions)))]
+compile_error!("native-import-fixture is forbidden in non-debug production builds");
+/// Denial marker only. Native service entrypoints must refuse when this is true.
+pub const NATIVE_IMPORT_FIXTURE_ENABLED: bool = cfg!(feature = "native-import-fixture");
+
 pub mod cache_experiment;
 pub mod capacity;
 mod capacity_rules;
