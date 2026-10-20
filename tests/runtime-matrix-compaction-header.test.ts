@@ -11,8 +11,18 @@ type Fault = "admission-provider" | "dispatch-provider" | "extra-admission" | "e
 type Observation = { marker: string; metadata: string | null; body: string; id: string };
 type ReplayModule = typeof import("../tools/cloudflare/runtime-matrix/context-replay.ts");
 
+function spyFetch(implementation: (...args: Parameters<typeof fetch>) => Promise<Response>) {
+  return spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(implementation, {
+      preconnect: () => {
+        throw new Error("network preconnection is forbidden");
+      },
+    })
+  );
+}
+
 async function sourceModule(): Promise<ReplayModule> {
-  const fetcher = spyOn(globalThis, "fetch").mockImplementation(() => {
+  const fetcher = spyFetch(() => {
     throw new Error("importing the existing source waterfall constant must not open network");
   });
   try {
@@ -48,7 +58,7 @@ async function exercise(run: ReplayModule["compactionHeaderControls"], fault?: F
       ),
     cases: [],
   };
-  const fetcher = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+  const fetcher = spyFetch(async (input, init) => {
     const request = new Request(input, init);
     assert.equal(request.url, context.url("/v1/responses"));
     assert.equal(request.method, "POST");
@@ -194,24 +204,25 @@ test("fallback setup uses the enabled original source waterfall and restores the
     events: () => Promise.resolve(events),
     cases: [],
   };
-  const fetcher = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+  const fetcher = spyFetch(async (input, init) => {
     const request = new Request(input, init);
     assert.equal(request.url, context.url("/v1/responses"));
     const body = object(await request.json());
     assert(typeof body.model === "string");
     const serialized = JSON.stringify(body);
-    const marker = serialized.match(/fixture:matrix:compaction:[a-z0-9_-]+/u)?.[0];
+    const marker = /fixture:matrix:compaction:[a-z0-9_-]+/u.exec(serialized)?.[0];
     assert(marker);
     const eligible = isResponsesCompaction(parseTurnMetadata(request.headers.get("x-codex-turn-metadata")));
     const id = `setup-request-${String(requests.length)}`;
     requests.push(body);
+    const hopCount = marker.endsWith(":failure") ? 2 : 1;
     const providers = eligible
       ? source
           .deepSeekWaterfallPlan({
             enabled: () => isProviderEnabled("ubiquity", selection),
             configured: (provider) => ["lithos", "deepseek", "openrouter"].includes(provider),
           })
-          .slice(0, marker.endsWith(":failure") ? 2 : 1)
+          .slice(0, hopCount)
       : ["deepseek"];
     if (eligible) {
       assert.equal(body.model, source.DEEPSEEK_WATERFALL_MODEL_ID);
