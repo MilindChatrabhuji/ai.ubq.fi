@@ -15,8 +15,8 @@ use std::{
         fd::{AsFd, OwnedFd},
         unix::net::UnixStream,
     },
-    time::Duration,
     sync::Arc,
+    time::Duration,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

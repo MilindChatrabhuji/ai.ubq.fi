@@ -14,8 +14,8 @@ use std::{
         fd::{AsFd, OwnedFd},
         unix::net::UnixStream,
     },
-    time::Duration,
     sync::Arc,
+    time::Duration,
 };
 
 fn connect(id: &str) -> ControlFrame {
@@ -280,7 +280,9 @@ pub(crate) fn late_rights_cannot_hide_behind_plain_header_prefix(process: &Arc<R
     assert_closed(witness);
 }
 
-pub(crate) fn malformed_oversized_and_partial_frames_drop_owned_rights(process: &Arc<ReceiveProcess>) {
+pub(crate) fn malformed_oversized_and_partial_frames_drop_owned_rights(
+    process: &Arc<ReceiveProcess>,
+) {
     let cases=[vec![0,0],vec![0,0,0,10,b'{',b'}'],packet(b"{}"),packet(br#"{"operation":"connected","v":1,"connection_id":"connection-1","url":"https://invalid"}"#),u32::try_from(MAX_FRAME_BYTES+1).unwrap().to_be_bytes().to_vec(),vec![0,0,0,0]];
     for bytes in cases {
         let (mut parent, raw) = pending_parent(process);
@@ -293,7 +295,9 @@ pub(crate) fn malformed_oversized_and_partial_frames_drop_owned_rights(process: 
     }
 }
 
-pub(crate) fn peer_eof_and_explicit_close_are_terminal_without_retry(process: &Arc<ReceiveProcess>) {
+pub(crate) fn peer_eof_and_explicit_close_are_terminal_without_retry(
+    process: &Arc<ReceiveProcess>,
+) {
     let (mut parent, raw) = pending_parent(process);
     drop(raw);
     assert_eq!(parent.receive().unwrap_err(), ControlError::PeerClosed);
@@ -403,7 +407,9 @@ pub(crate) fn terminal_endpoint_discards_queued_extra_frame_and_descriptor(
     assert_eq!(parent.receive().unwrap_err(), ControlError::Closed);
 }
 
-pub(crate) fn failed_send_consumes_fd_and_does_not_retry_after_peer_loss(process: &Arc<ReceiveProcess>) {
+pub(crate) fn failed_send_consumes_fd_and_does_not_retry_after_peer_loss(
+    process: &Arc<ReceiveProcess>,
+) {
     let (mut parent, mut peer) = endpoints(process);
     parent.send(connect("id"), None).unwrap();
     peer.receive().unwrap();
@@ -420,7 +426,9 @@ pub(crate) fn failed_send_consumes_fd_and_does_not_retry_after_peer_loss(process
     assert_closed(witness);
 }
 
-pub(crate) fn local_invalid_shape_or_version_also_consumes_supplied_fd(process: &Arc<ReceiveProcess>) {
+pub(crate) fn local_invalid_shape_or_version_also_consumes_supplied_fd(
+    process: &Arc<ReceiveProcess>,
+) {
     let (mut parent, _) = endpoints(process);
     let (fd, witness) = descriptor_pair();
     assert_eq!(
@@ -445,7 +453,9 @@ pub(crate) fn local_invalid_shape_or_version_also_consumes_supplied_fd(process: 
     assert!(ControlEndpoint::new(a, Side::Parent, Duration::ZERO, process.clone()).is_err());
 }
 
-pub(crate) fn connected_message_cannot_transfer_a_nonstream_descriptor(process: &Arc<ReceiveProcess>) {
+pub(crate) fn connected_message_cannot_transfer_a_nonstream_descriptor(
+    process: &Arc<ReceiveProcess>,
+) {
     let (mut parent, raw) = pending_parent(process);
     let (a, _) = std::os::unix::net::UnixDatagram::pair().unwrap();
     inject(
