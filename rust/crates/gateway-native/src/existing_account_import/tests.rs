@@ -336,7 +336,8 @@ fn controlled_async_writer_child() {
     let home = PathBuf::from(std::env::var_os("UOS_NATIVE_OWNER_TEST_DIRECTORY").unwrap());
     assert!(home.starts_with("/private/tmp/ai-rust-wasm-20261018"));
     fs::write(home.join("writer-ready"), b"process-denial-observed").unwrap();
-    for count in 0u64.. {
+    // Bounded fixture lifetime (50s at5ms); the parent must actually stop/reap it well before this bound.
+    for count in 0u64..10_000 {
         fs::write(
             home.join("async-native-write"),
             format!("synthetic-write-{count}"),
