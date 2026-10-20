@@ -25,8 +25,8 @@ pub(super) struct PreparedExistingImport<'a> {
 /// Genuine native durability, a fresh matching authoritative terminal and the
 /// SAME live stopped peer's release exchange. No DATA/Boolean constructor.
 pub(super) struct VerifiedImportPublication<'a> {
-    prepared: PreparedExistingImport<'a>,
-    terminal: AuthenticatedImportTerminal,
+    pub(super) prepared: PreparedExistingImport<'a>,
+    pub(super) terminal: AuthenticatedImportTerminal,
     reply: Option<AuthenticatedImportPublicationReply>,
 }
 impl VerifiedImportPublication<'_> {

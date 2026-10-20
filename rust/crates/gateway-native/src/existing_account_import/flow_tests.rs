@@ -9,6 +9,42 @@ use gateway_core::{identity::{RequestContext, RequestId, PrincipalId, PoolVersio
 use gateway_publication::{ConfiguredPaidInputs, PreparedConfigurationPublication, transport::{PublicationReceiver, PublicationRequest, OwnedNativeAuthHeaders}};
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
 use std::{collections::{BTreeMap, BTreeSet}, fs, io::{Read, Write}, net::{TcpListener, TcpStream}, os::unix::{fs::{OpenOptionsExt, PermissionsExt}, process::CommandExt}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, sync::{Arc, Mutex, atomic::{AtomicBool, AtomicUsize, Ordering}}, thread, time::{Duration, Instant}};
+
+struct FlowTokens;
+impl gateway_authority::TokenSource for FlowTokens {
+    fn next_token(&self) -> Result<String, gateway_core::GatewayError> {
+        static NEXT: AtomicUsize = AtomicUsize::new(1);
+        Ok(format!("native-flow-token-{}", NEXT.fetch_add(1, Ordering::SeqCst)))
+    }
+}
+fn authority(store: &base::Store) -> Authority<base::Store, FlowTokens> {
+    Authority::with_clock(store.clone(), FlowTokens, store.clone())
+}
+impl gateway_core::query::QueryStore for base::Store {
+    async fn query(&self, request: gateway_core::query::QueryRequest) -> Result<gateway_core::query::QueryPage, gateway_core::GatewayError> {
+        use gateway_core::{query::{QueryEntry, QueryPage}, state::RecordKey, tuple_key::TupleKey};
+        let checked = request.validate()?;
+        let rows = self.rows.lock().unwrap();
+        let mut matching = Vec::new();
+        for (key, record) in rows.iter() {
+            let key = RecordKey(key.clone());
+            if checked.accepts_record(&key, record)? {
+                matching.push((TupleKey::from_record_key(&key)?.sort_bytes().to_vec(), QueryEntry { key, record: record.clone() }));
+            }
+        }
+        matching.sort_by(|a, b| a.0.cmp(&b.0));
+        if checked.reverse { matching.reverse(); }
+        let more = matching.len() > checked.limit as usize;
+        matching.truncate(checked.limit as usize);
+        let entries = matching.into_iter().map(|(_, entry)| entry).collect::<Vec<_>>();
+        let next_cursor = if more { entries.last().map(|entry| checked.cursor_after(&entry.key)).transpose()? } else { None };
+        Ok(QueryPage { entries, next_cursor })
+    }
+}
+const MODELS: &[u8] = br#"{"models":[{"slug":"synthetic-model","display_name":"Synthetic","supported_reasoning_levels":[{"effort":"none","description":"None"}]}]}"#;
+fn key(parts: &[&str]) -> gateway_core::state::RecordKey {
+    gateway_core::tuple_key::TupleKey::from_scalar_parts(&parts.iter().map(|part| gateway_core::tuple_key::ScalarKeyPart::String(part)).collect::<Vec<_>>()).to_record_key()
+}
 const OLD: &[u8] = br#"{"tokens":{"access_token":"SYNTHETIC_OLD_ACCESS","refresh_token":"SYNTHETIC_OLD_REFRESH","account_id":"synthetic-account"},"OPENAI_API_KEY":"SYNTHETIC_INDEPENDENT","unrelated":"\ud800"}"#;
 const NEW: &[u8] = br#"{"auth":{"tokens":{"access_token":"SYNTHETIC_NEW_ACCESS","refresh_token":"SYNTHETIC_NEW_REFRESH","account_id":"synthetic-account"}},"client_version":"0.163.0"}"#;
 fn now() -> i64 { crate::http_server::now_ms().unwrap() }
@@ -36,7 +72,7 @@ fn admin_actor(store:&base::Store)->actor::NativeRenewalActor {
     let session=PasskeySession{token:token.into(),user_id:"flow-user".into(),created_at_ms:1,expires_at_ms:now()+600_000,audience_origin:None};
     store.seed(passkeys::key("sessions",token),"session-before",&session);
     store.rows.lock().unwrap().insert(session_index::index_key(&session_index::digest(token)).unwrap().0,session_index::record_for_session(&session,"session-before",None).unwrap());
-    let authority=base::authority(store); let config=base::config();
+    let authority=authority(store); let config=base::config();
     let request=AuthRequest{method:"POST".into(),url:"https://ai.ubq.fi/v1/responses".into(),headers:BTreeMap::from([("authorization".into(),format!("Bearer {token}"))]),..Default::default()};
     let context=RequestContext{request_id:RequestId("native-flow-original-request".into()),principal:PrincipalId("passkey-user:flow-user".into()),key_id:None,route:"responses".into(),started_at_ms:now()};
     futures_executor::block_on(actor::authenticate_admin_actor(&authority,&base::Host,&config,&request,&context)).unwrap()
@@ -63,7 +99,7 @@ impl Servers {
 impl Drop for Servers { fn drop(&mut self){self.stop.store(true,Ordering::Release);for join in self.joins.drain(..){join.join().unwrap();}} }
 fn tls(socket:TcpStream)->StreamOwned<ServerConnection,TcpStream>{socket.set_read_timeout(Some(Duration::from_secs(55))).unwrap();socket.set_write_timeout(Some(Duration::from_secs(5))).unwrap();let cert=include_bytes!("../../tests/fixtures/import-tls/leaf.der");let key=include_bytes!("../../tests/fixtures/import-tls/leaf.pk8.der");let config=ServerConfig::builder().with_no_client_auth().with_single_cert(vec![CertificateDer::from(cert.to_vec())],PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec()))).unwrap();StreamOwned::new(ServerConnection::new(Arc::new(config)).unwrap(),socket)}
 fn read_request(tls:&mut StreamOwned<ServerConnection,TcpStream>)->Option<(String,BTreeMap<String,String>,Vec<u8>)>{
-    let mut bytes=Vec::new();loop{if let Some(end)=bytes.windows(4).position(|p|p==b"\r\n\r\n"){let text=std::str::from_utf8(&bytes[..end]).ok()?;let mut lines=text.split("\r\n");let path=lines.next()?.split_whitespace().nth(1)?.to_owned();let headers:BTreeMap<String,String>=lines.map(|line|line.split_once(':')).collect::<Option<Vec<_>>>()?.into_iter().map(|(k,v)|(k.to_ascii_lowercase(),v.trim().to_owned())).collect();let len:usize=headers.get("content-length").map(|v|v.parse().ok()).unwrap_or(Some(0))?;if len>gateway_publication::import_publication_max_bytes().max(gateway_auth::native_import::authority::import_authority_request_max_bytes()){return None;}if bytes.len()>=end+4+len{return Some((path,headers,bytes[end+4..end+4+len].to_vec()));}}
+    let mut bytes=Vec::new();loop{if let Some(end)=bytes.windows(4).position(|p|p==b"\r\n\r\n"){let text=std::str::from_utf8(&bytes[..end]).ok()?;let mut lines=text.split("\r\n");let path=lines.next()?.split_whitespace().nth(1)?.to_owned();let headers:BTreeMap<String,String>=lines.map(|line|line.split_once(':')).collect::<Option<Vec<_>>>()?.into_iter().map(|(k,v)|(k.to_ascii_lowercase(),v.trim().to_owned())).collect();let len:usize=headers.get("content-length").map(|v|v.parse().ok()).unwrap_or(Some(0))?;if len>gateway_publication::import_publication_max_bytes().max(gateway_auth::native::NATIVE_MAX_BODY_BYTES){return None;}if bytes.len()>=end+4+len{return Some((path,headers,bytes[end+4..end+4+len].to_vec()));}}
         let mut part=[0u8;8192];let n=tls.read(&mut part).ok()?;if n==0{return None;}bytes.extend_from_slice(&part[..n]);
     }
 }
@@ -72,7 +108,7 @@ fn serve_tls(socket:TcpStream,role:u8,store:base::Store,home:&Path,traffic:Arc<T
     while let Some((path,headers,body))=read_request(&mut stream){
         let (status,mut response,response_headers)=if role==0{
             traffic.authority.lock().unwrap().push(body.clone());
-            let identity=id();let authority=base::authority(&store);let config=base::config();let owner=RegisteredRenewalOwner::configured("native-owner".into(),home.to_str().unwrap().into()).unwrap();let cancel=base::Cancel;let control=NativeRenewalAuthority::configured(&authority,&identity,&owner,&config,&cancel);
+            let identity=id();let authority=authority(&store);let config=base::config();let owner=RegisteredRenewalOwner::configured("native-owner".into(),home.to_str().unwrap().into()).unwrap();let cancel=base::Cancel;let control=NativeRenewalAuthority::configured(&authority,&identity,&owner,&config,&cancel);
             let owned=OwnedNativeAuthHeaders::from_pairs(headers.clone()).unwrap();
             if path==NATIVE_PUBLICATION_PATH{
                 let receiver=PublicationReceiver::configured(id(),inputs(),Vec::new(),now).unwrap();
@@ -81,12 +117,12 @@ fn serve_tls(socket:TcpStream,role:u8,store:base::Store,home:&Path,traffic:Arc<T
                 (reply.status,reply.raw_body,reply.headers)
             }else{
                 let result=futures_executor::block_on(async{let peer=control.authenticate_import_authority(owned.borrowed(),&body).await?;
-                    if gateway_auth::native_import::authority::ImportAuthorityRequestData::parse(&body).is_ok(){control.handle_import_authority(&peer,&body).await}else{control.handle_import_started(&peer,&body).await}});
+                    if gateway_auth::native_import::catalog_seed::ImportCatalogSeedRequestData::parse(&body).is_ok(){control.handle_import_catalog_seed(&peer,&body).await}else if gateway_auth::native_import::authority::ImportAuthorityRequestData::parse(&body).is_ok(){control.handle_import_authority(&peer,&body).await}else{control.handle_import_started(&peer,&body).await}});
                 let (status,reply)=match result{Ok(reply)=>(200,reply),Err(error)=>(error.status,serde_json::to_vec(&error.envelope).unwrap())};
                 let nonce=headers.get(NATIVE_NONCE_HEADER).unwrap();let signature=identity.sign_authority_response(nonce,&body,status,&reply).unwrap();
                 (status,reply,vec![(NATIVE_RESPONSE_MAC_HEADER.into(),signature)])
             }
-        }else if role==1{traffic.models.fetch_add(1,Ordering::SeqCst);(200,br#"{"models":[{"slug":"synthetic-model","display_name":"Synthetic","supported_reasoning_levels":[{"effort":"none","description":"None"}]}]}"#.to_vec(),Vec::new())}
+        }else if role==1{traffic.models.fetch_add(1,Ordering::SeqCst);(200,MODELS.to_vec(),Vec::new())}
         else{traffic.oauth.fetch_add(1,Ordering::SeqCst);(200,br#"{"access_token":"SYNTHETIC_ROTATED_ACCESS","refresh_token":"SYNTHETIC_ROTATED_REFRESH"}"#.to_vec(),Vec::new())};
         let mut head=format!("HTTP/1.1 {status} Fixture\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: keep-alive\r\n",response.len());
         for(k,v)in response_headers{head.push_str(&format!("{k}: {v}\r\n"));}head.push_str("\r\n");if stream.write_all(head.as_bytes()).and_then(|_|stream.write_all(&response)).and_then(|_|stream.flush()).is_err(){return;}response.fill(0);
@@ -134,7 +170,7 @@ fn start_custodian(root:&CaseRoot,servers:&Servers,account:String)->(OwnedGroup,
     let group=child.id();(OwnedGroup{child:Some(child),group},address)
 }
 fn request(store:&base::Store,home:&Path,account:String,address:std::net::SocketAddr,body:&[u8])->(Vec<u8>,NativeImportMetadata) {
-    let authority=base::authority(store);let identity=id();let config=base::config();let cancel=base::Cancel;let owner=RegisteredRenewalOwner::configured("native-owner".into(),home.to_str().unwrap().into()).unwrap();let actor=admin_actor(store);
+    let authority=authority(store);let identity=id();let config=base::config();let cancel=base::Cancel;let owner=RegisteredRenewalOwner::configured("native-owner".into(),home.to_str().unwrap().into()).unwrap();let actor=admin_actor(store);
     let client=crate::import_client::NativeImportClient::configured(&authority,&identity,&owner,&config,&cancel,address).unwrap();
     let prepared=futures_executor::block_on(client.prepare(&actor,NativeImportTarget::ExistingAccount{account_id_hash:account})).unwrap();
     let packet=client.request(prepared,body,now(),&base64url(&[9;32])).unwrap();let metadata=packet.metadata().clone();
@@ -148,6 +184,26 @@ fn actual_existing_account_original_start_owned_child_custody_durability_and_pub
     let(response,_metadata)=request(&store,&root.0.join("home"),account,address,NEW);
     assert!(response.starts_with(b"HTTP/1.1 200 "),"real source success required, not a dummy200 or narrowed unavailable path: {}",String::from_utf8_lossy(&response));
     child.wait_clean();
+    let header_end=response.windows(4).position(|part|part==b"\r\n\r\n").unwrap()+4;
+    let headers=String::from_utf8_lossy(&response[..header_end]).to_ascii_lowercase();
+    assert!(headers.contains("x-uos-upstream: chatgpt_codex\r\n"));
+    let result:serde_json::Value=serde_json::from_slice(&response[header_end..]).unwrap();
+    assert_eq!(result.as_object().unwrap().len(),12,"source completion fields may not be silently omitted");
+    assert_eq!(result["stored"],true);assert_eq!(result["refreshed"],false);assert_eq!(result["account_id"],"synthetic-account");
+    assert_eq!(result["account_count"],1);assert_eq!(result["account_ids"],serde_json::json!(["synthetic-account"]));
+    assert!(result["access_token_expires_at_ms"].is_null());assert_eq!(result["upstream_status"],200);
+    assert_eq!(result["upstream_content_type"],"application/json; charset=utf-8");
+    assert_eq!(result["normalized_snapshot_updated"],true);assert_eq!(result["catalog_seeded"],true,"normal source success must actually seed its versioned cache");
+    assert_eq!(result["models"]["count"],1);assert_eq!(result["models"]["source"],"chatgpt_codex");assert_eq!(result["models"]["client_version"],"0.163.0");
+    let pool_record=futures_executor::block_on(store.read(&codex_source_pool_key())).unwrap().unwrap();
+    let pool=gateway_auth::provider_credentials::parse_codex_source_pool(pool_record.json_value().unwrap()).unwrap().unwrap();
+    assert_eq!(result["updated_at_ms"].as_f64(),Some(pool.accounts[0].updated_at_ms));
+    assert_eq!(pool.accounts[0].access_token.expose(),"SYNTHETIC_NEW_ACCESS");assert!(pool.accounts[0].refresh_token.expose().is_empty());
+    let generation=futures_executor::block_on(store.read(&key(&["ubq_ai","codex_catalog_auth_generation"]))).unwrap().unwrap();
+    let cache=futures_executor::block_on(store.read(&key(&["ubq_ai","codex_catalog","0.163.0"]))).unwrap().unwrap();
+    let cache=cache.json_value().unwrap();assert_eq!(cache["auth_generation"],generation.value);assert_eq!(cache["source_sha256"],sha256_hex(MODELS));
+    assert!(cache["chunk_count"].as_u64().unwrap()>0);assert!(cache["source_chunk_count"].as_u64().unwrap()>0);
+    assert_eq!(cache["content_type"],"application/json; charset=utf-8");
     let bytes=fs::read(root.0.join("home/auth.json")).unwrap();let document=SourceJson::parse_bytes(&bytes).unwrap();let next=super::import_documents::credentials(&document).unwrap();assert_eq!(next.access_token.expose(),"SYNTHETIC_NEW_ACCESS");assert_eq!(next.refresh_token.expose(),"SYNTHETIC_NEW_REFRESH");assert_eq!(super::import_documents::member(&document,"OPENAI_API_KEY").unwrap().unwrap().as_str(),r#""SYNTHETIC_INDEPENDENT""#);assert_eq!(super::import_documents::member(&document,"unrelated").unwrap().unwrap().as_str(),r#""\ud800""#);
     let witness=fs::read(root.0.join("home/async-native-write")).unwrap();thread::sleep(Duration::from_millis(25));assert_eq!(fs::read(root.0.join("home/async-native-write")).unwrap(),witness,"actual writer must have stopped/reaped before credential mutation");
     assert_eq!(servers.traffic.models.load(Ordering::SeqCst),1);assert_eq!(servers.traffic.oauth.load(Ordering::SeqCst),0);

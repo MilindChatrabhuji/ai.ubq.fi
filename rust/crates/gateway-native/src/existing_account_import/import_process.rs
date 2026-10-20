@@ -114,12 +114,9 @@ fn run_actor() -> Result<(), GatewayError> {
             super::import_publication::ImportPublicationHttp::from_connected(target.as_str(), connected.publication, publication_identity)?
         };
         let prepared = super::prepare_flow::PreparedExistingImport::prepare(&authority, &context, &store, custody, validation)?;
-        let _verified = prepared.publish(&authority, &sender, &store, &context)?;
-        // Explicit unfinished producer dependency, NOT source success or an
-        // HTTP200/enum substitute. The authenticated source completion projection
-        // must replace this refusal before full-flow acceptance or activation.
-        Err(GatewayError::unavailable("Authenticated source completion projection is not installed",
-            "native_import_completion_projection_unavailable"))
+        let verified = prepared.publish(&authority, &sender, &store, &context)?;
+        let result = verified.source_result(&authority, &context)?;
+        crate::import_ingress::write_result(&mut client, result)
     })();
     match result {
         Ok(()) => Ok(()),
