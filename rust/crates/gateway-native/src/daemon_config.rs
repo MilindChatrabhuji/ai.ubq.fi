@@ -132,16 +132,24 @@ pub struct PreparedNativeDaemonConfig {
     pub owner_renewal: Option<OwnerRenewalConfig>,
 }
 #[derive(Clone, Copy, Eq, PartialEq)]
-enum NativeDaemonRole { Ordinary, Import }
+enum NativeDaemonRole {
+    Ordinary,
+    Import,
+}
 impl NativeDaemonConfig {
     pub fn read_stdin(input: impl Read) -> Result<PreparedNativeDaemonConfig, GatewayError> {
         Self::read_for_role(input, NativeDaemonRole::Ordinary)
     }
     /// Fixed first-party import Child only. No wire flag or caller-selected capability.
-    pub(crate) fn read_import_stdin(input: impl Read) -> Result<PreparedNativeDaemonConfig, GatewayError> {
+    pub(crate) fn read_import_stdin(
+        input: impl Read,
+    ) -> Result<PreparedNativeDaemonConfig, GatewayError> {
         Self::read_for_role(input, NativeDaemonRole::Import)
     }
-    fn read_for_role(input: impl Read, role: NativeDaemonRole) -> Result<PreparedNativeDaemonConfig, GatewayError> {
+    fn read_for_role(
+        input: impl Read,
+        role: NativeDaemonRole,
+    ) -> Result<PreparedNativeDaemonConfig, GatewayError> {
         let mut bytes = Vec::new();
         input
             .take(65_537)
@@ -160,7 +168,9 @@ impl NativeDaemonConfig {
             if let Some(renewal) = &config.owner_renewal {
                 renewal.validate()?;
             }
-            if role == NativeDaemonRole::Import && config.owner_renewal.is_none() { return Err(invalid()); }
+            if role == NativeDaemonRole::Import && config.owner_renewal.is_none() {
+                return Err(invalid());
+            }
             let mut prepared = Self {
                 v: 1,
                 listen: config.listen,
@@ -176,8 +186,14 @@ impl NativeDaemonConfig {
             config.prepare(false, role)
         }
     }
-    fn prepare(self, owner_renewal: bool, role: NativeDaemonRole) -> Result<PreparedNativeDaemonConfig, GatewayError> {
-        if role == NativeDaemonRole::Import && !owner_renewal { return Err(invalid()); }
+    fn prepare(
+        self,
+        owner_renewal: bool,
+        role: NativeDaemonRole,
+    ) -> Result<PreparedNativeDaemonConfig, GatewayError> {
+        if role == NativeDaemonRole::Import && !owner_renewal {
+            return Err(invalid());
+        }
         if self.v != 1
             || !self.listen.ip().is_loopback()
             || !self.nonce_database.is_absolute()

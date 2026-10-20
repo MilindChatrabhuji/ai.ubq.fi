@@ -423,7 +423,11 @@ impl OwnedRuntime {
     }
     pub(super) fn custody_registry(&self) -> Result<(&str, &str, &Path), GatewayError> {
         self.require_owned_child()?;
-        Ok((&self.owner.native_owner_id, &self.owner.account_id_hash, &self.owner.home))
+        Ok((
+            &self.owner.native_owner_id,
+            &self.owner.account_id_hash,
+            &self.owner.home,
+        ))
     }
     pub(super) fn matches_custody_owner(&self, owner: &str, account: &str) -> bool {
         self.owner.native_owner_id == owner && self.owner.account_id_hash == account

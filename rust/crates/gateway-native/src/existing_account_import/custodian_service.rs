@@ -1,18 +1,22 @@
 //! Fixed actual Child service. No credentials, import document or raw fd enters it.
-use super::{
-    CustodianRuntime,
-    actor_channel::OwnedImportChildChannel,
-};
+use super::{CustodianRuntime, actor_channel::OwnedImportChildChannel};
 use crate::import_custody_protocol::unavailable;
 use gateway_auth::native_auth::NativeTransportIdentity;
 use gateway_authority::native_control::NativeRenewalCancellation;
 use gateway_core::GatewayError;
-use std::{net::TcpStream, sync::{Arc, Mutex}, time::{Duration, Instant}};
+use std::{
+    net::TcpStream,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 struct OwnedPeerCancellation(Arc<Mutex<OwnedImportChildChannel>>);
 impl NativeRenewalCancellation for OwnedPeerCancellation {
     fn cancelled(&self) -> bool {
-        self.0.lock().map(|mut peer| peer.check_live().is_err()).unwrap_or(true)
+        self.0
+            .lock()
+            .map(|mut peer| peer.check_live().is_err())
+            .unwrap_or(true)
     }
 }
 pub(super) fn serve(
@@ -22,10 +26,18 @@ pub(super) fn serve(
     authority_socket: TcpStream,
     identity: NativeTransportIdentity,
 ) -> Result<(), GatewayError> {
-    let deadline = peer.deadline().min(Instant::now() + Duration::from_secs(45));
+    let deadline = peer
+        .deadline()
+        .min(Instant::now() + Duration::from_secs(45));
     let peer = Arc::new(Mutex::new(peer));
     let cancellation = OwnedPeerCancellation(peer.clone());
-    let authority = super::import_endpoints::fixed_authority_client(authority_origin, authority_socket, identity, &cancellation, deadline)?;
+    let authority = super::import_endpoints::fixed_authority_client(
+        authority_origin,
+        authority_socket,
+        identity,
+        &cancellation,
+        deadline,
+    )?;
     loop {
         let command = peer.lock().map_err(|_| unavailable())?.receive()?;
         if command.is_quiesce() {

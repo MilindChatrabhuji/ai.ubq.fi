@@ -154,12 +154,22 @@ impl PrivateHttps {
         Self::connected_url(url, socket, roots)
     }
     /// Only the native import ModelsValidation operation may use this fixed GET/query target.
-    pub(crate) fn models_connected(socket: TcpStream, roots: ureq::tls::RootCerts, client_version: &str) -> Result<Self, GatewayError> {
-        let mut url = url::Url::parse("https://chatgpt.com/backend-api/codex/models").map_err(|_| unavailable())?;
-        url.query_pairs_mut().append_pair("client_version", client_version);
+    pub(crate) fn models_connected(
+        socket: TcpStream,
+        roots: ureq::tls::RootCerts,
+        client_version: &str,
+    ) -> Result<Self, GatewayError> {
+        let mut url = url::Url::parse("https://chatgpt.com/backend-api/codex/models")
+            .map_err(|_| unavailable())?;
+        url.query_pairs_mut()
+            .append_pair("client_version", client_version);
         Self::connected_url(url, socket, roots)
     }
-    fn connected_url(url: url::Url, socket: TcpStream, roots: ureq::tls::RootCerts) -> Result<Self, GatewayError> {
+    fn connected_url(
+        url: url::Url,
+        socket: TcpStream,
+        roots: ureq::tls::RootCerts,
+    ) -> Result<Self, GatewayError> {
         let uri: Uri = url.as_str().parse().map_err(|_| unavailable())?;
         let address = socket.peer_addr().map_err(|_| unavailable())?;
         let config = ureq::Agent::config_builder()
@@ -186,21 +196,57 @@ impl PrivateHttps {
         })
     }
     /// Fixed models GET only. This does not widen any old POST target or old response limit.
-    pub(crate) fn get_models(&self, headers: &[(String, String)], deadline: Instant) -> Result<PrivateResponse, GatewayError> {
+    pub(crate) fn get_models(
+        &self,
+        headers: &[(String, String)],
+        deadline: Instant,
+    ) -> Result<PrivateResponse, GatewayError> {
         let target = url::Url::parse(&self.target).map_err(|_| unavailable())?;
-        if target.host_str() != Some("chatgpt.com") || target.path() != "/backend-api/codex/models" { return Err(unavailable()); }
-        let remaining = deadline.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()).ok_or_else(unavailable)?;
-        let mut request = self.agent.get(&self.target).header("Accept", "application/json");
-        for (name, value) in headers { request = request.header(name, value); }
-        let mut response = request.config().timeout_global(Some(remaining)).build().call().map_err(|_| unknown())?;
+        if target.host_str() != Some("chatgpt.com") || target.path() != "/backend-api/codex/models"
+        {
+            return Err(unavailable());
+        }
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(unavailable)?;
+        let mut request = self
+            .agent
+            .get(&self.target)
+            .header("Accept", "application/json");
+        for (name, value) in headers {
+            request = request.header(name, value);
+        }
+        let mut response = request
+            .config()
+            .timeout_global(Some(remaining))
+            .build()
+            .call()
+            .map_err(|_| unknown())?;
         let status = response.status().as_u16();
-        let headers = response.headers().iter().map(|(name, value)| value.to_str()
-            .map(|value| (name.as_str().to_owned(), value.to_owned())).map_err(|_| unknown()))
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                value
+                    .to_str()
+                    .map(|value| (name.as_str().to_owned(), value.to_owned()))
+                    .map_err(|_| unknown())
+            })
             .collect::<Result<Vec<_>, _>>()?;
         // The original upload validation buffers response.text() without a new numeric raw-body cap.
         // The existing safe normalized snapshot ceiling is enforced by the shared catalog planner.
-        let body = response.body_mut().with_config().limit(u64::MAX).read_to_vec().map_err(|_| unknown())?;
-        Ok(PrivateResponse { status, headers, body })
+        let body = response
+            .body_mut()
+            .with_config()
+            .limit(u64::MAX)
+            .read_to_vec()
+            .map_err(|_| unknown())?;
+        Ok(PrivateResponse {
+            status,
+            headers,
+            body,
+        })
     }
     pub fn send(
         &self,
@@ -212,16 +258,33 @@ impl PrivateHttps {
         self.send_bounded(headers, body, deadline, max_response, max_response)
     }
     /// Only this fully decoded new operation obtains the versioned derived success cap.
-    pub(crate) fn send_import_publication(&self, headers: &[(String, String)], body: &[u8], deadline: Instant)
-        -> Result<PrivateResponse, GatewayError> {
+    pub(crate) fn send_import_publication(
+        &self,
+        headers: &[(String, String)],
+        body: &[u8],
+        deadline: Instant,
+    ) -> Result<PrivateResponse, GatewayError> {
         let target = url::Url::parse(&self.target).map_err(|_| unavailable())?;
-        if target.path() != gateway_auth::native::NATIVE_PUBLICATION_PATH { return Err(unavailable()); }
+        if target.path() != gateway_auth::native::NATIVE_PUBLICATION_PATH {
+            return Err(unavailable());
+        }
         gateway_publication::ImportPublicationCommandData::parse(body)?;
-        self.send_bounded(headers, body, deadline,
-            gateway_auth::native_import::publication::import_publication_reply_max_bytes(), 65_536)
+        self.send_bounded(
+            headers,
+            body,
+            deadline,
+            gateway_auth::native_import::publication::import_publication_reply_max_bytes(),
+            65_536,
+        )
     }
-    fn send_bounded(&self, headers: &[(String, String)], body: &[u8], deadline: Instant,
-        max_success: usize, max_error: usize) -> Result<PrivateResponse, GatewayError> {
+    fn send_bounded(
+        &self,
+        headers: &[(String, String)],
+        body: &[u8],
+        deadline: Instant,
+        max_success: usize,
+        max_error: usize,
+    ) -> Result<PrivateResponse, GatewayError> {
         let remaining = deadline
             .checked_duration_since(Instant::now())
             .filter(|duration| !duration.is_zero())
@@ -254,7 +317,11 @@ impl PrivateHttps {
         let body = response
             .body_mut()
             .with_config()
-            .limit(if status == 200 { max_success } else { max_error } as u64)
+            .limit(if status == 200 {
+                max_success
+            } else {
+                max_error
+            } as u64)
             .read_to_vec()
             .map_err(|_| unknown())?;
         Ok(PrivateResponse {

@@ -60,13 +60,25 @@ pub struct NativeImportContext<'a> {
     auth: NativeAuthImportData<'a>,
 }
 impl<'a> NativeImportContext<'a> {
-    pub(crate) fn original_proof(&self) -> &'a AuthenticatedNativeImport { self.proof }
-    pub(crate) fn original_body(&self) -> &[u8] { self.auth.body.raw_body() }
+    pub(crate) fn original_proof(&self) -> &'a AuthenticatedNativeImport {
+        self.proof
+    }
+    pub(crate) fn original_body(&self) -> &[u8] {
+        self.auth.body.raw_body()
+    }
     pub(crate) fn deadline(&self) -> std::time::Instant {
         let now = std::time::Instant::now();
-        let remaining = self.original.now_ms().ok().and_then(|ms| self.proof.deadline_ms().checked_sub(ms))
-            .and_then(|ms| u64::try_from(ms).ok()).map(std::time::Duration::from_millis).unwrap_or_default();
-        self.original.deadline().min(now.checked_add(remaining).unwrap_or(now))
+        let remaining = self
+            .original
+            .now_ms()
+            .ok()
+            .and_then(|ms| self.proof.deadline_ms().checked_sub(ms))
+            .and_then(|ms| u64::try_from(ms).ok())
+            .map(std::time::Duration::from_millis)
+            .unwrap_or_default();
+        self.original
+            .deadline()
+            .min(now.checked_add(remaining).unwrap_or(now))
     }
     pub(crate) fn now_ms(&self) -> Result<i64, GatewayError> {
         self.original.now_ms()
@@ -167,7 +179,11 @@ pub(crate) fn decode_context<'a>(
     let auth = NativeAuthImportData {
         body: import_body::decode_auth(body, None).map_err(|_| auth_body_error())?,
     };
-    let context = NativeImportContext { original, proof, auth };
+    let context = NativeImportContext {
+        original,
+        proof,
+        auth,
+    };
     context.check_document(proof, metadata, body)?;
     Ok(context)
 }

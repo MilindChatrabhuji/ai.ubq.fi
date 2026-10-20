@@ -74,14 +74,34 @@ mod tests {
         let old = SourceJson::parse(r#"{"OPENAI_API_KEY":"SYNTHETIC_INDEPENDENT","other":"\ud800","\udfff":{"nested":[1,"\udc00"]},"tokens":{"account_id":"fixture","access_token":"old","refresh_token":"old-refresh"}}"#).unwrap();
         let new = SourceJson::parse(r#"{"tokens":{"account_id":"fixture","access_token":"new","refresh_token":"new-refresh","ignored":"\ud800"},"last_refresh":"2000-01-01T00:00:00Z","OPENAI_API_KEY":"MUST_NOT_REPLACE"}"#).unwrap();
         let merged = merge(&old, &new).unwrap();
-        for name in ["OPENAI_API_KEY", "other"] { assert_eq!(member(&merged, name).unwrap(), member(&old, name).unwrap()); }
+        for name in ["OPENAI_API_KEY", "other"] {
+            assert_eq!(member(&merged, name).unwrap(), member(&old, name).unwrap());
+        }
         let surrogate = JsString16::from_units(vec![0xdfff]);
-        assert_eq!(merged.object_entries().unwrap().into_iter().find(|(k, _)| *k == surrogate),
-            old.object_entries().unwrap().into_iter().find(|(k, _)| *k == surrogate));
+        assert_eq!(
+            merged
+                .object_entries()
+                .unwrap()
+                .into_iter()
+                .find(|(k, _)| *k == surrogate),
+            old.object_entries()
+                .unwrap()
+                .into_iter()
+                .find(|(k, _)| *k == surrogate)
+        );
         let credentials = credentials(&merged).unwrap();
         assert_eq!(credentials.access_token.expose(), "new");
         assert_eq!(credentials.refresh_token.expose(), "new-refresh");
-        assert_eq!(credentials.native_refreshed_at.as_deref(), Some("2000-01-01T00:00:00Z"));
-        assert_eq!(member(&member(&merged, "tokens").unwrap().unwrap(), "ignored").unwrap().unwrap().as_str(), r#""\ud800""#);
+        assert_eq!(
+            credentials.native_refreshed_at.as_deref(),
+            Some("2000-01-01T00:00:00Z")
+        );
+        assert_eq!(
+            member(&member(&merged, "tokens").unwrap().unwrap(), "ignored")
+                .unwrap()
+                .unwrap()
+                .as_str(),
+            r#""\ud800""#
+        );
     }
 }

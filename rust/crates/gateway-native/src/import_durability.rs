@@ -34,7 +34,9 @@ pub struct DurableNativeImport {
     credentials: NativeCredentials,
 }
 impl DurableNativeImport {
-    pub(super) fn credentials(&self) -> &NativeCredentials { &self.credentials }
+    pub(super) fn credentials(&self) -> &NativeCredentials {
+        &self.credentials
+    }
     pub(super) fn binding(&self) -> &NativeImportBinding {
         &self.binding
     }
@@ -355,7 +357,9 @@ pub(super) fn persist_live(
 ) -> Result<DurableNativeImport, GatewayError> {
     use rustix::fs::{AtFlags, fsync, renameat, unlinkat};
     use std::io::Write;
-    if !std::ptr::eq(candidate.original, proof) || !std::ptr::eq(context.original_proof(), proof) { return Err(unavailable()); }
+    if !std::ptr::eq(candidate.original, proof) || !std::ptr::eq(context.original_proof(), proof) {
+        return Err(unavailable());
+    }
     let binding = custody.binding().clone();
     custody.check_live(store, proof, original_body, context)?;
     let previous_bytes = read_fixed(&store.directory, "auth.json", AUTH_LIMIT)?;
@@ -472,8 +476,11 @@ pub(super) fn persist_live(
 /// A possible rotated credential is retained privately before the subsequent models request.
 /// This journal issues no receipt, publication, fresh start or retry permission.
 pub(super) fn retain_rotated(
-    store: &ExistingAccountImportStore, custody: &mut super::LiveImportCustody<'_>,
-    proof: &AuthenticatedNativeImport, original_body: &[u8], context: &crate::native_import::NativeImportContext<'_>,
+    store: &ExistingAccountImportStore,
+    custody: &mut super::LiveImportCustody<'_>,
+    proof: &AuthenticatedNativeImport,
+    original_body: &[u8],
+    context: &crate::native_import::NativeImportContext<'_>,
     rotated: &gateway_core::source_json::SourceJson,
 ) -> Result<(), GatewayError> {
     use std::io::Write;
@@ -482,14 +489,26 @@ pub(super) fn retain_rotated(
     store.require_binding(binding)?;
     let current = credentials(&read_fixed(&store.directory, "auth.json", AUTH_LIMIT)?)?;
     let next = super::import_documents::credentials(rotated)?;
-    if current.routing_account_hash() != binding.account_id_hash || current.generation_hash() != binding.source_native_generation
-        || next.account_id != current.account_id || next.external_user_id.is_some() { return Err(unavailable()); }
+    if current.routing_account_hash() != binding.account_id_hash
+        || current.generation_hash() != binding.source_native_generation
+        || next.account_id != current.account_id
+        || next.external_user_id.is_some()
+    {
+        return Err(unavailable());
+    }
     let name = format!(".uos-import-{}.rotated", binding.action_ref);
-    let mut file = File::from(openat(&store.directory, &name,
-        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::RUSR | Mode::WUSR).map_err(|_| unavailable())?);
+    let mut file = File::from(
+        openat(
+            &store.directory,
+            &name,
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::RUSR | Mode::WUSR,
+        )
+        .map_err(|_| unavailable())?,
+    );
     custody.check_live(store, proof, original_body, context)?;
-    file.write_all(rotated.as_bytes()).map_err(|_| unavailable())?;
+    file.write_all(rotated.as_bytes())
+        .map_err(|_| unavailable())?;
     custody.check_live(store, proof, original_body, context)?;
     file.sync_all().map_err(|_| unavailable())?;
     custody.check_live(store, proof, original_body, context)?;
