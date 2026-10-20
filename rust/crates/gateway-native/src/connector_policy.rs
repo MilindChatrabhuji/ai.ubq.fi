@@ -175,8 +175,9 @@ pub(crate) fn import_actor(
         .replace('*', "\\*")
         .replace('?', "\\?")
         .replace('|', "\\|");
+    let hash_pattern = "[0-9a-f]".repeat(64);
     let pattern =
-        format!("^{escaped}/\\.uos-import-[0-9a-f]{{64}}\\.(tmp|previous|rotated|receipt|receipt\\.tmp)$");
+        format!("^{escaped}/\\.uos-import-{hash_pattern}\\.(tmp|previous|rotated|receipt|receipt\\.tmp)$");
     // SBPL #"..." is a raw regex reader, unlike an ordinary JSON string.
     // Match the installed bsd.sb single-backslash regex spelling; only the
     // quote delimiter is escaped here. The regex language itself is unchanged.
@@ -236,27 +237,20 @@ mod import_profile_diagnostic {
     #[test]
     #[ignore = "one fixed source-generated matcher diagnostic, not normal acceptance"]
     fn source_generated_import_temp_rule_matcher() {
-        let output = std::path::Path::new("/private/tmp/ai-rust-wasm-20261018/native-safety-0403/profile-temp-matcher-literal-v1");
+        let output = std::path::Path::new("/private/tmp/ai-rust-wasm-20261018/native-safety-0403/profile-temp-matcher-unrolled-v1");
         fs::create_dir(output).unwrap();fs::set_permissions(output,fs::Permissions::from_mode(0o700)).unwrap();
         let root=fs::canonicalize(output).unwrap();let replay=root.join("replay");fs::create_dir(&replay).unwrap();
         let address=|port|SocketAddr::from((std::net::Ipv4Addr::LOCALHOST,port));
-        let base_profile=import_actor(std::path::Path::new("/usr/bin/touch"),&root,&replay,address(31001),address(31002),address(31003),address(31004),&[address(31005),address(31006),address(31007)]).unwrap();
+        let profile=import_actor(std::path::Path::new("/usr/bin/touch"),&root,&replay,address(31001),address(31002),address(31003),address(31004),&[address(31005),address(31006),address(31007)]).unwrap();
         let save=|name:&str,bytes:&[u8]|{let mut f=fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(root.join(name)).unwrap();f.write_all(bytes).unwrap();};
-        let positive=root.join(format!(".uos-import-{}.tmp","f".repeat(64)));
-        let begin=base_profile.find("(regex #").unwrap();
-        let end=begin+base_profile[begin..].find("\")").unwrap()+2;
-        let literal=format!("(literal {})",serde_json::to_string(positive.to_str().unwrap()).unwrap());
-        let mut profile=base_profile.clone();profile.replace_range(begin..end,&literal);
-        save("base-profile.sb",base_profile.as_bytes());save("candidate-profile.sb",profile.as_bytes());
-        save("filter-diff.json",&serde_json::to_vec(&serde_json::json!({"old_filter":&base_profile[begin..end],"new_filter":literal,"only_this_range_changed":true})).unwrap());
-        let mut rows=Vec::new();
-        for (kind,suffix) in [("positive","tmp"),("negative","tmpx")] {
-            let target=root.join(format!(".uos-import-{}.{}","f".repeat(64),suffix));assert!(!target.exists());
+        save("source-generated-profile.sb",profile.as_bytes());let mut rows=Vec::new();
+        for (kind,suffix,length) in [("positive","tmp",64),("negative","tmpx",64),("hash63","tmp",63),("hash65","tmp",65)] {
+            let target=root.join(format!(".uos-import-{}.{}","f".repeat(length),suffix));assert!(!target.exists());
             let result=Command::new("/usr/bin/sandbox-exec").args(["-p",&profile,"/usr/bin/touch"]).arg(&target).output().unwrap();
             save(&format!("{kind}.stderr"),&result.stderr[..result.stderr.len().min(8192)]);
             rows.push(serde_json::json!({"kind":kind,"exit":result.status.code(),"success":result.status.success(),"target_exists":target.exists(),"stderr_bytes":result.stderr.len()}));
         }
-        save("result.json",&serde_json::to_vec(&serde_json::json!({"source_generated_not_retained_launch":true,"diagnostic_only_not_custody":true,"counterfactual_exact_literal_only":true,"shipping_policy_changed":false,"targets":rows})).unwrap());
+        save("result.json",&serde_json::to_vec(&serde_json::json!({"source_generated_not_retained_launch":true,"diagnostic_only_not_custody":true,"equivalent_hash_atoms":64,"length_controls":[63,65],"targets":rows})).unwrap());
         eprintln!("MATCHER_DIAGNOSTIC fixed_positive_and_negative_complete");
     }
 
