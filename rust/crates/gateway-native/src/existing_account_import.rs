@@ -10,8 +10,18 @@ use gateway_authority::{
 };
 use gateway_core::{GatewayError, state::AuthorityStore};
 use std::{fs::File, path::Path};
+mod acl_inspector;
 #[path = "import_durability.rs"]
 mod durability;
+mod exclusive_owner;
+mod owner_runtime;
+pub use exclusive_owner::ExclusiveManagedOwner;
+pub use owner_runtime::{ExclusiveOwnerLease, OwnedRuntime};
+/// Fixed helper-only entry; it accepts no path, command, environment or arbitrary descriptor selector.
+pub fn owner_inspector_entry() -> Result<(), GatewayError> {
+    acl_inspector::entry()
+}
+
 pub use durability::DurableNativeImport;
 
 /// Explicit registry construction, never an uploaded home or environment default.
@@ -39,6 +49,26 @@ impl ExistingAccountImportStore {
             native_owner_id,
             account_id_hash,
         })
+    }
+    /// Verify trusted bootstrap DATA against actual kernel custody; this does not grant mutation.
+    pub fn prepare_exclusive_owner(
+        &self,
+        registered: &gateway_authority::native_control::RegisteredRenewalOwner,
+        writer_uid: u32,
+        native_client_uids: &[u32],
+        inspector: &Path,
+        inspector_sha256: &str,
+        deadline: std::time::Instant,
+    ) -> Result<ExclusiveManagedOwner, GatewayError> {
+        exclusive_owner::ExclusiveManagedOwner::prepare(
+            self,
+            registered,
+            writer_uid,
+            native_client_uids,
+            inspector,
+            inspector_sha256,
+            deadline,
+        )
     }
     /// CF's generation marker does not exclude the independent native daemon.
     /// No advisory lock or caller assertion is accepted as that missing ownership proof.
@@ -122,3 +152,7 @@ fn unavailable() -> GatewayError {
         "native_import_durability_unavailable",
     )
 }
+
+#[cfg(test)]
+#[path = "existing_account_import/tests.rs"]
+mod foundation_tests;
