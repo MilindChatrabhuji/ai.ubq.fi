@@ -79,14 +79,30 @@ impl ConfiguredPaidInputs {
         }
     }
     fn fingerprint(&self, runtime: Option<&StoredRecord>) -> Result<String, GatewayError> {
-        let source = runtime.map(StoredRecord::json_value).transpose()?;
-        let value = json!({"v":PAID_CONTROL_CONFIG_VERSION,"immutable":self.immutable_configuration,"runtime":source,"surplus_binding":self.binding(PaidProvider::Surplus),"openlux_discovery_binding":self.discovery_binding(PaidProvider::Metered),"openlux_binding":self.binding(PaidProvider::Metered)});
-        Ok(sha256_hex(&serde_json::to_vec(&value).map_err(|_| {
-            unavailable(
-                "Configuration encoding failed",
-                "paid_control_configuration_invalid",
-            )
-        })?))
+        // Preserve the exact existing JSON envelope, field ordering and SHA.
+        // Only the runtime leaf uses the existing lossless control-record codec.
+        #[derive(serde::Serialize)]
+        struct Fingerprint<'a> {
+            v: u32,
+            immutable: &'a Value,
+            runtime: Option<gateway_core::source_json::SourceJson>,
+            surplus_binding: Option<String>,
+            openlux_discovery_binding: Option<String>,
+            openlux_binding: Option<String>,
+        }
+        let source = runtime
+            .map(gateway_core::source_control::decode_source_control_record)
+            .transpose()?;
+        let value = Fingerprint {
+            v: PAID_CONTROL_CONFIG_VERSION,
+            immutable: &self.immutable_configuration,
+            runtime: source,
+            surplus_binding: self.binding(PaidProvider::Surplus),
+            openlux_discovery_binding: self.discovery_binding(PaidProvider::Metered),
+            openlux_binding: self.binding(PaidProvider::Metered),
+        };
+        let encoded = gateway_core::source_json::SourceJson::from_serializable(&value)?;
+        Ok(sha256_hex(encoded.as_str().as_bytes()))
     }
 
     /// Derive only configuration DATA from trusted current/planned records. The
@@ -297,7 +313,7 @@ impl PreparedConfigurationPublication {
         let runtime_key = runtime_config_key();
         let runtime_row = store.read(&runtime_key).await?;
         if let Some(row) = &runtime_row {
-            row.json_value()?;
+            gateway_core::source_control::decode_source_control_record(row)?;
         }
         let runtime_check = store::check(&runtime_key, runtime_row.as_ref());
         let config = inputs.candidate_configuration(
@@ -430,24 +446,65 @@ mod candidate_tests {
 
     #[test]
     fn profile_v2_runtime_uses_existing_lossless_fingerprint_envelope() {
-        use gateway_core::{source_control::{encode_source_control_record, decode_source_control_record}, source_json::SourceJson, source_serialization as source};
-        let identity = identity(); let owner = owner(&identity); let inputs = inputs();
+        use gateway_core::{
+            source_control::{decode_source_control_record, encode_source_control_record},
+            source_json::SourceJson,
+            source_serialization as source,
+        };
+        let identity = identity();
+        let owner = owner(&identity);
+        let inputs = inputs();
         let raw = SourceJson::parse(r#"{"model":"\ud800","reasoning":"none"}"#).unwrap();
         let runtime = encode_source_control_record("planned-runtime", &raw, None).unwrap();
-        assert_eq!(runtime.value_encoding, gateway_core::value::ValueEncoding::ProfileV2);
+        assert_eq!(
+            runtime.value_encoding,
+            gateway_core::value::ValueEncoding::ProfileV2
+        );
         let expected = source::object_keys(vec![
-            ("v".into(), SourceJson::from_serializable(&PAID_CONTROL_CONFIG_VERSION).unwrap()),
-            ("immutable".into(), SourceJson::from_serializable(&inputs.immutable_configuration).unwrap()),
-            ("runtime".into(), decode_source_control_record(&runtime).unwrap()),
-            ("surplus_binding".into(), SourceJson::from_serializable(&inputs.binding(PaidProvider::Surplus)).unwrap()),
-            ("openlux_discovery_binding".into(), SourceJson::from_serializable(&inputs.discovery_binding(PaidProvider::Metered)).unwrap()),
-            ("openlux_binding".into(), SourceJson::from_serializable(&inputs.binding(PaidProvider::Metered)).unwrap()),
-        ]).unwrap();
-        let actual = inputs.candidate_configuration(&identity, &owner, "g1", Some(&runtime), None).unwrap();
-        assert_eq!(actual.configuration_fingerprint, sha256_hex(expected.as_str().as_bytes()));
+            (
+                "v".into(),
+                SourceJson::from_serializable(&PAID_CONTROL_CONFIG_VERSION).unwrap(),
+            ),
+            (
+                "immutable".into(),
+                SourceJson::from_serializable(&inputs.immutable_configuration).unwrap(),
+            ),
+            (
+                "runtime".into(),
+                decode_source_control_record(&runtime).unwrap(),
+            ),
+            (
+                "surplus_binding".into(),
+                SourceJson::from_serializable(&inputs.binding(PaidProvider::Surplus)).unwrap(),
+            ),
+            (
+                "openlux_discovery_binding".into(),
+                SourceJson::from_serializable(&inputs.discovery_binding(PaidProvider::Metered))
+                    .unwrap(),
+            ),
+            (
+                "openlux_binding".into(),
+                SourceJson::from_serializable(&inputs.binding(PaidProvider::Metered)).unwrap(),
+            ),
+        ])
+        .unwrap();
+        let actual = inputs
+            .candidate_configuration(&identity, &owner, "g1", Some(&runtime), None)
+            .unwrap();
+        assert_eq!(
+            actual.configuration_fingerprint,
+            sha256_hex(expected.as_str().as_bytes())
+        );
         assert!(expected.as_str().contains("\\ud800"));
-        let literal = StoredRecord::json("planned-runtime", json!({"model":"\\ud800","reasoning":"none"}), None);
-        assert_ne!(actual.configuration_fingerprint, inputs.fingerprint(Some(&literal)).unwrap());
+        let literal = StoredRecord::json(
+            "planned-runtime",
+            json!({"model":"\\ud800","reasoning":"none"}),
+            None,
+        );
+        assert_ne!(
+            actual.configuration_fingerprint,
+            inputs.fingerprint(Some(&literal)).unwrap()
+        );
     }
 
     #[test]

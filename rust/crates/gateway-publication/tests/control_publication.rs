@@ -1181,3 +1181,61 @@ fn configuration_capture_retains_frozen_constructor_bytes_without_writes() {
         );
     });
 }
+
+#[test]
+fn source_utf16_runtime_capture_and_signed_receiver_keep_the_actual_codec() {
+    use gateway_core::{source_control::encode_source_control_record, source_json::SourceJson};
+    run(async {
+        let store = Memory::default();
+        let identity = publication_identity();
+        bootstrap(&store, &identity, now()).await;
+        let runtime = encode_source_control_record(
+            "runtime-profile-r1",
+            &SourceJson::parse(r#"{"model":"\ud800","reasoning":"none"}"#).unwrap(),
+            None,
+        )
+        .unwrap();
+        store
+            .0
+            .lock()
+            .unwrap()
+            .insert(runtime_config_key().0.clone(), runtime.clone());
+        let configured = inputs("fixture-paid-key");
+        let prepared =
+            PreparedConfigurationPublication::capture(&store, &identity, &configured, "g1", now())
+                .await
+                .unwrap();
+        let expected = prepared.configuration().clone();
+        assert_eq!(
+            expected.source_checks[0].expected_revision.as_deref(),
+            Some("runtime-profile-r1")
+        );
+        let command = prepared.command("profile-config-r1").unwrap();
+        let receiver =
+            PublicationReceiver::configured(identity.clone(), configured, vec![], now).unwrap();
+        let carrier = LocalCarrier {
+            receiver: &receiver,
+            store: &store,
+            lose_response: std::cell::Cell::new(false),
+            tamper_response: false,
+        };
+        let sender = NativePublicationSender::configured(&identity, &carrier);
+        let receipt = sender.send(&command, [71; 32], now()).await.unwrap();
+        assert_eq!(receipt.disposition, PublicationDisposition::Applied);
+        assert_eq!(
+            receipt.configuration_fingerprint.as_deref(),
+            Some(expected.configuration_fingerprint.as_str())
+        );
+        let replay = sender.send(&command, [72; 32], now()).await.unwrap();
+        assert_eq!(replay.disposition, PublicationDisposition::AlreadyCurrent);
+        assert_eq!(
+            store
+                .0
+                .lock()
+                .unwrap()
+                .get(&runtime_config_key().0)
+                .unwrap(),
+            &runtime
+        );
+    });
+}
