@@ -379,8 +379,8 @@ fn valid_legacy_renewal_utf16_models_are_untouched_by_v3_terminal_dispatch() {
         NativeRenewalContext, NativeRenewalFence, validate_native_control_custody,
     };
     use gateway_core::{
-        js_string::JsString16, model::ModelId,
-        source_control::encode_source_control_record, source_serialization as source,
+        js_string::JsString16, model::ModelId, source_control::encode_source_control_record,
+        source_serialization as source,
     };
     #[derive(serde::Serialize)]
     struct LegacyRenewalData {
@@ -431,18 +431,31 @@ fn valid_legacy_renewal_utf16_models_are_untouched_by_v3_terminal_dispatch() {
                 slot: 0,
             },
         };
-        let reference = gateway_auth::crypto::sha256_hex(&serde_json::to_vec(&(
-            "uos-native-renewal-action-v2", &fence.original_request_id,
-            &fence.context, &fence.source_native_generation,
-        )).unwrap());
+        let reference = gateway_auth::crypto::sha256_hex(
+            &serde_json::to_vec(&(
+                "uos-native-renewal-action-v2",
+                &fence.original_request_id,
+                &fence.context,
+                &fence.source_native_generation,
+            ))
+            .unwrap(),
+        );
         let document = SourceJson::from_serializable(&LegacyRenewalData {
-            v: 2, action_ref: reference.clone(), actor: action(2)["actor"].clone(),
-            created_at_ms: 2200, deadline_ms: 47200, fence,
-            checks_digest: "1".repeat(64), control_checks_digest: "2".repeat(64),
-            account_digests: vec!["3".repeat(64)], operation_id: None,
-        }).unwrap();
+            v: 2,
+            action_ref: reference.clone(),
+            actor: action(2)["actor"].clone(),
+            created_at_ms: 2200,
+            deadline_ms: 47200,
+            fence,
+            checks_digest: "1".repeat(64),
+            control_checks_digest: "2".repeat(64),
+            account_digests: vec!["3".repeat(64)],
+            operation_id: None,
+        })
+        .unwrap();
         let control_key = key("action", &reference);
-        let record = encode_source_control_record("legacy-model-revision", &document, None).unwrap();
+        let record =
+            encode_source_control_record("legacy-model-revision", &document, None).unwrap();
         validate_native_control_custody(&control_key, &record)
             .expect("actual existing renewal schema must accept the source model before export");
         println!("VALID_EXISTING_RENEWAL_SCHEMA_BEFORE_REAL_EXPORT");
@@ -451,18 +464,30 @@ fn valid_legacy_renewal_utf16_models_are_untouched_by_v3_terminal_dispatch() {
         let store = SqliteStore::open(&path);
         let input: PrivateCapture =
             serde_json::from_str(include_str!("fixtures/offline-source.json")).unwrap();
-        run(adopt_empty(&store, &prepare(&input, &CanonicalDates).unwrap())).unwrap();
+        run(adopt_empty(
+            &store,
+            &prepare(&input, &CanonicalDates).unwrap(),
+        ))
+        .unwrap();
         store.put(control_key.clone(), record.clone());
         drop(store);
         let store = SqliteStore::open(&path);
-        let bundle = run(export_rollback_bundle(&store, 2400, context()))
-            .expect("real exporter must preserve valid legacy source models without scalar projection");
-        let retained = bundle.rust_controls.iter().find(|row| row.key == control_key.0).unwrap();
+        let bundle = run(export_rollback_bundle(&store, 2400, context())).expect(
+            "real exporter must preserve valid legacy source models without scalar projection",
+        );
+        let retained = bundle
+            .rust_controls
+            .iter()
+            .find(|row| row.key == control_key.0)
+            .unwrap();
         assert_eq!(retained.record, record);
         let reopened = decode_source_control_record(&retained.record).unwrap();
         let fence = source::member(&reopened, "fence").unwrap();
         let context = source::member(&fence, "context").unwrap();
-        let model: ModelId = source::member(&context, "model").unwrap().deserialize().unwrap();
+        let model: ModelId = source::member(&context, "model")
+            .unwrap()
+            .deserialize()
+            .unwrap();
         assert_eq!(model.as_js_string().as_units(), units);
     }
 }

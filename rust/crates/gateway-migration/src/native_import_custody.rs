@@ -1,9 +1,11 @@
 //! Retained v3 terminal consistency only, never current authorization or a lease.
 use crate::{invalid, key, parts};
+use gateway_auth::native_import::NativeImportKind;
 use gateway_authority::native_control::import::ImportPublicationDataV1;
 use gateway_core::{
     GatewayError,
     source_control::decode_source_control_record,
+    source_serialization as source,
     state::{RecordKey, StoredRecord},
 };
 use serde_json::{Value, json};
@@ -69,10 +71,17 @@ pub(super) fn validate(all: &BTreeMap<String, StoredRecord>) -> Result<(), Gatew
         {
             continue;
         }
-        let action = value(action_record)?;
-        if action["kind"] != "codex_auth" || action["v"] != 3 {
+        let document = decode_source_control_record(action_record)?;
+        let kind = source::member(&document, "kind")
+            .map(|value| value.deserialize::<NativeImportKind>())
+            .transpose()?;
+        let version = source::member(&document, "v")
+            .map(|value| value.deserialize::<u8>())
+            .transpose()?;
+        if kind != Some(NativeImportKind::CodexAuth) || version != Some(3) {
             continue;
         }
+        let action: Value = document.deserialize()?;
         let operation_id = action["metadata"]["operation_id"]
             .as_str()
             .ok_or_else(|| invalid("Import operation reference is missing"))?;
