@@ -47,7 +47,7 @@ fn common(
     let (created, deadline) = lifetime;
     metadata.validate()?;
     target.validate()?;
-    if !matches!(version, 1 | 2 | 3)
+    if !matches!(version, 1..=3)
         || kind != NativeImportKind::CodexAuth
         || metadata.action_ref != id
         || actor.scope() != NativeActorScope::Admin
