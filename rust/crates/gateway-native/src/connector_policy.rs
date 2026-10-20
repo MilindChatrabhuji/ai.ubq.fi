@@ -177,9 +177,12 @@ pub(crate) fn import_actor(
         .replace('|', "\\|");
     let pattern =
         format!("^{escaped}/\\.uos-import-[0-9a-f]{{64}}\\.(tmp|previous|rotated|receipt|receipt\\.tmp)$");
+    // SBPL #"..." is a raw regex reader, unlike an ordinary JSON string.
+    // Match the installed bsd.sb single-backslash regex spelling; only the
+    // quote delimiter is escaped here. The regex language itself is unchanged.
+    let regex_literal = pattern.replace('"', "\\\"");
     policy.push_str(&format!(
-        "(allow file-write* (literal {literal}) (regex #{}))\n",
-        serde_json::to_string(&pattern).map_err(|_| ControlError::InvalidFrame)?
+        "(allow file-write* (literal {literal}) (regex #\"{regex_literal}\"))\n"
     ));
     policy.push_str(&format!(
         "(allow file-read* file-write* (subpath {}))\n",
@@ -233,7 +236,7 @@ mod import_profile_diagnostic {
     #[test]
     #[ignore = "one fixed source-generated matcher diagnostic, not normal acceptance"]
     fn source_generated_import_temp_rule_matcher() {
-        let output = std::path::Path::new("/private/tmp/ai-rust-wasm-20261018/native-safety-0403/profile-temp-matcher-v1");
+        let output = std::path::Path::new("/private/tmp/ai-rust-wasm-20261018/native-safety-0403/profile-temp-matcher-v2");
         fs::create_dir(output).unwrap();fs::set_permissions(output,fs::Permissions::from_mode(0o700)).unwrap();
         let root=fs::canonicalize(output).unwrap();let replay=root.join("replay");fs::create_dir(&replay).unwrap();
         let address=|port|SocketAddr::from((std::net::Ipv4Addr::LOCALHOST,port));
