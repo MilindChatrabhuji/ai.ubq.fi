@@ -133,7 +133,7 @@ export function qemuArgv(work: string, firmware: string): string[] {
     "-machine",
     "virt",
     "-cpu",
-    "max,lpa2=off",
+    "cortex-a57",
     "-accel",
     "tcg,thread=multi",
     "-smp",
