@@ -2,6 +2,7 @@
 //! never request DATA, select the actual one-use operation/start permission.
 use super::super::rows::{GenerationEffect, Phase};
 use super::*;
+use gateway_auth::native_import::authority::{ImportCompletionData, ImportCompletionModelsData};
 use gateway_auth::{
     native::NATIVE_RENEWAL_AUTHORITY_PATH,
     native_auth::{
@@ -15,6 +16,11 @@ use gateway_auth::{
     },
 };
 use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
+#[derive(Clone, Copy)]
+enum TerminalProjection {
+    ActorCompletion,
+    CustodyOnly,
+}
 
 impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
     NativeRenewalAuthority<'_, S, I, C>
@@ -219,18 +225,20 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 native_receipt_ref,
                 publication_request_digest,
             } => {
-                let (state, terminal) = self
+                let (state, terminal, completion) = self
                     .import_phase_terminal(
                         state,
                         claim_ref,
                         publication_revision,
                         native_receipt_ref,
                         publication_request_digest,
+                        TerminalProjection::ActorCompletion,
                     )
                     .await?;
                 ResultData::Terminal {
                     state,
                     terminal: Box::new(terminal),
+                    completion: completion.ok_or_else(unavailable)?,
                 }
             }
         };
@@ -297,13 +305,14 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             return Err(unavailable());
         }
         let state = remote_state::state_data(&row, record.revision);
-        let (_, terminal) = self
+        let (_, terminal, _) = self
             .import_phase_terminal(
                 &state,
                 &started.claim_ref,
                 revision,
                 &publication.native_receipt_ref,
                 &publication.publication_request_digest,
+                TerminalProjection::CustodyOnly,
             )
             .await?;
         Ok(terminal)
@@ -316,7 +325,15 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         revision: &str,
         receipt: &str,
         digest: &str,
-    ) -> Result<(State, ImportAuthorityTerminalData), GatewayError> {
+        projection: TerminalProjection,
+    ) -> Result<
+        (
+            State,
+            ImportAuthorityTerminalData,
+            Option<ImportCompletionData>,
+        ),
+        GatewayError,
+    > {
         for _ in 0..5 {
             let mut tx = self.authority.transaction(self.time(0)?)?;
             let key = rows::key("action", &original.metadata.action_ref);
@@ -338,7 +355,28 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             {
                 return Err(unavailable());
             }
-            publication_current::verify(self, &mut tx, &row, publication).await?;
+            let completion = match projection {
+                TerminalProjection::CustodyOnly => {
+                    publication_current::verify(self, &mut tx, &row, publication).await?;
+                    None
+                }
+                TerminalProjection::ActorCompletion => {
+                    let actual =
+                        publication_current::completion_metadata(self, &mut tx, &row, publication)
+                            .await?;
+                    Some(ImportCompletionData {
+                        account_count: actual.account_count as u64,
+                        account_ids: actual.account_ids,
+                        updated_at_ms: actual.updated_at_ms,
+                        models: ImportCompletionModelsData {
+                            count: actual.models.count as u64,
+                            source: actual.models.source,
+                            updated_at_ms: actual.models.updated_at_ms,
+                            client_version: actual.models.client_version,
+                        },
+                    })
+                }
+            };
             let terminal = ImportAuthorityTerminalData {
                 publication_revision: publication.publication_revision.clone(),
                 native_receipt_ref: publication.native_receipt_ref.clone(),
@@ -357,7 +395,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 if self.time(row.created_at_ms)? >= row.deadline_ms {
                     return Err(unavailable());
                 }
-                return Ok((state, terminal));
+                return Ok((state, terminal, completion));
             }
         }
         Err(unavailable())
