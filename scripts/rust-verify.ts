@@ -275,6 +275,10 @@ const observeCommandResult = (command: RustCommand, result: CommandResult): numb
   return tests;
 };
 const PRELAUNCH_TARGET = "connector_confinement";
+const OWNED_CHILD_CASES = [
+  "existing_account_import::foundation_tests::actual_owned_async_child_stop_wait_and_dirty_epoch_do_not_infer_external_absence",
+  "existing_account_import::foundation_tests::actual_owned_child_reap_records_stopped_but_reopened_marker_grants_no_lease",
+] as const;
 const CONNECTOR_EXAMPLE = "uos-native-connector-fixture";
 type CargoExecutable = Readonly<{ name: string; kind: string; source: string; executable: string; sha256: string; test: boolean }>;
 const artifactHash = (path: string, target: string): string => {
@@ -343,8 +347,52 @@ const checkedArtifacts = (items: readonly CargoExecutable[], target: string): vo
   for (const item of items)
     if (artifactHash(item.executable, target) !== item.sha256) throw new Error("Cargo executable hash changed after isolated compilation");
 };
+const nativeTestNames = (stdout: string): string[] => {
+  const names = stdout.split("\n").flatMap((line) => {
+    const match = /^(.*): test\s*$/.exec(line);
+    return match ? [match[1]] : [];
+  });
+  if (new Set(names).size !== names.length) throw new Error("Native test inventory contains duplicate names");
+  return names.sort((left, right) => left.localeCompare(right));
+};
+const requireTestNames = (actual: readonly string[], expected: readonly string[]): void => {
+  if (
+    JSON.stringify([...actual].sort((left, right) => left.localeCompare(right))) !==
+    JSON.stringify([...expected].sort((left, right) => left.localeCompare(right)))
+  )
+    throw new Error("Exact native test-name inventory mismatch");
+};
+const nativeLibraryArtifact = (tests: readonly CargoExecutable[], cwd: string): CargoExecutable => {
+  const libraries = tests.filter((item) => item.kind === "lib");
+  const library = libraries[0];
+  if (libraries.length !== 1 || library.source !== realpathSync(join(cwd, "crates/gateway-native/src/lib.rs")))
+    throw new Error("Exact native library test artifact/source is missing");
+  return library;
+};
+const nativeLibrarySelection = async (
+  cargo: string,
+  flags: readonly string[],
+  cwd: string,
+  checked: (command: RustCommand) => Promise<CommandResult>
+): Promise<Readonly<{ argv: readonly string[]; names: readonly string[] }>> => {
+  const argv = [cargo, "test", ...flags, "--lib", "--"];
+  const original = nativeTestNames((await checked({ argv: [...argv, "--list"], cwd, isolated: true })).stdout);
+  if (OWNED_CHILD_CASES.some((name) => !original.includes(name))) throw new Error("Expected exact owned-child lib case is missing");
+  const filtered = [...argv, "--exact", ...OWNED_CHILD_CASES.flatMap((name) => ["--skip", name])];
+  const names = nativeTestNames((await checked({ argv: [...filtered, "--list"], cwd, isolated: true })).stdout);
+  requireTestNames(
+    names,
+    original.filter((name) => !OWNED_CHILD_CASES.some((owned) => owned === name))
+  );
+  console.log(JSON.stringify({ nativeLibraryInventory: original, loopbackLibraryInventory: names, trustedLibraryCases: OWNED_CHILD_CASES }));
+  return { argv: filtered, names };
+};
+type NativeTestPair = (argv: readonly string[], isolated: boolean, expected?: readonly string[]) => Promise<void>;
+const runOwnedChildCases = async (library: CargoExecutable, pair: NativeTestPair): Promise<void> => {
+  for (const name of OWNED_CHILD_CASES) await pair([library.executable, name, "--exact", "--test-threads=1", "--nocapture"], false, [name]);
+};
 // An internal acceptance seam, not a CLI escape: only this fixed native target
-// may run without the outer Darwin profile. All its child policies stay real.
+// and two exact owned-child lib cases may run without the outer Darwin profile.
 export const executeDarwinNativeTests = async (
   cwd: string,
   inherited: Record<string, string>,
@@ -385,12 +433,13 @@ export const executeDarwinNativeTests = async (
   );
   if (!fixture || binaries.some((item) => !item)) throw new Error("Exact named native fixture/binary prerequisite is missing");
   const compile = await checked({
-    argv: [cargo, "test", ...flags, ...(selection === "prelaunch" ? ["--test", PRELAUNCH_TARGET] : []), "--no-run", "--message-format=json"],
+    argv: [cargo, "test", ...flags, ...(selection === "prelaunch" ? ["--lib", "--test", PRELAUNCH_TARGET] : []), "--no-run", "--message-format=json"],
     cwd,
     isolated: true,
   });
   const compiled = cargoExecutables(compile.stdout, cwd, target);
   const tests = compiled.filter((item) => item.test);
+  const library = nativeLibraryArtifact(tests, cwd);
   const prelaunch = tests.find((item) => item.kind === "test" && item.name === PRELAUNCH_TARGET);
   if (prelaunch?.source !== realpathSync(join(cwd, "crates/gateway-native/tests/connector_confinement.rs")))
     throw new Error("Exact native prelaunch target/source is missing");
@@ -406,26 +455,36 @@ export const executeDarwinNativeTests = async (
   console.log(JSON.stringify({ nativePrelaunchSource: source, tree, artifacts: allArtifacts }));
   let listed = 0;
   let passed = 0;
-  const pair = async (argv: readonly string[], isolated: boolean): Promise<void> => {
+  const pair = async (argv: readonly string[], isolated: boolean, expected?: readonly string[]): Promise<void> => {
     checkedArtifacts(allArtifacts, target);
     const listing = await checked({ argv: [...argv, "--list"], cwd, isolated });
-    const count = listing.stdout.split("\n").filter((line) => /: test\s*$/.test(line)).length;
+    const names = nativeTestNames(listing.stdout);
+    if (expected) requireTestNames(names, expected);
     checkedArtifacts(allArtifacts, target);
     const result = await checked({ argv, cwd, isolated });
-    listed += count;
-    passed += [...result.stdout.matchAll(/^test result: ok\.\s+(\d+) passed;/gm)].reduce((sum, match) => sum + Number(match[1]), 0);
+    const executed = [...result.stdout.matchAll(/^test result: ok\.\s+(\d+) passed;/gm)].reduce((sum, match) => sum + Number(match[1]), 0);
+    if (!isolated && (!names.length || executed !== names.length))
+      throw new Error("Selected prelaunch target listed or executed zero passing or incomplete tests");
+    listed += names.length;
+    passed += executed;
   };
+  const normalLibrary = await nativeLibrarySelection(cargo, flags, cwd, (command) => {
+    checkedArtifacts(allArtifacts, target);
+    return checked(command);
+  });
   if (selection === "package") {
+    await pair(normalLibrary.argv, true, normalLibrary.names);
     // Cargo's actual default-selection artifacts, not a guessed test directory,
     // supply every remaining lib/bin/integration/example/bench target exactly once.
-    const normal = tests.filter((item) => item !== prelaunch);
+    const normal = tests.filter((item) => item !== prelaunch && item !== library);
     const selectors = normal.flatMap((item) => (item.kind === "lib" ? ["--lib"] : [`--${item.kind}`, item.name]));
     if (selectors.length) await pair([cargo, "test", ...flags, ...selectors, "--"], true);
     // Explicit test selectors suppress doctests; preserve the original Cargo
     // package default by retaining its separate, still-isolated doc-test pass.
     if (cargoDoctestsSelected(compile.stdout, cwd)) await pair([cargo, "test", ...flags, "--doc", "--"], true);
-  } else if (tests.length !== 1) throw new Error("Focused prelaunch compilation emitted additional selected tests");
+  } else if (tests.length !== 2) throw new Error("Focused prelaunch compilation emitted additional selected tests");
   await pair([prelaunch.executable, "--test-threads=1", "--nocapture"], false);
+  await runOwnedChildCases(library, pair);
   await unchanged();
   checkedArtifacts(allArtifacts, target);
   if (!listed || !passed) throw new Error("Selected native tests listed or executed zero passing tests");
