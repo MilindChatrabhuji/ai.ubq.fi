@@ -598,3 +598,6 @@ fn ordinary_preparation_stays_v2_and_never_acquires_publication_by_default() {
 
 #[path = "import_publication.rs"]
 mod publication;
+
+#[path = "import_phase.rs"]
+mod phase;

@@ -76,8 +76,8 @@ impl ImportCustodyStartedRequest {
 /// }
 /// ```
 pub struct VerifiedCurrentImportStarted {
-    request: ImportCustodyStartedRequest,
-    verified_at_ms: i64,
+    pub(super) request: ImportCustodyStartedRequest,
+    pub(super) verified_at_ms: i64,
 }
 impl VerifiedCurrentImportStarted {
     pub fn request(&self) -> &ImportCustodyStartedRequest {

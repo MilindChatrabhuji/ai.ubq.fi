@@ -22,10 +22,10 @@ pub enum NativeImportMode {
     ReconcileOnly,
 }
 pub struct NativeImportClaim {
-    binding: NativeImportBinding,
-    row: ImportActionRow,
-    permit: Option<String>,
-    mode: NativeImportMode,
+    pub(super) binding: NativeImportBinding,
+    pub(super) state: ImportActionState,
+    pub(super) permit: Option<String>,
+    pub(super) mode: NativeImportMode,
 }
 impl NativeImportClaim {
     pub fn binding(&self) -> &NativeImportBinding {
@@ -126,7 +126,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         }
         Ok(())
     }
-    async fn import_operation(
+    pub(super) async fn import_operation(
         &self,
         tx: &mut Transaction<'_, S, I>,
         claim: &NativeImportClaim,
@@ -139,14 +139,15 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             .read(&rows::key("operation", &claim.binding.operation_id))
             .await?
             .ok_or_else(unavailable)?;
+        let original = claim.state.local()?;
         if !row.unfinished()
-            || row.metadata != claim.row.metadata
-            || row.facts != claim.row.facts
-            || row.actor != claim.row.actor
-            || row.context != claim.row.context
-            || row.target != claim.row.target
-            || row.created_at_ms != claim.row.created_at_ms
-            || row.deadline_ms != claim.row.deadline_ms
+            || row.metadata != original.metadata
+            || row.facts != original.facts
+            || row.actor != original.actor
+            || row.context != original.context
+            || row.target != original.target
+            || row.created_at_ms != original.created_at_ms
+            || row.deadline_ms != original.deadline_ms
             || op.v != 1
             || op.operation_id != claim.binding.operation_id
             || op.action_ref != claim.binding.action_ref
@@ -164,7 +165,12 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         proof: &AuthenticatedNativeImport,
     ) -> Result<NativeImportClaim, GatewayError> {
         self.recheck_import(proof).await?;
-        let row = &proof.row;
+        self.claim_import_row(proof.state.local()?).await
+    }
+    pub(super) async fn claim_import_row(
+        &self,
+        row: &ImportActionRow,
+    ) -> Result<NativeImportClaim, GatewayError> {
         let request_digest = super::super::facts::digest(&(
             "uos-native-import-effect-v2",
             &row.metadata,
@@ -257,7 +263,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             if tx.commit().await? {
                 return Ok(NativeImportClaim {
                     binding: binding(row, op.claim_ref),
-                    row: row.clone(),
+                    state: ImportActionState::Local(Box::new(row.clone())),
                     permit,
                     mode,
                 });
@@ -274,9 +280,23 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         claim.mode = NativeImportMode::ReconcileOnly;
         let permit = claim.permit.take();
         proof.body.require_owner(self.identity, self.time(0)?)?;
-        if proof.metadata() != &claim.row.metadata {
+        proof.state.local()?;
+        if proof.metadata() != &claim.state.local()?.metadata {
             return Err(unavailable());
         }
+        let revision = self.start_import_revision(claim, fresh, permit).await?;
+        Ok(revision.map(|started_revision| NativeImportStart {
+            proof,
+            binding: claim.binding.clone(),
+            started_revision,
+        }))
+    }
+    pub(super) async fn start_import_revision(
+        &self,
+        claim: &NativeImportClaim,
+        fresh: bool,
+        permit: Option<String>,
+    ) -> Result<Option<String>, GatewayError> {
         for _ in 0..5 {
             let mut tx = self.authority.transaction(self.time(0)?)?;
             let (row, mut op) = self.import_operation(&mut tx, claim).await?;
@@ -307,11 +327,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 .ok_or_else(unavailable)?;
             self.current_import_row(&mut tx, &row).await?;
             if tx.commit().await? {
-                return Ok(Some(NativeImportStart {
-                    proof,
-                    binding: claim.binding.clone(),
-                    started_revision,
-                }));
+                return Ok(Some(started_revision));
             }
         }
         Err(unavailable())
