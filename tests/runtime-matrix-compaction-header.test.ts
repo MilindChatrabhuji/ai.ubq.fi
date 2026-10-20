@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { isResponsesCompaction, parseCodexInput, parseTurnMetadata } from "../lib/jev_compaction/codex_items.ts";
 import { compact } from "../lib/jev_compaction/compact.ts";
 import { collectToolCalls } from "../lib/jev_compaction/state.ts";
-import type { JevAsker } from "../lib/jev_compaction/types.ts";
+import type { JevAsker, ToolResult, ToolUse } from "../lib/jev_compaction/types.ts";
 import { deepSeekUpstreamModelFor } from "../src/deepseek/index.ts";
 import * as kv from "../src/kv.ts";
 import { isProviderEnabled, normalizeProviderSelection, normalizeSelectedProviderIds, type ProviderSelection } from "../src/provider/selection.ts";
@@ -154,8 +154,8 @@ async function originalQuestions(body: Record<string, unknown>, mode: "failure" 
     ]
   );
   for (const call of calls) {
-    const tool = transcript.messages[call.callIndex]?.toolUses[0];
-    const result = transcript.messages[call.resultIndex]?.toolResults?.[0];
+    const tool: ToolUse | undefined = transcript.messages[call.callIndex]?.toolUses[0];
+    const result: ToolResult | undefined = transcript.messages[call.resultIndex]?.toolResults?.[0];
     assert(tool && result);
     assert.equal(tool.tool_use_id, call.tool_use_id);
     assert.equal(result.tool_use_id, call.tool_use_id);
