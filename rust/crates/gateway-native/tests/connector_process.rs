@@ -125,6 +125,7 @@ fn actual_tcp_descriptor_outlives_dial_process_and_control_channel() {
             Err(e) => panic!("{e}"),
         }
     };
+    actual.set_nonblocking(false).unwrap();
     actual
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();

@@ -56,7 +56,12 @@ pub(crate) fn run_dial(
         Duration::from_secs(10),
         process,
     )?;
-    stream.set_read_timeout(None).map_err(io_error)?;
+    if let Err(error) = stream.set_read_timeout(None) {
+        let events = channel_events(&stream, Duration::ZERO)?;
+        if error.kind() != io::ErrorKind::InvalidInput || !events.contains(PollFlags::HUP) {
+            return Err(io_error(error));
+        }
+    }
     let received = endpoint.receive()?;
     let ControlFrame::Connect { connection_id, .. } = received.frame else {
         return Err(ControlError::WrongState);
