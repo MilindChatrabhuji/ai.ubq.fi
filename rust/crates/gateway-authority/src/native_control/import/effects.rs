@@ -41,8 +41,9 @@ impl NativeImportClaim {
 /// let forged: NativeImportStart<'_> = serde_json::from_str("{}").unwrap();
 /// ```
 pub struct NativeImportStart<'a> {
-    proof: &'a AuthenticatedNativeImport,
-    binding: NativeImportBinding,
+    pub(super) proof: &'a AuthenticatedNativeImport,
+    pub(super) binding: NativeImportBinding,
+    pub(super) started_revision: String,
 }
 impl NativeImportStart<'_> {
     pub fn binding(&self) -> &NativeImportBinding {
@@ -50,6 +51,26 @@ impl NativeImportStart<'_> {
     }
     pub fn require_body(&self, body: &[u8], now: i64) -> Result<(), GatewayError> {
         self.proof.require_body(body, now)
+    }
+    /// DATA from this actual committed Start; never caller-selected revisions or time.
+    pub fn custody_request(&self) -> Result<ImportCustodyStartedRequest, GatewayError> {
+        let binding = &self.binding;
+        let request = ImportCustodyStartedRequest {
+            v: 1,
+            operation_id: binding.operation_id.clone(),
+            action_ref: binding.action_ref.clone(),
+            claim_ref: binding.claim_ref.clone(),
+            native_owner_id: binding.native_owner_id.clone(),
+            account_id_hash: binding.account_id_hash.clone(),
+            source_native_generation: binding.source_native_generation.clone(),
+            owner_revision: binding.owner_revision.clone(),
+            source_revision: binding.source_revision.clone(),
+            normalized_revision: binding.normalized_revision.clone(),
+            started_revision: self.started_revision.clone(),
+            deadline_ms: self.proof.deadline_ms(),
+        };
+        request.validate()?;
+        Ok(request)
     }
 }
 pub(super) fn generation_key(
@@ -87,7 +108,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         row: &ImportActionRow,
     ) -> Result<(), GatewayError> {
         tx.now = self.time(row.created_at_ms)?;
-        if row.v != 2
+        if !row.unfinished()
             || row.kind != NativeImportKind::CodexAuth
             || row.kind != row.target.kind()
             || row.deadline_ms != crate::add(row.created_at_ms, OWNER_RENEWAL_MAX_MS)?
@@ -118,7 +139,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             .read(&rows::key("operation", &claim.binding.operation_id))
             .await?
             .ok_or_else(unavailable)?;
-        if row.v != 2
+        if !row.unfinished()
             || row.metadata != claim.row.metadata
             || row.facts != claim.row.facts
             || row.actor != claim.row.actor
@@ -276,12 +297,20 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 return Ok(None);
             }
             op.phase = Phase::Started;
-            tx.put(&rows::key("operation", &op.operation_id), &op, None)?;
+            let operation_key = rows::key("operation", &op.operation_id);
+            tx.put(&operation_key, &op, None)?;
+            let started_revision = tx
+                .post_checks()
+                .into_iter()
+                .find(|check| check.key == operation_key)
+                .and_then(|check| check.expected_revision)
+                .ok_or_else(unavailable)?;
             self.current_import_row(&mut tx, &row).await?;
             if tx.commit().await? {
                 return Ok(Some(NativeImportStart {
                     proof,
                     binding: claim.binding.clone(),
+                    started_revision,
                 }));
             }
         }
