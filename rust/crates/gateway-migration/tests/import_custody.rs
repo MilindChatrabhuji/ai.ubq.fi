@@ -188,7 +188,8 @@ fn exact_v1_v2_v3_null_normalized_and_limited_survive_real_restart_latest_invers
         ))
         .unwrap();
         assert_eq!(
-            SourceJson::from_serializable(&run(export_native_latest(&restore, 2400)).unwrap()).unwrap(),
+            SourceJson::from_serializable(&run(export_native_latest(&restore, 2400)).unwrap())
+                .unwrap(),
             SourceJson::from_serializable(&bundle.source).unwrap()
         );
         assert!(
