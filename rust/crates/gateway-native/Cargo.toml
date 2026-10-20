@@ -42,3 +42,15 @@ workspace = true
 [[example]]
 name = "uos-native-connector-fixture"
 path = "tests/support/connector_fixture.rs"
+
+[[bin]]
+name = "uos-native-supervisor"
+path = "src/bin/uos-native-supervisor.rs"
+
+[[bin]]
+name = "uos-native-request"
+path = "src/bin/uos-native-request.rs"
+
+[[bin]]
+name = "uos-native-connector"
+path = "src/bin/uos-native-connector.rs"

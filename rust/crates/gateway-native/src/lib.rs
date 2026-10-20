@@ -1,4 +1,24 @@
 //! Narrow native capabilities. No shell, arbitrary URL/path or generic JSON-RPC ingress.
+#[cfg(unix)]
+mod connector_fd;
+#[cfg(unix)]
+mod connector_policy;
+#[cfg(unix)]
+mod connector_protocol;
+#[cfg(unix)]
+mod connector_supervisor;
+#[cfg(unix)]
+mod connector_worker;
+#[cfg(unix)]
+mod daemon_startup;
+#[cfg(unix)]
+mod native_request_process;
+#[cfg(unix)]
+pub use connector_supervisor::run_native_supervisor;
+#[cfg(unix)]
+pub use connector_worker::run_native_connector;
+#[cfg(unix)]
+pub use native_request_process::run_native_request;
 pub mod access_publication;
 #[cfg(unix)]
 pub mod authority_http;
