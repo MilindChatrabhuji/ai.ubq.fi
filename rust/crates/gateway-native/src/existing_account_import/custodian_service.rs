@@ -43,10 +43,14 @@ pub(super) fn serve(
             let snapshot = runtime.recheck_import_session(&mut peer, &command, fresh)?;
             peer.stopped(&command, snapshot)?;
         } else if command.is_check() {
+            #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE check_fresh");
             let fresh = authority.verify_started_custody(command.header().binding)?;
             let mut peer = peer.lock().map_err(|_| unavailable())?;
+            #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE check_kernel");
             let snapshot = runtime.recheck_import_session(&mut peer, &command, fresh)?;
+            #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE check_reply");
             peer.stopped(&command, snapshot)?;
+            #[cfg(test)] eprintln!("NATIVE_IMPORT_CUSTODIAN_STAGE check_done");
         } else if let Some(revision) = command.publication_revision() {
             let fresh = authority.verify_custody_terminal(command.header().binding, revision)?;
             let mut peer = peer.lock().map_err(|_| unavailable())?;

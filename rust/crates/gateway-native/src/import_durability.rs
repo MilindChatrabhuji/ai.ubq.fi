@@ -424,7 +424,16 @@ pub(super) fn persist_live(
             Mode::RUSR | Mode::WUSR,
         )
         .map(File::from)
-        .map_err(|_| unavailable())
+        .map_err(|_error| {
+            #[cfg(feature = "native-import-fixture")]
+            if name == temp_name.as_str() {
+                let code = match _error.raw_os_error() { 1 => 241, 13 => 242, 17 => 243, _ => 244 };
+                // Diagnostic-only early nonzero exit preserves the original
+                // uncertain Started action and never grants custody or success.
+                std::process::exit(code);
+            }
+            unavailable()
+        })
     };
     // Every check rereads the physical source as well as the live authenticated issuer.
     // Temporary and backup effects never require weakening the one-link auth invariant.
