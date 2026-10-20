@@ -246,6 +246,18 @@ impl ExclusiveManagedOwner {
             }
             acl_inspector::observe(&anchor.directory, &self.inspector, deadline)?;
         }
+        let root_now = File::from(
+            openat(
+                rustix::fs::CWD,
+                &self.home,
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .map_err(|_| fail())?,
+        );
+        if !Facts::read(&root_now)?.same_object(&self.anchors.last().ok_or_else(fail)?.facts) {
+            return Err(fail());
+        }
         self.inspector.recheck()
     }
     pub fn native_owner_id(&self) -> &str {

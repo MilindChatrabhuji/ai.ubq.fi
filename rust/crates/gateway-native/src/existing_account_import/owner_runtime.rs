@@ -86,6 +86,7 @@ impl ExclusiveOwnerLease<'_> {
         }
         self.runtime.owner.recheck(deadline)?;
         self.runtime.check_epoch(Phase::Stopped)?;
+        self.runtime.check_generation(&self.binding)?;
         context.check_current(authority).await?;
         context.check_document(self.original, self.original.metadata(), original_body)
     }
@@ -101,7 +102,7 @@ impl OwnedRuntime {
         let lock = File::from(
             openat(
                 directory,
-                "auth.json",
+                ".uos-owner.lock",
                 OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
                 Mode::empty(),
             )
@@ -115,7 +116,25 @@ impl OwnedRuntime {
         {
             return Err(fail());
         }
-        // Existing inode coordination is for cooperating actors ONLY. No new pre-start file is created.
+        let auth = File::from(
+            openat(
+                directory,
+                "auth.json",
+                OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+                Mode::empty(),
+            )
+            .map_err(|_| fail())?,
+        );
+        let auth_facts = Facts::read(&auth)?;
+        if auth_facts.uid != owner.writer_uid
+            || auth_facts.mode & 0o170000 != 0o100000
+            || auth_facts.mode & 0o077 != 0
+            || auth_facts.links != 1
+        {
+            return Err(fail());
+        }
+        // A PREPARED stable lock inode coordinates trusted actors; auth.json is replaced by import.
+        // Missing pre-existing lock/custody is unavailable, never created before the original start.
         flock(&lock, FlockOperation::NonBlockingLockExclusive).map_err(|_| fail())?;
         let this = Self {
             owner,
@@ -143,6 +162,20 @@ impl OwnedRuntime {
         Ok(())
     }
     fn check_epoch(&self, phase: Phase) -> Result<(), GatewayError> {
+        let pinned = rustix::fs::fstat(&self.lock).map_err(|_| fail())?;
+        let current = statat(
+            self.owner.directory()?,
+            ".uos-owner.lock",
+            AtFlags::SYMLINK_NOFOLLOW,
+        )
+        .map_err(|_| fail())?;
+        if pinned.st_dev != current.st_dev
+            || pinned.st_ino != current.st_ino
+            || pinned.st_mode != current.st_mode
+            || pinned.st_uid != current.st_uid
+        {
+            return Err(fail());
+        }
         let epoch = read_epoch(self.owner.directory()?)?.ok_or_else(fail)?;
         self.match_epoch(&epoch)?;
         if epoch.phase != phase || self.epoch.as_ref().is_none_or(|e| e.boot != epoch.boot) {
@@ -215,6 +248,15 @@ impl OwnedRuntime {
         self.write_epoch(Phase::Running)?;
         executable.recheck()?;
         sandbox.recheck()?;
+        let errors = File::from(
+            openat(
+                self.owner.directory()?,
+                ".uos-owner-fixture.stderr",
+                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::RUSR | Mode::WUSR,
+            )
+            .map_err(|_| fail())?,
+        );
         self.child = Some(
             Command::new(sandbox.path())
                 .args(["-p", profile])
@@ -227,7 +269,7 @@ impl OwnedRuntime {
                 .env("UOS_NATIVE_OWNER_TEST_DIRECTORY", &self.owner.home)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stderr(Stdio::from(errors))
                 .spawn()
                 .map_err(|_| fail())?,
         );
@@ -299,6 +341,7 @@ impl OwnedRuntime {
         }
         context.check_document(proof, proof.metadata(), body)?;
         self.stop_owned(deadline)?;
+        self.check_generation(start.binding())?;
         context.check_current(authority).await?;
         context.check_document(proof, proof.metadata(), body)?;
         Ok(ExclusiveOwnerLease {
@@ -306,6 +349,43 @@ impl OwnedRuntime {
             binding: start.binding().clone(),
             original: proof,
         })
+    }
+    fn check_generation(&self, binding: &NativeImportBinding) -> Result<(), GatewayError> {
+        let file = File::from(
+            openat(
+                self.owner.directory()?,
+                "auth.json",
+                OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+                Mode::empty(),
+            )
+            .map_err(|_| fail())?,
+        );
+        let before = Facts::read(&file)?;
+        if before.mode & 0o170000 != 0o100000
+            || before.uid != self.owner.writer_uid
+            || before.links != 1
+            || before.size > 1_048_576
+        {
+            return Err(fail());
+        }
+        let mut bytes = Vec::new();
+        file.try_clone()
+            .map_err(|_| fail())?
+            .take(1_048_577)
+            .read_to_end(&mut bytes)
+            .map_err(|_| fail())?;
+        if bytes.len() > 1_048_576 || Facts::read(&file)? != before {
+            return Err(fail());
+        }
+        let value = serde_json::from_slice(&bytes).map_err(|_| fail())?;
+        let credentials = gateway_auth::native_credentials::parse_native_document(&value)?;
+        if credentials.routing_account_hash() != binding.account_id_hash
+            || credentials.generation_hash() != binding.source_native_generation
+            || credentials.external_user_id.is_some()
+        {
+            return Err(fail());
+        }
+        Ok(())
     }
     /// Runtime history is an observation; stopped disk DATA without this live Child never issues a lease.
     pub fn has_settled_owned_writer(&self) -> bool {

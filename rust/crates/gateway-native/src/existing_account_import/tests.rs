@@ -36,6 +36,13 @@ impl Home {
             .unwrap();
         auth.write_all(b"SYNTHETIC_OWNER_DATA").unwrap();
         auth.sync_all().unwrap();
+        let lock = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(path.join(".uos-owner.lock"))
+            .unwrap();
+        lock.sync_all().unwrap();
         Self(path)
     }
     fn store(&self) -> (ExistingAccountImportStore, RegisteredRenewalOwner) {
@@ -92,8 +99,22 @@ fn actual_anchored_inspector_no_acl_preserves_parent_cwd_and_rejects_real_ace() 
     let cwd = std::env::current_dir().unwrap();
     acl_inspector::observe(&file, &helper, deadline()).unwrap();
     assert_eq!(std::env::current_dir().unwrap(), cwd);
-    let uid = rustix::process::getuid().as_raw();
-    let ace = format!("user:{uid} allow readsecurity");
+    let output = Command::new("/usr/bin/id")
+        .arg("-un")
+        .env_clear()
+        .output()
+        .unwrap();
+    assert!(output.status.success() && output.stderr.is_empty());
+    let username = std::str::from_utf8(&output.stdout)
+        .unwrap()
+        .trim_end_matches('\n');
+    assert!(
+        !username.is_empty()
+            && username
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    );
+    let ace = format!("user:{username} allow readsecurity");
     let status = Command::new("/bin/chmod")
         .args(["+a", &ace])
         .arg(&home.0)
