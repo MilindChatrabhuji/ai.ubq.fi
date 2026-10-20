@@ -11,8 +11,9 @@ use gateway_auth::{
         ImportAuthorityClaimMode, ImportAuthorityCommand as Command,
         ImportAuthorityReplyData as Reply, ImportAuthorityRequestData as Request,
         ImportAuthorityResult as ResultData, ImportAuthorityStateData as State,
-        ImportAuthorityTerminalData, ImportCustodyStartedReplyData, ImportCustodyStartedWire,
-        import_authority_reply_max_bytes, import_custody_reply_max_bytes,
+        ImportAuthorityTerminalData, ImportCompletionData, ImportCustodyStartedReplyData,
+        ImportCustodyStartedWire, import_authority_reply_max_bytes_for,
+        import_custody_reply_max_bytes,
     },
 };
 use std::{
@@ -68,6 +69,7 @@ impl AuthenticatedImportCatalogObservation {
 pub struct AuthenticatedImportTerminal {
     binding: NativeImportBinding,
     terminal: ImportAuthorityTerminalData,
+    completion: ImportCompletionData,
     observed_at_ms: i64,
 }
 /// A current matching terminal for request-correlated original B1 DATA.
@@ -100,6 +102,9 @@ impl VerifiedCurrentImportTerminal {
     }
 }
 impl AuthenticatedImportTerminal {
+    pub fn completion(&self) -> &ImportCompletionData {
+        &self.completion
+    }
     pub fn binding(&self) -> &NativeImportBinding {
         &self.binding
     }
@@ -255,7 +260,8 @@ impl<'a, C: NativeRenewalCancellation> RemoteImportAuthority<'a, C> {
     fn exchange(&self, command: Command) -> Result<ResultData, GatewayError> {
         let request = Request::new(command)?;
         let bytes = request.bytes()?;
-        let response = self.exchange_bytes(&bytes, import_authority_reply_max_bytes())?;
+        let response =
+            self.exchange_bytes(&bytes, import_authority_reply_max_bytes_for(&request)?)?;
         let reply = Reply::parse_for(&response, &request)?;
         Ok(reply.result)
     }
@@ -475,7 +481,11 @@ impl<'a, C: NativeRenewalCancellation> RemoteImportAuthority<'a, C> {
         publication_request_digest: &str,
     ) -> Result<AuthenticatedImportTerminal, GatewayError> {
         let state = self.state(&claim.state)?.clone();
-        let ResultData::Terminal { state, terminal } = self.exchange(Command::Terminal {
+        let ResultData::Terminal {
+            state,
+            terminal,
+            completion,
+        } = self.exchange(Command::Terminal {
             state,
             claim_ref: claim.binding.claim_ref.clone(),
             publication_revision: publication_revision.into(),
@@ -489,6 +499,7 @@ impl<'a, C: NativeRenewalCancellation> RemoteImportAuthority<'a, C> {
         Ok(AuthenticatedImportTerminal {
             binding: claim.binding.clone(),
             terminal: *terminal,
+            completion,
             observed_at_ms: self.now()?,
         })
     }

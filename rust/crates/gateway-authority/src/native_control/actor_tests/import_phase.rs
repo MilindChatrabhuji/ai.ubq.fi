@@ -311,13 +311,17 @@ fn terminal_query_requires_exact_matching_guarded_group_and_rejects_foreign_repl
             publication_request_digest: sha256_hex(&body),
         };
         let before = f.snapshot();
-        let ResultData::Terminal { terminal, .. } = f.phase(command.clone(), 92).await else {
+        let ResultData::Terminal { terminal, completion, .. } = f.phase(command.clone(), 92).await else {
             panic!("wrong phase")
         };
         assert_eq!(
             terminal.native_source_generation,
             wire.native_source_generation
         );
+        assert_eq!(completion.account_count, 1);
+        assert_eq!(completion.account_ids, ["synthetic-account"]);
+        assert_eq!(completion.models.count, 1);
+        assert_eq!(completion.models.client_version.as_deref(), Some("1.1.0"));
         assert_eq!(before, f.snapshot());
         let key = gateway_schema::catalog_store::runtime_config_key();
         f.store
@@ -346,3 +350,6 @@ mod actual_tls;
 
 #[path = "import_custody_terminal.rs"]
 mod custody_terminal;
+
+#[path = "import_completion_wire.rs"]
+mod completion_wire;

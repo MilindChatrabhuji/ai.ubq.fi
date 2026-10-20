@@ -169,9 +169,10 @@ fn maximal_terminal_reply_is_finite_and_matching_not_a_generic_large_body() {
     let reply = ImportAuthorityReplyData::new(ImportAuthorityResult::Terminal {
         state: after,
         terminal: Box::new(terminal),
+        completion: sample_completion(),
     });
     let bytes = serde_json::to_vec(&reply).unwrap();
-    assert!(bytes.len() <= import_authority_reply_max_bytes());
+    assert!(bytes.len() <= import_authority_reply_max_bytes_for(&request).unwrap());
     assert!(bytes.len() > NATIVE_CONTROL_MAX_BYTES);
     assert!(accepts_reply(&request.bytes().unwrap(), &bytes));
     let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
@@ -257,4 +258,63 @@ fn readonly_custody_terminal_has_closed_matching_echo_and_computed_bounds() {
     let mut over = bytes;
     over.resize(import_authority_reply_max_bytes() + 1, b' ');
     assert!(!accepts_reply(&body, &over));
+}
+
+fn sample_completion() -> ImportCompletionData {
+    ImportCompletionData {
+        account_count: 2,
+        account_ids: vec!["one".into(), "two".into()],
+        updated_at_ms: 1234.5,
+        models: ImportCompletionModelsData {
+            count: 3,
+            source: gateway_core::source_json::SourceJson::parse(r#""\ud800""#)
+                .unwrap()
+                .deserialize()
+                .unwrap(),
+            updated_at_ms: 9876,
+            client_version: None,
+        },
+    }
+}
+#[test]
+fn actor_completion_preserves_required_nullable_utf16_and_request_specific_ceiling() {
+    let state = max_state();
+    let terminal = max_terminal();
+    let request = ImportAuthorityRequestData::new(ImportAuthorityCommand::Terminal {
+        state: state.clone(),
+        claim_ref: "claim".into(),
+        publication_revision: terminal.publication_revision.clone(),
+        native_receipt_ref: terminal.native_receipt_ref.clone(),
+        publication_request_digest: terminal.publication_request_digest.clone(),
+    })
+    .unwrap();
+    let mut after = state.clone();
+    after.action_revision = terminal.publication_revision.clone();
+    let reply = ImportAuthorityReplyData::new(ImportAuthorityResult::Terminal {
+        state: after,
+        terminal: Box::new(terminal),
+        completion: sample_completion(),
+    });
+    let bytes = serde_json::to_vec(&reply).unwrap();
+    let parsed = ImportAuthorityReplyData::parse_for(&bytes, &request).unwrap();
+    let ImportAuthorityResult::Terminal { completion, .. } = parsed.result else {
+        panic!("terminal")
+    };
+    assert_eq!(completion.models.source.as_units(), [0xd800]);
+    assert_eq!(completion.models.client_version, None);
+    assert_eq!(completion.account_ids, ["one", "two"]);
+    let cap = import_authority_reply_max_bytes_for(&request).unwrap();
+    assert!(cap > import_authority_reply_max_bytes());
+    let current = ImportAuthorityRequestData::new(ImportAuthorityCommand::Current {
+        state,
+        claim_ref: None,
+    })
+    .unwrap();
+    assert_eq!(
+        import_authority_reply_max_bytes_for(&current).unwrap(),
+        import_authority_reply_max_bytes()
+    );
+    let mut over = bytes;
+    over.resize(cap + 1, b' ');
+    assert!(ImportAuthorityReplyData::parse_for(&over, &request).is_err());
 }

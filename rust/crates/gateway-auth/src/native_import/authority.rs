@@ -276,195 +276,13 @@ impl ImportAuthorityTerminalData {
         Ok(())
     }
 }
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ImportAuthorityResult {
-    CustodyTerminal {
-        started: ImportCustodyStartedWire,
-        publication_revision: String,
-        terminal: Box<ImportAuthorityTerminalData>,
-    },
-    Admit {
-        state: ImportAuthorityStateData,
-    },
-    FinishCurrent {
-        state: ImportAuthorityStateData,
-    },
-    Claim {
-        state: ImportAuthorityStateData,
-        claim_ref: String,
-        mode: ImportAuthorityClaimMode,
-        #[serde(deserialize_with = "nullable")]
-        start_permit: Option<String>,
-    },
-    Start {
-        state: ImportAuthorityStateData,
-        claim_ref: String,
-        #[serde(deserialize_with = "nullable")]
-        started_revision: Option<String>,
-    },
-    Current {
-        state: ImportAuthorityStateData,
-        #[serde(deserialize_with = "nullable")]
-        claim_ref: Option<String>,
-        #[serde(deserialize_with = "nullable")]
-        catalog_revision: Option<String>,
-    },
-    Unknown {
-        state: ImportAuthorityStateData,
-        claim_ref: String,
-    },
-    Terminal {
-        state: ImportAuthorityStateData,
-        terminal: Box<ImportAuthorityTerminalData>,
-    },
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ImportAuthorityReplyData {
-    pub operation: String,
-    pub v: u8,
-    pub result: ImportAuthorityResult,
-}
-impl ImportAuthorityReplyData {
-    pub fn new(result: ImportAuthorityResult) -> Self {
-        Self {
-            operation: IMPORT_AUTHORITY_OPERATION.into(),
-            v: 1,
-            result,
-        }
-    }
-    pub fn validate_for(&self, request: &ImportAuthorityRequestData) -> Result<(), GatewayError> {
-        request.validate()?;
-        if self.operation != IMPORT_AUTHORITY_OPERATION || self.v != 1 {
-            return Err(invalid());
-        }
-        let valid = match (&request.command, &self.result) {
-            (
-                ImportAuthorityCommand::CustodyTerminal {
-                    started: a,
-                    publication_revision: x,
-                },
-                ImportAuthorityResult::CustodyTerminal {
-                    started: b,
-                    publication_revision: y,
-                    terminal,
-                },
-            ) => {
-                terminal.validate()?;
-                a == b
-                    && x == y
-                    && &terminal.publication_revision == x
-                    && &terminal.source_revision == x
-                    && &terminal.normalized_revision == x
-            }
-            (
-                ImportAuthorityCommand::Admit { metadata },
-                ImportAuthorityResult::Admit { state },
-            ) => {
-                state.validate()?;
-                &state.metadata == metadata
-            }
-            (
-                ImportAuthorityCommand::FinishCurrent { state: a },
-                ImportAuthorityResult::FinishCurrent { state: b },
-            ) => a == b,
-            (
-                ImportAuthorityCommand::Claim { state: a },
-                ImportAuthorityResult::Claim {
-                    state: b,
-                    claim_ref,
-                    mode,
-                    start_permit,
-                },
-            ) => {
-                reference(claim_ref)?;
-                if let Some(value) = start_permit {
-                    text(value)?;
-                }
-                a == b && (*mode == ImportAuthorityClaimMode::ImportOnce) == start_permit.is_some()
-            }
-            (
-                ImportAuthorityCommand::Start {
-                    state: a,
-                    claim_ref: x,
-                    ..
-                },
-                ImportAuthorityResult::Start {
-                    state: b,
-                    claim_ref: y,
-                    started_revision,
-                },
-            ) => {
-                if let Some(value) = started_revision {
-                    text(value)?;
-                }
-                a == b && x == y
-            }
-            (
-                ImportAuthorityCommand::Current {
-                    state: a,
-                    claim_ref: x,
-                },
-                ImportAuthorityResult::Current {
-                    state: b,
-                    claim_ref: y,
-                    catalog_revision,
-                },
-            ) => {
-                if let Some(value) = catalog_revision {
-                    text(value)?;
-                }
-                a == b && x == y
-            }
-            (
-                ImportAuthorityCommand::Unknown {
-                    state: a,
-                    claim_ref: x,
-                },
-                ImportAuthorityResult::Unknown {
-                    state: b,
-                    claim_ref: y,
-                },
-            ) => a == b && x == y,
-            (
-                ImportAuthorityCommand::Terminal {
-                    state: a,
-                    publication_revision,
-                    native_receipt_ref,
-                    publication_request_digest,
-                    ..
-                },
-                ImportAuthorityResult::Terminal { state: b, terminal },
-            ) => {
-                b.validate()?;
-                terminal.validate()?;
-                let mut expected = a.clone();
-                expected.action_revision = publication_revision.clone();
-                expected == *b
-                    && &terminal.publication_revision == publication_revision
-                    && &terminal.native_receipt_ref == native_receipt_ref
-                    && &terminal.publication_request_digest == publication_request_digest
-            }
-            _ => false,
-        };
-        if valid { Ok(()) } else { Err(invalid()) }
-    }
-    pub fn parse_for(
-        body: &[u8],
-        request: &ImportAuthorityRequestData,
-    ) -> Result<Self, GatewayError> {
-        if body.len() > import_authority_reply_max_bytes() {
-            return Err(invalid());
-        }
-        let value: Self = serde_json::from_slice(body).map_err(|_| invalid())?;
-        value.validate_for(request)?;
-        if serde_json::to_vec(&value).map_err(|_| invalid())? != body {
-            return Err(invalid());
-        }
-        Ok(value)
-    }
-}
+#[path = "authority_completion.rs"]
+mod completion;
+pub use completion::{ImportCompletionData, ImportCompletionModelsData};
+#[path = "authority_result.rs"]
+mod result;
+pub use result::{ImportAuthorityReplyData, ImportAuthorityResult};
+
 /// Exact existing B1 canonical12-field DATA. This duplicate wire shape selects
 /// authentication bounds only; it never constructs the authority's private proof.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -696,20 +514,39 @@ pub fn import_authority_reply_max_bytes() -> usize {
             state: s.clone(),
             claim_ref: r,
         },
-        ImportAuthorityResult::Terminal {
-            state: {
-                let mut terminal_state = s;
-                terminal_state.action_revision = "r".repeat(256);
-                terminal_state
-            },
-            terminal: Box::new(max_terminal()),
-        },
     ];
     results
         .into_iter()
         .map(|result| encoded(&ImportAuthorityReplyData::new(result)))
         .max()
         .expect("finite phases")
+        .max(original_terminal_reply_max_bytes())
+}
+fn original_terminal_reply_max_bytes() -> usize {
+    #[derive(Serialize)]
+    struct LegacyTerminal {
+        phase: &'static str,
+        state: ImportAuthorityStateData,
+        terminal: ImportAuthorityTerminalData,
+    }
+    let mut state = max_state();
+    state.action_revision = "r".repeat(256);
+    let value = serde_json::json!({"operation":IMPORT_AUTHORITY_OPERATION,"v":1,"result":LegacyTerminal {phase:"terminal",state,terminal:max_terminal()}});
+    encoded(&value)
+}
+pub fn import_authority_reply_max_bytes_for(
+    request: &ImportAuthorityRequestData,
+) -> Result<usize, GatewayError> {
+    request.validate()?;
+    Ok(
+        if matches!(request.command, ImportAuthorityCommand::Terminal { .. }) {
+            import_authority_reply_max_bytes()
+                + ",\"completion\":".len()
+                + completion::completion_envelope_max_bytes()
+        } else {
+            import_authority_reply_max_bytes()
+        },
+    )
 }
 pub fn import_custody_request_max_bytes() -> usize {
     encoded(&max_custody())
@@ -755,7 +592,7 @@ pub(crate) fn new_response_limit(
     }
     if let Ok(request) = ImportAuthorityRequestData::parse(request) {
         ImportAuthorityReplyData::parse_for(response, &request)?;
-        return Ok(Some(import_authority_reply_max_bytes()));
+        return Ok(Some(import_authority_reply_max_bytes_for(&request)?));
     }
     let request = ImportCustodyStartedWire::parse(request)?;
     ImportCustodyStartedReplyData::parse_for(response, &request)?;
