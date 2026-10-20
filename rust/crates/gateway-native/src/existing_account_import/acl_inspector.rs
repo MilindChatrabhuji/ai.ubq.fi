@@ -194,7 +194,13 @@ pub(super) fn parse(output: &[u8], facts: &Facts) -> Result<(), GatewayError> {
     }
     let stamp = fields[7];
     if let Some((hour, minute)) = stamp.split_once(':') {
-        if hour.len() != 2 || minute.len() != 2 || number(hour)? > 23 || number(minute)? > 59 {
+        if hour.len() != 2
+            || minute.len() != 2
+            || !hour.bytes().all(|b| b.is_ascii_digit())
+            || !minute.bytes().all(|b| b.is_ascii_digit())
+            || hour.parse::<u8>().map_err(|_| fail())? > 23
+            || minute.parse::<u8>().map_err(|_| fail())? > 59
+        {
             return Err(fail());
         }
     } else if !(1..=9999).contains(&number(stamp)?) {
