@@ -13,6 +13,13 @@ use gateway_core::{GatewayError, state::AuthorityStore};
 use serde::{Deserialize, Serialize};
 mod action;
 use action::ImportActionRow;
+mod publication;
+pub use publication::{
+    NativeImportPublication, NativeImportPublicationDisposition, PreparedNativeImportPublication,
+};
+mod publication_current;
+mod publication_source;
+pub(in crate::native_control) use publication_current::VerifiedImportActorRevisions;
 mod publication_data;
 pub use publication_data::{ImportCatalogDisposition, ImportPublicationDataV1};
 mod publication_wire;
