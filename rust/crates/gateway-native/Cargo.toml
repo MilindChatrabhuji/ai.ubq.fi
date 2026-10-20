@@ -38,3 +38,7 @@ libc = "=0.2.191"
 
 [lints]
 workspace = true
+
+[[example]]
+name = "uos-native-connector-fixture"
+path = "tests/support/connector_fixture.rs"
