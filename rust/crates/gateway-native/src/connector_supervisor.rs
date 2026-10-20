@@ -221,20 +221,20 @@ impl RequestChildren {
                 self.stop_connector()?;
                 return Ok(status);
             }
-            if let Some(child) = &mut self.connector {
-                if let Some(status) = child.try_wait().map_err(io_error)? {
-                    child.wait().map_err(io_error)?;
-                    self.connector.take();
-                    if !status.success() {
-                        self.stop_request()?;
-                        return Err(ControlError::Closed);
-                    }
-                    self.input
-                        .as_mut()
-                        .ok_or(ControlError::Closed)?
-                        .write_all(&[1])
-                        .map_err(io_error)?;
+            if let Some(child) = &mut self.connector
+                && let Some(status) = child.try_wait().map_err(io_error)?
+            {
+                child.wait().map_err(io_error)?;
+                self.connector.take();
+                if !status.success() {
+                    self.stop_request()?;
+                    return Err(ControlError::Closed);
                 }
+                self.input
+                    .as_mut()
+                    .ok_or(ControlError::Closed)?
+                    .write_all(&[1])
+                    .map_err(io_error)?;
             }
             thread::sleep(Duration::from_millis(2));
         }
