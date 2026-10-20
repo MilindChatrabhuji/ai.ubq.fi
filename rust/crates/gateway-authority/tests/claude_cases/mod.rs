@@ -250,6 +250,7 @@ fn claude_quota_encoding_is_explicit_and_other_authority_reads_stay_json_only() 
         "malformed",
         "json-tag",
         "typed-roster",
+        "legacy-roster",
     ] {
         let store = MemoryStore::default();
         let roster = claude_setup(&store);
@@ -274,11 +275,18 @@ fn claude_quota_encoding_is_explicit_and_other_authority_reads_stay_json_only() 
                     PortableValue::from_json(&roster),
                     None,
                 )
-                .unwrap()
+                .unwrap();
+                // Named roster decoding opts in; generic JSON reads still reject typed rows.
+                assert!(record.json_value().is_err());
+            }
+            "legacy-roster" => {
+                record =
+                    StoredRecord::profile("legacy-roster", PortableValue::from_json(&roster), None)
+                        .unwrap()
             }
             _ => unreachable!(),
         }
-        let key = if fault == "typed-roster" {
+        let key = if matches!(fault, "typed-roster" | "legacy-roster") {
             keys::claude_accounts()
         } else {
             claude_key(&roster, 1)
@@ -287,6 +295,8 @@ fn claude_quota_encoding_is_explicit_and_other_authority_reads_stay_json_only() 
         let result = run(authority(&store).prove_claude_unavailable(&"paid-model".into(), NOW));
         if fault == "json-tag" {
             assert!(result.unwrap().is_none());
+        } else if fault == "typed-roster" {
+            assert!(result.unwrap().is_some(), "{fault}");
         } else {
             assert!(result.is_err(), "{fault}");
         }
