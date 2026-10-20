@@ -114,3 +114,35 @@ fn one_byte_over_and_closed_required_shape_refuse_without_narrowing_old_domains(
     trailing.extend_from_slice(b"{}");
     assert!(Frame::decode(&trailing).is_err());
 }
+
+
+#[test]
+fn actual_tcp_prefix_truncation_eof_oversize_and_deadline_refuse() {
+    use std::net::TcpListener;
+    let pair = || {
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let sender = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (receiver, _) = listener.accept().unwrap();
+        drop(listener); (sender, receiver)
+    };
+    let deadline = || Instant::now() + Duration::from_secs(2);
+    let mut header = maximal_header();
+    header.sequence = 1;
+    header.binding.operation_id = "op".into(); header.binding.claim_ref = "claim".into();
+    header.binding.native_owner_id = "owner".into(); header.binding.owner_revision = "owner-1".into();
+    header.binding.source_revision = "source-1".into(); header.binding.normalized_revision = "normalized-1".into();
+    header.binding.started_revision = "started-1".into();
+    let frame = Frame::Quiesce(header); let encoded = frame.encode().unwrap();
+    let (mut sender, mut receiver) = pair();
+    send(&mut sender, &frame, deadline(), None).unwrap();
+    assert_eq!(receive(&mut receiver, deadline(), None).unwrap().encode().unwrap(), encoded);
+    for partial in [vec![], vec![0, 0], (CUSTODY_FRAME_MAX as u32 + 1).to_be_bytes().to_vec(), {
+        let mut bytes = (encoded.len() as u32).to_be_bytes().to_vec(); bytes.extend_from_slice(&encoded[..encoded.len() / 2]); bytes
+    }, { let mut bytes = 2u32.to_be_bytes().to_vec(); bytes.extend_from_slice(b"{}"); bytes }] {
+        let (mut sender, mut receiver) = pair();
+        sender.write_all(&partial).unwrap(); sender.shutdown(std::net::Shutdown::Write).unwrap();
+        assert!(receive(&mut receiver, deadline(), None).is_err());
+    }
+    let (_sender, mut receiver) = pair();
+    assert!(receive(&mut receiver, Instant::now(), None).is_err());
+}

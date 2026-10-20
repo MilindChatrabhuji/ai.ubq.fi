@@ -77,11 +77,7 @@ impl ImportValidation {
             let is_json = response.headers.iter().any(|(name, value)| name.eq_ignore_ascii_case("content-type") && value.contains("application/json"));
             if !is_json { return Err(invalid_catalog()); }
             let body = SourceJson::parse_bytes(&response.body).map_err(|_| invalid_catalog())?;
-            // M22's narrow helper reuses the original normalizer; DATA serialization is not proof.
-            let prepared = gateway_publication::prepare_import_catalog(&body, &self.client_version, response.status, context.now_ms()?)?;
-            let value = SourceJson::from_serializable(&prepared)?;
-            let snapshot = document::member(&value, "snapshot")?.ok_or_else(invalid_catalog)?;
-            CatalogValidation::Normalized { snapshot, client_version: self.client_version.clone(), upstream_status: response.status }
+            normalized_catalog(&body, &self.client_version, response.status, context.now_ms()?)?
         } else { return Err(model_error(&response, &credentials)); };
         Ok(ValidatedNativeImport { document: source, credentials, catalog, refreshed })
     }
@@ -136,6 +132,14 @@ fn selected_version(version: Option<&JsString16>) -> String {
     });
     if valid { supplied.unwrap_or_else(|| "0.100.0".into()) } else { "0.100.0".into() }
 }
+fn normalized_catalog(body: &SourceJson, version: &str, status: u16, now: i64) -> Result<CatalogValidation, GatewayError> {
+    // This is the actual shared source normalizer, not a second native interpretation.
+    let prepared = gateway_publication::prepare_import_catalog(body, version, status, now)
+        .map_err(|error| if error.status == 503 { invalid_catalog() } else { error })?;
+    let gateway_publication::ImportCatalogData::Normalized { snapshot, client_version, upstream_status } = prepared
+        else { return Err(invalid_catalog()); };
+    Ok(CatalogValidation::Normalized { snapshot, client_version, upstream_status })
+}
 fn invalid_catalog() -> GatewayError {
     GatewayError::new(502, "Codex upstream models response did not include a non-empty model catalog", Some("codex_upstream_unreachable"))
 }
@@ -151,6 +155,19 @@ fn model_error(response: &PrivateResponse, credentials: &NativeCredentials) -> G
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn actual_shared_catalog_normalization_preserves_source_empty_and_safe_size_errors() {
+        let empty = SourceJson::parse(r#"{"models":[]}"#).unwrap();
+        let error = match normalized_catalog(&empty, "0.100.0", 200, 1) { Err(e) => e, Ok(_) => panic!("empty catalog accepted") };
+        assert_eq!(error.status, 502);
+        assert_eq!(error.envelope.error.code.as_deref(), Some("codex_upstream_unreachable"));
+        let input = SourceJson::parse(r#"{"models":[{"slug":"synthetic_model","display_name":"Synthetic"}]}"#).unwrap();
+        assert!(normalized_catalog(&input, "0.100.0", 200, 1).is_ok());
+        let oversized_version = format!("{}.0.0", "0".repeat(60_000));
+        let error = match normalized_catalog(&input, &oversized_version, 200, 1) { Err(e) => e, Ok(_) => panic!("oversized source snapshot accepted") };
+        assert_eq!(error.status, 413);
+        assert_eq!(error.envelope.error.code.as_deref(), Some("invalid_request_error"));
+    }
     #[test]
     fn source_client_version_precedence_grammar_and_safe_integer_domain_are_not_narrowed() {
         assert_eq!(selected_version(None), "0.100.0");
