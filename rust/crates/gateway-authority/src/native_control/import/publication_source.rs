@@ -60,7 +60,7 @@ pub(super) async fn prepare<S: AuthorityStore, I: TokenSource, C: NativeRenewalC
         account_id: wire.document.account_id.clone(),
         access_token: access,
         refresh_token: Secret::new(String::new()),
-        updated_at_ms: tx.now as f64,
+        updated_at_ms: wire.document.updated_at_ms,
         native_owner: Some(CodexNativeOwner {
             codex_home: control.registered.home.clone(),
             generation_hash: wire.access_generation.clone(),

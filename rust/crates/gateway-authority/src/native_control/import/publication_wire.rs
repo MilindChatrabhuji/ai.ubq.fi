@@ -74,6 +74,7 @@ mod tests {
             document: ImportAccessDocument {
                 account_id: "account".into(),
                 access_token: "SYNTHETIC".into(),
+                updated_at_ms: 1_000_000.0,
                 native_refreshed_at: None,
             },
             catalog: ImportCatalogData::Normalized {

@@ -26,6 +26,7 @@ fn request(normalized: bool) -> ImportPublicationCommandData {
         document: ImportAccessDocument {
             account_id: "account".into(),
             access_token: "SYNTHETIC_ACCESS".into(),
+            updated_at_ms: 1_000_000.0,
             native_refreshed_at: None,
         },
         catalog: if normalized {
@@ -231,4 +232,46 @@ fn overlong_retained_revision_and_normalized_revision_mismatch_refuse() {
         });
         assert!(response.validate_for(&request, &body).is_err());
     }
+}
+
+#[test]
+fn selected_auth_timestamp_is_required_finite_and_inside_existing_access_document_budget() {
+    for value in [
+        0.0,
+        -0.0,
+        1_000_012.25,
+        -f64::MAX,
+        f64::MAX,
+        f64::MIN_POSITIVE,
+        f64::from_bits(1),
+    ] {
+        let mut row = request(false);
+        row.document.updated_at_ms = value;
+        let fixed = serde_json::to_vec(&row.document).unwrap().len();
+        row.document
+            .access_token
+            .push_str(&"x".repeat(ACCESS_MAX_BYTES - fixed));
+        assert_eq!(
+            serde_json::to_vec(&row.document).unwrap().len(),
+            ACCESS_MAX_BYTES
+        );
+        let body = row.bytes().unwrap();
+        let decoded = ImportPublicationCommandData::parse(&body).unwrap();
+        assert_eq!(decoded.document.updated_at_ms.to_bits(), value.to_bits());
+        row.document.access_token.push('x');
+        assert!(row.bytes().is_err());
+    }
+    let mut row = request(false);
+    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        row.document.updated_at_ms = value;
+        assert!(row.bytes().is_err());
+    }
+    let mut value = serde_json::to_value(request(false)).unwrap();
+    value["document"]
+        .as_object_mut()
+        .unwrap()
+        .remove("updated_at_ms");
+    assert!(ImportPublicationCommandData::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+    value["document"]["updated_at_ms"] = serde_json::Value::Null;
+    assert!(ImportPublicationCommandData::parse(&serde_json::to_vec(&value).unwrap()).is_err());
 }
