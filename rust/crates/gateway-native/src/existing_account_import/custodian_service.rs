@@ -30,7 +30,10 @@ pub(super) fn serve(
         let command = peer.lock().map_err(|_| unavailable())?.receive()?;
         if command.is_quiesce() {
             let fresh = authority.verify_started_custody(command.header().binding)?;
-            runtime.open_import_session(&mut peer.lock().map_err(|_| unavailable())?, &command, fresh)?;
+            {
+                let mut peer = peer.lock().map_err(|_| unavailable())?;
+                runtime.open_import_session(&mut peer, &command, fresh)?;
+            }
             // Recheck CURRENT Started after actual kill/wait/kernel settlement,
             // before the first Stopped reply can reach the actor.
             let fresh = authority.verify_started_custody(command.header().binding)?;
