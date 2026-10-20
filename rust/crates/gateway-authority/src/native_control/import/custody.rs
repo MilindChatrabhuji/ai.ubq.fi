@@ -47,7 +47,7 @@ fn common(
     let (created, deadline) = lifetime;
     metadata.validate()?;
     target.validate()?;
-    if !matches!(version, 1 | 2)
+    if !matches!(version, 1..=3)
         || kind != NativeImportKind::CodexAuth
         || metadata.action_ref != id
         || actor.scope() != NativeActorScope::Admin
@@ -118,7 +118,7 @@ pub(in crate::native_control) fn validate_custody(
         return Err(unavailable());
     };
     let facts = &row.facts;
-    if row.v != 2
+    if !matches!(row.v, 2 | 3)
         || facts.account_id_hash != *account_id_hash
         || facts.slot >= facts.account_digests.len() as u64
     {

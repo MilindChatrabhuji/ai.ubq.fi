@@ -1,10 +1,11 @@
 import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   executeRustPlan,
+  executeDarwinNativeTests,
   parseRustArguments,
   planRustVerification as planRustVerificationForHost,
   runCommand,
@@ -14,6 +15,7 @@ import {
   rustVerificationEnvironment,
   verifyWorkerArtifact,
   type RustCommand,
+  type CommandRunner,
   type RustStage,
 } from "./rust-verify.ts";
 
@@ -369,4 +371,232 @@ test("isolated Rust children preserve account HOME and isolate ambient Git confi
   assert.equal(environment.UNLISTED_CREDENTIAL_PROBE, undefined);
   assert.throws(() => rustVerificationEnvironment({ ...source, HOME: undefined }, linux), /explicit inherited absolute HOME/);
   assert.throws(() => rustVerificationEnvironment({ ...source, HOME: "relative-home" }, linux), /explicit inherited absolute HOME/);
+});
+
+const ownedChildCases = [
+  "existing_account_import::foundation_tests::actual_owned_async_child_stop_wait_and_dirty_epoch_do_not_infer_external_absence",
+  "existing_account_import::foundation_tests::actual_owned_child_reap_records_stopped_but_reopened_marker_grants_no_lease",
+];
+const nativeArtifacts = () => {
+  const root = fixture();
+  writeFileSync(join(root, "rust/Cargo.toml"), readFileSync(join(root, "rust/Cargo.toml"), "utf8") + '[workspace.package]\nversion="0.1.0"\n');
+  const task = mkdtempSync(join(temporary, "darwin-artifacts-"));
+  const sha = "1".repeat(40);
+  const tree = "2".repeat(40);
+  const target = rustSourceTarget(join(task, "target"), sha, tree);
+  const bin = join(task, "rustup/toolchains/1.98.1-aarch64-apple-darwin/bin");
+  mkdirSync(bin, { recursive: true });
+  for (const name of ["cargo", "rustc", "rustdoc"]) writeFileSync(join(bin, name), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  const directory = join(root, "rust/crates/gateway-native");
+  const manifest = join(directory, "Cargo.toml");
+  const artifact = (name: string, kind: string, test: boolean) => {
+    const sourcePaths: Record<string, string> = { test: `tests/${name}.rs`, example: "tests/support/connector_fixture.rs", lib: "src/lib.rs" };
+    const source = join(directory, sourcePaths[kind] ?? `src/bin/${name}.rs`);
+    const runtimePath = kind === "example" ? `examples/${name}` : name;
+    const executable = join(target, "aarch64-apple-darwin/debug", test ? `deps/${name}-exact-cargo-hash` : runtimePath);
+    mkdirSync(join(source, ".."), { recursive: true });
+    mkdirSync(join(executable, ".."), { recursive: true });
+    writeFileSync(source, test ? "#[test]\nfn selected_source_case() {}\n" : "// synthetic Cargo source\n");
+    writeFileSync(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    return {
+      reason: "compiler-artifact",
+      manifest_path: manifest,
+      package_id: `path+file://${realpathSync(manifest).slice(0, -11)}#0.1.0`,
+      target: { name, kind: [kind], src_path: source, doctest: kind === "lib" },
+      profile: { test },
+      executable,
+    };
+  };
+  const prerequisites = ["uos-native", "uos-native-connector", "uos-native-request", "uos-native-supervisor"].map((name) => artifact(name, "bin", false));
+  prerequisites.push(artifact("uos-native-connector-fixture", "example", false));
+  const selected = [
+    artifact("gateway_native", "lib", true),
+    artifact("uos-native", "bin", true),
+    artifact("connector_fd", "test", true),
+    artifact("connector_process", "test", true),
+    artifact("connector_confinement", "test", true),
+  ];
+  const prelaunch = selected.at(-1);
+  assert.ok(prelaunch);
+  const library = selected[0];
+  const libraryNames = [...ownedChildCases, "ordinary_library_case", ownedChildCases[0] + "_neighbor"];
+  const environment = {
+    HOME: task,
+    PATH: bin,
+    RUSTUP_HOME: join(task, "rustup"),
+    CARGO_HOME: join(task, "cargo"),
+    CARGO_TARGET_DIR: target,
+    XDG_CACHE_HOME: join(task, "cache"),
+    UNLISTED_CREDENTIAL_PROBE: "must-not-inherit",
+  };
+  const calls: RustCommand[] = [];
+  const json = (artifacts: unknown[]) => [...artifacts, { reason: "build-finished", success: true }].map((value) => JSON.stringify(value)).join("\n");
+  const runtimeOutput = (command: RustCommand): string => {
+    if (command.argv.includes("--lib") || command.argv[0] === library.executable) {
+      const exact = command.argv[0] === library.executable ? ownedChildCases.find((name) => command.argv.includes(name)) : undefined;
+      let names = exact ? [exact] : libraryNames;
+      if (command.argv.includes("--skip")) names = names.filter((name) => !ownedChildCases.includes(name));
+      return command.argv.includes("--list")
+        ? names.map((name) => name + ": test\n").join("")
+        : `test result: ok. ${names.length} passed; 0 failed; 0 ignored;\n`;
+    }
+    return command.argv.includes("--list") ? "exact_selected: test\n" : "test result: ok. 1 passed; 0 failed; 0 ignored;\n";
+  };
+  const run: CommandRunner = (command, inherited) => {
+    calls.push(command);
+    assert.equal(inherited.UNLISTED_CREDENTIAL_PROBE, undefined);
+    let stdout: string;
+    if (command.argv[0] === "git") {
+      stdout = "";
+      if (command.argv[1] === "rev-parse") stdout = command.argv[2] === "HEAD" ? sha : tree;
+    } else if (command.argv[1] === "build") stdout = json(prerequisites);
+    else if (command.argv.includes("--no-run")) stdout = json(command.argv.includes("--test") ? [library, prelaunch] : selected);
+    else stdout = runtimeOutput(command);
+    return Promise.resolve({ code: 0, stdout, stderr: "" });
+  };
+  return { root, cwd: join(root, "rust"), environment, calls, run, json, selected, prerequisites, prelaunch, library, libraryNames };
+};
+
+test("Darwin native packages alone select the source-bound prelaunch split; Linux and WASM keep their policies", () => {
+  const fixture = nativeArtifacts();
+  const paths = ["rust/crates/gateway-native/tests/connector_confinement.rs"];
+  for (const host of [darwin, linux]) {
+    const plan = planRustVerification(fixture.root, paths, "native", false, host);
+    assert.deepEqual(plan.testPackages, ["gateway-native"]);
+    assert.equal(plan.commands.filter((command) => command.darwinNativeTests).length, host === darwin ? 1 : 0);
+    assert.ok(plan.commands.every((command) => command.isolated));
+    if (host === linux) assert.equal(plan.commands.filter((command) => command.testListing === true || command.testRun === true).length, 2);
+  }
+  assert.ok(
+    !planRustVerification(fixture.root, ["rust/crates/gateway-core/src/lib.rs"], "wasm", false, darwin).commands.some((command) => command.darwinNativeTests)
+  );
+});
+
+test("Darwin exact emitted inventory runs each lib/bin/test plus doctests once without broad unconfined Cargo", async () => {
+  const fixture = nativeArtifacts();
+  assert.equal(await executeDarwinNativeTests(fixture.cwd, fixture.environment, "package", fixture.run), 7);
+  const unconfined = fixture.calls.filter((command) => command.argv[0] !== "git" && !command.isolated);
+  assert.equal(unconfined.length, 6);
+  assert.equal(unconfined.filter((command) => command.argv[0] === fixture.prelaunch.executable).length, 2);
+  for (const name of ownedChildCases) {
+    const exact = unconfined.filter((command) => command.argv[0] === fixture.library.executable && command.argv.includes(name));
+    assert.equal(exact.length, 2);
+    assert.ok(exact.every((command) => command.argv.includes("--exact")));
+  }
+  const normal = fixture.calls.filter(
+    (command) => command.argv[1] === "test" && !command.argv.includes("--no-run") && !command.argv.includes("--doc") && !command.argv.includes("--lib")
+  );
+  assert.equal(normal.length, 2);
+  for (const command of normal) {
+    assert.ok(command.isolated);
+    assert.ok(!command.argv.includes("--lib"));
+    for (const name of ["uos-native", "connector_fd", "connector_process"]) assert.equal(command.argv.filter((value) => value === name).length, 1);
+    assert.ok(!command.argv.includes("connector_confinement"));
+  }
+  assert.equal(fixture.calls.filter((command) => command.argv.includes("--doc")).length, 2);
+  assert.ok(fixture.calls.findIndex((command) => command.argv[1] === "build") < fixture.calls.findIndex((command) => command.argv.includes("--no-run")));
+});
+
+test("focused internal acceptance compiles and executes only the exact prelaunch target with all its cases", async () => {
+  const fixture = nativeArtifacts();
+  assert.equal(await executeDarwinNativeTests(fixture.cwd, fixture.environment, "prelaunch", fixture.run), 3);
+  const compile = fixture.calls.find((command) => command.argv.includes("--no-run"));
+  assert.ok(compile?.isolated);
+  assert.ok(compile.argv.includes("--lib") && compile.argv.includes("--test") && compile.argv.includes("connector_confinement"));
+  assert.ok(!fixture.calls.some((command) => command.argv.includes("--doc")));
+  assert.equal(fixture.calls.filter((command) => command.argv[0] === fixture.prelaunch.executable).length, 2);
+});
+
+test("prelaunch dispatch refuses missing fixtures, missing targets, mismatched source/profile/build identities and empty inventory", async () => {
+  for (const corrupt of ["fixture", "target", "source", "profile", "identity", "build"] as const) {
+    const fixture = nativeArtifacts();
+    const run: CommandRunner = (command, environment) => {
+      if (command.argv[1] === "build" && corrupt === "fixture") return Promise.resolve({ code: 0, stdout: fixture.json([]), stderr: "" });
+      if (command.argv.includes("--no-run")) {
+        const artifact = structuredClone(fixture.prelaunch);
+        if (corrupt === "target") artifact.target.name = "not-the-selected-target";
+        if (corrupt === "source") artifact.target.src_path = fixture.selected[0].target.src_path;
+        if (corrupt === "profile") artifact.profile.test = false;
+        if (corrupt === "identity") artifact.package_id += "mismatch";
+        return Promise.resolve({ code: 0, stdout: corrupt === "build" ? JSON.stringify(artifact) : fixture.json([fixture.library, artifact]), stderr: "" });
+      }
+      return fixture.run(command, environment);
+    };
+    await assert.rejects(executeDarwinNativeTests(fixture.cwd, fixture.environment, "prelaunch", run), /missing|mismatch|incomplete/);
+    assert.ok(!fixture.calls.some((command) => command.argv[0] === fixture.prelaunch.executable));
+  }
+});
+
+test("prelaunch dispatch rechecks artifact hashes between listing and execution and refuses wrong source-bound targets", async () => {
+  const fixture = nativeArtifacts();
+  const run: CommandRunner = async (command, environment) => {
+    const result = await fixture.run(command, environment);
+    if (command.argv[0] === fixture.prelaunch.executable && command.argv.includes("--list"))
+      writeFileSync(fixture.prelaunch.executable, "changed executable\n");
+    return result;
+  };
+  await assert.rejects(executeDarwinNativeTests(fixture.cwd, fixture.environment, "prelaunch", run), /hash changed/);
+  assert.equal(fixture.calls.filter((command) => command.argv[0] === fixture.prelaunch.executable).length, 1);
+  await assert.rejects(
+    executeDarwinNativeTests(fixture.cwd, { ...fixture.environment, CARGO_TARGET_DIR: temporary }, "prelaunch", fixture.run),
+    /source\/tree identity/
+  );
+});
+
+test("Darwin retains Cargo's actual disabled doc-test selection instead of forcing extra cases", async () => {
+  const fixture = nativeArtifacts();
+  fixture.selected[0].target.doctest = false;
+  assert.equal(await executeDarwinNativeTests(fixture.cwd, fixture.environment, "package", fixture.run), 6);
+  assert.ok(!fixture.calls.some((command) => command.argv.includes("--doc")));
+});
+
+test("prelaunch refuses duplicate or missing executable artifacts and zero executed tests", async () => {
+  for (const corrupt of ["duplicate", "missing", "zero"] as const) {
+    const fixture = nativeArtifacts();
+    const run: CommandRunner = (command, environment) => {
+      if (command.argv.includes("--no-run") && corrupt === "duplicate")
+        return Promise.resolve({ code: 0, stdout: fixture.json([fixture.library, fixture.prelaunch, fixture.prelaunch]), stderr: "" });
+      if (command.argv.includes("--no-run") && corrupt === "missing") rmSync(fixture.prelaunch.executable);
+      if (command.argv[0] === fixture.prelaunch.executable && corrupt === "zero")
+        return Promise.resolve({ code: 0, stdout: "test result: ok. 0 passed; 0 failed;\n", stderr: "" });
+      return fixture.run(command, environment);
+    };
+    await assert.rejects(executeDarwinNativeTests(fixture.cwd, fixture.environment, "prelaunch", run), /duplicate|ENOENT|zero passing/);
+  }
+});
+
+test("only the two exact owned-child lib cases leave the wrapped inventory, retaining prefix siblings and ordinary tests", async () => {
+  const fixture = nativeArtifacts();
+  await executeDarwinNativeTests(fixture.cwd, fixture.environment, "package", fixture.run);
+  const wrapped = fixture.calls.filter((command) => command.argv.includes("--skip"));
+  assert.ok(wrapped.length > 0 && wrapped.every((command) => command.isolated && command.argv.includes("--lib") && command.argv.includes("--exact")));
+  for (const command of wrapped)
+    assert.deepEqual(
+      command.argv.filter((value, index) => command.argv[index - 1] === "--skip"),
+      ownedChildCases
+    );
+  const actual = fixture.calls.filter((command) => !command.isolated && command.argv[0] === fixture.library.executable && !command.argv.includes("--list"));
+  assert.deepEqual(
+    actual.map((command) => command.argv[1]),
+    ownedChildCases
+  );
+  assert.ok(actual.every((command) => command.argv.includes("--exact")));
+});
+
+test("missing lib artifacts, missing exact cases, overbroad filtered inventory and lib hash drift refuse dispatch", async () => {
+  for (const corrupt of ["library", "case", "overbroad", "hash"] as const) {
+    const fixture = nativeArtifacts();
+    const run: CommandRunner = async (command, environment) => {
+      if (command.argv.includes("--no-run") && corrupt === "library") return { code: 0, stdout: fixture.json([fixture.prelaunch]), stderr: "" };
+      const result = await fixture.run(command, environment);
+      if (command.argv.includes("--list") && command.argv.includes("--lib")) {
+        if (corrupt === "case" && !command.argv.includes("--skip")) return { ...result, stdout: "ordinary_library_case: test\n" };
+        if (corrupt === "overbroad" && command.argv.includes("--skip")) return { ...result, stdout: "ordinary_library_case: test\n" };
+        if (corrupt === "hash") writeFileSync(fixture.library.executable, "changed source-bound library\n");
+      }
+      return result;
+    };
+    await assert.rejects(executeDarwinNativeTests(fixture.cwd, fixture.environment, "prelaunch", run), /missing|inventory mismatch|hash changed/);
+    assert.ok(!fixture.calls.some((command) => !command.isolated && command.argv[0] === fixture.library.executable));
+  }
 });

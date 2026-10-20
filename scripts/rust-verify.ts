@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
-import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectCiScope, isDocumentationPath, isRustGatePath, RUST_NATIVE_ONLY_PACKAGES } from "./test-scope.ts";
 import { testNetworkArgv } from "./test-network.ts";
@@ -32,7 +32,14 @@ export type RustPlan = Readonly<{
   buildWorker: boolean;
   commands: readonly RustCommand[];
 }>;
-export type RustCommand = Readonly<{ argv: readonly string[]; cwd: string; isolated?: boolean; testListing?: boolean; testRun?: boolean }>;
+export type RustCommand = Readonly<{
+  argv: readonly string[];
+  cwd: string;
+  isolated?: boolean;
+  testListing?: boolean;
+  testRun?: boolean;
+  darwinNativeTests?: boolean;
+}>;
 export type CommandResult = Readonly<{ code: number; stdout: string; stderr: string }>;
 export type CommandRunner = (command: RustCommand, environment: Record<string, string>) => Promise<CommandResult>;
 type Table = Record<string, unknown>;
@@ -125,8 +132,11 @@ const workerDependencies = (packages: readonly Package[], worker: Package): Set<
   }
 };
 const testCommands = (names: readonly string[], target: string, cwd: string): RustCommand[] =>
-  names.flatMap((name) => {
+  names.flatMap<RustCommand>((name) => {
     const argv = ["cargo", "test", "--locked", "--offline", "--target", target, "-p", name];
+    // Darwin prelaunch tests install their own child profiles; nesting those
+    // beneath the package-wide Seatbelt changes the policy being tested.
+    if (name === "gateway-native" && target === "aarch64-apple-darwin") return [{ argv, cwd, isolated: true, darwinNativeTests: true }];
     return [
       { argv: [...argv, "--", "--list"], cwd, isolated: true, testListing: true },
       { argv, cwd, isolated: true, testRun: true },
@@ -264,12 +274,231 @@ const observeCommandResult = (command: RustCommand, result: CommandResult): numb
     throw new Error("Selected Rust test package executed zero passing tests");
   return tests;
 };
+const PRELAUNCH_TARGET = "connector_confinement";
+const OWNED_CHILD_CASES = [
+  "existing_account_import::foundation_tests::actual_owned_async_child_stop_wait_and_dirty_epoch_do_not_infer_external_absence",
+  "existing_account_import::foundation_tests::actual_owned_child_reap_records_stopped_but_reopened_marker_grants_no_lease",
+] as const;
+const CONNECTOR_EXAMPLE = "uos-native-connector-fixture";
+type CargoExecutable = Readonly<{ name: string; kind: string; source: string; executable: string; sha256: string; test: boolean }>;
+const artifactHash = (path: string, target: string): string => {
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0 || (stat.mode & 0o111) === 0 || !inside(realpathSync(target), realpathSync(path)))
+    throw new Error("Cargo executable is missing, unsafe or outside the source-bound target");
+  return digest(readFileSync(path));
+};
+const cargoExecutable = (message: Table, manifest: string, cwd: string, target: string): CargoExecutable => {
+  const artifact = table(message.target);
+  const kind = strings(artifact.kind);
+  const profile = table(message.profile);
+  if (kind.length !== 1 || !["lib", "bin", "test", "example", "bench"].includes(kind[0]) || typeof profile.test !== "boolean")
+    throw new Error("Cargo executable target/profile identity is invalid");
+  if (
+    typeof artifact.name !== "string" ||
+    !/^[A-Za-z0-9_-]+$/.test(artifact.name) ||
+    typeof artifact.src_path !== "string" ||
+    typeof message.executable !== "string"
+  )
+    throw new Error("Cargo executable source identity is invalid");
+  const source = realpathSync(artifact.src_path);
+  if (!inside(dirname(manifest), source)) throw new Error("Cargo executable source escapes its native manifest");
+  const version = table(table(toml(join(cwd, "Cargo.toml"))).workspace).package;
+  const expectedVersion = table(version).version;
+  if (typeof expectedVersion !== "string" || message.package_id !== `path+file://${dirname(manifest)}#${expectedVersion}`)
+    throw new Error("Cargo executable package identity mismatch");
+  const executable = message.executable;
+  return { name: artifact.name, kind: kind[0], source, executable, sha256: artifactHash(executable, target), test: profile.test };
+};
+const cargoExecutables = (stdout: string, cwd: string, target: string): CargoExecutable[] => {
+  const manifest = realpathSync(join(cwd, "crates/gateway-native/Cargo.toml"));
+  const executables: CargoExecutable[] = [];
+  let finished = false;
+  for (const line of stdout.split("\n").filter((line) => line.trim() !== "")) {
+    const message = table(JSON.parse(line));
+    if (message.reason === "build-finished") {
+      if (message.success !== true || finished) throw new Error("Cargo build identity is missing or ambiguous");
+      finished = true;
+    }
+    if (message.reason !== "compiler-artifact" || message.executable === null || message.executable === undefined) continue;
+    if (typeof message.manifest_path !== "string" || realpathSync(message.manifest_path) !== manifest) continue;
+    const item = cargoExecutable(message, manifest, cwd, target);
+    if (executables.some((old) => old.kind === item.kind && old.name === item.name && old.test === item.test))
+      throw new Error("Cargo emitted duplicate executable identities");
+    executables.push(item);
+  }
+  if (!finished) throw new Error("Cargo build identity is missing or incomplete");
+  return executables;
+};
+const cargoDoctestsSelected = (stdout: string, cwd: string): boolean => {
+  const manifest = realpathSync(join(cwd, "crates/gateway-native/Cargo.toml"));
+  const selected = new Set<boolean>();
+  for (const line of stdout.split("\n").filter((line) => line.trim() !== "")) {
+    const message = table(JSON.parse(line));
+    if (message.reason !== "compiler-artifact" || typeof message.manifest_path !== "string" || realpathSync(message.manifest_path) !== manifest) continue;
+    const target = table(message.target);
+    if (!strings(target.kind).includes("lib")) continue;
+    if (typeof target.doctest !== "boolean") throw new Error("Cargo library doc-test identity is missing");
+    selected.add(target.doctest);
+  }
+  if (selected.size !== 1) throw new Error("Cargo library doc-test selection is missing or ambiguous");
+  return selected.has(true);
+};
+const checkedArtifacts = (items: readonly CargoExecutable[], target: string): void => {
+  for (const item of items)
+    if (artifactHash(item.executable, target) !== item.sha256) throw new Error("Cargo executable hash changed after isolated compilation");
+};
+const nativeTestNames = (stdout: string): string[] => {
+  const names = stdout.split("\n").flatMap((line) => {
+    const match = /^(.*): test\s*$/.exec(line);
+    return match ? [match[1]] : [];
+  });
+  if (new Set(names).size !== names.length) throw new Error("Native test inventory contains duplicate names");
+  return names.sort((left, right) => left.localeCompare(right));
+};
+const requireTestNames = (actual: readonly string[], expected: readonly string[]): void => {
+  if (
+    JSON.stringify([...actual].sort((left, right) => left.localeCompare(right))) !==
+    JSON.stringify([...expected].sort((left, right) => left.localeCompare(right)))
+  )
+    throw new Error("Exact native test-name inventory mismatch");
+};
+const nativeLibraryArtifact = (tests: readonly CargoExecutable[], cwd: string): CargoExecutable => {
+  const libraries = tests.filter((item) => item.kind === "lib");
+  const library = libraries[0];
+  if (libraries.length !== 1 || library.source !== realpathSync(join(cwd, "crates/gateway-native/src/lib.rs")))
+    throw new Error("Exact native library test artifact/source is missing");
+  return library;
+};
+const nativeLibrarySelection = async (
+  cargo: string,
+  flags: readonly string[],
+  cwd: string,
+  checked: (command: RustCommand) => Promise<CommandResult>
+): Promise<Readonly<{ argv: readonly string[]; names: readonly string[] }>> => {
+  const argv = [cargo, "test", ...flags, "--lib", "--"];
+  const original = nativeTestNames((await checked({ argv: [...argv, "--list"], cwd, isolated: true })).stdout);
+  if (OWNED_CHILD_CASES.some((name) => !original.includes(name))) throw new Error("Expected exact owned-child lib case is missing");
+  const filtered = [...argv, "--exact", ...OWNED_CHILD_CASES.flatMap((name) => ["--skip", name])];
+  const names = nativeTestNames((await checked({ argv: [...filtered, "--list"], cwd, isolated: true })).stdout);
+  requireTestNames(
+    names,
+    original.filter((name) => !OWNED_CHILD_CASES.some((owned) => owned === name))
+  );
+  console.log(JSON.stringify({ nativeLibraryInventory: original, loopbackLibraryInventory: names, trustedLibraryCases: OWNED_CHILD_CASES }));
+  return { argv: filtered, names };
+};
+type NativeTestPair = (argv: readonly string[], isolated: boolean, expected?: readonly string[]) => Promise<void>;
+const runOwnedChildCases = async (library: CargoExecutable, pair: NativeTestPair): Promise<void> => {
+  for (const name of OWNED_CHILD_CASES) await pair([library.executable, name, "--exact", "--test-threads=1", "--nocapture"], false, [name]);
+};
+// An internal acceptance seam, not a CLI escape: only this fixed native target
+// and two exact owned-child lib cases may run without the outer Darwin profile.
+export const executeDarwinNativeTests = async (
+  cwd: string,
+  inherited: Record<string, string>,
+  selection: "package" | "prelaunch" = "package",
+  run: CommandRunner = runCommand
+): Promise<number> => {
+  if (run === runCommand && (process.platform !== "darwin" || process.arch !== "arm64")) throw new Error("Prelaunch execution requires Darwin ARM64");
+  if (!["package", "prelaunch"].includes(selection)) throw new Error("Unknown native test selection");
+  const environment = rustVerificationEnvironment(inherited, { platform: "darwin", arch: "arm64" });
+  const checked = async (command: RustCommand): Promise<CommandResult> => {
+    console.log(JSON.stringify({ stage: "native", ...command }));
+    const result = await run(command, environment);
+    observeCommandResult(command, result);
+    return result;
+  };
+  const git = async (args: readonly string[]): Promise<string> => (await checked({ argv: ["git", ...args], cwd })).stdout.trim();
+  const source = await git(["rev-parse", "HEAD"]);
+  const tree = await git(["rev-parse", "HEAD^{tree}"]);
+  const target = environment.CARGO_TARGET_DIR;
+  if (!/^[a-f0-9]{40}$/.test(source) || !/^[a-f0-9]{40}$/.test(tree) || basename(target) !== `${source}-${tree}` || basename(dirname(target)) !== "exact-rust")
+    throw new Error("Native test target is not bound to the exact source/tree identity");
+  const unchanged = async (): Promise<void> => {
+    if (
+      (await git(["rev-parse", "HEAD"])) !== source ||
+      (await git(["rev-parse", "HEAD^{tree}"])) !== tree ||
+      (await git(["status", "--porcelain", "--untracked-files=no"]))
+    )
+      throw new Error("Native test source changed or is not clean");
+  };
+  await unchanged();
+  const cargo = rustToolPath("cargo", environment, { platform: "darwin", arch: "arm64" });
+  const flags = ["--locked", "--offline", "--target", "aarch64-apple-darwin", "-p", "gateway-native"];
+  const build = await checked({ argv: [cargo, "build", ...flags, "--bins", "--example", CONNECTOR_EXAMPLE, "--message-format=json"], cwd, isolated: true });
+  const prerequisites = cargoExecutables(build.stdout, cwd, target);
+  const fixture = prerequisites.find((item) => item.kind === "example" && item.name === CONNECTOR_EXAMPLE && !item.test);
+  const binaries = ["uos-native", "uos-native-connector", "uos-native-request", "uos-native-supervisor"].map((name) =>
+    prerequisites.find((item) => item.kind === "bin" && item.name === name && !item.test)
+  );
+  if (!fixture || binaries.some((item) => !item)) throw new Error("Exact named native fixture/binary prerequisite is missing");
+  const compile = await checked({
+    argv: [cargo, "test", ...flags, ...(selection === "prelaunch" ? ["--lib", "--test", PRELAUNCH_TARGET] : []), "--no-run", "--message-format=json"],
+    cwd,
+    isolated: true,
+  });
+  const compiled = cargoExecutables(compile.stdout, cwd, target);
+  const tests = compiled.filter((item) => item.test);
+  const library = nativeLibraryArtifact(tests, cwd);
+  const prelaunch = tests.find((item) => item.kind === "test" && item.name === PRELAUNCH_TARGET);
+  if (prelaunch?.source !== realpathSync(join(cwd, "crates/gateway-native/tests/connector_confinement.rs")))
+    throw new Error("Exact native prelaunch target/source is missing");
+  const runtimeDirectory = realpathSync(dirname(dirname(prelaunch.executable)));
+  if (
+    realpathSync(dirname(dirname(fixture.executable))) !== runtimeDirectory ||
+    binaries.some((item) => !item || realpathSync(dirname(item.executable)) !== runtimeDirectory)
+  )
+    throw new Error("Native prelaunch fixture layout differs from Cargo's actual emitted paths");
+  const allArtifacts = [...prerequisites, ...compiled];
+  await unchanged();
+  checkedArtifacts(allArtifacts, target);
+  console.log(JSON.stringify({ nativePrelaunchSource: source, tree, artifacts: allArtifacts }));
+  let listed = 0;
+  let passed = 0;
+  const pair = async (argv: readonly string[], isolated: boolean, expected?: readonly string[]): Promise<void> => {
+    checkedArtifacts(allArtifacts, target);
+    const listing = await checked({ argv: [...argv, "--list"], cwd, isolated });
+    const names = nativeTestNames(listing.stdout);
+    if (expected) requireTestNames(names, expected);
+    checkedArtifacts(allArtifacts, target);
+    const result = await checked({ argv, cwd, isolated });
+    const executed = [...result.stdout.matchAll(/^test result: ok\.\s+(\d+) passed;/gm)].reduce((sum, match) => sum + Number(match[1]), 0);
+    if (!isolated && (!names.length || executed !== names.length))
+      throw new Error("Selected prelaunch target listed or executed zero passing or incomplete tests");
+    listed += names.length;
+    passed += executed;
+  };
+  const normalLibrary = await nativeLibrarySelection(cargo, flags, cwd, (command) => {
+    checkedArtifacts(allArtifacts, target);
+    return checked(command);
+  });
+  if (selection === "package") {
+    await pair(normalLibrary.argv, true, normalLibrary.names);
+    // Cargo's actual default-selection artifacts, not a guessed test directory,
+    // supply every remaining lib/bin/integration/example/bench target exactly once.
+    const normal = tests.filter((item) => item !== prelaunch && item !== library);
+    const selectors = normal.flatMap((item) => (item.kind === "lib" ? ["--lib"] : [`--${item.kind}`, item.name]));
+    if (selectors.length) await pair([cargo, "test", ...flags, ...selectors, "--"], true);
+    // Explicit test selectors suppress doctests; preserve the original Cargo
+    // package default by retaining its separate, still-isolated doc-test pass.
+    if (cargoDoctestsSelected(compile.stdout, cwd)) await pair([cargo, "test", ...flags, "--doc", "--"], true);
+  } else if (tests.length !== 2) throw new Error("Focused prelaunch compilation emitted additional selected tests");
+  await pair([prelaunch.executable, "--test-threads=1", "--nocapture"], false);
+  await runOwnedChildCases(library, pair);
+  await unchanged();
+  checkedArtifacts(allArtifacts, target);
+  if (!listed || !passed) throw new Error("Selected native tests listed or executed zero passing tests");
+  return listed;
+};
+
 export const executeRustPlan = async (plan: RustPlan, environment: Record<string, string>, run: CommandRunner = runCommand): Promise<number> => {
   if (plan.packages.length === 0 || plan.commands.length === 0) throw new Error("Rust gate refuses an empty plan");
   let listedTests = 0;
   for (const command of plan.commands) {
     console.log(JSON.stringify({ stage: plan.stage, cwd: command.cwd, argv: command.argv }));
-    listedTests += observeCommandResult(command, await run(command, environment));
+    listedTests += command.darwinNativeTests
+      ? await executeDarwinNativeTests(command.cwd, environment, "package", run)
+      : observeCommandResult(command, await run(command, environment));
   }
   return listedTests;
 };
