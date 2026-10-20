@@ -202,6 +202,28 @@ impl RegisteredRenewalOwners {
         }
         Err(fail())
     }
+    /// Import codec/current account select only a configured resource, never permission.
+    pub async fn for_import_action<'a, S: AuthorityStore, I: TokenSource>(
+        &'a self,
+        authority: &Authority<S, I>,
+        action_ref: &str,
+    ) -> Result<&'a RegisteredRenewalOwner, GatewayError> {
+        crate::text(action_ref)?;
+        for _ in 0..3 {
+            let mut tx = authority.transaction(authority.fresh_time(0)?)?;
+            let (account_hash, native_owner) =
+                super::import::owner_selection(&mut tx, action_ref).await?;
+            let owner = self
+                .account(&mut tx, &account_hash, None, Some(&native_owner))
+                .await?;
+            authority.fresh_time(tx.now)?;
+            if tx.commit().await? {
+                return Ok(owner);
+            }
+        }
+        Err(fail())
+    }
+
     /// Only the stored server action chooses an owner; the wire carries no profile/home selector.
     pub async fn for_action<'a, S: AuthorityStore, I: TokenSource>(
         &'a self,

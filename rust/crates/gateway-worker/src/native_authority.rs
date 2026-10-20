@@ -1,4 +1,6 @@
 //! Fixed reverse native protocols, authenticated against the common durable nonce authority.
+#[path = "native_import_dispatch.rs"]
+mod import_dispatch;
 use gateway_auth::{
     GatewayError,
     native::*,
@@ -15,6 +17,7 @@ use gateway_authority::{
         },
     },
 };
+pub use import_dispatch::publication as import_publication;
 use serde::Serialize;
 use worker::{Env, Method, Request, Response};
 
@@ -132,7 +135,8 @@ pub async fn handle(
     let incoming = Incoming(Cancellation::from_request(&request)?);
     let path = request.path();
     let maximum = if path == NATIVE_RENEWAL_AUTHORITY_PATH {
-        gateway_auth::native_control::NATIVE_AUTHORITY_MAX_BYTES
+        // The authenticator still applies each complete typed operation's old/new limit.
+        gateway_auth::native::NATIVE_MAX_BODY_BYTES
     } else {
         gateway_auth::native_live::NATIVE_LIVE_AUTHORITY_MAX_BYTES
     };
@@ -169,6 +173,18 @@ pub async fn handle(
                 now,
             )
             .await?;
+        if let Some(response) = import_dispatch::authority(
+            &authority,
+            &proof,
+            native,
+            &config,
+            &incoming,
+            (&headers.nonce, &bytes),
+        )
+        .await?
+        {
+            return Ok(response);
+        }
         proof.require_request(
             NativeCapability::OwnerRenewal,
             NATIVE_RENEWAL_AUTHORITY_PATH,

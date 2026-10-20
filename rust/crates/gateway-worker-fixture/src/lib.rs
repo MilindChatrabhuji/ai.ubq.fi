@@ -1,5 +1,6 @@
 //! Test-only constructor composition. The actual application and coordination
 //! authority are gateway-worker; no request handler, ledger or upstream is copied.
+mod native_import;
 mod setup;
 use gateway_auth::{
     GatewayError,
@@ -44,6 +45,13 @@ pub async fn fetch(
     env: Env,
     context: Context,
 ) -> worker::Result<gateway_worker::GatewayResponse> {
+    if env
+        .var("UOS_MATRIX_SCENARIO")
+        .ok()
+        .is_some_and(|v| v.to_string() == "native-import")
+    {
+        return native_import::fetch(request, env, context).await;
+    }
     let result = async {
         let scenario = env
             .var("UOS_MATRIX_SCENARIO")

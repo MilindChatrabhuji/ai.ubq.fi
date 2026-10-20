@@ -21,7 +21,14 @@ pub struct RegisteredRenewalOwner {
 impl RegisteredRenewalOwner {
     pub fn configured(id: String, home: String) -> Result<Self, GatewayError> {
         text(&id)?;
-        if !std::path::Path::new(&home).is_absolute() {
+        // Worker validates a configured native POSIX resource name, not its own
+        // filesystem. wasm32-unknown-unknown Path::is_absolute always refuses it.
+        // Actual native filesystem/custody enforcement remains separately owned.
+        #[cfg(target_arch = "wasm32")]
+        let absolute = home.starts_with('/');
+        #[cfg(not(target_arch = "wasm32"))]
+        let absolute = std::path::Path::new(&home).is_absolute();
+        if !absolute {
             return Err(fail());
         }
         Ok(Self { id, home })
@@ -569,5 +576,21 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
             }
         }
         Err(conflict())
+    }
+}
+
+#[cfg(test)]
+mod registered_home_tests {
+    use super::RegisteredRenewalOwner;
+
+    #[test]
+    fn native_registered_home_keeps_absolute_syntax_and_rejects_relative_metadata() {
+        assert!(
+            RegisteredRenewalOwner::configured("owner".into(), "/tmp/native-profile".into())
+                .is_ok()
+        );
+        for home in ["relative-profile", "./profile", "../profile", ""] {
+            assert!(RegisteredRenewalOwner::configured("owner".into(), home.into()).is_err());
+        }
     }
 }
