@@ -155,7 +155,10 @@ impl NativeRenewalAuthorityRequest {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[path = "response_codec.rs"]
+mod response_codec;
+
+#[derive(Serialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NativeRenewalAuthorityResponse {
     Claim {

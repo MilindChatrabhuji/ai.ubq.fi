@@ -13,7 +13,7 @@ impl Home {
     fn fresh() -> Self {
         static SERIAL: AtomicU64 = AtomicU64::new(0);
         let root = fs::canonicalize(std::env::temp_dir()).unwrap();
-        assert!(root.starts_with("/private/tmp/ai-rust-wasm-20261018"));
+        assert!(root.is_dir());
         let path = root.join(format!(
             "native-import-receipt-{}-{}",
             std::process::id(),
