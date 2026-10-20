@@ -19,7 +19,7 @@ await writeFile(configPath, config);
 const reserved = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null, { status: 503 }) });
 const port = reserved.port;
 reserved.stop(true);
-const processHandle = Bun.spawn([resolve(binary), "serve", configPath, "--experimental", `--socket-addr=main=127.0.0.1:${port}`], {
+const processHandle = Bun.spawn([resolve(binary), "serve", configPath, "--experimental", "--import-path", "/", `--socket-addr=main=127.0.0.1:${port}`], {
   stdin: "ignore",
   stdout: "pipe",
   stderr: "pipe",
@@ -90,7 +90,12 @@ try {
   assert(healthBody.includes(sha));
   const meta = JSON.parse(Buffer.from(health.headers.get("x-uos-fixture-import-metadata") ?? "", "base64url").toString());
   cases.push("shipping-entrypoint-actual-public-normal-preparation");
-  const admit = (await send(authority, req({ phase: "admit", metadata: meta.metadata }))).value.result;
+  const admit = (
+    await send(
+      authority,
+      req({ phase: "admit", metadata: { v: meta.metadata.v, operation_id: meta.metadata.operation_id, action_ref: meta.metadata.action_ref } })
+    )
+  ).value.result;
   const state = admit.state;
   assert.equal(state.action_version, 3);
   cases.push("closed-import-admit-through-worker-do");
