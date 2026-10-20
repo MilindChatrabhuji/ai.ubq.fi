@@ -34,6 +34,8 @@ mod effects;
 mod remote_state;
 mod sources;
 use remote_state::ImportActionState;
+#[cfg(all(unix, feature = "native-import-fixture"))]
+mod fixture;
 #[cfg(unix)]
 mod remote;
 mod remote_server;

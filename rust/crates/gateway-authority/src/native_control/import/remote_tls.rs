@@ -31,7 +31,7 @@ impl Roots {
     pub(super) fn webpki() -> Self {
         Self(ureq::tls::RootCerts::WebPki)
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-import-fixture"))]
     pub(super) fn fixture(certificate_der: &[u8]) -> Self {
         Self(ureq::tls::RootCerts::new_with_certs(&[
             ureq::tls::Certificate::from_der(certificate_der).to_owned(),
