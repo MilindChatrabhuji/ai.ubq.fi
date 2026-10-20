@@ -263,7 +263,6 @@ test("deepseek responses: a namespaced tool call returns its namespace to the cl
     namespace: "collaboration",
     arguments: "{}",
   });
-
   const translator = createDeepSeekResponsesStreamTranslator(
     "deepseek-v4-flash",
     "resp_ns_stream",
@@ -478,6 +477,33 @@ test("deepseek responses: a reasoning item also rides a plain assistant message"
   assert.equal(withMessage.ok, true);
   const messages = withMessage.value.body.messages as Record<string, unknown>[];
   assert.equal(messages[1].reasoning_content, "Because.");
+});
+
+test("deepseek responses: clears reasoning at a user-turn boundary", () => {
+  const reasoningOnly = toDeepSeekResponsesPayload(
+    chatCompletion({ role: "assistant", content: "", reasoning_content: "stale reasoning" }),
+    "deepseek-flash",
+    "resp_reasoning_only",
+    echo
+  );
+  const reasoningItems = reasoningOnly.output as Record<string, unknown>[];
+  assert.equal(reasoningItems.length, 1);
+  assert.deepEqual(
+    reasoningItems.map((item) => item.type),
+    ["reasoning"]
+  );
+  const body = toDeepSeekResponsesChatBody(
+    {
+      input: [...reasoningItems, { type: "message", role: "user", content: "new question" }, { type: "message", role: "assistant", content: "new answer" }],
+    },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.value.body.messages, [
+    { role: "user", content: "new question" },
+    { role: "assistant", content: "new answer" },
+  ]);
 });
 
 test("deepseek responses: reasoning is never invented without tools", () => {
@@ -813,7 +839,6 @@ test("deepseek responses: stream translator emits the Responses event sequence",
     })
   );
   events.push(...translator.finish());
-
   assert.deepEqual(eventTypes(events), [
     "response.created",
     "response.in_progress",
@@ -864,7 +889,6 @@ test("deepseek responses: the reasoning item announces the index it answers for"
   events.push(...translator.push(chatChunk({ reasoning_content: "second" })));
   events.push(...translator.push(chatChunk({ content: "answer" }, { finish_reason: "stop" })));
   events.push(...translator.finish());
-
   const added = events.filter((event) => event.type === "response.output_item.added");
   assert.deepEqual(
     added.map((event) => [event.output_index, (event.item as Record<string, unknown>).type]),
@@ -874,7 +898,6 @@ test("deepseek responses: the reasoning item announces the index it answers for"
     ]
   );
   assert.deepEqual(added[0].item, { id: reasoningId, type: "reasoning", status: "in_progress", summary: [] });
-
   const partAdded = events.find((event) => event.type === "response.reasoning_summary_part.added");
   assert.deepEqual(partAdded, {
     type: "response.reasoning_summary_part.added",
@@ -883,7 +906,6 @@ test("deepseek responses: the reasoning item announces the index it answers for"
     summary_index: 0,
     part: { type: "summary_text", text: "" },
   });
-
   const deltas = events.filter((event) => event.type === "response.reasoning_summary_text.delta");
   assert.deepEqual(
     deltas.map((event) => event.delta),
@@ -894,7 +916,6 @@ test("deepseek responses: the reasoning item announces the index it answers for"
     assert.equal(event.output_index, 0);
     assert.equal(event.summary_index, 0);
   }
-
   const textDone = events.find((event) => event.type === "response.reasoning_summary_text.done");
   assert.equal(textDone?.text, "first second");
   const partDone = events.find((event) => event.type === "response.reasoning_summary_part.done");
@@ -987,7 +1008,6 @@ test("deepseek responses: a length stop becomes response.incomplete with max_out
   translator.push(chatChunk({ role: "assistant", content: "cut off here" }));
   translator.push({ ...chatChunk({}), choices: [{ index: 0, finish_reason: "length" }] });
   const events = translator.finish();
-
   const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
   assert.equal(terminal.type, "response.incomplete");
   assert.equal(terminal.response.status, "incomplete");

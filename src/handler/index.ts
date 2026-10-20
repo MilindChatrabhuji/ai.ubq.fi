@@ -1,3 +1,4 @@
+import { handleAdminCodexResetConsume } from "../admin/codex-reset.ts";
 import {
   handleAdminApiKeyChanges,
   handleAdminApiKeysCreate,
@@ -158,6 +159,7 @@ const ADMIN_ROUTES: readonly AdminRouteEntry[] = [
   { methods: ["GET", "POST"], path: "/admin/defaults", run: (req) => handleAdminDefaults(req) },
   { methods: ["GET", "POST", "DELETE"], path: "/admin/debug/routing", run: (req) => handleAdminDebugRouting(req) },
   { methods: ["GET"], path: "/admin/providers", run: () => handleHealthProviders({ includeQuota: true }) },
+  { methods: ["POST"], path: "/admin/providers/codex/banked-resets/consume", run: (req) => handleAdminCodexResetConsume(req) },
   { methods: ["GET"], path: "/admin/providers/selection", run: () => handleAdminProviderSelectionGet() },
   { methods: ["POST"], path: "/admin/providers/selection", run: (req) => handleAdminProviderSelectionSet(req) },
   { methods: ["GET"], path: "/admin/providers/capacity", run: (req) => proxyAdminChartSource(req, handleProviderCapacity(req)) },

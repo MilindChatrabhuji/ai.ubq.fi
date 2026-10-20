@@ -6,6 +6,67 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## TypeScript-only VPS releases reuse verified payloads - 2026-10-19
+
+The VPS deploy CLI reuses the selected immutable release's `node_modules` and `.native/kv` payload when the root lockfile
+and native input manifest match exactly. A mismatch falls back to the existing fresh install/build path. This avoids
+recompiling the unchanged native KV addon for routing and client-only changes.
+
+Reason: repeated Cargo builds delayed small TypeScript releases and kept the service on stale behavior longer than
+necessary. Reuse is bound to the selected release's verified provenance and the current tracked native inputs.
+
+Reversal risk: reusing across a changed lockfile or native input would violate the immutable release identity, so either
+mismatch must continue to rebuild and verify from source.
+
+## Client Retry-After is bounded independently of quota deadlines - 2026-10-19
+
+Gateway routing errors retain their durable quota or reset deadline, but the client-facing `Retry-After` hint is capped
+at 60 seconds. A weekly Codex quota block previously emitted the full remaining duration, such as 561,000 seconds, and
+clients slept for days instead of retrying or entering an available failover.
+
+Reason: routing availability can change through paid failover, reset recovery, or operator action long before the
+upstream subscription window resets. The upstream deadline is still enforced internally and is not shortened.
+
+Reversal risk: removing the cap restores multi-day client sleeps on ordinary weekly exhaustion. Emitting no header
+would instead invite tight retry loops.
+
+## Shadow banked-reset decisions do not suppress enabled overage - 2026-10-19
+
+In banked-reset shadow mode, `shadow_selected` and `already_would_spend_once` prove that no reset credit was
+redeemed: shadow persists a decision but never consumes it. Both outcomes now qualify for the existing single bounded
+overage probe when the account's `Allow overage spending` setting is on. The per-account allow setting remains a hard
+gate; `live_armed`, a completed live redemption, and fence or configuration failures still never fall back.
+
+A durable reset record stuck at local `claimed` without a provider submission likewise returns
+`unsubmitted_transaction`. Reconciliation cannot advance that record and no external reset was consumed, so the same
+bounded overage probe may proceed. In-progress, live-armed, submitted, unknown, and ambiguous states remain ineligible.
+
+Enabled overage is a serving path, not a single-flight reset recovery probe. It does not claim the reset probe lease, so
+concurrent client requests may use the account directly; each request still performs at most one bounded upstream
+attempt.
+
+Reason: an exhausted account with overage enabled remained stuck behind an existing shadow decision and fell through to
+paid routing, even though shadow mode could not spend the reset it observed.
+
+Reversal risk: removing these reasons restores that dead-end. Adding live-arming or completed-redemption reasons would
+risk spending both a banked reset and overage for one episode.
+
+## Explicit manual banked reset verifies and promotes one account - 2026-10-18
+
+An authenticated admin may use one banked reset for a selected Codex account through `POST /admin/providers/codex/banked-resets/consume`. This explicit manual action works independently of the Automatic resets switch and automatic shadow arming; global `enabled=false` and `mode=disabled` still make zero provider calls. Manual and automatic redemptions share the existing one-per-account-per-UTC-day submission budget, account/window idempotency, exact credential and quota fences, and unknown-consumption refusal. An uncertain consume is never replayed.
+
+After a documented verified consume outcome, the manual action synchronously reads that account's current usage. One atomic transaction stores the fresh account-bound observation, reconciles only quota classes proven recovered, records completed manual promotion and selects that same account with reason `manual_reset`. This explicit operator transition may supersede a healthy active account; ordinary serial routing, provider selection, authentication and model eligibility remain unchanged. Pending propagation or a failed promotion never claims success, and a repeated completed action cannot restore an old priority. The manual intent contains opaque account/credential hashes and quota metadata, never tokens. KV export/import retains the intent together with its authoritative reset-window and account-day ledgers; importing only the intent would lose the consumption and daily-budget proof.
+
+Reason: a manual reset outside the gateway could leave exhausted routing state until a later capacity sample. The button owns verification and promotion directly, without waiting for chart sampling or issuing inference. Acceptance uses isolated upstream fixtures; agents remain forbidden from directly redeeming live credits.
+
+## Allow overage spending false refuses all overage - 2026-10-18
+
+The per-account `Allow overage spending` setting is a hard gate. With the setting off, the gateway may redeem a banked reset, but it must never dispatch an overage probe, including after the reset preflight returns `no_eligible_credit`, empty or ineligible inventory, `inventory_unavailable`, or `account_day_limit_reached`. That case returns the ordinary `codex_quota_blocked` response. With the setting on, the existing resets-first flow and one bounded overage fallback remain unchanged.
+
+Reason: the previous implementation treated off as "try resets first" and still spent overage when no reset was redeemable, which contradicts the operator-facing switch. This change governs gateway-routed inference only; a native Codex client that authenticates directly to ChatGPT is outside the gateway and must be configured or authenticated separately.
+
+Reversal risk: turning the setting off now stops serving an exhausted subscription instead of silently drawing paid overage. That is the requested safe behavior, and re-enabling the setting restores the bounded fallback.
+
 ## Real CI checks for Sentinel and merge groups - 2026-10-18
 
 Issue #1206 preserves real successful checks for Sentinel's delivery and base-failure attribution. Run the complete job set for merge groups, PRs targeting exactly `queue-canary`, Sentinel-authored PRs targeting exactly `development`, development pushes, and development PRs changing the CI workflow or selector itself. Use the PR author, not the actor who reruns a workflow. Ordinary owner PRs retain changed-path job selection.
@@ -2156,3 +2217,39 @@ Reversal risk: the provider-owned base ids must actually track the latest weight
 gateway cannot detect that from a dated row. OpenRouter's `~deepseek/deepseek-flash-latest` alias must remain routable.
 The paid hops use `deepseek-v4.1-flash`, so paid key policies keep their existing base model id rather than requiring a
 new dated snapshot.
+
+## Rust WASM migration starts with isolated shared contracts - 2026-10-18
+
+The owner requested the complete gateway in Rust/WASM on Cloudflare. The first milestone adds the separate `rust/` workspace, pinned dependencies, source-derived domain types, an atomic persistence interface and the actual workers-rs fetch export; it does not replace or activate the existing backend. The [foundation contract](research/rust-wasm-port-contract.md) records the exact boundaries, source references, gates and missing parity. All Rust compiles run on the isolated VPS build workspace unless its recorded failure requires the authorized Mac fallback.
+
+Keep operator provider IDs separate from transport/accounting IDs, preserve distinct administrative/routing account hashes and native-owner credential generations, and retain one original request identity across distinct paid hops. Semantic completion, API-key dispatch quota, kernel settlement, paid reconciliation and actual delivery remain independent; Workers EOF supplies no native delivery receipt and never invents success or a refund. The latest disabled-overage hard gate is unchanged. Hot coordination and retained history share atomic authority without forcing indefinite ledgers into an evicting snapshot.
+
+The foundation refuses every unfinished route with an explicit non-success response; health is only release liveness with validated full-source identity. Full authentication, routing, durable state, native boundaries, protocol/admin parity, migration, CI and live deployment acceptance remain required for the original goal. This scoped Rust decision does not change the existing Bun runtime, locks, production service, credentials, databases, DNS or Sentinel ownership.
+
+## Rust portable keys and queries share one source-compatible tuple codec - 2026-10-18
+
+Before any Rust persistence or deployment, retire provisional JSON-array key identity. Every read, write, query and future migration uses the core `tuple-v1:<lowercase hex>` codec and its exact binary sort bytes. Preserve current source bytes/string/bigint/number/boolean distinctions, signed zeros, infinities, positive NaN and the proven negative-NaN refusal. No per-module JSON comparator, dual-codec fallback or live migration is authorized. A shared typed builder and raw validator prevent different modules from naming or ordering the same source key differently.
+
+The additive query interface preserves pinned source selectors: prefix alone or prefix with one strict descendant start/end bound, and ranges with both bounds. Exact-prefix rows are excluded, start is inclusive and end exclusive; empty prefix is the whole-keyspace form. Pages filter absolute expiry before their limit and use opaque version/selector/direction-bound continuations. Changed limits are allowed on resume; malformed and cross-query tokens fail closed. This shared contract adds no new gateway scheduler or provider behavior, and source/runtime/deployment acceptance remains separate.
+
+## Surplus inference enables provider secret masking - 2026-10-18
+
+Enable [Surplus Secret Masking](https://www.surplusintelligence.ai/docs/guides/secret-masking) for every Surplus inference POST with exactly one `X-SI-Mask-Secrets: on` header from the shared authenticated-header builder. This covers native Responses and native Claude Chat, streamed and buffered. The provider handles masking and restoration while the gateway retains its existing request and response contracts.
+
+Reason: the owner requested the announced feature. Surplus can globally pause masking and forward requests without protection or a receipt, so this opt-in does not guarantee that every request is masked. The gateway does not require or parse a masking receipt.
+
+Reversal risk: removing the header returns request-level enablement to the provider's defaults.
+
+## Native gateway private runtime and request phases, revision 3 - 2026-10-19
+
+The source-only native gateway runtime uses private constructor-bound verification and expiring current-epoch grants to bind an authenticated native identity to durable request lifetimes. API-key and independently verified kernel scopes are separately nullable; GitHub, passkey, allowlist/admin/deploy and policy-free local authentication retain their source principal identities without fabricated API keys or repositories. Permanent constructor-seeded inference capabilities are retired for migrated consumers.
+
+Private binding and SQLite schema revision 3 accept only the new closed DTO phases within their configured authority epoch: open requestId/route/path after authentication and process permission without accounting or body metadata; reserve the applicable API and kernel families; bind immutable validated model/stream/literal reasoning once at the existing parser boundary; bind request-specific routing through a private source port before dispatch or paid exposure. API-free requests acquire no paid entitlement, and a static key policy cannot grant global unrostered/direct-hop permission. Old v2 admission DTOs and existing schema revisions fail closed; no mixed-version overload, generic remote KV, local ledger fallback or live store migration is introduced.
+
+Current grant/context/intent/expiry and applicable raw H/scope checks remain atomic with new effects and historical permission acknowledgments. Existing request-owned terminal, kernel, billing and definite-no-fetch cleanup preserve their native meaning after key revocation; ambiguous transport start and lost acknowledgments never recreate compensation rights. Existing API/kernel/Codex/paid reducers and all legacy/private-control fixture assertions remain required.
+
+This decision authorizes only the coherent source and synthetic fixture foundation. Real native handler/parser/provider and Worker data-plane adoption, owner selection, credentials, publication, state/scheduler migration, real renewal/spend and production/standby activation remain outside this stage. Exact-source Linux mixed acceptance and integrated CI/artifact receipts must follow the local source-ready handback before delivery.
+
+For the private v3 incomplete-migration vector, current-H authentication retains the existing resolver's 503 `server_error` before any request/admission/paid effect. The old synthetic cold-capability `unauthorized` vector moves to that authentication phase; admin no-op/revocation and public gateway HTTP mapping are unchanged. The exact source-bound assertion amendment is retained with the foundation evidence.
+
+A separate constructor-private retained-history verifier permits only API no-fetch release, paid no-fetch release, paid lifecycle observations without fetch/dispatch-start mutation, verified paid billing, paid deferral, and reconciliation claim/finish for existing durable original binding/principal/key/request handles. Current epoch, namespace, expiring grant, private context, intent and target scope are rechecked before effects and replay; cursors and leases also retain the exact grant and handles. It creates no principal or request lifetime and cannot authorize admission, exposure, routing, dispatch or administration. Synthetic restoration of accepted distinct historical principals preserves the all-principal key-deletion invariant while fresh same-key identities remain `api-key:<keyid>`.

@@ -344,7 +344,7 @@ export const collapseCerebrasSystemMessages = (messages: unknown): unknown => {
   return [{ ...systems[0], content: texts.join("\n\n") }, ...messages.filter((message) => !isCerebrasSystemMessage(message))];
 };
 
-const projectCerebrasRequest = (body: Record<string, unknown>): Record<string, unknown> => {
+export const projectCerebrasRequest = (body: Record<string, unknown>): Record<string, unknown> => {
   // The Chat wire's `developer` mapping and the system-message collapse both
   // live here, so every dispatch through this transport carries exactly one
   // leading `system` message whichever wire built the body.
@@ -500,7 +500,7 @@ const normalizeToolCalls = (rawToolCalls: unknown, choiceIndex: number): Normali
 };
 
 const choiceHasNoPayload = (content: unknown, toolCalls: readonly unknown[] | undefined, refusal: string): boolean =>
-  content === undefined && !toolCalls?.length && !refusal;
+  (content === undefined || content === null) && !toolCalls?.length && !refusal;
 
 /** Mirrors the upstream `content` field: absent content becomes explicit JSON `null` only when a tool call or refusal exists. */
 const choiceContent = (content: unknown, toolCalls: readonly unknown[] | undefined, refusal: string): unknown => {

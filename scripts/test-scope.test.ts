@@ -28,6 +28,8 @@ writeFileSync(join(fixture, "tests/a.test.ts"), "import '../src/consumer.ts';\n"
 writeFileSync(join(fixture, "tests/b.test.ts"), "import '../src/b.ts';\n");
 writeFileSync(join(fixture, "src/storage/kv.ts"), "export const kv = 1;\n");
 writeFileSync(join(fixture, "src/storage-consumer.ts"), "import './storage/kv.ts';\n");
+writeFileSync(join(fixture, "docs.md"), "# Documentation\n");
+writeFileSync(join(fixture, "tests/docs.test.ts"), "import docs from '../docs.md' with { type: 'text' };\nexport default docs;\n");
 writeFileSync(join(fixture, "tests/storage.test.ts"), "import '../src/storage-consumer.ts';\n");
 
 afterAll(() => {
@@ -326,17 +328,22 @@ describe("Sentinel complete CI check set", () => {
     expect(workflow.env?.GITHUB_EVENT_BEFORE).toBe("${{ github.event.before }}");
     expect(Object.values(jobs).every((job) => job.env?.GITHUB_EVENT_BEFORE === undefined)).toBe(true);
     const jobNames = Object.keys(jobs).sort((left, right) => left.localeCompare(right));
-    expect(jobNames).toEqual(["darwin-native", "docs", "mac-containment", "native", "scope", "validate", "verify-artifact"]);
+    expect(jobNames).toEqual(["darwin-native", "docs", "mac-containment", "native", "rust-native", "rust-wasm", "scope", "validate", "verify-artifact"]);
     expect(jobs.scope.env?.GITHUB_PR_AUTHOR).toBe("${{ github.event.pull_request.user.login }}");
     for (const output of [
       "needs_docs",
       "needs_validate",
       "needs_native",
       "needs_native_build",
+      "needs_worker_runtime",
       "needs_mac",
       "needs_darwin",
       "needs_darwin_tests",
       "needs_artifact",
+      "needs_typescript_validate",
+      "needs_rust_native",
+      "needs_rust_wasm",
+      "needs_rust_build",
     ]) {
       expect(jobs.scope.outputs?.[output]).toBe(`\${{ steps.scope.outputs.${output} }}`);
     }
@@ -344,6 +351,10 @@ describe("Sentinel complete CI check set", () => {
     expect(scopeStep).toContain("scripts/test-scope.ts --ci-json");
     expect(scopeStep).toContain("'.needsDocs'");
     expect(scopeStep).toContain("'.needsDarwinTests'");
+    expect(scopeStep).toContain("'.needsWorkerRuntime'");
+    const workerPreparation = jobs.native.steps.find((step) => step.name === "Prepare pinned mixed-client Worker test runtime");
+    expect(workerPreparation?.if).toBe("${{ needs.scope.outputs.needs_worker_runtime == 'true' }}");
+    expect(workerPreparation?.run).toBe("bun --no-env-file --no-install scripts/prepare-worker-test-runtime.ts");
     expect(jobs.docs.if).toBe("${{ needs.scope.outputs.needs_docs == 'true' }}");
     expect(jobs.native.steps.find((step) => step.name === "Preflight deployment and immutable release fixtures")?.if).toBe(
       "${{ needs.scope.outputs.needs_native == 'true' }}"
@@ -359,15 +370,75 @@ describe("Sentinel complete CI check set", () => {
       .flatMap((job) => job.steps.map((step) => step.run ?? ""))
       .join("\n");
     expect(commands).not.toContain("TEST_SCOPE_FORCE");
-    expect(commands).not.toMatch(/(?:run deploy:|ops\/deploy(?:-mac)?\.ts)/);
+    expect(commands).not.toMatch(/(?:run deploy:|ops\/deploy(?:-mac)?\.ts|(?:cf|wrangler)\s+(?:deploy|publish))/);
+    expect(jobs["rust-native"].if).toBe("${{ needs.scope.outputs.needs_rust_native == 'true' }}");
+    expect(jobs["rust-wasm"].if).toBe("${{ needs.scope.outputs.needs_rust_wasm == 'true' }}");
+    expect(jobs["rust-native"].steps.some((step) => step.run?.includes("scripts/rust-verify.ts --stage native"))).toBe(true);
+    expect(jobs["rust-wasm"].steps.some((step) => step.run?.includes("scripts/rust-verify.ts --stage wasm"))).toBe(true);
+    const requiredRust = jobs.validate.steps.find((step) => step.name === "Require every selected Rust gate")?.run ?? "";
+    expect(requiredRust).toContain('test "$RUST_NATIVE_RESULT" = success');
+    expect(requiredRust).toContain('test "$RUST_WASM_RESULT" = success');
+    for (const result of ["failure", "cancelled", "skipped"]) {
+      const rejected = spawnSync("/bin/sh", ["-c", requiredRust], {
+        env: { RUST_NATIVE_REQUIRED: "true", RUST_NATIVE_RESULT: result, RUST_WASM_REQUIRED: "false", RUST_WASM_RESULT: "skipped" },
+      });
+      expect(rejected.status).not.toBe(0);
+    }
+    const accepted = spawnSync("/bin/sh", ["-c", requiredRust], {
+      env: { RUST_NATIVE_REQUIRED: "true", RUST_NATIVE_RESULT: "success", RUST_WASM_REQUIRED: "true", RUST_WASM_RESULT: "success" },
+    });
+    expect(accepted.status).toBe(0);
     expect(workflow.concurrency.group).toContain("github.event_name == 'push' || github.event_name == 'merge_group'");
     expect(workflow.concurrency["cancel-in-progress"]).toBe("${{ github.event_name != 'push' && github.event_name != 'merge_group' }}");
   });
 });
 
 describe("test scope", () => {
+  test("Worker fixture reads select only an existing real mixed test and admit its native runtime", () => {
+    const root = mkdtempSync(join(fixture, "worker-scope-"));
+    const mixed = "tests/native-authority-workerd.test.ts";
+    const candidates = [mixed, "tests/unrelated.test.ts"];
+    const changedInputs = [
+      "tests/fixtures/native-authority/fixture-worker.mjs",
+      "tests/fixtures/native-authority/bun-client.ts",
+      "tests/fixtures/native-authority/mixed-client-workerd.mjs",
+      "scripts/prepare-worker-test-runtime.ts",
+      "tools/worker-test-runtime/inputs.json",
+    ];
+    for (const path of changedInputs) expect(selectAffectedTestFiles([path], candidates, root)).toEqual([]);
+    expect(ciScopeForSelection({ ...sourceSelection, affectedTests: [mixed] }, root, {}).needsWorkerRuntime).toBe(false);
+    expect(ciScopeForSelection({ ...sourceSelection, runAll: true }, root, {}).needsWorkerRuntime).toBe(false);
+    mkdirSync(join(root, "tests"));
+    writeFileSync(join(root, mixed), "// Synthetic selector input only, never executed\n");
+    for (const path of changedInputs) {
+      const selected = selectAffectedTestFiles([path], candidates, root);
+      expect(selected).toEqual([mixed]);
+      expect(ciScopeForSelection({ ...sourceSelection, paths: [path], affectedTests: selected }, root, {})).toMatchObject({
+        needsWorkerRuntime: true,
+        needsNativeBuild: true,
+        needsNativeKv: false,
+      });
+    }
+    for (const selection of [docsSelection, { ...sourceSelection, paths: ["tests/unrelated.test.ts"] }]) {
+      expect(ciScopeForSelection(selection, root, {}).needsWorkerRuntime).toBe(false);
+    }
+    expect(ciScopeForSelection({ ...sourceSelection, runAll: true, affectedTests: [] }, root, {}).needsWorkerRuntime).toBe(true);
+    expect(ciScopeForSelection(sourceSelection, root, protectedContexts[0]).needsWorkerRuntime).toBe(false);
+    mkdirSync(join(root, "src"));
+    mkdirSync(join(root, "tests/fixtures/native-authority"), { recursive: true });
+    writeFileSync(join(root, "src/authority.ts"), "export const authority = 1;\n");
+    writeFileSync(join(root, "src/unrelated.ts"), "export const unrelated = 1;\n");
+    writeFileSync(join(root, "tests/fixtures/native-authority/fixture-worker.mjs"), "import '../../../src/authority.ts';\n");
+    expect(selectAffectedTestFiles(["src/authority.ts"], candidates, root)).toEqual([mixed]);
+    expect(selectAffectedTestFiles(["src/unrelated.ts"], candidates, root)).toEqual([]);
+  });
+
   test("selects only tests whose imports reach the changed source file", () => {
     expect(selectAffectedTestFiles(["src/a.ts"], ["tests/a.test.ts", "tests/b.test.ts"], fixture)).toEqual(["tests/a.test.ts"]);
+  });
+
+  test("does not parse non-code assets reached by text imports", () => {
+    expect(selectAffectedTestFiles(["docs.md"], ["tests/docs.test.ts"], fixture)).toEqual(["tests/docs.test.ts"]);
   });
 
   test("skips testing when no candidate test reaches the change", () => {
@@ -460,5 +531,68 @@ describe("test scope", () => {
       fixture
     );
     expect(docs).toMatchObject({ docsOnly: true, needsValidate: false, needsNativeKv: false, needsNativeBuild: false, needsArtifact: false });
+  });
+});
+
+describe("Rust changed-path CI selection", () => {
+  test("Rust-only source gets both Rust gates without unrelated TypeScript tests", () => {
+    const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], {}, "rust/crates/gateway-core/src/state.rs");
+    expect(ci.status).toBe(0);
+    expect(JSON.parse(ci.stdout)).toMatchObject({
+      paths: ["rust/crates/gateway-core/src/state.rs"],
+      affectedTests: [],
+      runAll: false,
+      needsValidate: true,
+      needsTypeScriptValidate: false,
+      needsRustNative: true,
+      needsRustWasm: true,
+      needsRustBuild: true,
+      needsNativeKv: false,
+      needsNativeBuild: false,
+      needsArtifact: false,
+    });
+  });
+
+  test("Rust documentation stays documentation-only on an ordinary PR", () => {
+    const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], {}, "rust/README.md");
+    expect(ci.status).toBe(0);
+    expect(JSON.parse(ci.stdout)).toMatchObject({
+      documentationOnly: true,
+      affectedTests: [],
+      needsDocs: true,
+      needsValidate: false,
+      needsRustNative: false,
+      needsRustWasm: false,
+    });
+  });
+
+  test("workflow data dependency selects its contract rather than all TypeScript tests", () => {
+    const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], {}, ".github/workflows/deno-deploy.yml");
+    expect(ci.status).toBe(0);
+    expect(JSON.parse(ci.stdout).affectedTests).toEqual(["scripts/test-scope.test.ts"]);
+  });
+
+  test("complete contexts schedule real Rust jobs without changing documentation test selection", () => {
+    for (const context of protectedContexts) {
+      expect(ciScopeForSelection(docsSelection, ROOT, context)).toMatchObject({
+        completeCheckSet: true,
+        affectedTests: [],
+        needsRustNative: true,
+        needsRustWasm: true,
+        needsRustBuild: true,
+      });
+    }
+  });
+});
+
+test("native-only companion source does not schedule a WASM compilation on ordinary PRs", () => {
+  const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], {}, "rust/crates/gateway-native/src/lib.rs");
+  expect(ci.status).toBe(0);
+  expect(JSON.parse(ci.stdout)).toMatchObject({
+    affectedTests: [],
+    needsRustNative: true,
+    needsRustWasm: false,
+    needsRustBuild: false,
+    needsTypeScriptValidate: false,
   });
 });

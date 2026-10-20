@@ -1,4 +1,5 @@
 import "./network.js";
+import { appendManualResetControl } from "./admin-reset.js";
 import {
   buildBackendUrl,
   formatAuthSessionLabel,
@@ -24,7 +25,6 @@ import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
 import { toast } from "./toast.js?v=passport-design-20260922";
 import { createSupervisorView } from "./admin-supervisor.js?v=20261001-supervisor-v4";
-
 const STORAGE_KEYS = {
   rememberToken: AUTH_STORAGE_KEYS.rememberToken,
   token: AUTH_STORAGE_KEYS.token,
@@ -124,13 +124,18 @@ const fetch = async (input, init = {}) => {
 
 const debounce = (fn, wait = 450) => {
   let timer = null;
-  return (...args) => {
+  const debounced = (...args) => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
       fn(...args);
     }, wait);
   };
+  debounced.cancel = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  return debounced;
 };
 
 const mustGet = (id) => {
@@ -293,6 +298,8 @@ let adminPrefetchSignature = "";
 let adminPrefetchPromise = null;
 let authWidgetAutoOpened = false;
 let allKeys = [];
+let keyExpiryTimer = 0;
+let refreshKeyRows = () => {};
 let keysLoading = false;
 let keysLoadedAt = 0;
 let providersLoading = false;
@@ -368,11 +375,13 @@ const meteredQuotaCycleStarted = mustGet("metered-quota-cycle-started");
 let defaultsLoaded = false;
 let defaultsSaving = false;
 let defaultsSaveQueued = false;
+let defaultsSaveQueuedTarget = "";
 let defaultsModelMap = new Map();
 let defaultsTouched = false;
 let defaultsEditRevision = 0;
 let defaultsLoadId = 0;
 let defaultsLoadedAt = 0;
+let cancelDefaultsSaveSchedule = () => {};
 
 const kernelListBadge = mustGet("kernel-list-badge");
 const kernelAttention = mustGet("kernel-attention");
@@ -922,6 +931,26 @@ const getApiKeyStatus = (key) => {
   return isExpiredAt(key?.expires_at_ms) ? "expired" : "active";
 };
 
+const scheduleKeyExpiryRefresh = () => {
+  if (keyExpiryTimer) globalThis.clearTimeout(keyExpiryTimer);
+  keyExpiryTimer = 0;
+  const now = Date.now();
+  const nextExpiry = allKeys.reduce((next, key) => {
+    const expiresAtMs = key?.expires_at_ms;
+    return typeof expiresAtMs === "number" && Number.isFinite(expiresAtMs) && expiresAtMs > now
+      ? Math.min(next, expiresAtMs)
+      : next;
+  }, Number.POSITIVE_INFINITY);
+  if (!Number.isFinite(nextExpiry)) return;
+  keyExpiryTimer = globalThis.setTimeout(
+    () => {
+      keyExpiryTimer = 0;
+      refreshKeyRows();
+    },
+    Math.min(2_147_483_647, Math.max(0, nextExpiry - now + 1))
+  );
+};
+
 const numberFormatter = new Intl.NumberFormat();
 const compactNumberFormatter = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
 const creditFormatter = new Intl.NumberFormat(undefined, {
@@ -1312,13 +1341,12 @@ let codexResetSettingsRevision = 0;
 const codexResetSaving = new Set();
 let codexResetSettingsTarget = "";
 let codexResetSettingsToken = "";
-
 let codexOverageSettings = [];
 let codexOverageSettingsRevision = 0;
 const codexOverageSaving = new Set();
 let codexOverageSettingsTarget = "";
 let codexOverageSettingsToken = "";
-
+const refreshResetPanels = () => Promise.all([loadProviders(), loadProviderCapacity()]);
 const renderCodexCapacitySource = (source, provider = null) => {
   // The capacity list is a role="list" container, and aria-allowed-role rejects listitem on article.
   const row = document.createElement("div");
@@ -1345,17 +1373,18 @@ const renderCodexCapacitySource = (source, provider = null) => {
   label.dataset.check = "";
   const copy = document.createElement("span");
   const count = setting?.available_count;
-  copy.textContent = "Use banked resets";
+  copy.textContent = "Automatic resets";
   const countLabel = document.createElement("small");
   countLabel.textContent = Number.isSafeInteger(count) && count >= 0 ? count + " available" : "Count unavailable";
   const input = document.createElement("input");
   input.type = "checkbox";
   input.setAttribute("role", "switch");
-  input.setAttribute("aria-label", "Use banked resets for " + title.textContent);
+  input.setAttribute("aria-label", "Automatic resets for " + title.textContent);
   input.checked = setting?.enabled === true;
   input.disabled = !setting || codexResetSaving.has(setting.account_id_hash);
   label.append(copy, input, countLabel);
   header.append(label);
+  appendManualResetControl(header, setting, title.textContent, apiUrl, getAdminToken, refreshResetPanels);
   input.addEventListener("change", async () => {
     if (!setting) return;
     const target = apiUrl("/admin/providers");
@@ -6617,23 +6646,13 @@ const buildUnlimitedToggle = (id, controlId, labelText) => {
 const renderKeys = (keys, view = "all") => {
   clearKeysListLoading();
   keysList.textContent = "";
-  let filteredKeys = keys;
-  if (view === "active") {
-    filteredKeys = keys.filter((k) => getApiKeyStatus(k) === "active");
-  } else if (view === "expired") {
-    filteredKeys = keys.filter((k) => getApiKeyStatus(k) === "expired");
-  } else if (view === "revoked") {
-    filteredKeys = keys.filter((k) => getApiKeyStatus(k) === "revoked");
-  }
-  if (!filteredKeys.length) {
-    setKeyListMessage(view === "all" ? "No API keys yet." : `No ${view} API keys.`);
-    setKeysBadge("ok", view === "all" ? "No API keys" : `No ${view} API keys`);
-    updateAccessApiKeysSummary();
-    return;
-  }
+  const statusRefreshers = [];
+  let emptyMessage = null;
 
-  filteredKeys.forEach((key, index) => {
-    const statusKind = getApiKeyStatus(key);
+  keys.forEach((key, index) => {
+    let statusKind = getApiKeyStatus(key);
+    const keyLabel = key.name || key.id || "unnamed API key";
+    const currentKeyLabel = () => key.name || key.id || keyLabel;
     const row = document.createElement("div");
     row.dataset.key = "row";
     row.dataset.state = statusKind;
@@ -6801,21 +6820,26 @@ const renderKeys = (keys, view = "all") => {
     applyIconButton(editBtn, "edit", "Edit API key");
     actionRow.appendChild(editBtn);
 
-    if (statusKind === "active") {
-      const revokeBtn = document.createElement("button");
-      revokeBtn.type = "button";
-      revokeBtn.dataset.variant = "danger";
-      applyIconButton(revokeBtn, "revoke", "Revoke API key");
-      revokeBtn.addEventListener("click", () => {
-        void revokeKey(key.id, key.name || "this API key", revokeBtn);
-      });
-      actionRow.appendChild(revokeBtn);
-    } else if (statusKind === "revoked") {
+    const renderKeyActions = (statusKind) => {
+      actionRow.textContent = "";
+      actionRow.appendChild(editBtn);
+      if (statusKind !== "revoked") {
+        const revokeBtn = document.createElement("button");
+        revokeBtn.type = "button";
+        revokeBtn.dataset.variant = "danger";
+        applyIconButton(revokeBtn, "revoke", "Revoke API key");
+        revokeBtn.addEventListener("click", () => {
+          void revokeKey(key.id, currentKeyLabel(), revokeBtn);
+        });
+        actionRow.appendChild(revokeBtn);
+        return;
+      }
+
       const restoreBtn = document.createElement("button");
       restoreBtn.type = "button";
       applyIconButton(restoreBtn, "restore", "Unrevoke API key");
       restoreBtn.addEventListener("click", () => {
-        void unrevokeKey(key.id, key.name || "this API key", restoreBtn);
+        void unrevokeKey(key.id, currentKeyLabel(), restoreBtn);
       });
       actionRow.appendChild(restoreBtn);
 
@@ -6824,10 +6848,11 @@ const renderKeys = (keys, view = "all") => {
       deleteBtn.dataset.variant = "danger";
       applyIconButton(deleteBtn, "trash", "Delete API key");
       deleteBtn.addEventListener("click", () => {
-        void deleteKey(key.id, key.name || "this API key", deleteBtn);
+        void deleteKey(key.id, currentKeyLabel(), deleteBtn);
       });
       actionRow.appendChild(deleteBtn);
-    }
+    };
+    renderKeyActions(statusKind);
 
     controls.appendChild(status);
     controls.appendChild(actionRow);
@@ -7121,6 +7146,21 @@ const renderKeys = (keys, view = "all") => {
       updatePaidFallbackInfo();
     };
 
+    const updateKeyStatus = () => {
+      const nextStatusKind = getApiKeyStatus(key);
+      row.dataset.state = nextStatusKind;
+      status.dataset.state = nextStatusKind === "active" ? "ok" : nextStatusKind === "expired" ? "warning" : "bad";
+      status.textContent =
+        nextStatusKind === "revoked" ? "Revoked" : nextStatusKind === "expired" ? "Expired" : "Active";
+      if (nextStatusKind !== statusKind) renderKeyActions(nextStatusKind);
+      statusKind = nextStatusKind;
+      expiresInfo.valueEl.textContent = formatExpires(key.expires_at_ms);
+      if (nextStatusKind === "expired") expiresInfo.item.dataset.state = "bad";
+      else delete expiresInfo.item.dataset.state;
+      row.hidden = view !== "all" && view !== nextStatusKind;
+    };
+    statusRefreshers.push(updateKeyStatus);
+
     const buildEditPayload = () => {
       const payload = { id: key.id };
       let changed = false;
@@ -7303,7 +7343,7 @@ const renderKeys = (keys, view = "all") => {
         }
 
         title.textContent = key.name || "Untitled";
-        expiresInfo.valueEl.textContent = formatExpires(key.expires_at_ms);
+        updateKeyStatus();
         observedAtMs = Date.now();
         updateUsageInfo();
 
@@ -7328,6 +7368,7 @@ const renderKeys = (keys, view = "all") => {
         } else {
           setEditBadge("ok", "Saved");
         }
+        refreshKeyRows();
       } catch {
         setEditBadge("bad", "Offline");
       } finally {
@@ -7458,8 +7499,26 @@ const renderKeys = (keys, view = "all") => {
     row.appendChild(main);
     keysList.appendChild(row);
   });
-  setKeysBadge("ok", `${formatPlural(filteredKeys.length, "API key")}`);
-  updateAccessApiKeysSummary();
+  refreshKeyRows = () => {
+    statusRefreshers.forEach((refresh) => refresh());
+    const visibleCount = view === "all" ? keys.length : keys.filter((key) => getApiKeyStatus(key) === view).length;
+    if (visibleCount) {
+      emptyMessage?.remove();
+      emptyMessage = null;
+      setKeysBadge("ok", `${formatPlural(visibleCount, "API key")}`);
+    } else {
+      if (!emptyMessage) {
+        emptyMessage = document.createElement("p");
+        emptyMessage.dataset.empty = "keys";
+        emptyMessage.textContent = view === "all" ? "No API keys yet." : `No ${view} API keys.`;
+        keysList.appendChild(emptyMessage);
+      }
+      setKeysBadge("ok", view === "all" ? "No API keys" : `No ${view} API keys`);
+    }
+    updateAccessApiKeysSummary();
+    scheduleKeyExpiryRefresh();
+  };
+  refreshKeyRows();
 };
 
 const renderPasskeyUsers = (users) => {
@@ -8712,11 +8771,16 @@ const unrevokeKey = async (id, name, button) => {
     }
     updateKeyRevocationState(id, null);
     const remainsExpired = isExpiredAt(allKeys.find((key) => key?.id === id)?.expires_at_ms);
+    if (remainsExpired) {
+      toast.info(`Unrevoked ${name}`, {
+        description: "The key remains expired and cannot be used until its expiry is extended.",
+      });
+    }
+    await refreshKeys();
     setKeysBadge(
       remainsExpired ? "warning" : "ok",
       remainsExpired ? `Unrevoked ${name} · remains expired` : `Unrevoked ${name}`
     );
-    void refreshKeys();
   } catch {
     setKeysBadge("bad", "Offline");
   } finally {
@@ -8913,6 +8977,25 @@ const updateReasoningOptions = (modelSlug, preferred) => {
   return updateReasoningSelectForModel(defaultsReasoningSelect, model, preferred);
 };
 
+const defaultsTarget = () => apiUrl("/admin/defaults");
+const clearDefaultsSaveQueue = () => {
+  cancelDefaultsSaveSchedule();
+  defaultsSaveQueued = false;
+  defaultsSaveQueuedTarget = "";
+};
+const queueDefaultsSave = () => {
+  defaultsSaveQueued = true;
+  defaultsSaveQueuedTarget = defaultsTarget();
+};
+const scheduleQueuedDefaultsSave = (loadTarget) => {
+  if (!defaultsSaveQueued) return;
+  if (defaultsSaveQueuedTarget !== loadTarget || defaultsTarget() !== loadTarget) {
+    clearDefaultsSaveQueue();
+    return;
+  }
+  scheduleDefaultsSave();
+};
+
 const loadDefaults = async (options = {}) => {
   const token = getAdminToken();
   if (!token && !hasAdminCredential()) {
@@ -8924,7 +9007,12 @@ const loadDefaults = async (options = {}) => {
 
   const loadId = ++defaultsLoadId;
   const preserveInputs = options.preserveInputs === true;
-  if (!preserveInputs) defaultsTouched = false;
+  const loadTarget = defaultsTarget();
+  if (!preserveInputs) {
+    defaultsTouched = false;
+    defaultsEditRevision += 1;
+    clearDefaultsSaveQueue();
+  }
   defaultsLoaded = false;
   setDefaultsBadge("unknown", defaultsLoadedAt ? "Cached · refreshing" : "Loading...");
   setMeteredQuotaBadge("unknown", defaultsLoadedAt ? "Cached · refreshing" : "Loading...");
@@ -8946,6 +9034,7 @@ const loadDefaults = async (options = {}) => {
         defaultsLoaded = true;
         setDefaultsBadge("unknown", "Cached · refresh unavailable");
         setMeteredQuotaBadge("unknown", "Cached · refresh unavailable");
+        scheduleQueuedDefaultsSave(loadTarget);
         return;
       }
       setDefaultsBadge("bad", modelsPayload?.error?.message ?? "Error");
@@ -8964,6 +9053,7 @@ const loadDefaults = async (options = {}) => {
         defaultsLoaded = true;
         setDefaultsBadge("unknown", "Cached · refresh unavailable");
         setMeteredQuotaBadge("unknown", "Cached · refresh unavailable");
+        scheduleQueuedDefaultsSave(loadTarget);
         return;
       }
       setDefaultsBadge("bad", defaultsPayload?.error?.message ?? "Error");
@@ -8999,6 +9089,7 @@ const loadDefaults = async (options = {}) => {
     });
     defaultsLoaded = true;
     defaultsLoadedAt = Date.now();
+    scheduleQueuedDefaultsSave(loadTarget);
     if (!defaultsTouched && result) {
       setDefaultsBadge("ok", `${result.selectedModel} · ${result.selectedReasoning}`);
     }
@@ -9007,6 +9098,7 @@ const loadDefaults = async (options = {}) => {
       defaultsLoaded = true;
       setDefaultsBadge("unknown", "Cached · offline");
       setMeteredQuotaBadge("unknown", "Cached · offline");
+      scheduleQueuedDefaultsSave(loadTarget);
       return;
     }
     setDefaultsBadge("bad", "Offline");
@@ -9684,8 +9776,14 @@ let providerTierFilter = "all";
 let providersVisibleIds = new Set();
 let providerSelectionLoadedAt = 0;
 let providerSelectionLoadId = 0;
+let providerSelectionContextId = 0;
 let providerSelectionSaving = false;
 let providerSelectionSaveError = "";
+
+// A refresh must not commit its server selection after the picker is edited.
+const markProviderSelectionEdited = () => {
+  providerSelectionLoadId += 1;
+};
 
 const setProvidersSelectionBadge = (state, text) => setBadge(providersSelectionBadge, state, text);
 
@@ -10010,6 +10108,7 @@ const renderProvidersMessage = (message) => {
 
 /** Drop the loaded roster and both selections, e.g. after the token or target changes. */
 const invalidateProviderSelection = (message) => {
+  providerSelectionContextId += 1;
   providerSelectionLoadId += 1;
   providerSelectionSaving = false;
   providerRoster = [];
@@ -10182,6 +10281,7 @@ const renderProvidersPicker = () => {
 };
 
 const applyProvidersSelection = (mutate) => {
+  markProviderSelectionEdited();
   providerSelectionSaveError = "";
   mutate(providersVisibleEntries());
   if (providersOnlyActiveInput.checked) {
@@ -10289,6 +10389,7 @@ const saveProviderSelection = async () => {
     return;
   }
   if (providerSelectionSaving || !providersHasUnsavedChanges() || !providersHasActiveTier()) return;
+  const saveContextId = providerSelectionContextId;
   const submittedSelection = new Set(providerSelection);
   const submittedIds = providersSelectedIds();
   providerSelectionSaving = true;
@@ -10301,6 +10402,7 @@ const saveProviderSelection = async () => {
       body: JSON.stringify({ provider_ids: submittedIds }),
     });
     const payload = await response.json().catch(() => null);
+    if (saveContextId !== providerSelectionContextId) return;
     if (!response.ok) {
       providerSelectionSaving = false;
       providerSelectionSaveError = "Failed to save";
@@ -10337,6 +10439,7 @@ const saveProviderSelection = async () => {
       }
     );
   } catch (error) {
+    if (saveContextId !== providerSelectionContextId) return;
     providerSelectionSaving = false;
     providerSelectionSaveError = "Save error";
     toast.error("Save failed", { description: "Offline" });
@@ -10347,6 +10450,7 @@ const saveProviderSelection = async () => {
 
 const discardProviderChanges = () => {
   if (!providersHasUnsavedChanges()) return;
+  markProviderSelectionEdited();
   providerSelectionSaveError = "";
   providerSelection = new Set(providersSavedSelection);
   renderProvidersPicker();
@@ -10436,8 +10540,10 @@ providersList.addEventListener("change", (event) => {
   providerSelectionSaveError = "";
   if (subscriptionId) setSubscriptionChecked(subscriptionId, checkbox.checked);
   else setProviderChecked(id, checkbox.checked);
-  if (providersOnlyActiveInput.checked || subscriptionId) renderProvidersPicker();
-  else {
+  if (providersOnlyActiveInput.checked || subscriptionId) {
+    markProviderSelectionEdited();
+    renderProvidersPicker();
+  } else {
     applyProvidersSelection(() => {});
   }
 });
@@ -10465,6 +10571,7 @@ providersInvertBtn.addEventListener("click", () => {
 providersDropMissingBtn.addEventListener("click", () => {
   const missing = providersMissingSelectionIds();
   if (!missing.length) return;
+  markProviderSelectionEdited();
   for (const id of missing) providerSelection.delete(id);
   providerSelectionSaveError = "";
   renderProvidersPicker();
@@ -10480,7 +10587,10 @@ providersSelectionSave.addEventListener("click", () => {
 });
 
 const saveDefaults = async () => {
-  if (!defaultsLoaded) return;
+  if (!defaultsLoaded) {
+    queueDefaultsSave();
+    return;
+  }
   const token = getAdminToken();
   if (!token && !hasAdminCredential()) {
     setDefaultsBadge("bad", "Missing token");
@@ -10488,10 +10598,19 @@ const saveDefaults = async () => {
   }
 
   if (defaultsSaving) {
-    defaultsSaveQueued = true;
+    queueDefaultsSave();
     return;
   }
+  const saveTarget = defaultsTarget();
+  if (defaultsSaveQueued) {
+    if (defaultsSaveQueuedTarget !== saveTarget) {
+      clearDefaultsSaveQueue();
+      return;
+    }
+    clearDefaultsSaveQueue();
+  }
   defaultsSaving = true;
+  const saveLoadId = defaultsLoadId;
   const saveRevision = defaultsEditRevision;
   const model = defaultsModelSelect.value;
   const reasoning = defaultsReasoningSelect.value;
@@ -10509,7 +10628,7 @@ const saveDefaults = async () => {
   setDefaultsBadge("unknown", "Saving...");
 
   try {
-    const res = await fetch(apiUrl("/admin/defaults"), {
+    const res = await fetch(saveTarget, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -10523,6 +10642,11 @@ const saveDefaults = async () => {
       }),
     });
     const data = await res.json().catch(() => null);
+    if (saveTarget !== defaultsTarget()) {
+      if (defaultsSaveQueuedTarget === saveTarget) clearDefaultsSaveQueue();
+      return;
+    }
+    if (saveLoadId !== defaultsLoadId && !defaultsSaveQueued) return;
     if (!res.ok) {
       setDefaultsBadge("bad", data?.error?.message ?? "Error");
       return;
@@ -10539,7 +10663,7 @@ const saveDefaults = async () => {
       defaultsTouched = false;
       setDefaultsBadge("ok", summary);
     } else {
-      defaultsSaveQueued = true;
+      queueDefaultsSave();
       setDefaultsBadge("unknown", "Saving latest changes...");
     }
   } catch {
@@ -10547,8 +10671,8 @@ const saveDefaults = async () => {
   } finally {
     defaultsSaving = false;
     if (defaultsSaveQueued) {
-      defaultsSaveQueued = false;
-      void saveDefaults();
+      if (defaultsSaveQueuedTarget !== defaultsTarget()) clearDefaultsSaveQueue();
+      else scheduleDefaultsSave();
     }
   }
 };
@@ -10756,6 +10880,7 @@ const hydrateAdminSnapshots = async () => {
 const scheduleDefaultsSave = debounce(() => {
   void saveDefaults();
 }, 500);
+cancelDefaultsSaveSchedule = scheduleDefaultsSave.cancel;
 
 restoreSettings();
 syncCreateUsageLimitControls();
@@ -10872,6 +10997,7 @@ tokenInput.addEventListener("input", () => {
     setKernelPubKeysBadge("unknown", "Not loaded");
     setKernelPubKeysMessage("Paste an admin token to load kernel attestation keys.");
     allKeys = [];
+    scheduleKeyExpiryRefresh();
     passkeyUsers = [];
     kernelQueueItems = [];
     kernelPubKeys = [];
@@ -11038,12 +11164,15 @@ baseSelect.addEventListener("change", () => {
   setKernelNewPanelOpen(false);
   resetKernelPubKeyForm();
   allKeys = [];
+  scheduleKeyExpiryRefresh();
   keysLoadedAt = 0;
   passkeyUsers = [];
   passkeyUsersLoadedAt = 0;
   defaultsLoaded = false;
   defaultsLoadedAt = 0;
   defaultsLoadId += 1;
+  defaultsEditRevision += 1;
+  clearDefaultsSaveQueue();
   kernelListLoadedAt = 0;
   kernelListLoadId += 1;
   kernelQueueItems = [];
@@ -11251,7 +11380,7 @@ const markDefaultsEditing = () => {
   defaultsEditRevision += 1;
   setDefaultsBadge("unknown", "Editing...");
   if (defaultsSaving) {
-    defaultsSaveQueued = true;
+    queueDefaultsSave();
     return;
   }
   scheduleDefaultsSave();

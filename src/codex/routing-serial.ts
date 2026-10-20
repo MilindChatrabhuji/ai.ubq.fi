@@ -21,15 +21,73 @@ import {
   setRoutingStateCache,
 } from "./routing-state.ts";
 import { normalizeRoutingState, parseStoredCapacityObservationStore, routingAccountIdentity } from "./capacity-routing.ts";
-import {
-  classifyCodexRouteSelection,
-  evaluateCodexRoutingAccount,
-  foldCodexRoutingEvaluation,
-  parseCodexAuthPoolSnapshot,
-  routingStateChangedByNormalization,
-} from "./routing-evaluation.ts";
+import { evaluateCodexRoutingAccount, foldCodexRoutingEvaluation, parseCodexAuthPoolSnapshot } from "./routing-evaluation.ts";
 import type { CodexRoutingAccountEvaluation, CodexRoutingAccumulation, CodexRoutingAccumulator, CodexRoutingSlotIdentity } from "./routing-evaluation.ts";
 import { codexModelUnavailableAccounts } from "../models/codex-models-availability.ts";
+
+import * as serialDecisions from "../authority/native-codex.ts";
+import type { CodexSerialAdmissionPlan } from "../authority/native-codex-contracts.ts";
+import { codexEvaluationMetadata, hydrateCodexRouteSelection } from "./routing-evaluation.ts";
+import { foldCodexRoutingEvaluation as foldMetadata } from "../authority/native-codex-evaluation.ts";
+import { nativeCodexAccountMetadata } from "./routing-state.ts";
+const activeSelectionForAccount = (
+  account: RoutingAccount,
+  poolVersionstamp: string,
+  generation: number,
+  now: number,
+  transitionReason: CodexActiveAccountTransitionReason | null
+): CodexActiveAccountSelection | null =>
+  serialDecisions.activeSelectionForAccount(nativeCodexAccountMetadata(account), poolVersionstamp, generation, now, transitionReason);
+type SerialSelectionDecision = Readonly<{
+  selection: RouteSelection;
+  nextActive: CodexActiveAccountSelection | null;
+  metadata: serialDecisions.SerialSelectionDecision;
+}>;
+const serialSelectionDecision = (
+  active: CodexActiveAccountSelection | null,
+  pool: CodexAuthPoolState,
+  evaluations: SerialRoutingEvaluations,
+  poolVersionstamp: string,
+  now: number,
+  poolSnapshotJson: string,
+  capacitySnapshotJson: string
+): SerialSelectionDecision | null => {
+  const byAccountId = new Map(
+    [...evaluations.byAccountId.values()].map((evaluation) => [evaluation.account.accountIdHash, codexEvaluationMetadata(evaluation)])
+  );
+  const identityByAccountId = new Map([...evaluations.identityByAccountId.values()].map((identity) => [identity.accountIdHash, identity]));
+  const accumulated = {
+    available: [],
+    blockedAccounts: [],
+    skipped: [],
+    retryAt: null,
+    hasQuotaBlock: false,
+    hasUpstreamTimeoutBlock: false,
+    modelUnavailable: null,
+  } as import("../authority/native-codex-evaluation.ts").CodexRoutingAccumulator;
+  for (const evaluation of byAccountId.values()) foldMetadata(accumulated, evaluation);
+  const cohort = pool.accounts.flatMap((auth) => {
+    const identity = evaluations.identityByAccountId.get(auth.account_id);
+    return identity ? [identity] : [];
+  });
+  const metadata = serialDecisions.serialSelectionDecision(
+    active,
+    cohort,
+    { accumulated, byAccountId, identityByAccountId },
+    poolVersionstamp,
+    now,
+    null,
+    null
+  );
+  if (metadata === null) return null;
+  const selection = hydrateCodexRouteSelection(
+    metadata.selection,
+    [...evaluations.byAccountId.values()].map((evaluation) => evaluation.account),
+    poolSnapshotJson,
+    capacitySnapshotJson
+  );
+  return { selection, nextActive: metadata.nextActive, metadata };
+};
 
 type SerialRoutingEvaluations = Readonly<{
   accumulated: CodexRoutingAccumulation;
@@ -78,187 +136,6 @@ const evaluateSerialRoutingAccounts = async (
     foldCodexRoutingEvaluation(accumulator, evaluated);
   }
   return { accumulated: { ...accumulator }, byAccountId, identityByAccountId: byId };
-};
-
-const activeSelectionForAccount = (
-  account: RoutingAccount,
-  poolVersionstamp: string,
-  generation: number,
-  now: number,
-  transitionReason: CodexActiveAccountTransitionReason | null
-): CodexActiveAccountSelection | null => {
-  if (account.routingGeneration === undefined || !isVersionstamp(poolVersionstamp) || !Number.isSafeInteger(generation) || generation < 1) return null;
-  return {
-    v: 1,
-    account_id_hash: account.accountIdHash,
-    credential_version: account.credentialVersion,
-    pool_versionstamp: poolVersionstamp,
-    slot: account.slot,
-    routing_generation: account.routingGeneration,
-    generation,
-    transition_reason: transitionReason,
-    updated_at_ms: now,
-  };
-};
-
-const activeSelectionNeedsRefresh = (active: CodexActiveAccountSelection, account: RoutingAccount, poolVersionstamp: string): boolean =>
-  active.account_id_hash !== account.accountIdHash ||
-  active.credential_version !== account.credentialVersion ||
-  active.pool_versionstamp !== poolVersionstamp ||
-  active.slot !== account.slot ||
-  active.routing_generation !== account.routingGeneration;
-
-type SerialSelectionDecision = Readonly<{
-  selection: RouteSelection;
-  nextActive: CodexActiveAccountSelection | null;
-}>;
-
-type SerialSelectionContext = Readonly<{
-  evaluations: SerialRoutingEvaluations;
-  poolVersionstamp: string;
-  now: number;
-  poolSnapshotJson: string;
-  capacitySnapshotJson: string;
-  eligibleInPoolOrder: readonly RoutingAccount[];
-  fullCohortExhausted: boolean;
-  fullCohortUnavailable: boolean;
-  activeEvaluation: CodexRoutingAccountEvaluation | null;
-}>;
-
-/** One eligible account admitted under a committed active row. */
-const eligibleSerialSelection = (account: RoutingAccount, selection: CodexActiveAccountSelection, evaluations: SerialRoutingEvaluations): RouteSelection => ({
-  kind: "eligible",
-  accounts: [
-    {
-      ...account,
-      activeGeneration: selection.generation,
-      activePoolVersionstamp: selection.pool_versionstamp,
-      activeTransitionReason: selection.transition_reason,
-    },
-  ],
-  skippedSlots: evaluations.accumulated.skipped,
-  blockedAccounts: evaluations.accumulated.blockedAccounts,
-});
-
-/**
- * The blocked/credential-invalid result bound to the active row as this
- * decision leaves it: a same-identity fence refresh the decision commits is
- * the observed active row, not a stale pre-refresh value.
- */
-const blockedSerialSelection = (context: SerialSelectionContext, current: CodexActiveAccountSelection | null): RouteSelection =>
-  classifyCodexRouteSelection(
-    context.evaluations.accumulated,
-    context.fullCohortExhausted,
-    { selection: current },
-    context.poolSnapshotJson,
-    context.capacitySnapshotJson,
-    context.fullCohortUnavailable
-  );
-
-/** A missing active row bootstraps the first account eligible under the requested model. */
-const serialBootstrapDecision = (context: SerialSelectionContext): SerialSelectionDecision | null => {
-  const bootstrap = context.eligibleInPoolOrder.at(0);
-  if (!bootstrap) return { selection: blockedSerialSelection(context, null), nextActive: null };
-  const nextActive = activeSelectionForAccount(bootstrap, context.poolVersionstamp, 1, context.now, null);
-  if (!nextActive) return null;
-  return { selection: eligibleSerialSelection(bootstrap, nextActive, context.evaluations), nextActive };
-};
-
-/**
- * A pool reorder preserves the opaque identity; removal or replacement is the
- * only membership observation that may select a sibling.
- */
-const serialReplacementDecision = (context: SerialSelectionContext, active: CodexActiveAccountSelection): SerialSelectionDecision | null => {
-  const replacement = context.eligibleInPoolOrder.at(0);
-  if (!replacement) return { selection: blockedSerialSelection(context, active), nextActive: null };
-  const nextActive = activeSelectionForAccount(replacement, context.poolVersionstamp, active.generation + 1, context.now, "account_removed_or_replaced");
-  if (!nextActive) return null;
-  return { selection: eligibleSerialSelection(replacement, nextActive, context.evaluations), nextActive };
-};
-
-/** The active account is still eligible; only its same-identity fences may refresh. */
-const serialCurrentActiveDecision = (
-  context: SerialSelectionContext,
-  active: CodexActiveAccountSelection,
-  current: RoutingAccount
-): SerialSelectionDecision | null => {
-  const needsRefresh = activeSelectionNeedsRefresh(active, current, context.poolVersionstamp);
-  const refreshed = needsRefresh
-    ? activeSelectionForAccount(current, context.poolVersionstamp, active.generation, context.now, active.transition_reason)
-    : null;
-  if (needsRefresh && refreshed === null) return null;
-  return { selection: eligibleSerialSelection(current, refreshed ?? active, context.evaluations), nextActive: refreshed };
-};
-
-/** The active account is blocked, invalid, or probing: move only for an authoritative reason. */
-const serialBlockedActiveDecision = (
-  context: SerialSelectionContext,
-  active: CodexActiveAccountSelection,
-  activeEvaluation: CodexRoutingAccountEvaluation
-): SerialSelectionDecision | null => {
-  // A recovery-probe lease or transient circuit is not capacity evidence. It
-  // must fail retryably without sending traffic to a healthy sibling, and it
-  // must not unlock reset or paid fallback paths.
-  if (activeEvaluation.activeTransitionReason === null) return { selection: { kind: "routing_unavailable" }, nextActive: null };
-  const replacement = context.eligibleInPoolOrder.at(0);
-  if (!replacement) {
-    const needsRefresh = activeSelectionNeedsRefresh(active, activeEvaluation.account, context.poolVersionstamp);
-    const refreshed = needsRefresh
-      ? activeSelectionForAccount(activeEvaluation.account, context.poolVersionstamp, active.generation, context.now, active.transition_reason)
-      : null;
-    if (needsRefresh && refreshed === null) return null;
-    return { selection: blockedSerialSelection(context, refreshed ?? active), nextActive: refreshed };
-  }
-  const nextActive = activeSelectionForAccount(
-    replacement,
-    context.poolVersionstamp,
-    active.generation + 1,
-    context.now,
-    activeEvaluation.activeTransitionReason
-  );
-  if (!nextActive) return null;
-  return { selection: eligibleSerialSelection(replacement, nextActive, context.evaluations), nextActive };
-};
-
-const serialSelectionDecision = (
-  active: CodexActiveAccountSelection | null,
-  pool: CodexAuthPoolState,
-  evaluations: SerialRoutingEvaluations,
-  poolVersionstamp: string,
-  now: number,
-  poolSnapshotJson: string,
-  capacitySnapshotJson: string
-): SerialSelectionDecision | null => {
-  const eligibleInPoolOrder = pool.accounts
-    .map((auth) => evaluations.byAccountId.get(auth.account_id)?.routedAccount ?? null)
-    .filter((account): account is RoutingAccount => account !== null);
-  const accountForActive =
-    active === null ? null : pool.accounts.find((account) => evaluations.identityByAccountId.get(account.account_id)?.accountIdHash === active.account_id_hash);
-  const activeEvaluation = accountForActive ? (evaluations.byAccountId.get(accountForActive.account_id) ?? null) : null;
-  const fullCohortExhausted =
-    pool.accounts.length > 0 && pool.accounts.every((auth) => evaluations.byAccountId.get(auth.account_id)?.activeTransitionReason === "quota_exhausted");
-  const fullCohortUnavailable =
-    pool.accounts.length > 0 &&
-    pool.accounts.every((auth) => {
-      const reason = evaluations.byAccountId.get(auth.account_id)?.activeTransitionReason;
-      return reason === "quota_exhausted" || reason === "credential_invalid";
-    });
-  const context: SerialSelectionContext = {
-    evaluations,
-    poolVersionstamp,
-    now,
-    poolSnapshotJson,
-    capacitySnapshotJson,
-    eligibleInPoolOrder,
-    fullCohortExhausted,
-    fullCohortUnavailable,
-    activeEvaluation,
-  };
-  if (active === null) return serialBootstrapDecision(context);
-  if (activeEvaluation === null) return serialReplacementDecision(context, active);
-  const current = activeEvaluation.routedAccount;
-  if (current !== null) return serialCurrentActiveDecision(context, active, current);
-  return serialBlockedActiveDecision(context, active, activeEvaluation);
 };
 
 /** One coherent strong snapshot of the four rows every admission decision linearizes on, in a fixed order. */
@@ -351,22 +228,28 @@ const commitCodexSerialAdmission = async (
   prepared: CodexSerialAdmissionRows,
   decision: SerialSelectionDecision
 ): Promise<boolean> => {
-  const routingChanged = routingStateChangedByNormalization(prepared.durableRouting, prepared.normalized);
-  if (!routingChanged && decision.nextActive === null) {
-    // A check-only transaction linearizes the admission snapshot without
-    // writing on the hot path. A concurrent active/pool/routing/capacity
-    // update restarts the bounded strong-read loop before dispatch.
-    const admitted = await kv.atomic().check(rows.activeEntry).check(rows.authEntry).check(rows.routingEntry).check(rows.capacityEntry).commit();
-    if (!admitted.ok) return false;
-    setRoutingStateCache(prepared.normalized, rows.routingEntry.versionstamp);
-    return true;
-  }
-  let operation = kv.atomic().check(rows.activeEntry).check(rows.authEntry).check(rows.routingEntry).check(rows.capacityEntry);
-  if (routingChanged) operation = operation.set(CODEX_ACCOUNT_ROUTING_KV_KEY, prepared.normalized);
-  if (decision.nextActive !== null) operation = operation.set(CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY, decision.nextActive);
+  const plan: CodexSerialAdmissionPlan = serialDecisions.planCodexSerialCommit(
+    {
+      active: rows.activeEntry.versionstamp,
+      pool: rows.authEntry.versionstamp,
+      routing: rows.routingEntry.versionstamp,
+      capacity: rows.capacityEntry.versionstamp,
+    },
+    prepared.durableRouting,
+    prepared.normalized,
+    decision.metadata
+  );
+  let operation = kv
+    .atomic()
+    .check({ key: rows.activeEntry.key, versionstamp: plan.checks.active })
+    .check({ key: rows.authEntry.key, versionstamp: plan.checks.pool })
+    .check({ key: rows.routingEntry.key, versionstamp: plan.checks.routing })
+    .check({ key: rows.capacityEntry.key, versionstamp: plan.checks.capacity });
+  if (plan.writes.routing !== null) operation = operation.set(CODEX_ACCOUNT_ROUTING_KV_KEY, plan.writes.routing);
+  if (plan.writes.active !== null) operation = operation.set(CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY, plan.writes.active);
   const committed = await operation.commit();
   if (!committed.ok) return false;
-  setRoutingStateCache(prepared.normalized, routingChanged ? committed.versionstamp : rows.routingEntry.versionstamp);
+  setRoutingStateCache(prepared.normalized, plan.writes.routing !== null ? committed.versionstamp : rows.routingEntry.versionstamp);
   return true;
 };
 
