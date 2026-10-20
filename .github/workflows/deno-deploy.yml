@@ -406,7 +406,7 @@ jobs:
       - name: Prepare distro-only emulator and public probe tooling
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends qemu-system-arm qemu-utils qemu-efi-aarch64 genisoimage gcc libc6-dev gpgv
+          sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-utils qemu-efi-aarch64 genisoimage gcc libc6-dev gpgv
           dpkg-query -W qemu-system-arm qemu-utils qemu-efi-aarch64 genisoimage gcc libc6-dev gpgv
       - name: Boot authenticated offline ARM64 guest and verify exact Linux capability
         run: bun --no-env-file --no-install scripts/rust-linux-guest.ts
