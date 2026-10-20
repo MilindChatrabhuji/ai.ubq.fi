@@ -249,6 +249,12 @@ pub(super) async fn initialize(
     }
     let authority = Authority::with_clock(store.clone(), Tokens, Clock);
     let cfg = config(env);
+    worker::console_error!(
+        "M52 fixture config production={} hosted={} absolute={}",
+        cfg.production,
+        cfg.hosted,
+        std::path::Path::new(HOME).is_absolute()
+    );
     let context = RequestContext {
         request_id: RequestId("fixture-import-original-request".into()),
         principal: PrincipalId(format!("passkey-user:{USER}")),
@@ -262,8 +268,22 @@ pub(super) async fn initialize(
         headers: BTreeMap::from([("authorization".into(), format!("Bearer {SESSION}"))]),
         ..Default::default()
     };
-    let actor = authenticate_admin_actor(&authority, &Host, &cfg, &auth, &context).await?;
-    let owner = RegisteredRenewalOwner::configured(OWNER.into(), HOME.into())?;
+    let actor = authenticate_admin_actor(&authority, &Host, &cfg, &auth, &context)
+        .await
+        .map_err(|error| {
+            worker::console_error!(
+                "M52 fixture actor error {}",
+                error.envelope.error.code.as_deref().unwrap_or("none")
+            );
+            error
+        })?;
+    let owner = RegisteredRenewalOwner::configured(OWNER.into(), HOME.into()).map_err(|error| {
+        worker::console_error!(
+            "M52 fixture owner error {}",
+            error.envelope.error.code.as_deref().unwrap_or("none")
+        );
+        error
+    })?;
     let control = NativeRenewalAuthority::configured(&authority, id, &owner, &cfg, &Cancel);
     let prepared = control
         .prepare_import(
