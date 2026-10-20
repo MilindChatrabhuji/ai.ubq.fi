@@ -130,7 +130,7 @@ test("the retired guest interface cannot replace required Mac-native and WASM va
   const workflow = readFileSync(new URL("../.github/workflows/deno-deploy.yml", import.meta.url), "utf8");
   assert(!workflow.includes("linux_capability_probe") && !workflow.includes("linux-capability-probe:") && !workflow.includes("probe-only /"));
   const native = workflow.slice(workflow.indexOf("  rust-native:"), workflow.indexOf("  rust-wasm:"));
-  assert(native.includes("runs-on: macos-15") && native.includes("--prepare-ci native") && native.includes("--stage native"));
+  assert(native.includes("runs-on: macos-26") && native.includes("--prepare-ci native") && native.includes("--stage native"));
   assert(!native.includes("apt-get") && native.includes('test "$(uname -m)" = arm64'));
   assert(workflow.includes('if [ "$RUST_NATIVE_REQUIRED" = true ]; then test "$RUST_NATIVE_RESULT" = success; fi'));
   assert(workflow.includes('if [ "$RUST_WASM_REQUIRED" = true ]; then test "$RUST_WASM_RESULT" = success; fi'));
