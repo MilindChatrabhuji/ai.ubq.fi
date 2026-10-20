@@ -20,6 +20,9 @@ use std::{
 };
 
 pub fn run_native_supervisor() -> ! {
+    if crate::require_production_artifact().is_err() {
+        std::process::exit(ControlError::UnsupportedPlatform.exit_code());
+    }
     let code = match run() {
         Ok(()) => 0,
         Err(error) => error.exit_code(),

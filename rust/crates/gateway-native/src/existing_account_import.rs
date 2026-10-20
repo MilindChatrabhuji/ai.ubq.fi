@@ -11,11 +11,24 @@ use gateway_authority::{
 use gateway_core::{GatewayError, state::AuthorityStore};
 use std::{fs::File, path::Path};
 mod acl_inspector;
+mod actor_channel;
+mod completion;
+mod custodian_runtime;
+mod custodian_service;
 #[path = "import_durability.rs"]
 mod durability;
 mod exclusive_owner;
+mod import_documents;
+mod import_endpoints;
+pub(crate) mod import_process;
+mod import_publication;
+mod live_custody;
 mod owner_runtime;
+mod prepare_flow;
+mod validation;
+pub use custodian_runtime::CustodianRuntime;
 pub use exclusive_owner::ExclusiveManagedOwner;
+pub use live_custody::LiveImportCustody;
 pub use owner_runtime::{ExclusiveOwnerLease, OwnedRuntime};
 /// Fixed helper-only entry; it accepts no path, command, environment or arbitrary descriptor selector.
 pub fn owner_inspector_entry() -> Result<(), GatewayError> {
@@ -156,3 +169,6 @@ fn unavailable() -> GatewayError {
 #[cfg(test)]
 #[path = "existing_account_import/tests.rs"]
 mod foundation_tests;
+
+#[cfg(all(test, target_os = "macos", feature = "native-import-fixture"))]
+mod flow_tests;

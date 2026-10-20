@@ -49,6 +49,22 @@ pub(crate) struct ImportHead {
     pub(crate) framing_deadline: Instant,
 }
 impl ImportHead {
+    pub(crate) fn auth_headers(&self) -> Result<NativeAuthHeaders<'_>, GatewayError> {
+        Ok(NativeAuthHeaders {
+            version: self.one(NATIVE_VERSION_HEADER)?,
+            key_id: self.one(NATIVE_KEY_HEADER)?,
+            time_ms: self.one(NATIVE_TIME_HEADER)?,
+            nonce: self.one(NATIVE_NONCE_HEADER)?,
+            mac: self.one(NATIVE_MAC_HEADER)?,
+        })
+    }
+    fn metadata(&self) -> Result<NativeImportMetadata, GatewayError> {
+        Ok(NativeImportMetadata {
+            v: 1,
+            operation_id: self.one(NATIVE_IMPORT_OPERATION_HEADER)?.into(),
+            action_ref: self.one(NATIVE_IMPORT_ACTION_HEADER)?.into(),
+        })
+    }
     fn optional(&self, name: &str) -> Result<Option<&str>, GatewayError> {
         let mut values = self
             .headers
@@ -120,18 +136,8 @@ where
         identity: &NativeTransportIdentity,
         nonces: &SqliteNonceStore,
     ) -> Result<(), GatewayError> {
-        let auth = NativeAuthHeaders {
-            version: head.one(NATIVE_VERSION_HEADER)?,
-            key_id: head.one(NATIVE_KEY_HEADER)?,
-            time_ms: head.one(NATIVE_TIME_HEADER)?,
-            nonce: head.one(NATIVE_NONCE_HEADER)?,
-            mac: head.one(NATIVE_MAC_HEADER)?,
-        };
-        let metadata = NativeImportMetadata {
-            v: 1,
-            operation_id: head.one(NATIVE_IMPORT_OPERATION_HEADER)?.into(),
-            action_ref: head.one(NATIVE_IMPORT_ACTION_HEADER)?.into(),
-        };
+        let auth = head.auth_headers()?;
+        let metadata = head.metadata()?;
         let watch = stream.try_clone().map_err(|_| unavailable())?;
         let cancelled = || disconnected(&watch);
         let original = NativeControlContext::admitted(
@@ -140,17 +146,7 @@ where
             auth,
         );
         original.check()?;
-        let replay = StoreNonceAuthority::new(nonces);
-        let header_proof =
-            futures_executor::block_on(NativeAuthenticator::new(identity, &replay).admit_import(
-                head.kind,
-                NativeImportAuthHeaders {
-                    auth,
-                    body_sha256: head.one(NATIVE_IMPORT_BODY_HEADER)?,
-                },
-                &metadata,
-                now_ms()?,
-            ))?;
+        let header_proof = admit_headers(&head, identity, nonces, &metadata, &original)?;
         let cancellation = OriginalCancellation(&original);
         let authority = NativeRenewalAuthority::configured(
             &self.authority,
@@ -181,6 +177,71 @@ where
         original.check()?;
         write_result(stream, result)
     }
+}
+fn admit_headers(
+    head: &ImportHead,
+    identity: &NativeTransportIdentity,
+    nonces: &SqliteNonceStore,
+    metadata: &NativeImportMetadata,
+    original: &NativeControlContext<'_>,
+) -> Result<gateway_auth::native_import::NativeImportAdmission, GatewayError> {
+    original.check()?;
+    let replay = StoreNonceAuthority::new(nonces);
+    futures_executor::block_on(NativeAuthenticator::new(identity, &replay).admit_import(
+        head.kind,
+        NativeImportAuthHeaders {
+            auth: original.original_auth_headers(),
+            body_sha256: head.one(NATIVE_IMPORT_BODY_HEADER)?,
+        },
+        metadata,
+        now_ms()?,
+    ))
+}
+/// Original accepted request DATA and genuine actual-remote proof. No decoder or
+/// second nonce store is introduced for the dedicated actor.
+pub(crate) struct RemoteImportDocument {
+    pub(crate) proof: gateway_authority::native_control::import::AuthenticatedNativeImport,
+    pub(crate) metadata: NativeImportMetadata,
+    raw: NativeDocument,
+}
+impl RemoteImportDocument {
+    pub(crate) fn body(&self) -> &[u8] {
+        &self.raw.0
+    }
+}
+pub(crate) fn read_remote_import<C: NativeRenewalCancellation>(
+    stream: &mut TcpStream,
+    head: &ImportHead,
+    identity: &NativeTransportIdentity,
+    nonces: &SqliteNonceStore,
+    authority: &gateway_authority::native_control::import::RemoteImportAuthority<'_, C>,
+    original: &NativeControlContext<'_>,
+    registered_target: (&str, &str),
+) -> Result<RemoteImportDocument, GatewayError> {
+    let (native_owner_id, account_id_hash) = registered_target;
+    let metadata = head.metadata()?;
+    let header = admit_headers(head, identity, nonces, &metadata, original)?;
+    let admitted = authority.admit_import(header)?;
+    original.check()?;
+    if admitted.native_owner_id() != native_owner_id
+        || admitted.account_id_hash() != account_id_hash
+        || !matches!(admitted.target(), gateway_auth::native_import::NativeImportTarget::ExistingAccount { account_id_hash: actual } if actual == account_id_hash)
+    {
+        return Err(unavailable());
+    }
+    if head.kind != NativeImportKind::CodexAuth || head.path != head.kind.path() {
+        return Err(unavailable());
+    }
+    let raw = read_body(stream, head, original)?;
+    original.check()?;
+    let proof = authority.finish_import(admitted, &raw.0)?;
+    authority.recheck_import(&proof)?;
+    original.check()?;
+    Ok(RemoteImportDocument {
+        proof,
+        metadata,
+        raw,
+    })
 }
 struct NativeDocument(Vec<u8>);
 impl Drop for NativeDocument {
@@ -288,7 +349,10 @@ fn append(
     }
     Ok(())
 }
-fn write_result(stream: &mut TcpStream, result: NativeImportResult) -> Result<(), GatewayError> {
+pub(crate) fn write_result(
+    stream: &mut TcpStream,
+    result: NativeImportResult,
+) -> Result<(), GatewayError> {
     let body = serde_json::to_vec(&result.body).map_err(|_| unavailable())?;
     let mut response = format!("HTTP/1.1 {} Native\r\n", result.status);
     let mut content_type = false;

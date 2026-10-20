@@ -17,6 +17,9 @@ use std::{
 };
 
 pub fn run_native_connector() -> ! {
+    if crate::require_production_artifact().is_err() {
+        std::process::exit(ControlError::UnsupportedPlatform.exit_code());
+    }
     ReceiveProcess::run(|process| {
         crate::connector_policy::inherited_only_stdio()?;
         let owned = std::io::stdin()

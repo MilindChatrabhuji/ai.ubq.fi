@@ -130,3 +130,98 @@ pub(crate) fn validate_unix_control(
     }
     Ok(())
 }
+
+/// Credential mutation belongs only to the fixed native import child, never the inference connector.
+pub(crate) fn import_actor(
+    binary: &Path,
+    root: &Path,
+    replay: &Path,
+    client: (SocketAddr, SocketAddr),
+    custody: (SocketAddr, SocketAddr),
+    endpoints: &[SocketAddr; 3],
+) -> Result<String, ControlError> {
+    let (client_local, client_peer) = client;
+    let (custody_local, custody_peer) = custody;
+    let canonical_root = std::fs::canonicalize(root).map_err(|_| ControlError::InvalidFrame)?;
+    if canonical_root != root {
+        return Err(ControlError::InvalidFrame);
+    }
+    let mut policy = base(binary)?;
+    // open_home deliberately opens each NOFOLLOW directory component. These
+    // literal directory reads permit that traversal, not ancestor subtrees.
+    for ancestor in canonical_root.ancestors().skip(1) {
+        policy.push_str(&format!(
+            "(allow file-read-data (literal {}))\n",
+            quoted(ancestor)?
+        ));
+    }
+    let root = quoted(root)?;
+    let root: String = serde_json::from_str(&root).map_err(|_| ControlError::InvalidFrame)?;
+    policy.push_str(&format!(
+        "(allow file-read* (subpath {}))\n",
+        serde_json::to_string(&root).map_err(|_| ControlError::InvalidFrame)?
+    ));
+    // Only auth and this protocol's fixed temporary/backup/receipt names are writable.
+    // The actor cannot alter the custodian's lock or dirty runtime epoch.
+    let literal = serde_json::to_string(&format!("{root}/auth.json"))
+        .map_err(|_| ControlError::InvalidFrame)?;
+    let escaped = root
+        .replace('\\', "\\\\")
+        .replace('.', "\\.")
+        .replace('+', "\\+")
+        .replace('(', "\\(")
+        .replace(')', "\\)")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+        .replace('{', "\\{")
+        .replace('}', "\\}")
+        .replace('^', "\\^")
+        .replace('$', "\\$")
+        .replace('*', "\\*")
+        .replace('?', "\\?")
+        .replace('|', "\\|");
+    let hash_pattern = "[0-9a-f]".repeat(64);
+    let pattern = format!(
+        "^{escaped}/\\.uos-import-{hash_pattern}\\.(tmp|previous|rotated|receipt|receipt\\.tmp)$"
+    );
+    // SBPL #"..." is a raw regex reader, unlike an ordinary JSON string.
+    // Match the installed bsd.sb single-backslash regex spelling; only the
+    // quote delimiter is escaped here. The regex language itself is unchanged.
+    let regex_literal = pattern.replace('"', "\\\"");
+    policy.push_str(&format!(
+        "(allow file-write* (literal {literal}) (regex #\"{regex_literal}\"))\n"
+    ));
+    policy.push_str(&format!(
+        "(allow file-read* file-write* (subpath {}))\n",
+        quoted(replay)?
+    ));
+    for endpoint in endpoints {
+        if endpoint.port() == 0 || endpoint.ip().is_unspecified() || endpoint.ip().is_multicast() {
+            return Err(ControlError::InvalidFrame);
+        }
+        // Seatbelt has port-only external TCP enforcement, not a hostname ACL.
+        // These are trusted fixed-origin resolved endpoints; TLS binds their hosts.
+        let host = if endpoint.ip().is_loopback() {
+            "localhost"
+        } else if endpoint.port() == 443 {
+            "*"
+        } else {
+            return Err(ControlError::UnsupportedPlatform);
+        };
+        policy.push_str(&format!(
+            "(allow network-outbound (remote tcp \"{host}:{}\"))\n",
+            endpoint.port()
+        ));
+    }
+    for (local, peer) in [(client_local, client_peer), (custody_local, custody_peer)] {
+        if !local.ip().is_loopback() || !peer.ip().is_loopback() {
+            return Err(ControlError::InvalidFrame);
+        }
+        policy.push_str(&format!("(allow network-inbound network-outbound (require-all (local tcp \"localhost:{}\") (remote tcp \"localhost:{}\")))\n", local.port(), peer.port()));
+    }
+    Ok(policy)
+}
+
+#[cfg(all(test, target_os = "macos", feature = "native-import-fixture"))]
+#[path = "import_policy_tests.rs"]
+mod import_policy_tests;

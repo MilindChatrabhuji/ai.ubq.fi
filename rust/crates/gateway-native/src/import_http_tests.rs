@@ -45,13 +45,13 @@ use std::{
 const RAW: &[u8] = br#"{"tokens":{"access_token":"SYNTHETIC_ACCESS","refresh_token":"SYNTHETIC_REFRESH","account_id":"synthetic-account"},"extra":"\ud800"}"#;
 const HOME: &str = "/tmp/native-import-http-synthetic-owner";
 #[derive(Clone, Default)]
-struct Store {
-    rows: Arc<Mutex<BTreeMap<String, StoredRecord>>>,
+pub(crate) struct Store {
+    pub(crate) rows: Arc<Mutex<BTreeMap<String, StoredRecord>>>,
     admitted: Arc<(Mutex<usize>, Condvar)>,
     action_key: Arc<Mutex<Option<RecordKey>>>,
 }
 impl Store {
-    fn seed(&self, key: RecordKey, revision: &str, value: impl Serialize) {
+    pub(crate) fn seed(&self, key: RecordKey, revision: &str, value: impl Serialize) {
         self.rows.lock().unwrap().insert(
             key.0,
             StoredRecord::json(revision, serde_json::to_value(value).unwrap(), None),
@@ -112,7 +112,7 @@ impl AuthorityStore for Store {
         Ok(CommitOutcome::Committed)
     }
 }
-struct Tokens(AtomicUsize);
+pub(crate) struct Tokens(AtomicUsize);
 impl Default for Tokens {
     fn default() -> Self {
         Self(AtomicUsize::new(1))
@@ -126,7 +126,7 @@ impl TokenSource for Tokens {
         ))
     }
 }
-struct Host;
+pub(crate) struct Host;
 impl WebAuthnCrypto for Host {
     async fn validate_key(&self, _: &CosePublicKey) -> Result<(), GatewayError> {
         Err(unavailable())
@@ -158,7 +158,7 @@ impl AuthHost for Host {
         Err(unavailable())
     }
 }
-struct Cancel;
+pub(crate) struct Cancel;
 impl NativeRenewalCancellation for Cancel {
     fn cancelled(&self) -> bool {
         false
@@ -206,7 +206,7 @@ impl NativeImportHandler for Recording {
         ))
     }
 }
-fn config() -> AuthConfig {
+pub(crate) fn config() -> AuthConfig {
     AuthConfig {
         production: true,
         hosted: true,
@@ -214,7 +214,7 @@ fn config() -> AuthConfig {
         ..Default::default()
     }
 }
-fn authority(store: &Store) -> Authority<Store, Tokens> {
+pub(crate) fn authority(store: &Store) -> Authority<Store, Tokens> {
     Authority::with_clock(store.clone(), Tokens::default(), store.clone())
 }
 fn seed(store: &Store, id: &NativeTransportIdentity) -> String {

@@ -45,6 +45,7 @@ struct Epoch {
 #[serde(rename_all = "snake_case")]
 enum Phase {
     Running,
+    Stopping,
     Stopped,
 }
 /// Actual private process custody; a JSON marker/available flock does not mint stopped-child proof.
@@ -276,8 +277,10 @@ impl OwnedRuntime {
         self.settled = false;
         Ok(())
     }
-    fn stop_owned(&mut self, deadline: Instant) -> Result<(), GatewayError> {
+    fn stop_kernel(&mut self, deadline: Instant) -> Result<(), GatewayError> {
         self.check_epoch(Phase::Running)?;
+        // Dirty intent is durable before any possible kill; uncertainty cannot reopen custody.
+        self.write_epoch(Phase::Stopping)?;
         let child = self.child.as_mut().ok_or_else(fail)?;
         if child.try_wait().map_err(|_| fail())?.is_none() {
             child.kill().map_err(|_| fail())?;
@@ -294,6 +297,13 @@ impl OwnedRuntime {
         // The actual retained Child was reaped, not an arbitrary PID or socket closed.
         self.child.take();
         self.owner.recheck(deadline)?;
+        fsync(self.owner.directory()?).map_err(|_| fail())?;
+        self.write_epoch(Phase::Stopped)?;
+        self.settled = true;
+        Ok(())
+    }
+    fn stop_owned(&mut self, deadline: Instant) -> Result<(), GatewayError> {
+        self.stop_kernel(deadline)?;
         let auth = File::from(
             openat(
                 self.owner.directory()?,
@@ -310,9 +320,6 @@ impl OwnedRuntime {
         {
             return Err(fail());
         }
-        fsync(self.owner.directory()?).map_err(|_| fail())?;
-        self.write_epoch(Phase::Stopped)?;
-        self.settled = true;
         Ok(())
     }
     pub async fn settle_for_import<
@@ -386,6 +393,40 @@ impl OwnedRuntime {
             return Err(fail());
         }
         Ok(())
+    }
+    // Kernel/actual-Child adapter only. These methods never read credential bytes or generations.
+    pub(super) fn require_owned_child(&self) -> Result<(), GatewayError> {
+        if self.settled || self.child.is_none() {
+            return Err(fail());
+        }
+        self.check_epoch(Phase::Running)
+    }
+    pub(super) fn custody_stop(&mut self, deadline: Instant) -> Result<(), GatewayError> {
+        self.require_owned_child()?;
+        self.stop_kernel(deadline)
+    }
+    pub(super) fn custody_snapshot(
+        &self,
+        deadline: Instant,
+    ) -> Result<super::custodian_runtime::KernelSnapshot, GatewayError> {
+        if !self.settled || self.child.is_some() {
+            return Err(fail());
+        }
+        self.owner.recheck(deadline)?;
+        self.check_epoch(Phase::Stopped)?;
+        let epoch = self.epoch.as_ref().ok_or_else(fail)?;
+        Ok(super::custodian_runtime::KernelSnapshot {
+            epoch: epoch.boot.clone(),
+            root_device: epoch.root_device,
+            root_inode: epoch.root_inode,
+        })
+    }
+    pub(super) fn custody_registry(&self) -> Result<(&str, &str, &Path), GatewayError> {
+        self.require_owned_child()?;
+        Ok((&self.owner.native_owner_id, &self.owner.account_id_hash, &self.owner.home))
+    }
+    pub(super) fn matches_custody_owner(&self, owner: &str, account: &str) -> bool {
+        self.owner.native_owner_id == owner && self.owner.account_id_hash == account
     }
     /// Runtime history is an observation; stopped disk DATA without this live Child never issues a lease.
     pub fn has_settled_owned_writer(&self) -> bool {

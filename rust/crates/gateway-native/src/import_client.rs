@@ -22,7 +22,7 @@ use std::{collections::BTreeMap, net::SocketAddr, sync::Arc};
 
 /// Local construction/preparation errors, not an HTTP/provider status policy.
 #[derive(Debug)]
-pub(crate) enum ClientError {
+pub enum ClientError {
     InvalidEndpoint,
     Cancelled,
     Expired,
@@ -31,7 +31,7 @@ pub(crate) enum ClientError {
 }
 
 /// Explicit trusted constructor configuration, with no endpoint/identity default.
-pub(crate) struct NativeImportClient<'a, S, I, C> {
+pub struct NativeImportClient<'a, S, I, C> {
     control: NativeRenewalAuthority<'a, S, I, C>,
     identity: &'a NativeTransportIdentity,
     cancellation: &'a C,
@@ -41,7 +41,7 @@ pub(crate) struct NativeImportClient<'a, S, I, C> {
 impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
     NativeImportClient<'a, S, I, C>
 {
-    pub(crate) fn configured(
+    pub fn configured(
         endpoint: SocketAddr,
         authority: &'a Authority<S, I>,
         identity: &'a NativeTransportIdentity,
@@ -67,7 +67,7 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         })
     }
     /// Only finite target data enters actual preparation; no document or digest.
-    pub(crate) async fn prepare(
+    pub async fn prepare(
         &self,
         actor: &NativeRenewalActor,
         target: NativeImportTarget,
@@ -89,7 +89,7 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         })
     }
     /// Consumes this client's actual prepared object; there is no retry/send API.
-    pub(crate) fn request<'b>(
+    pub fn request<'b>(
         &self,
         prepared: ClientPreparedImport,
         original_body: &'b [u8],
@@ -145,47 +145,47 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
 
 /// No public constructor, Deserialize, Clone, Debug or Serialize. The original
 /// actual authority-prepared object remains inside this client's private handle.
-pub(crate) struct ClientPreparedImport {
+pub struct ClientPreparedImport {
     prepared: PreparedNativeImport,
     marker: Arc<()>,
 }
 impl ClientPreparedImport {
-    pub(crate) fn metadata(&self) -> &NativeImportMetadata {
+    pub fn metadata(&self) -> &NativeImportMetadata {
         self.prepared.metadata()
     }
-    pub(crate) fn target(&self) -> &NativeImportTarget {
+    pub fn target(&self) -> &NativeImportTarget {
         self.prepared.target()
     }
-    pub(crate) fn deadline_ms(&self) -> i64 {
+    pub fn deadline_ms(&self) -> i64 {
         self.prepared.deadline_ms()
     }
 }
 
 /// Native-only sensitive request DATA, not dispatch permission or a receipt.
 /// Deliberately no Debug, Serialize, Clone, response parser or completion method.
-pub(crate) struct NativeUploadRequest<'a> {
+pub struct NativeUploadRequest<'a> {
     prepared: ClientPreparedImport,
     endpoint: SocketAddr,
     headers: BTreeMap<String, String>,
     body: &'a [u8],
 }
 impl NativeUploadRequest<'_> {
-    pub(crate) fn endpoint(&self) -> SocketAddr {
+    pub fn endpoint(&self) -> SocketAddr {
         self.endpoint
     }
-    pub(crate) fn method(&self) -> &'static str {
+    pub fn method(&self) -> &'static str {
         "POST"
     }
-    pub(crate) fn path(&self) -> &'static str {
+    pub fn path(&self) -> &'static str {
         self.prepared.target().kind().path()
     }
-    pub(crate) fn metadata(&self) -> &NativeImportMetadata {
+    pub fn metadata(&self) -> &NativeImportMetadata {
         self.prepared.metadata()
     }
-    pub(crate) fn headers(&self) -> &BTreeMap<String, String> {
+    pub fn headers(&self) -> &BTreeMap<String, String> {
         &self.headers
     }
-    pub(crate) fn body(&self) -> &[u8] {
+    pub fn body(&self) -> &[u8] {
         self.body
     }
 }

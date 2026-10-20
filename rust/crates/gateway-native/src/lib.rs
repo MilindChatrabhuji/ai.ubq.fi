@@ -1,4 +1,15 @@
 //! Narrow native capabilities. No shell, arbitrary URL/path or generic JSON-RPC ingress.
+/// A compile-time fixture artifact is never an ordinary native service, even
+/// when dependency feature unification enabled it without the native feature.
+pub fn require_production_artifact() -> Result<(), gateway_auth::GatewayError> {
+    if gateway_authority::NATIVE_IMPORT_FIXTURE_ENABLED {
+        return Err(gateway_auth::GatewayError::unavailable(
+            "Fixture-enabled artifacts cannot run native services",
+            "native_fixture_artifact_forbidden",
+        ));
+    }
+    Ok(())
+}
 #[cfg(unix)]
 mod connector_fd;
 #[cfg(unix)]
@@ -18,6 +29,10 @@ pub use connector_supervisor::run_native_supervisor;
 #[cfg(unix)]
 pub use connector_worker::run_native_connector;
 #[cfg(unix)]
+pub use existing_account_import::import_process::run_native_import;
+#[cfg(all(unix, feature = "native-import-fixture"))]
+pub use existing_account_import::import_process::run_native_import_fixture;
+#[cfg(unix)]
 pub use native_request_process::run_native_request;
 pub mod access_publication;
 #[cfg(unix)]
@@ -30,6 +45,10 @@ pub mod daemon_config;
 pub mod existing_account_import;
 #[cfg(unix)]
 pub mod http_server;
+#[cfg(unix)]
+pub mod import_client;
+#[cfg(unix)]
+mod import_custody_protocol;
 #[cfg(unix)]
 mod import_ingress;
 #[cfg(unix)]

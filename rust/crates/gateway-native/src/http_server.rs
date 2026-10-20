@@ -86,6 +86,7 @@ impl NativeHttpService {
         self
     }
     pub fn serve(self, listener: TcpListener) -> Result<(), GatewayError> {
+        crate::require_production_artifact()?;
         let service = Arc::new(self);
         let active = Arc::new(AtomicUsize::new(0));
         for stream in listener.incoming() {
@@ -115,6 +116,7 @@ impl NativeHttpService {
         Ok(())
     }
     pub(crate) fn serve_connection(&self, stream: &mut TcpStream) -> Result<(), GatewayError> {
+        crate::require_production_artifact()?;
         if let Err(error) = self.handle(stream) {
             write_error(stream, error)?;
         }
@@ -477,6 +479,14 @@ enum IncomingRequest {
     Legacy(HttpRequest),
     Import(crate::import_ingress::ImportHead),
 }
+pub(crate) fn read_import_head(
+    stream: &mut TcpStream,
+) -> Result<crate::import_ingress::ImportHead, GatewayError> {
+    match read_request(stream)? {
+        IncomingRequest::Import(head) => Ok(head),
+        IncomingRequest::Legacy(_) => Err(invalid()),
+    }
+}
 fn read_request(stream: &mut TcpStream) -> Result<IncomingRequest, GatewayError> {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut bytes = Vec::new();
@@ -728,4 +738,4 @@ mod live_http_tests;
 
 #[cfg(test)]
 #[path = "import_http_tests.rs"]
-mod import_http_tests;
+pub(crate) mod import_http_tests;

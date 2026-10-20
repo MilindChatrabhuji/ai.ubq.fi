@@ -19,6 +19,9 @@ use std::{
     time::Duration,
 };
 pub fn run_native_request() -> ! {
+    if crate::require_production_artifact().is_err() {
+        std::process::exit(ControlError::UnsupportedPlatform.exit_code());
+    }
     ReceiveProcess::run(|process| {
         crate::connector_policy::inherited_only_stdio()?;
         let mode = rustix::fs::fstat(std::io::stdin())

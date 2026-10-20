@@ -21,6 +21,7 @@ fn main() {
 
 #[cfg(unix)]
 fn run() -> Result<(), gateway_auth::GatewayError> {
+    gateway_native::require_production_artifact()?;
     use gateway_native::{
         confinement::{NativeConfinement, enforce},
         daemon_config::NativeDaemonConfig,
