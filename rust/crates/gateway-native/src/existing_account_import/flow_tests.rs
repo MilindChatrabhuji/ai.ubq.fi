@@ -46,10 +46,10 @@ fn key(parts: &[&str]) -> gateway_core::state::RecordKey {
     gateway_core::tuple_key::TupleKey::from_scalar_parts(&parts.iter().map(|part| gateway_core::tuple_key::ScalarKeyPart::String(part)).collect::<Vec<_>>()).to_record_key()
 }
 const OLD: &[u8] = br#"{"tokens":{"access_token":"SYNTHETIC_OLD_ACCESS","refresh_token":"SYNTHETIC_OLD_REFRESH","account_id":"synthetic-account"},"OPENAI_API_KEY":"SYNTHETIC_INDEPENDENT","unrelated":"\ud800"}"#;
-const NEW: &[u8] = br#"{"auth":{"tokens":{"access_token":"SYNTHETIC_NEW_ACCESS","refresh_token":"SYNTHETIC_NEW_REFRESH","account_id":"synthetic-account"}},"client_version":"0.163.0"}"#;
+const NEW: &[u8] = br#"{"auth":{"tokens":{"access_token":"SYNTHETIC_NEW_ACCESS","refresh_token":"SYNTHETIC_NEW_REFRESH","account_id":"synthetic-account"}},"models":{"client_version":"0.163.0"}}"#;
 fn now() -> i64 { crate::http_server::now_ms().unwrap() }
 fn id() -> NativeTransportIdentity { NativeTransportIdentity::new("native-flow".into(), "fixture-host".into(), "epoch".into(), [83;32], BTreeSet::from([NativeCapability::CodexAuthImport, NativeCapability::AccessPublish])).unwrap() }
-fn credentials() -> gateway_auth::native_credentials::NativeCredentials { super::durability::credentials(OLD).unwrap() }
+fn credentials() -> gateway_auth::native_credentials::NativeCredentials { super::import_documents::credentials(&SourceJson::parse_bytes(OLD).unwrap()).unwrap() }
 fn inputs() -> ConfiguredPaidInputs { ConfiguredPaidInputs::new(None,None,None,serde_json::json!({"fixture":"genuine-native-flow"})).unwrap() }
 fn setup(store: &base::Store, home: &Path) -> String {
     let identity = id();
@@ -116,7 +116,7 @@ fn serve_tls(socket:TcpStream,role:u8,store:base::Store,home:&Path,traffic:Arc<T
                 if traffic.drop_publication.swap(false,Ordering::SeqCst)&&reply.status==200{return;}
                 (reply.status,reply.raw_body,reply.headers)
             }else{
-                let result=futures_executor::block_on(async{let peer=control.authenticate_import_authority(owned.borrowed(),&body).await?;
+                let result=futures_executor::block_on(async{let peer=control.authenticate_import_authority(NativeAuthHeaders { version:&headers[NATIVE_VERSION_HEADER], key_id:&headers[NATIVE_KEY_HEADER], time_ms:&headers[NATIVE_TIME_HEADER], nonce:&headers[NATIVE_NONCE_HEADER], mac:&headers[NATIVE_MAC_HEADER] },&body).await?;
                     if gateway_auth::native_import::catalog_seed::ImportCatalogSeedRequestData::parse(&body).is_ok(){control.handle_import_catalog_seed(&peer,&body).await}else if gateway_auth::native_import::authority::ImportAuthorityRequestData::parse(&body).is_ok(){control.handle_import_authority(&peer,&body).await}else{control.handle_import_started(&peer,&body).await}});
                 let (status,reply)=match result{Ok(reply)=>(200,reply),Err(error)=>(error.status,serde_json::to_vec(&error.envelope).unwrap())};
                 let nonce=headers.get(NATIVE_NONCE_HEADER).unwrap();let signature=identity.sign_authority_response(nonce,&body,status,&reply).unwrap();
@@ -171,7 +171,7 @@ fn start_custodian(root:&CaseRoot,servers:&Servers,account:String)->(OwnedGroup,
 }
 fn request(store:&base::Store,home:&Path,account:String,address:std::net::SocketAddr,body:&[u8])->(Vec<u8>,NativeImportMetadata) {
     let authority=authority(store);let identity=id();let config=base::config();let cancel=base::Cancel;let owner=RegisteredRenewalOwner::configured("native-owner".into(),home.to_str().unwrap().into()).unwrap();let actor=admin_actor(store);
-    let client=crate::import_client::NativeImportClient::configured(&authority,&identity,&owner,&config,&cancel,address).unwrap();
+    let client=crate::import_client::NativeImportClient::configured(address,&authority,&identity,&owner,&config,&cancel).unwrap();
     let prepared=futures_executor::block_on(client.prepare(&actor,NativeImportTarget::ExistingAccount{account_id_hash:account})).unwrap();
     let packet=client.request(prepared,body,now(),&base64url(&[9;32])).unwrap();let metadata=packet.metadata().clone();
     let mut socket=TcpStream::connect(packet.endpoint()).unwrap();socket.set_read_timeout(Some(Duration::from_secs(50))).unwrap();socket.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
