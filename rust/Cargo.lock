@@ -918,9 +918,13 @@ dependencies = [
  "gateway-core",
  "gateway-providers",
  "gateway-schema",
+ "getrandom 0.4.3",
+ "rustls",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "ureq",
+ "url",
 ]
 
 [[package]]
