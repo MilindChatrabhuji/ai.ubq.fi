@@ -21,24 +21,10 @@ use gateway_core::{
     state::{AtomicTransition, CommitOutcome, RecordMutation, StoredRecord},
 };
 use gateway_schema::catalog_store;
-use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NativeImportPublicationDisposition {
-    Applied,
-    AlreadyCurrent,
-}
-/// Sanitized authoritative DATA, not native physical durability/completion proof.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct NativeImportPublication {
-    pub v: u8,
-    pub operation_id: String,
-    pub action_ref: String,
-    pub disposition: NativeImportPublicationDisposition,
-    pub publication: ImportPublicationDataV1,
-}
+pub use gateway_auth::native_import::publication::{
+    NativeImportPublication, NativeImportPublicationDisposition,
+};
 pub struct PreparedNativeImportPublication<'c, 'a, S, I, C> {
     control: &'c NativeRenewalAuthority<'a, S, I, C>,
     peer: &'c AuthenticatedNativeOwner,
