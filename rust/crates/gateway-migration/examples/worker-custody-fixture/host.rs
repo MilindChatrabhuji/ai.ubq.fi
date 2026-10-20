@@ -123,6 +123,7 @@ impl Host {
     pub fn advance_managed_a(
         self,
         store: &super::port::Store,
+        time: super::inputs::FixtureTime,
     ) -> Result<(Self, super::producers::Receipt), gateway_migration::MigrationError> {
         use gateway_auth::{
             crypto::Secret,
@@ -133,7 +134,11 @@ impl Host {
         use gateway_core::state::{
             AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
         };
-        let snapshot = super::support_run(read_codex_source_pool(store, 2300))?
+        time.check()?;
+        if self.now_ms != time.runtime() {
+            return Err(error("Fixture managed owner clock differs").into());
+        }
+        let snapshot = super::support_run(read_codex_source_pool(store, time.runtime()))?
             .ok_or_else(|| error("Current source pool is missing"))?;
         if snapshot.pool.accounts.len() != 2
             || snapshot.pool.accounts[0].account_id != "managed-a"
@@ -162,7 +167,9 @@ impl Host {
         document["last_refresh"] = serde_json::json!("2026-10-19T00:00:00.000000002Z");
         std::fs::write(&path, serde_json::to_vec(&document).map_err(error)?).map_err(error)?;
         if super::support_run(gateway_migration::export_native_with_custody(
-            store, 2300, &self,
+            store,
+            time.runtime(),
+            &self,
         ))
         .is_ok()
         {
@@ -180,7 +187,7 @@ impl Host {
                 ..old_fence
             },
             credentials,
-            observed_at_ms: 2300,
+            observed_at_ms: time.runtime(),
         };
         let projection = ManagedAccessProjection::from_native(&generation)?;
         if projection.access_generation()
@@ -232,13 +239,16 @@ impl Host {
         }
         let current = super::support_run(store.read(&pool_key))?
             .ok_or_else(|| error("Published source is missing"))?;
-        let fixed = self.with_current_pool(&current, 2400)?;
+        let fixed = self.with_current_pool(&current, time.export())?;
         super::support_run(gateway_migration::export_native_with_custody(
-            store, 2400, &fixed,
+            store,
+            time.export(),
+            &fixed,
         ))?;
         if std::fs::read(sibling_path).map_err(error)? != sibling_bytes {
             return Err(error("Sibling physical auth changed").into());
         }
+        time.check()?;
         Ok((
             fixed,
             super::producers::Receipt {

@@ -91,11 +91,17 @@ fn main() -> Result<(), gateway_migration::MigrationError> {
     if init.v != 1 {
         return Err(port::error("Unsupported fixture initialization").into());
     }
+    let time = inputs::FixtureTime::new(init.capture.captured_at_ms)?;
+    if init.now_ms != time.runtime() {
+        return Err(port::error("Fixture initialization time differs").into());
+    }
+    time.check()?;
     let store = port::Store::default();
     let fixed = host::Host::from_stopped_fixture(&init.directory, &init.capture, init.now_ms)?;
     let candidate = support_run(sanitize_native_capture(&init.capture, &fixed))?;
     let prepared = prepare_native(&candidate)?;
     let adoption_receipt = support_run(adopt_empty(&store, &prepared))?;
+    time.check()?;
     port::write(&Candidate {
         operation: "candidate",
         capture: candidate,
@@ -105,17 +111,23 @@ fn main() -> Result<(), gateway_migration::MigrationError> {
         Phase::ExerciseRuntime { v: 1 } => {}
         _ => return Err(port::error("Expected the fixed runtime producer phase").into()),
     }
-    port::write(&producers::exercise(&store)?)?;
+    time.check()?;
+    let runtime = producers::exercise(&store, time)?;
+    time.check()?;
+    port::write(&runtime)?;
     match port::read::<Phase>()? {
         Phase::AdvanceManagedA { v: 1 } => {}
         _ => return Err(port::error("Expected the fixed managed-a producer phase").into()),
     }
-    let (fixed, receipt) = fixed.advance_managed_a(&store)?;
+    time.check()?;
+    let (fixed, receipt) = fixed.advance_managed_a(&store, time)?;
+    time.check()?;
     port::write(&receipt)?;
     let export: Export = port::read()?;
-    if export.v != 1 {
+    if export.v != 1 || export.now_ms != time.export() {
         return Err(port::error("Unsupported fixture export").into());
     }
+    time.check()?;
     let current =
         support_run(store.read(&gateway_auth::provider_credentials::codex_source_pool_key()))?
             .ok_or_else(|| port::error("Current fixture source pool is missing"))?;
@@ -127,6 +139,7 @@ fn main() -> Result<(), gateway_migration::MigrationError> {
         export.artifacts.into(),
     ))?;
     let (source, rust_controls, artifacts) = bundle.into_private_parts();
+    time.check()?;
     port::write(&Inverse {
         operation: "inverse",
         source,

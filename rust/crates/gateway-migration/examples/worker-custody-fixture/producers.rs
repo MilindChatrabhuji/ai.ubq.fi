@@ -38,13 +38,13 @@ impl gateway_authority::TokenSource for Tokens {
         ))
     }
 }
-struct Clock;
+struct Clock(i64);
 impl gateway_authority::AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
-        Ok(2300)
+        Ok(self.0)
     }
 }
-struct Host;
+struct Host(i64);
 impl gateway_auth::webauthn::WebAuthnCrypto for Host {
     async fn validate_key(
         &self,
@@ -61,7 +61,7 @@ impl gateway_auth::webauthn::WebAuthnCrypto for Host {
 }
 impl AuthHost for Host {
     fn now_ms(&self) -> i64 {
-        2300
+        self.0
     }
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError> {
         Ok(vec![7; length])
@@ -84,7 +84,7 @@ impl AuthHost for Host {
 }
 struct Capabilities;
 impl gateway_admin_runtime::capabilities::RuntimeCapabilities for Capabilities {}
-fn admin(body: Value) -> AdminInput {
+fn admin(body: Value, now_ms: i64) -> AdminInput {
     AdminInput {
         parameter: None,
         query: Default::default(),
@@ -96,22 +96,27 @@ fn admin(body: Value) -> AdminInput {
             is_super_admin: false,
         },
         request_id: "isolated-admin".into(),
-        now_ms: 2300,
+        now_ms,
     }
 }
-pub fn exercise(store: &port::Store) -> Result<Receipt, GatewayError> {
+pub fn exercise(
+    store: &port::Store,
+    time: super::inputs::FixtureTime,
+) -> Result<Receipt, GatewayError> {
+    time.check()?;
+    let now = time.runtime();
     let token = format!("u_{}", "1".repeat(64));
-    let policy = support_run(gateway_auth::api_keys::authenticate(store, &token, 2300))?;
+    let policy = support_run(gateway_auth::api_keys::authenticate(store, &token, now))?;
     if policy.key_id != "offline-key" {
         return Err(port::error("Original offline API-key fixture differs"));
     }
     let authority =
-        gateway_authority::Authority::with_clock(store, Tokens(AtomicU64::new(1)), Clock);
+        gateway_authority::Authority::with_clock(store, Tokens(AtomicU64::new(1)), Clock(now));
     let reservation = support_run(authority.reserve_api_key(
         &ApiKeyId("offline-key".into()),
         &RequestId("native-post-restart-admission".into()),
         "responses",
-        2300,
+        now,
     ))?;
     if reservation.request_id.0 != "native-post-restart-admission" {
         return Err(port::error("Actual admission receipt differs"));
@@ -127,13 +132,14 @@ pub fn exercise(store: &port::Store) -> Result<Receipt, GatewayError> {
     if request.json_value()?["state"] != "reserved" {
         return Err(port::error("Actual admission did not reserve"));
     }
+    let host = Host(now);
     let runtime = gateway_admin_runtime::AdminRuntime {
         store,
-        host: &Host,
+        host: &host,
         capabilities: &Capabilities,
         config: &Default::default(),
     };
-    let before = support_run(runtime.execute(AdminOperation::DebugGet, admin(Value::Null)))?;
+    let before = support_run(runtime.execute(AdminOperation::DebugGet, admin(Value::Null, now)))?;
     if before
         .body
         .as_json()
@@ -143,7 +149,7 @@ pub fn exercise(store: &port::Store) -> Result<Receipt, GatewayError> {
     }
     support_run(runtime.execute(
         AdminOperation::DebugSet,
-        admin(json!({"scenario":"normal","duration_ms":0})),
+        admin(json!({"scenario":"normal","duration_ms":0}), now),
     ))?;
     let debug = key(json!(["uos_ai", "debug_routing", "v1"]));
     let updated = support_run(store.read(&debug))?
@@ -181,7 +187,7 @@ pub fn exercise(store: &port::Store) -> Result<Receipt, GatewayError> {
     if !changed {
         return Err(port::error("Original shared buffer missing"));
     }
-    let expected = StoredRecord::source_graph("latest-alias-write", graph, Some(9500))?;
+    let expected = StoredRecord::source_graph("latest-alias-write", graph, Some(time.deadline))?;
     if support_run(store.commit(AtomicTransition {
         checks: vec![RevisionCheck {
             key: graph_key.clone(),
@@ -207,6 +213,7 @@ pub fn exercise(store: &port::Store) -> Result<Receipt, GatewayError> {
     if support_run(store.read(&window))?.is_none() {
         return Err(port::error("Actual quota window missing"));
     }
+    time.check()?;
     Ok(Receipt {
         operation: "runtime_exercised",
         cases: vec![
