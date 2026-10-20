@@ -12,6 +12,7 @@ import {
   planRustVerification as planRustVerificationForHost,
   runCommand,
   rustNativeTarget,
+  rustCiComponents,
   rustSourceTarget,
   rustToolPath,
   rustVerificationEnvironment,
@@ -701,4 +702,32 @@ test("finite import selector refuses missing names, wrong optimized profile and 
     await assert.rejects(executeDarwinNativeImportTests(fixture.cwd, fixture.environment, run), /Missing exact|optimized-debug|failed \(7\)/);
     assert.equal(fixture.payloads.length, 0);
   }
+});
+
+test("native CI preparation selects only pinned matching Darwin components and retains the Worker Linux tool graph", () => {
+  assert.deepEqual(
+    rustCiComponents(darwin).map(([component, target]) => [component, target]),
+    [
+      ["clippy", "aarch64-apple-darwin"],
+      ["rustfmt", "aarch64-apple-darwin"],
+    ]
+  );
+  assert.deepEqual(
+    rustCiComponents(linux).map(([component, target]) => [component, target]),
+    [
+      ["clippy", "aarch64-unknown-linux-gnu"],
+      ["rustfmt", "aarch64-unknown-linux-gnu"],
+      ["rust-std", "wasm32-unknown-unknown"],
+    ]
+  );
+  assert.throws(() => rustCiComponents({ platform: "darwin", arch: "x64" }), /supported Darwin or Linux ARM64/);
+  const bootstrap = readFileSync(new URL("../ops/prepare-ci-native-toolchain.sh", import.meta.url), "utf8");
+  for (const checksum of [
+    "738e3f60114b20550fcf4f8a57c9cea0544239f214709f45594ff3fde327f577",
+    "de51d4fade4f31ad8ec405261cc96bedc000d905f98980027610d6e288dbe21b",
+    "2de831ef563ce772519a4d18ba2659f0f7428d497ef66dad24b5a35e8f8cd177",
+  ])
+    assert.ok(bootstrap.includes(checksum));
+  assert.ok(bootstrap.includes("Darwin-arm64") && bootstrap.includes("--disable-ldconfig") && bootstrap.includes("uos_check"));
+  assert.ok(bootstrap.includes('mkdir "$uos_toolchain"'), "Prepared tool destinations must still be fresh");
 });
