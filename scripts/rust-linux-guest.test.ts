@@ -71,7 +71,7 @@ test("only explicit manual capability requests can select the isolated job", () 
 test("QEMU command uses real ARM64 TCG, selected UEFI and no NIC or directory exports", () => {
   const argv = qemuArgv(taskDirectory, "/usr/share/AAVMF/AAVMF_CODE.fd");
   assert.equal(argv[0], "/usr/bin/qemu-system-aarch64");
-  assert.deepEqual(argv.slice(argv.indexOf("-cpu"), argv.indexOf("-cpu") + 2), ["-cpu", "max,lpa2=off"]);
+  assert.deepEqual(argv.slice(argv.indexOf("-cpu"), argv.indexOf("-cpu") + 2), ["-cpu", "cortex-a57"]);
   assert(argv.includes("tcg,thread=multi"));
   assert(argv.includes("none"));
   assert.deepEqual(argv.slice(argv.indexOf("-nic"), argv.indexOf("-nic") + 2), ["-nic", "none"]);
