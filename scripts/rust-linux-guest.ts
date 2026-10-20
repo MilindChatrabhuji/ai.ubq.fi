@@ -25,8 +25,29 @@ export type Expected = {
   configSha256: string;
   hashes: { kernel: string; modules: string; probe: string };
 };
-export type Result = { code: number; stdout: string; stderr: string };
-export type Runner = (argv: string[], cwd: string, timeout?: number) => Promise<Result>;
+export type Result = {
+  code: number;
+  stdout: string;
+  stderr: string;
+  signal?: NodeJS.Signals | null;
+  timedOut?: boolean;
+  pid?: number;
+  cleanup?: { childExited: boolean; streamsSettled: boolean; groupAbsent: boolean };
+};
+type Observer = (stream: "serial" | "stderr", chunk: Uint8Array) => void;
+export type Runner = (argv: string[], cwd: string, timeout?: number, observe?: Observer) => Promise<Result>;
+// Internal capture error: preserve partial output and the original cause after settlement.
+export class CommandFailure extends Error {
+  #result: Result;
+  constructor(result: Result, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.#result = result;
+    this.name = "CommandFailure";
+  }
+  get result(): Result {
+    return this.#result;
+  }
+}
 const digest = (value: string | Uint8Array): string => createHash("sha256").update(value).digest("hex");
 const table = (value: unknown): Record<string, unknown> => {
   assert(value !== null && typeof value === "object" && !Array.isArray(value), "Expected data object");
@@ -197,43 +218,66 @@ export function validateReceipt(serial: string, expected: Expected, exitCode: nu
   assert(ends[0] === `UOS_LINUX_GUEST_DONE ${expected.nonce} ${digest(raw)}`, "Receipt terminal digest mismatch");
   return validateBody(JSON.parse(raw) as unknown, expected);
 }
-async function bounded(stream: ReadableStream<Uint8Array>, stop: () => void): Promise<string> {
-  const chunks: Uint8Array[] = [];
-  let size = 0;
+type Capture = { chunks: Uint8Array[]; size: number };
+function groupAbsent(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return false;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ESRCH") return true;
+    throw error;
+  }
+}
+async function bounded(stream: ReadableStream<Uint8Array>, stop: () => void, capture: Capture, observe?: (chunk: Uint8Array) => void): Promise<void> {
   for await (const chunk of stream) {
-    size += chunk.length;
-    if (size > MAX_LOG) {
+    const available = MAX_LOG - capture.size,
+      admitted = chunk.subarray(0, available);
+    capture.chunks.push(admitted);
+    capture.size += admitted.length;
+    if (admitted.length) observe?.(admitted);
+    if (chunk.length > available) {
       stop();
       throw new Error("Command log limit exceeded");
     }
-    chunks.push(chunk);
   }
-  return Buffer.concat(chunks).toString("utf8");
 }
-async function command(argv: string[], cwd: string, timeout = 60_000): Promise<Result> {
+// No output is published here; only executeProbe's fixed QEMU path supplies an observer.
+export async function captureCommand(argv: string[], cwd: string, timeout = 60_000, observe?: Observer): Promise<Result> {
   const env: Record<string, string> = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: join(cwd, "home"), GNUPGHOME: join(cwd, "gnupg"), LC_ALL: "C" };
   if (process.env.RUNNER_TRACKING_ID) env.RUNNER_TRACKING_ID = process.env.RUNNER_TRACKING_ID;
+  const timeoutMs = budget(timeout);
   const child = Bun.spawn(argv, { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
+  let stopSent = false;
   const stop = (): void => {
+    if (stopSent) return;
     try {
       process.kill(-child.pid, "SIGKILL");
+      stopSent = true;
     } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+      if (!(error instanceof Error && "code" in error && error.code === "ESRCH") && !groupAbsent(child.pid)) throw error;
     }
   };
-  let expired = false;
+  let expired = false,
+    failure: unknown;
   const timer = setTimeout(() => {
     expired = true;
     stop();
-  }, budget(timeout));
+  }, timeoutMs);
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
-  const stdout = bounded(child.stdout, stop),
-    stderr = bounded(child.stderr, stop);
+  const out: Capture = { chunks: [], size: 0 },
+    err: Capture = { chunks: [], size: 0 };
+  const stdout = bounded(child.stdout, stop, out, (chunk) => {
+      observe?.("serial", chunk);
+    }),
+    stderr = bounded(child.stderr, stop, err, (chunk) => {
+      observe?.("stderr", chunk);
+    });
   try {
-    const [code, out, err] = await Promise.all([child.exited, stdout, stderr]);
+    await Promise.all([child.exited, stdout, stderr]);
     assert(!expired, "Command deadline exceeded");
-    return { code, stdout: out, stderr: err };
+  } catch (error) {
+    failure = error;
   } finally {
     clearTimeout(timer);
     process.removeListener("SIGINT", stop);
@@ -242,9 +286,20 @@ async function command(argv: string[], cwd: string, timeout = 60_000): Promise<R
     await child.exited;
     await Promise.allSettled([stdout, stderr]);
   }
+  const result: Result = {
+    code: await child.exited,
+    signal: child.signalCode,
+    timedOut: expired,
+    pid: child.pid,
+    stdout: Buffer.concat(out.chunks).toString("utf8"),
+    stderr: Buffer.concat(err.chunks).toString("utf8"),
+    cleanup: { childExited: true, streamsSettled: true, groupAbsent: groupAbsent(child.pid) },
+  };
+  if (failure !== undefined) throw new CommandFailure(result, failure);
+  return result;
 }
 async function checked(argv: string[], cwd: string): Promise<Result> {
-  const result = await command(argv, cwd);
+  const result = await captureCommand(argv, cwd);
   assert.equal(result.code, 0, `${argv[0]} failed: ${result.stderr.slice(-2000)}`);
   return result;
 }
@@ -334,9 +389,41 @@ async function preparePayload(input: Inputs, work: string, sourceSha: string): P
   );
   return expected;
 }
-export async function executeProbe(argv: string[], expected: Expected, work: string, run: Runner): Promise<Record<string, unknown>> {
-  const result = await run(argv, work, 900_000);
-  return validateReceipt(result.stdout, expected, result.code);
+export async function executeProbe(
+  argv: string[],
+  expected: Expected,
+  work: string,
+  run: Runner,
+  emit: (line: string) => void = console.log
+): Promise<Record<string, unknown>> {
+  assert(argv[0] === "/usr/bin/qemu-system-aarch64", "Public diagnostics are restricted to the fixed QEMU executable");
+  let result: Result | undefined;
+  try {
+    result = await run(argv, work, 900_000, (stream, chunk) => {
+      emit(`UOS_LINUX_GUEST_QEMU_${stream.toUpperCase()} ${JSON.stringify(Buffer.from(chunk).toString("utf8"))}`);
+    });
+    assert(result.cleanup?.groupAbsent !== false, "QEMU process group still present after cleanup");
+    return validateReceipt(result.stdout, expected, result.code);
+  } catch (error) {
+    const captured = error instanceof CommandFailure ? error.result : result;
+    emit(
+      "UOS_LINUX_GUEST_QEMU_FAILURE " +
+        JSON.stringify({
+          exit: captured?.code ?? null,
+          signal: captured?.signal ?? null,
+          timedOut: captured?.timedOut ?? null,
+          pid: captured?.pid ?? null,
+          cleanup: captured?.cleanup ?? null,
+          originalException: String(error instanceof CommandFailure ? error.cause : error).slice(-4096),
+          originalStack: error instanceof Error ? (error.stack?.slice(-4096) ?? "") : "",
+          serialBytes: Buffer.byteLength(captured?.stdout ?? ""),
+          stderrBytes: Buffer.byteLength(captured?.stderr ?? ""),
+          serialTail: captured?.stdout.slice(-4096) ?? "",
+          stderrTail: captured?.stderr.slice(-4096) ?? "",
+        })
+    );
+    throw error;
+  }
 }
 async function main(): Promise<void> {
   assert(process.platform === "linux" && process.arch === "arm64" && Bun.version === "1.4.0", "Probe requires the pinned Linux ARM64 CI host");
@@ -362,12 +449,16 @@ async function main(): Promise<void> {
       "Committed probe source must be clean"
     );
     const input = loadInputs(JSON.parse(await readFile(join(DATA, "inputs.json"), "utf8")) as unknown);
+    console.log("UOS_LINUX_GUEST_STAGE prepare-inputs:start");
     const expected = await preparePayload(input, work, sourceSha);
+    console.log("UOS_LINUX_GUEST_STAGE prepare-inputs:complete");
     const info = table(JSON.parse((await checked(["/usr/bin/qemu-img", "info", "--output=json", join(work, input.disk.name)], work)).stdout) as unknown);
     assert(info.format === "qcow2" && !info["backing-filename"], "Unexpected root disk backing chain");
     await checked(["/usr/bin/qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", join(work, input.disk.name), join(work, "overlay.qcow2")], work);
     await copyFile("/usr/share/AAVMF/AAVMF_VARS.fd", join(work, "vars.fd"));
-    const result = await executeProbe(qemuArgv(work, "/usr/share/AAVMF/AAVMF_CODE.fd"), expected, work, command);
+    console.log("UOS_LINUX_GUEST_STAGE qemu:start");
+    const result = await executeProbe(qemuArgv(work, "/usr/share/AAVMF/AAVMF_CODE.fd"), expected, work, captureCommand);
+    console.log("UOS_LINUX_GUEST_STAGE qemu:complete");
     console.log(
       JSON.stringify({
         sourceSha,

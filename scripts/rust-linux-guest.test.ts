@@ -1,9 +1,11 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import {
   executeProbe,
+  captureCommand,
+  CommandFailure,
   loadInputs,
   parseArtifact,
   probeRequest,
@@ -12,7 +14,11 @@ import {
   verifyBytes,
   verifyChecksum,
   type Expected,
+  type Runner,
 } from "./rust-linux-guest.ts";
+
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const taskDirectory = "/nonexistent/unit-probe";
@@ -109,9 +115,11 @@ test("partial, duplicate, corrupted, provisioning-error and failed-QEMU results 
     good + "UOS_LINUX_GUEST_ERROR failure\n",
   ])
     assert.throws(() => validateReceipt(serial, expected, 0));
-  await assert.rejects(executeProbe(["mock-qemu"], expected, taskDirectory, () => Promise.resolve({ code: 1, stdout: good, stderr: "failed" })));
+  await assert.rejects(
+    executeProbe(["/usr/bin/qemu-system-aarch64"], expected, taskDirectory, () => Promise.resolve({ code: 1, stdout: good, stderr: "failed" }))
+  );
   assert.equal(
-    (await executeProbe(["mock-qemu"], expected, taskDirectory, () => Promise.resolve({ code: 0, stdout: good, stderr: "" }))).phase,
+    (await executeProbe(["/usr/bin/qemu-system-aarch64"], expected, taskDirectory, () => Promise.resolve({ code: 0, stdout: good, stderr: "" }))).phase,
     "post-kernel-reboot"
   );
 });
@@ -153,4 +161,92 @@ test("retained authenticated checksum documents bind each exact download before 
     ] as const)
       if (group.members.includes(name)) verifyChecksum(sums.toString("utf8"), item);
   }
+});
+
+// Real portable child fixtures exercise the same capture/settlement path, not QEMU or Linux syscalls.
+async function fixture(code: string, timeout: number, observe?: Parameters<typeof captureCommand>[3]) {
+  const work = mkdtempSync(join(tmpdir(), "uos-probe-diagnostics-"));
+  try {
+    return await captureCommand([process.execPath, "--no-env-file", "--no-install", "-e", code], work, timeout, observe);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+function absent(pid: number | undefined) {
+  assert(pid !== undefined);
+  assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+}
+test("timeout preserves public serial/stderr, original cause and exact signal after actual child settlement", async () => {
+  const events: string[] = [];
+  const run: Runner = (_argv, _cwd, _timeout, observe) =>
+    fixture('console.log("partial-boot"); console.error("fixture-stderr"); setInterval(() => {}, 1000)', 150, observe);
+  await assert.rejects(
+    executeProbe(["/usr/bin/qemu-system-aarch64"], expected, taskDirectory, run, (line) => {
+      events.push(line);
+    }),
+    (error: unknown) => {
+      assert(error instanceof CommandFailure);
+      assert(!Object.keys(error).includes("result"), "Generic errors must not publish captured command output");
+      assert(error.cause instanceof Error && error.cause.message === "Command deadline exceeded");
+      assert.equal(error.result.timedOut, true);
+      assert.equal(error.result.signal, "SIGKILL");
+      assert(error.result.code !== 0 && error.result.stdout.includes("partial-boot") && error.result.stderr.includes("fixture-stderr"));
+      absent(error.result.pid);
+      assert.deepEqual(error.result.cleanup, { childExited: true, streamsSettled: true, groupAbsent: true });
+      return true;
+    }
+  );
+  assert(events.some((event) => event.startsWith("UOS_LINUX_GUEST_QEMU_SERIAL ") && event.includes("partial-boot")));
+  assert(events.some((event) => event.startsWith("UOS_LINUX_GUEST_QEMU_STDERR ") && event.includes("fixture-stderr")));
+  assert(events.at(-1)?.includes('"timedOut":true'));
+});
+test("actual nonzero child and partial receipt retain diagnostics and cannot count as success", async () => {
+  const events: string[] = [];
+  let captured: Awaited<ReturnType<typeof captureCommand>> | undefined;
+  const run: Runner = async (_argv, _cwd, _timeout, observe) => {
+    captured = await fixture('console.log("UOS_LINUX_GUEST_RECEIPT partial"); console.error("boot-failed"); process.exit(7)', 2000, observe);
+    return captured;
+  };
+  await assert.rejects(
+    executeProbe(["/usr/bin/qemu-system-aarch64"], expected, taskDirectory, run, (line) => {
+      events.push(line);
+    })
+  );
+  assert(captured);
+  assert.equal(captured.code, 7);
+  assert.equal(captured.signal, null);
+  absent(captured.pid);
+  assert(events.at(-1)?.includes('"exit":7') && events.at(-1)?.includes("boot-failed"));
+  await assert.rejects(
+    executeProbe(["arbitrary-private-command"], expected, taskDirectory, run, (line) => {
+      events.push(line);
+    }),
+    /fixed QEMU/
+  );
+});
+test("oversize actual child output is capped, original log-limit error survives settlement", async () => {
+  let bytes = 0,
+    terminal = "";
+  const run: Runner = (_argv, _cwd, _timeout, observe) =>
+    fixture('console.error("before-limit"); process.stdout.write("x".repeat(8*1024*1024+65536)); setInterval(() => {}, 1000)', 2000, (stream, chunk) => {
+      bytes += chunk.length;
+      observe?.(stream, chunk);
+    });
+  await assert.rejects(
+    executeProbe(["/usr/bin/qemu-system-aarch64"], expected, taskDirectory, run, (line) => {
+      if (line.startsWith("UOS_LINUX_GUEST_QEMU_FAILURE ")) terminal = line;
+    }),
+    (error: unknown) => {
+      assert(error instanceof CommandFailure, String(error) + terminal);
+      assert(error.cause instanceof Error && error.cause.message === "Command log limit exceeded");
+      assert.equal(Buffer.byteLength(error.result.stdout), 8 * 1024 * 1024);
+      assert(error.result.stderr.includes("before-limit"));
+      assert.equal(error.result.timedOut, false);
+      absent(error.result.pid);
+      assert.deepEqual(error.result.cleanup, { childExited: true, streamsSettled: true, groupAbsent: true });
+      return true;
+    }
+  );
+  assert(bytes <= 2 * 8 * 1024 * 1024);
+  assert(terminal.includes('"serialBytes":8388608') && terminal.includes('"groupAbsent":true') && terminal.includes("Command log limit exceeded"));
 });
