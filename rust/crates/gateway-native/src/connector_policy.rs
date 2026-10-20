@@ -120,7 +120,9 @@ pub(crate) fn validate_unix_control(
             // A closed Darwin Unix peer loses its peer address (EINVAL).
             // Validate the local domain instead; leave queued data/rights for
             // the actual receive path rather than treating HUP as EOF.
-            rustix::net::getsockname(control).map_err(|_| ControlError::InvalidDescriptor)?
+            Some(
+                rustix::net::getsockname(control).map_err(|_| ControlError::InvalidDescriptor)?,
+            )
         }
     };
     if let Some(address) = address
