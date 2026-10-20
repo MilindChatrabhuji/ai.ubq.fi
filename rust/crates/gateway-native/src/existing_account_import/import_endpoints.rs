@@ -32,6 +32,13 @@ impl ResolvedImportEndpoints {
         data.validate()?;
         Ok(Self { origin: origin.into(), data })
     }
+    #[cfg(all(test, feature = "native-import-fixture"))]
+    pub(super) fn fixture(authority: SocketAddr, models: SocketAddr, oauth: SocketAddr) -> Result<Self, GatewayError> {
+        let data = ImportEndpointData { authority, models, oauth };
+        data.validate()?;
+        if data.addresses().iter().any(|address| !address.ip().is_loopback()) { return Err(unavailable()); }
+        Ok(Self { origin: "https://localhost/".into(), data })
+    }
     pub(super) fn require_origin(&self, origin: &str) -> Result<(), GatewayError> {
         let origin: String = checked_origin(origin)?.into();
         if self.origin != origin { return Err(unavailable()); }

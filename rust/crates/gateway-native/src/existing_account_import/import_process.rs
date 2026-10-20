@@ -71,3 +71,58 @@ impl PreparedImportActor {
             store, nonces, cancellation, deadline })
     }
 }
+
+/// Ordinary executable always refuses fixture-enabled artifacts before stdin,
+/// credentials, sockets or replay storage. The fixed test harness is separate.
+pub fn run_native_import() -> ! {
+    if crate::require_production_artifact().is_err() || !cfg!(target_os = "macos") {
+        std::process::exit(78);
+    }
+    exit_actor()
+}
+#[cfg(feature = "native-import-fixture")]
+pub fn run_native_import_fixture() -> ! { exit_actor() }
+fn exit_actor() -> ! {
+    let code = if run_actor().is_ok() { 0 } else { 1 };
+    // Stderr is the actual custody channel; never contaminate its frames with
+    // diagnostics or include credential-bearing errors in process output.
+    std::process::exit(code)
+}
+fn run_actor() -> Result<(), GatewayError> {
+    if !cfg!(target_os = "macos") || std::env::args_os().count() != 1 { return Err(unavailable()); }
+    let actor = PreparedImportActor::from_stdio()?;
+    let PreparedImportActor { mut client, custody, endpoints, identity, authority_identity, publication_identity,
+        origin, native_owner_id, account_id_hash, store, nonces, cancellation, deadline } = actor;
+    let result = (|| {
+        let head = crate::http_server::read_import_head(&mut client)?;
+        let auth = head.auth_headers()?;
+        let cancelled = || cancellation.cancelled();
+        let original = crate::owner_control::NativeControlContext::admitted(deadline, &cancelled, auth);
+        original.check()?;
+        let connected = endpoints.connect(&cancellation, deadline)?;
+        let authority = super::import_endpoints::fixed_authority_client(&origin, connected.authority, authority_identity, &cancellation, deadline)?;
+        let document = crate::import_ingress::read_remote_import(&mut client, &head, &identity, &nonces, &authority,
+            &original, &native_owner_id, &account_id_hash)?;
+        let context = crate::native_import::decode_context(&document.proof, &document.metadata, document.body(), &original)?;
+        let validation = super::validation::ImportValidation::from_connected(connected.models, Some(connected.oauth),
+            context.auth_data().client_version(), super::import_endpoints::validation_roots())?;
+        #[cfg(feature = "native-import-fixture")]
+        let sender = super::import_publication::ImportPublicationHttp::from_fixture_connected(connected.publication, publication_identity)?;
+        #[cfg(not(feature = "native-import-fixture"))]
+        let sender = {
+            let target = url::Url::parse(&origin).map_err(|_| unavailable())?.join(gateway_auth::native::NATIVE_PUBLICATION_PATH).map_err(|_| unavailable())?;
+            super::import_publication::ImportPublicationHttp::from_connected(target.as_str(), connected.publication, publication_identity)?
+        };
+        let prepared = super::prepare_flow::PreparedExistingImport::prepare(&authority, &context, &store, custody, validation)?;
+        let _verified = prepared.publish(&authority, &sender, &store, &context)?;
+        // Explicit unfinished producer dependency, NOT source success or an
+        // HTTP200/enum substitute. The authenticated source completion projection
+        // must replace this refusal before full-flow acceptance or activation.
+        Err(GatewayError::unavailable("Authenticated source completion projection is not installed",
+            "native_import_completion_projection_unavailable"))
+    })();
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) => crate::http_server::write_error(&mut client, error),
+    }
+}

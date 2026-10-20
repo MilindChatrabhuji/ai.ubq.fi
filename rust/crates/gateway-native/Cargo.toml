@@ -58,3 +58,12 @@ path = "src/bin/uos-native-request.rs"
 [[bin]]
 name = "uos-native-connector"
 path = "src/bin/uos-native-connector.rs"
+
+[[bin]]
+name = "uos-native-import"
+path = "src/bin/uos-native-import.rs"
+
+[[example]]
+name = "uos-native-import-fixture"
+path = "tests/support/import_fixture.rs"
+required-features = ["native-import-fixture"]

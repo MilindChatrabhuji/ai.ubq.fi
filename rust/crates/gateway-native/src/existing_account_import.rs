@@ -12,6 +12,7 @@ use gateway_core::{GatewayError, state::AuthorityStore};
 use std::{fs::File, path::Path};
 mod acl_inspector;
 mod actor_channel;
+mod completion;
 mod custodian_runtime;
 mod custodian_service;
 #[path = "import_durability.rs"]
@@ -20,7 +21,7 @@ mod exclusive_owner;
 mod import_documents;
 mod import_endpoints;
 mod import_publication;
-mod import_process;
+pub(crate) mod import_process;
 mod live_custody;
 mod owner_runtime;
 mod prepare_flow;
@@ -168,3 +169,6 @@ fn unavailable() -> GatewayError {
 #[cfg(test)]
 #[path = "existing_account_import/tests.rs"]
 mod foundation_tests;
+
+#[cfg(all(test, target_os = "macos", feature = "native-import-fixture"))]
+mod flow_tests;

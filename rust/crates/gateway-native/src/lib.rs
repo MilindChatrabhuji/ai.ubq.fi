@@ -27,6 +27,10 @@ mod native_request_process;
 #[cfg(unix)]
 pub use connector_supervisor::run_native_supervisor;
 #[cfg(unix)]
+pub use existing_account_import::import_process::run_native_import;
+#[cfg(all(unix, feature = "native-import-fixture"))]
+pub use existing_account_import::import_process::run_native_import_fixture;
+#[cfg(unix)]
 pub use connector_worker::run_native_connector;
 #[cfg(unix)]
 pub use native_request_process::run_native_request;

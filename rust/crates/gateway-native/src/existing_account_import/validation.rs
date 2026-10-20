@@ -18,6 +18,8 @@ pub(super) struct ValidatedNativeImport<'a> {
     pub(super) catalog: CatalogValidation,
     pub(super) refreshed: bool,
     pub(super) content_type: Option<String>,
+    pub(super) raw_models_body: Option<String>,
+    pub(super) etag: Option<String>,
 }
 
 use super::{ExistingAccountImportStore, LiveImportCustody, import_documents as document};
@@ -87,10 +89,17 @@ impl ImportValidation {
         else if (200..300).contains(&response.status) {
             let is_json = response.headers.iter().any(|(name, value)| name.eq_ignore_ascii_case("content-type") && value.contains("application/json"));
             if !is_json { return Err(invalid_catalog()); }
-            let body = SourceJson::parse_bytes(&response.body).map_err(|_| invalid_catalog())?;
+            let decoded = String::from_utf8_lossy(&response.body);
+            let text = decoded.strip_prefix('\u{feff}').unwrap_or(&decoded);
+            let body = SourceJson::parse(text).map_err(|_| invalid_catalog())?;
             normalized_catalog(&body, &self.client_version, response.status, context.now_ms()?)?
         } else { return Err(model_error(&response, &credentials)); };
-        Ok(ValidatedNativeImport { original, document: source, credentials, catalog, refreshed, content_type })
+        let etag = if content_type.is_some() { response.headers.iter().find(|(name, _)| name.eq_ignore_ascii_case("etag")).map(|(_, value)| value.clone()) } else { None };
+        let raw_models_body = if content_type.is_some() {
+            let decoded = String::from_utf8_lossy(&response.body);
+            Some(decoded.strip_prefix('\u{feff}').unwrap_or(&decoded).to_owned())
+        } else { None };
+        Ok(ValidatedNativeImport { original, document: source, credentials, catalog, refreshed, content_type, raw_models_body, etag })
     }
     /// A genuine original401 plus consumed original Start/live custody is required before the one dispatch.
     pub(super) fn refresh_once<'a>(&mut self, pending: NeedsRefresh401<'a>, custody: &mut LiveImportCustody<'_>, store: &ExistingAccountImportStore,

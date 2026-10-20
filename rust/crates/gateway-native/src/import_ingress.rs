@@ -214,11 +214,17 @@ pub(crate) fn read_remote_import<C: NativeRenewalCancellation>(
     nonces: &SqliteNonceStore,
     authority: &gateway_authority::native_control::import::RemoteImportAuthority<'_, C>,
     original: &NativeControlContext<'_>,
+    native_owner_id: &str,
+    account_id_hash: &str,
 ) -> Result<RemoteImportDocument, GatewayError> {
     let metadata = head.metadata()?;
     let header = admit_headers(head, identity, nonces, &metadata, original)?;
     let admitted = authority.admit_import(header)?;
     original.check()?;
+    if admitted.native_owner_id() != native_owner_id || admitted.account_id_hash() != account_id_hash
+        || !matches!(admitted.target(), gateway_auth::native_import::NativeImportTarget::ExistingAccount { account_id_hash: actual } if actual == account_id_hash) {
+        return Err(unavailable());
+    }
     if head.kind != NativeImportKind::CodexAuth || head.path != head.kind.path() {
         return Err(unavailable());
     }

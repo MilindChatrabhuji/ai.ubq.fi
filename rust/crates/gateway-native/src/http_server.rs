@@ -736,4 +736,4 @@ mod live_http_tests;
 
 #[cfg(test)]
 #[path = "import_http_tests.rs"]
-mod import_http_tests;
+pub(crate) mod import_http_tests;

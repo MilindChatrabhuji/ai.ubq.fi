@@ -40,6 +40,37 @@ impl CustodianRuntime {
             session: None,
         })
     }
+    /// Trusted host composition for ONE actual accepted loopback import client.
+    /// OwnedRuntime already proves live actual Child custody; this accepts no
+    /// PID, executable, command, new listener or uploaded native owner/root.
+    pub fn serve_import(&mut self, client: std::net::TcpStream, config: &[u8]) -> Result<(), GatewayError> {
+        crate::require_production_artifact()?;
+        let prepared = crate::daemon_config::NativeDaemonConfig::read_import_stdin(config)?;
+        let registry = prepared.owner_renewal.as_ref().ok_or_else(unavailable)?;
+        let endpoints = super::import_endpoints::ResolvedImportEndpoints::resolve(registry.authority_origin())?;
+        let actor = std::env::current_exe().map_err(|_| unavailable())?.parent().ok_or_else(unavailable)?.join("uos-native-import");
+        let digest = gateway_auth::crypto::sha256_hex(&std::fs::read(&actor).map_err(|_| unavailable())?);
+        self.serve_from_artifact(client, config, &actor, &digest, endpoints)
+    }
+    fn serve_from_artifact(
+        &mut self, client: std::net::TcpStream, config: &[u8], actor: &std::path::Path, digest: &str,
+        endpoints: super::import_endpoints::ResolvedImportEndpoints,
+    ) -> Result<(), GatewayError> {
+        let prepared = crate::daemon_config::NativeDaemonConfig::read_import_stdin(config)?;
+        let registry = prepared.owner_renewal.as_ref().ok_or_else(unavailable)?;
+        endpoints.require_origin(registry.authority_origin())?;
+        let authority_socket = std::net::TcpStream::connect_timeout(&endpoints.data()?.authority, Duration::from_secs(5)).map_err(|_| unavailable())?;
+        let peer = self.launch_actor(actor, digest, client, config, prepared.nonce_database.parent().ok_or_else(unavailable)?, &endpoints)?;
+        super::custodian_service::serve(self, peer, registry.authority_origin(), authority_socket, prepared.identity)
+    }
+    #[cfg(all(test, feature = "native-import-fixture"))]
+    pub(super) fn serve_fixture(
+        &mut self, client: std::net::TcpStream, config: &[u8], actor: &std::path::Path, digest: &str,
+        endpoints: super::import_endpoints::ResolvedImportEndpoints,
+    ) -> Result<(), GatewayError> {
+        if actor.file_name().and_then(|name| name.to_str()) != Some("uos-native-import-fixture") { return Err(unavailable()); }
+        self.serve_from_artifact(client, config, actor, digest, endpoints)
+    }
     pub(super) fn launch_actor(
         &self, binary: &std::path::Path, digest: &str, client: std::net::TcpStream,
         config: &[u8], replay: &std::path::Path, endpoints: &super::import_endpoints::ResolvedImportEndpoints,
@@ -161,7 +192,7 @@ fn same_snapshot(expected: &KernelSnapshot, actual: &KernelSnapshot) -> Result<(
     Ok(())
 }
 impl OwnedRuntime {
-    pub(crate) fn into_custodian(self) -> Result<CustodianRuntime, GatewayError> {
+    pub fn into_custodian(self) -> Result<CustodianRuntime, GatewayError> {
         CustodianRuntime::from_owned(self)
     }
 }
