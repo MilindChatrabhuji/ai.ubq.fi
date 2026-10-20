@@ -239,6 +239,7 @@ test("native cleanup settles a pending stdout reader and its actual owned proces
     await fixture.port.call({ v: 1 }, "ready");
     const pid = fixture.pid();
     const pending = assert.rejects(fixture.port.call({ v: 1 }, "pending"), /closed before its phase receipt/);
+    await Bun.sleep(10);
     await fixture.port.close();
     await pending;
     await fixture.port.close();
