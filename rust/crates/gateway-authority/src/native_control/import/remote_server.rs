@@ -37,7 +37,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         self.require_import_phase_peer(&peer, body)?;
         Ok(peer)
     }
-    fn require_import_phase_peer(
+    pub(super) fn require_import_phase_peer(
         &self,
         peer: &AuthenticatedNativeOwner,
         body: &[u8],

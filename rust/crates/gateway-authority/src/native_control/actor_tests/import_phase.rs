@@ -358,3 +358,6 @@ mod custody_terminal;
 
 #[path = "import_completion_wire.rs"]
 mod completion_wire;
+
+#[path = "import_catalog_seed.rs"]
+mod catalog_seed;

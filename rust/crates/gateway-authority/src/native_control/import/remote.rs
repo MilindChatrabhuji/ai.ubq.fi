@@ -473,6 +473,47 @@ impl<'a, C: NativeRenewalCancellation> RemoteImportAuthority<'a, C> {
             observed_at_ms: self.now()?,
         })
     }
+    /// Attempt only the optional existing catalog cache after primary publication.
+    /// Native caller retains actual validated raw body/headers and maps an actual
+    /// optional error (including existing transport-frame overflow) to false.
+    pub fn seed_catalog(
+        &self,
+        claim: &NativeImportClaim,
+        terminal: &AuthenticatedImportTerminal,
+        source_body: &str,
+        etag: Option<&str>,
+        content_type: Option<&str>,
+    ) -> Result<bool, GatewayError> {
+        use gateway_auth::native_import::catalog_seed::{
+            IMPORT_CATALOG_SEED_OPERATION, ImportCatalogSeedReplyData,
+            ImportCatalogSeedRequestData, import_catalog_seed_reply_max_bytes,
+        };
+        let state = self.state(&claim.state)?.clone();
+        if claim.binding != terminal.binding {
+            return Err(unavailable());
+        }
+        let Some(client_version) = terminal.completion.models.client_version.clone() else {
+            return Ok(false);
+        };
+        let request = ImportCatalogSeedRequestData {
+            operation: IMPORT_CATALOG_SEED_OPERATION.into(),
+            v: 1,
+            state: state.clone(),
+            claim_ref: claim.binding.claim_ref.clone(),
+            publication_revision: terminal.terminal.publication_revision.clone(),
+            native_receipt_ref: terminal.terminal.native_receipt_ref.clone(),
+            publication_request_digest: terminal.terminal.publication_request_digest.clone(),
+            client_version,
+            source_body: source_body.into(),
+            etag: etag.map(str::to_owned),
+            content_type: content_type.map(str::to_owned),
+        };
+        let bytes = request.bytes()?;
+        let reply = self.exchange_bytes(&bytes, import_catalog_seed_reply_max_bytes())?;
+        let result = ImportCatalogSeedReplyData::parse(&reply)?;
+        self.check_state(&state)?;
+        Ok(result.seeded)
+    }
     pub fn observe_publication(
         &self,
         claim: &NativeImportClaim,

@@ -562,6 +562,9 @@ pub fn import_custody_reply_max_bytes() -> usize {
 /// None preserves the old operation's original cap. A marker is used only to
 /// refuse malformed new input; larger selection requires the COMPLETE typed body.
 pub(crate) fn new_request_limit(body: &[u8]) -> Result<Option<usize>, GatewayError> {
+    if let Some(limit) = super::catalog_seed::request_limit(body)? {
+        return Ok(Some(limit));
+    }
     let value: serde_json::Value = match serde_json::from_slice(body) {
         Ok(value) => value,
         Err(_) => return Ok(None),
@@ -581,6 +584,18 @@ pub(crate) fn new_response_limit(
     status: u16,
     response: &[u8],
 ) -> Result<Option<usize>, GatewayError> {
+    if super::catalog_seed::request_limit(request)?.is_some() {
+        if status >= 400 {
+            return Ok(Some(NATIVE_CONTROL_ERROR_MAX_BYTES));
+        }
+        if status != 200 {
+            return Err(invalid());
+        }
+        super::catalog_seed::ImportCatalogSeedReplyData::parse(response)?;
+        return Ok(Some(
+            super::catalog_seed::import_catalog_seed_reply_max_bytes(),
+        ));
+    }
     if new_request_limit(request)?.is_none() {
         return Ok(None);
     }
