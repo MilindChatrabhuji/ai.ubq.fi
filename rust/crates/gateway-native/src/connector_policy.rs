@@ -192,3 +192,32 @@ pub(crate) fn import_actor(
     }
     Ok(policy)
 }
+
+
+#[cfg(all(test, target_os = "macos"))]
+mod import_profile_diagnostic {
+    use super::*;
+    use std::{fs, io::Write, os::unix::fs::{OpenOptionsExt, PermissionsExt}, process::Command};
+    #[test]
+    fn source_generated_import_profile_parse() {
+        let output = std::path::Path::new("/private/tmp/ai-rust-wasm-20261018/native-safety-0403/profile-reconstruction-v1");
+        fs::create_dir(output).unwrap();
+        fs::set_permissions(output, fs::Permissions::from_mode(0o700)).unwrap();
+        let actor = std::path::Path::new("/private/tmp/ai-rust-wasm-20261018/mac-target-full-flow-8fff335b7744/debug/examples/uos-native-import-fixture");
+        let home = std::path::Path::new("/private/tmp/ai-rust-wasm-20261018/mac-tmp/native-flow-1530-0/home");
+        let replay = home.parent().unwrap().join("replay");
+        let address = |port| SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
+        let profile = import_actor(actor, home, &replay, address(31001), address(31002), address(31003), address(31004), &[address(31005), address(31006), address(31007)]).unwrap();
+        let save = |name: &str, bytes: &[u8]| {
+            let mut file = fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(output.join(name)).unwrap();
+            file.write_all(bytes).unwrap();
+        };
+        save("source-generated-profile.sb", profile.as_bytes());
+        let result = Command::new("/usr/bin/sandbox-exec").args(["-p", &profile, "/usr/bin/true"]).output().unwrap();
+        save("compiler.stderr", &result.stderr[..result.stderr.len().min(8192)]);
+        save("compiler.stdout", &result.stdout[..result.stdout.len().min(8192)]);
+        save("result.json", &serde_json::to_vec(&serde_json::json!({"reconstructed_not_retained_launch_bytes":true,"status":result.status.code(),"success":result.status.success(),"stderr_bytes":result.stderr.len(),"stdout_bytes":result.stdout.len()})).unwrap());
+        assert!(!result.status.success(), "fixed true target is not granted by the unchanged profile");
+        eprintln!("PROFILE_RECONSTRUCTION_DIAGNOSTIC status={:?} stderr_bytes={}",result.status.code(),result.stderr.len());
+    }
+}

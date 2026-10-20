@@ -17,6 +17,7 @@ pub(super) struct ValidatedNativeImport<'a> {
     pub(super) credentials: NativeCredentials,
     pub(super) catalog: CatalogValidation,
     pub(super) refreshed: bool,
+    pub(super) updated_at_ms: f64,
     pub(super) content_type: Option<String>,
     pub(super) raw_models_body: Option<String>,
     pub(super) etag: Option<String>,
@@ -40,6 +41,7 @@ pub(super) struct NeedsRefresh401<'a> {
     document: SourceJson,
     credentials: NativeCredentials,
     original_error: GatewayError,
+    seed_updated_at_ms: f64,
 }
 pub(super) enum ValidationOutcome<'a> {
     Valid(ValidatedNativeImport<'a>),
@@ -56,6 +58,7 @@ impl ImportValidation {
         context.check()?;
         let source = context.auth_data().auth().clone();
         let credentials = document::credentials(&source)?;
+        let seed_updated_at_ms = context.now_ms()? as f64;
         if credentials.external_user_id.is_some() { return Err(unavailable()); }
         match context.original_proof().target() {
             gateway_auth::native_import::NativeImportTarget::ExistingAccount { account_id_hash }
@@ -65,10 +68,10 @@ impl ImportValidation {
         let response = self.models(&credentials, context)?;
         if response.status == 401 {
             return Ok(ValidationOutcome::Original401(NeedsRefresh401 {
-                original: context.original_proof(), original_error: model_error(&response, &credentials), document: source, credentials,
+                original: context.original_proof(), original_error: model_error(&response, &credentials), document: source, credentials, seed_updated_at_ms,
             }));
         }
-        self.finish(context.original_proof(), source, credentials, response, false, context).map(ValidationOutcome::Valid)
+        self.finish(context.original_proof(), source, credentials, response, false, seed_updated_at_ms, seed_updated_at_ms, context).map(ValidationOutcome::Valid)
     }
     fn models(&self, credentials: &NativeCredentials, context: &NativeImportContext<'_>) -> Result<PrivateResponse, GatewayError> {
         context.check()?;
@@ -80,7 +83,7 @@ impl ImportValidation {
         context.check()?; Ok(result)
     }
     fn finish<'a>(&self, original: &'a AuthenticatedNativeImport, source: SourceJson, credentials: NativeCredentials, response: PrivateResponse,
-        refreshed: bool, context: &NativeImportContext<'_>) -> Result<ValidatedNativeImport<'a>, GatewayError> {
+        refreshed: bool, seed_updated_at_ms: f64, validated_updated_at_ms: f64, context: &NativeImportContext<'_>) -> Result<ValidatedNativeImport<'a>, GatewayError> {
         context.check()?;
         let content_type = if (200..300).contains(&response.status) {
             response.headers.iter().find(|(name, _)| name.eq_ignore_ascii_case("content-type")).map(|(_, value)| value.clone())
@@ -99,7 +102,8 @@ impl ImportValidation {
             let decoded = String::from_utf8_lossy(&response.body);
             Some(decoded.strip_prefix('\u{feff}').unwrap_or(&decoded).to_owned())
         } else { None };
-        Ok(ValidatedNativeImport { original, document: source, credentials, catalog, refreshed, content_type, raw_models_body, etag })
+        let updated_at_ms = if response.status == 429 { seed_updated_at_ms } else { validated_updated_at_ms };
+        Ok(ValidatedNativeImport { original, document: source, credentials, catalog, refreshed, updated_at_ms, content_type, raw_models_body, etag })
     }
     /// A genuine original401 plus consumed original Start/live custody is required before the one dispatch.
     pub(super) fn refresh_once<'a>(&mut self, pending: NeedsRefresh401<'a>, custody: &mut LiveImportCustody<'_>, store: &ExistingAccountImportStore,
@@ -124,11 +128,12 @@ impl ImportValidation {
         fields.push((JsString16::from_utf8("last_refresh"), SourceJson::from_serializable(&timestamp)?));
         let source = document::object(fields)?;
         let credentials = document::credentials(&source)?;
+        let refreshed_updated_at_ms = context.now_ms()? as f64;
         // Rotated material is durable native-private before a later catalog retry can fail.
         super::durability::retain_rotated(store, custody, proof, body, context, &source)?;
         let result = self.models(&credentials, context).map_err(|_| pending.original_error.clone())?;
         custody.check_live(store, proof, body, context)?;
-        self.finish(proof, source, credentials, result, true, context)
+        self.finish(proof, source, credentials, result, true, pending.seed_updated_at_ms, refreshed_updated_at_ms, context)
     }
 }
 fn tokens_replaced(tokens: &SourceJson, rotated: &SourceJson, previous: &NativeCredentials) -> Result<Vec<(JsString16, SourceJson)>, GatewayError> {

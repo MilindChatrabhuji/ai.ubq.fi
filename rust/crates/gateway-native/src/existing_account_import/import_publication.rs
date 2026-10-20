@@ -39,7 +39,7 @@ impl<'a> PreparedImportPublication<'a> {
             normalized_revision: binding.normalized_revision.clone(), publication_revision: custody.publication_reference()?, account_id_hash: binding.account_id_hash.clone(),
             previous_native_source_generation: binding.source_native_generation.clone(), native_source_generation: receipt.native_generation().into(),
             access_generation: access.native_generation_hash, native_receipt_ref: receipt.receipt_ref(), document: ImportAccessDocument {
-                account_id: credentials.account_id.clone(), access_token: credentials.access_token.expose().into(), native_refreshed_at: credentials.native_refreshed_at.clone(),
+                account_id: credentials.account_id.clone(), access_token: credentials.access_token.expose().into(), updated_at_ms: candidate.updated_at_ms, native_refreshed_at: credentials.native_refreshed_at.clone(),
             }, catalog };
         let body = command.bytes()?;
         custody.bind_publication(&sha256_hex(&body))?;
