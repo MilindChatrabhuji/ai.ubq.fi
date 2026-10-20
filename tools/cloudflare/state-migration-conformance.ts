@@ -409,7 +409,7 @@ export class NativePort {
   }
   private _timer: ReturnType<typeof setTimeout> | undefined;
   async close(expectSuccess = false): Promise<void> {
-    if (this._closing === undefined) this._closing = this._close(expectSuccess);
+    this._closing ??= this._close(expectSuccess);
     const cleanup = await this._closing;
     const results = [...cleanup.results];
     if (expectSuccess && cleanup.exit.status === "fulfilled") {
