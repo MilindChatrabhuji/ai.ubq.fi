@@ -11,7 +11,8 @@ pub(super) enum CatalogValidation {
     AuthenticatedLimited,
 }
 // Only the fixed models/OAuth producer below may create this; callers cannot deserialize it.
-pub(super) struct ValidatedNativeImport {
+pub(super) struct ValidatedNativeImport<'a> {
+    pub(super) original: &'a AuthenticatedNativeImport,
     pub(super) document: SourceJson,
     pub(super) credentials: NativeCredentials,
     pub(super) catalog: CatalogValidation,
@@ -31,14 +32,15 @@ pub(super) struct ImportValidation {
     oauth: Option<PrivateHttps>,
     client_version: String,
 }
-pub(super) struct NeedsRefresh401 {
+pub(super) struct NeedsRefresh401<'a> {
+    original: &'a AuthenticatedNativeImport,
     document: SourceJson,
     credentials: NativeCredentials,
     original_error: GatewayError,
 }
-pub(super) enum ValidationOutcome {
-    Valid(ValidatedNativeImport),
-    Original401(NeedsRefresh401),
+pub(super) enum ValidationOutcome<'a> {
+    Valid(ValidatedNativeImport<'a>),
+    Original401(NeedsRefresh401<'a>),
 }
 impl ImportValidation {
     pub(super) fn from_connected(models: TcpStream, oauth: Option<TcpStream>, version: Option<&JsString16>, roots: ureq::tls::RootCerts) -> Result<Self, GatewayError> {
@@ -47,7 +49,7 @@ impl ImportValidation {
         let oauth = oauth.map(|socket| PrivateHttps::from_connected("https://auth.openai.com/oauth/token", "/oauth/token", socket, roots)).transpose()?;
         Ok(Self { models, oauth, client_version })
     }
-    pub(super) fn probe(&self, context: &NativeImportContext<'_>) -> Result<ValidationOutcome, GatewayError> {
+    pub(super) fn probe<'a>(&self, context: &NativeImportContext<'a>) -> Result<ValidationOutcome<'a>, GatewayError> {
         context.check()?;
         let source = context.auth_data().auth().clone();
         let credentials = document::credentials(&source)?;
@@ -55,10 +57,10 @@ impl ImportValidation {
         let response = self.models(&credentials, context)?;
         if response.status == 401 {
             return Ok(ValidationOutcome::Original401(NeedsRefresh401 {
-                original_error: model_error(&response, &credentials), document: source, credentials,
+                original: context.original_proof(), original_error: model_error(&response, &credentials), document: source, credentials,
             }));
         }
-        self.finish(source, credentials, response, false, context).map(ValidationOutcome::Valid)
+        self.finish(context.original_proof(), source, credentials, response, false, context).map(ValidationOutcome::Valid)
     }
     fn models(&self, credentials: &NativeCredentials, context: &NativeImportContext<'_>) -> Result<PrivateResponse, GatewayError> {
         context.check()?;
@@ -69,8 +71,8 @@ impl ImportValidation {
             "Upstream validation request failed: Codex upstream request failed: upstream unreachable.", Some("codex_upstream_unreachable")))?;
         context.check()?; Ok(result)
     }
-    fn finish(&self, source: SourceJson, credentials: NativeCredentials, response: PrivateResponse,
-        refreshed: bool, context: &NativeImportContext<'_>) -> Result<ValidatedNativeImport, GatewayError> {
+    fn finish<'a>(&self, original: &'a AuthenticatedNativeImport, source: SourceJson, credentials: NativeCredentials, response: PrivateResponse,
+        refreshed: bool, context: &NativeImportContext<'_>) -> Result<ValidatedNativeImport<'a>, GatewayError> {
         context.check()?;
         let catalog = if response.status == 429 { CatalogValidation::AuthenticatedLimited }
         else if (200..300).contains(&response.status) {
@@ -79,11 +81,12 @@ impl ImportValidation {
             let body = SourceJson::parse_bytes(&response.body).map_err(|_| invalid_catalog())?;
             normalized_catalog(&body, &self.client_version, response.status, context.now_ms()?)?
         } else { return Err(model_error(&response, &credentials)); };
-        Ok(ValidatedNativeImport { document: source, credentials, catalog, refreshed })
+        Ok(ValidatedNativeImport { original, document: source, credentials, catalog, refreshed })
     }
     /// A genuine original401 plus consumed original Start/live custody is required before the one dispatch.
-    pub(super) fn refresh_once(&mut self, pending: NeedsRefresh401, custody: &mut LiveImportCustody<'_>, store: &ExistingAccountImportStore,
-        proof: &AuthenticatedNativeImport, body: &[u8], context: &NativeImportContext<'_>) -> Result<ValidatedNativeImport, GatewayError> {
+    pub(super) fn refresh_once<'a>(&mut self, pending: NeedsRefresh401<'a>, custody: &mut LiveImportCustody<'_>, store: &ExistingAccountImportStore,
+        proof: &'a AuthenticatedNativeImport, body: &[u8], context: &NativeImportContext<'_>) -> Result<ValidatedNativeImport<'a>, GatewayError> {
+        if !std::ptr::eq(pending.original, proof) || !std::ptr::eq(context.original_proof(), proof) { return Err(unavailable()); }
         custody.check_live(store, proof, body, context)?;
         let transport = self.oauth.take().ok_or_else(unavailable)?;
         let request = serde_json::to_vec(&serde_json::json!({"client_id":"app_EMoamEEZ73f0CkXaXp7hrann", "grant_type":"refresh_token",
@@ -107,7 +110,7 @@ impl ImportValidation {
         super::durability::retain_rotated(store, custody, proof, body, context, &source)?;
         let result = self.models(&credentials, context).map_err(|_| pending.original_error.clone())?;
         custody.check_live(store, proof, body, context)?;
-        self.finish(source, credentials, result, true, context)
+        self.finish(proof, source, credentials, result, true, context)
     }
 }
 fn tokens_replaced(tokens: &SourceJson, rotated: &SourceJson, previous: &NativeCredentials) -> Result<Vec<(JsString16, SourceJson)>, GatewayError> {

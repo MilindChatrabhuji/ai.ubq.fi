@@ -17,6 +17,7 @@ mod custodian_runtime;
 mod durability;
 mod exclusive_owner;
 mod import_documents;
+mod import_publication;
 mod live_custody;
 mod owner_runtime;
 mod validation;

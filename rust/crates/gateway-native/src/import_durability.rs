@@ -34,6 +34,7 @@ pub struct DurableNativeImport {
     credentials: NativeCredentials,
 }
 impl DurableNativeImport {
+    pub(super) fn credentials(&self) -> &NativeCredentials { &self.credentials }
     pub(super) fn binding(&self) -> &NativeImportBinding {
         &self.binding
     }
@@ -350,10 +351,11 @@ pub(super) fn persist_live(
     proof: &AuthenticatedNativeImport,
     original_body: &[u8],
     context: &crate::native_import::NativeImportContext<'_>,
-    candidate: &super::validation::ValidatedNativeImport,
+    candidate: &super::validation::ValidatedNativeImport<'_>,
 ) -> Result<DurableNativeImport, GatewayError> {
     use rustix::fs::{AtFlags, fsync, renameat, unlinkat};
     use std::io::Write;
+    if !std::ptr::eq(candidate.original, proof) || !std::ptr::eq(context.original_proof(), proof) { return Err(unavailable()); }
     let binding = custody.binding().clone();
     custody.check_live(store, proof, original_body, context)?;
     let previous_bytes = read_fixed(&store.directory, "auth.json", AUTH_LIMIT)?;

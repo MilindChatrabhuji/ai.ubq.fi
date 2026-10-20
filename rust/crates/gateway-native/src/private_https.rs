@@ -209,6 +209,19 @@ impl PrivateHttps {
         deadline: Instant,
         max_response: usize,
     ) -> Result<PrivateResponse, GatewayError> {
+        self.send_bounded(headers, body, deadline, max_response, max_response)
+    }
+    /// Only this fully decoded new operation obtains the versioned derived success cap.
+    pub(crate) fn send_import_publication(&self, headers: &[(String, String)], body: &[u8], deadline: Instant)
+        -> Result<PrivateResponse, GatewayError> {
+        let target = url::Url::parse(&self.target).map_err(|_| unavailable())?;
+        if target.path() != gateway_auth::native::NATIVE_PUBLICATION_PATH { return Err(unavailable()); }
+        gateway_publication::ImportPublicationCommandData::parse(body)?;
+        self.send_bounded(headers, body, deadline,
+            gateway_auth::native_import::publication::import_publication_reply_max_bytes(), 65_536)
+    }
+    fn send_bounded(&self, headers: &[(String, String)], body: &[u8], deadline: Instant,
+        max_success: usize, max_error: usize) -> Result<PrivateResponse, GatewayError> {
         let remaining = deadline
             .checked_duration_since(Instant::now())
             .filter(|duration| !duration.is_zero())
@@ -241,7 +254,7 @@ impl PrivateHttps {
         let body = response
             .body_mut()
             .with_config()
-            .limit(max_response as u64)
+            .limit(if status == 200 { max_success } else { max_error } as u64)
             .read_to_vec()
             .map_err(|_| unknown())?;
         Ok(PrivateResponse {

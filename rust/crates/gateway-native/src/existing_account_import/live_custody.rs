@@ -28,6 +28,8 @@ pub struct LiveImportCustody<'a> {
     root_inode: u64,
     deadline: Instant,
     uncertain: bool,
+    publication_ref: Option<String>,
+    publication_digest: Option<String>,
 }
 impl<'a> LiveImportCustody<'a> {
     pub(super) fn begin_live_custody(
@@ -85,7 +87,21 @@ impl<'a> LiveImportCustody<'a> {
             root_inode: stopped.root_inode,
             deadline,
             uncertain: false,
+            publication_ref: None,
+            publication_digest: None,
         })
+    }
+    pub(super) fn publication_reference(&mut self) -> Result<String, GatewayError> {
+        if self.uncertain { return Err(unavailable()); }
+        if self.publication_ref.is_none() { self.publication_ref = Some(wire::random_ref()?); }
+        self.publication_ref.clone().ok_or_else(unavailable)
+    }
+    pub(super) fn bind_publication(&mut self, digest: &str) -> Result<(), GatewayError> {
+        if self.uncertain || !wire::hash(digest) || self.publication_digest.as_deref().is_some_and(|original| original != digest) {
+            return Err(unavailable());
+        }
+        self.publication_digest = Some(digest.into());
+        Ok(())
     }
     pub(super) fn binding(&self) -> &NativeImportBinding {
         self.original_start.binding()
