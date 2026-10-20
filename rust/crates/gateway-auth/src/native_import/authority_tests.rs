@@ -166,10 +166,13 @@ fn maximal_terminal_reply_is_finite_and_matching_not_a_generic_large_body() {
     .unwrap();
     let mut after = state;
     after.action_revision = terminal.publication_revision.clone();
+    // This old negative mutates through Value; UTF16 has a separate direct-codec test.
+    let mut completion = sample_completion();
+    completion.models.source = gateway_core::js_string::JsString16::from_utf8("source");
     let reply = ImportAuthorityReplyData::new(ImportAuthorityResult::Terminal {
         state: after,
         terminal: Box::new(terminal),
-        completion: sample_completion(),
+        completion,
     });
     let bytes = serde_json::to_vec(&reply).unwrap();
     assert!(bytes.len() <= import_authority_reply_max_bytes_for(&request).unwrap());
@@ -305,6 +308,7 @@ fn actor_completion_preserves_required_nullable_utf16_and_request_specific_ceili
     assert_eq!(completion.account_ids, ["one", "two"]);
     let cap = import_authority_reply_max_bytes_for(&request).unwrap();
     assert!(cap > import_authority_reply_max_bytes());
+    println!("legacy-authority-reply-cap={} actor-completion-reply-cap={cap}", import_authority_reply_max_bytes());
     let current = ImportAuthorityRequestData::new(ImportAuthorityCommand::Current {
         state,
         claim_ref: None,
