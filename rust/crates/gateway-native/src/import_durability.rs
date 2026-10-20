@@ -1,14 +1,11 @@
 //! Only fixed native files are decoded here. No receipt constructor is public.
 use super::*;
-use gateway_auth::{
-    crypto::Secret,
-    native_credentials::NativeCredentials,
-};
+#[cfg(test)]
+use gateway_auth::native_credentials::parse_native_document;
+use gateway_auth::{crypto::Secret, native_credentials::NativeCredentials};
 use rustix::fs::{Mode, OFlags, fstat, openat};
 use serde::{Deserialize, Serialize};
 use std::{io::Read, path::Component};
-#[cfg(test)]
-use gateway_auth::native_credentials::parse_native_document;
 const AUTH_LIMIT: u64 = 1_048_576;
 const RECEIPT_LIMIT: u64 = 4096;
 #[derive(Deserialize, Serialize)]
@@ -133,7 +130,8 @@ fn receipt_name(action_ref: &str) -> Result<String, GatewayError> {
     Ok(format!(".uos-import-{action_ref}.receipt"))
 }
 fn credentials(raw: &[u8]) -> Result<NativeCredentials, GatewayError> {
-    let document = gateway_core::source_json::SourceJson::parse_bytes(raw).map_err(|_| unavailable())?;
+    let document =
+        gateway_core::source_json::SourceJson::parse_bytes(raw).map_err(|_| unavailable())?;
     super::import_documents::credentials(&document).map_err(|_| unavailable())
 }
 pub(super) fn reconcile(
@@ -354,45 +352,69 @@ pub(super) fn persist_live(
     context: &crate::native_import::NativeImportContext<'_>,
     candidate: &super::validation::ValidatedNativeImport,
 ) -> Result<DurableNativeImport, GatewayError> {
-    use std::io::Write;
     use rustix::fs::{AtFlags, fsync, renameat, unlinkat};
+    use std::io::Write;
     let binding = custody.binding().clone();
     custody.check_live(store, proof, original_body, context)?;
     let previous_bytes = read_fixed(&store.directory, "auth.json", AUTH_LIMIT)?;
     let previous = credentials(&previous_bytes)?;
     if previous.routing_account_hash() != binding.account_id_hash
         || previous.generation_hash() != binding.source_native_generation
-        || candidate.credentials.account_id != previous.account_id || candidate.credentials.external_user_id.is_some() {
+        || candidate.credentials.account_id != previous.account_id
+        || candidate.credentials.external_user_id.is_some()
+    {
         return Err(unavailable());
     }
     let previous_document = gateway_core::source_json::SourceJson::parse_bytes(&previous_bytes)?;
     let merged = super::import_documents::merge(&previous_document, &candidate.document)?;
     let bytes = merged.as_bytes();
-    if bytes.len() as u64 > AUTH_LIMIT { return Err(unavailable()); }
+    if bytes.len() as u64 > AUTH_LIMIT {
+        return Err(unavailable());
+    }
     let persisted = credentials(bytes)?;
-    if !persisted.same_credentials(&candidate.credentials) || persisted.account_id != previous.account_id {
+    if !persisted.same_credentials(&candidate.credentials)
+        || persisted.account_id != previous.account_id
+    {
         return Err(unavailable());
     }
     let original_sha256 = sha256_hex(original_body);
-    let wire = ReceiptWire { v: 1, operation_id: binding.operation_id.clone(), action_ref: binding.action_ref.clone(),
-        claim_ref: binding.claim_ref.clone(), native_owner_id: binding.native_owner_id.clone(), account_id_hash: binding.account_id_hash.clone(),
-        previous_native_generation: binding.source_native_generation.clone(), native_generation: persisted.generation_hash(),
-        original_document_sha256: original_sha256.clone(), persisted_document_sha256: sha256_hex(bytes) };
+    let wire = ReceiptWire {
+        v: 1,
+        operation_id: binding.operation_id.clone(),
+        action_ref: binding.action_ref.clone(),
+        claim_ref: binding.claim_ref.clone(),
+        native_owner_id: binding.native_owner_id.clone(),
+        account_id_hash: binding.account_id_hash.clone(),
+        previous_native_generation: binding.source_native_generation.clone(),
+        native_generation: persisted.generation_hash(),
+        original_document_sha256: original_sha256.clone(),
+        persisted_document_sha256: sha256_hex(bytes),
+    };
     let receipt_bytes = serde_json::to_vec(&wire).map_err(|_| unavailable())?;
-    if receipt_bytes.len() as u64 > RECEIPT_LIMIT { return Err(unavailable()); }
+    if receipt_bytes.len() as u64 > RECEIPT_LIMIT {
+        return Err(unavailable());
+    }
     let temp_name = format!(".uos-import-{}.tmp", binding.action_ref);
     let previous_name = format!(".uos-import-{}.previous", binding.action_ref);
     let name = receipt_name(&binding.action_ref)?;
     let receipt_temp = format!("{name}.tmp");
     let create = |name: &str| {
-        openat(&store.directory, name, OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::RUSR | Mode::WUSR).map(File::from).map_err(|_| unavailable())
+        openat(
+            &store.directory,
+            name,
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::RUSR | Mode::WUSR,
+        )
+        .map(File::from)
+        .map_err(|_| unavailable())
     };
     // Every check rereads the physical source as well as the live authenticated issuer.
     // Temporary and backup effects never require weakening the one-link auth invariant.
     let checkpoint = |custody: &mut super::LiveImportCustody<'_>, expected: &[u8]| {
         custody.check_live(store, proof, original_body, context)?;
-        if read_fixed(&store.directory, "auth.json", AUTH_LIMIT)? != expected { return Err(unavailable()); }
+        if read_fixed(&store.directory, "auth.json", AUTH_LIMIT)? != expected {
+            return Err(unavailable());
+        }
         Ok(())
     };
     checkpoint(custody, &previous_bytes)?;
@@ -404,24 +426,36 @@ pub(super) fn persist_live(
     checkpoint(custody, &previous_bytes)?;
     let mut backup = create(&previous_name)?;
     checkpoint(custody, &previous_bytes)?;
-    backup.write_all(&previous_bytes).map_err(|_| unavailable())?;
+    backup
+        .write_all(&previous_bytes)
+        .map_err(|_| unavailable())?;
     checkpoint(custody, &previous_bytes)?;
     backup.sync_all().map_err(|_| unavailable())?;
     checkpoint(custody, &previous_bytes)?;
     fsync(&store.directory).map_err(|_| unavailable())?;
     checkpoint(custody, &previous_bytes)?;
     // Immediate final original/current/live/physical check before the one auth rename.
-    renameat(&store.directory, &temp_name, &store.directory, "auth.json").map_err(|_| unavailable())?;
+    renameat(&store.directory, &temp_name, &store.directory, "auth.json")
+        .map_err(|_| unavailable())?;
     checkpoint(custody, bytes)?;
     fsync(&store.directory).map_err(|_| unavailable())?;
     checkpoint(custody, bytes)?;
     let mut receipt = create(&receipt_temp)?;
     checkpoint(custody, bytes)?;
-    receipt.write_all(&receipt_bytes).map_err(|_| unavailable())?;
+    receipt
+        .write_all(&receipt_bytes)
+        .map_err(|_| unavailable())?;
     checkpoint(custody, bytes)?;
     receipt.sync_all().map_err(|_| unavailable())?;
     checkpoint(custody, bytes)?;
-    rustix::fs::linkat(&store.directory, &receipt_temp, &store.directory, &name, AtFlags::empty()).map_err(|_| unavailable())?;
+    rustix::fs::linkat(
+        &store.directory,
+        &receipt_temp,
+        &store.directory,
+        &name,
+        AtFlags::empty(),
+    )
+    .map_err(|_| unavailable())?;
     checkpoint(custody, bytes)?;
     unlinkat(&store.directory, &receipt_temp, AtFlags::empty()).map_err(|_| unavailable())?;
     checkpoint(custody, bytes)?;
@@ -431,4 +465,32 @@ pub(super) fn persist_live(
     checkpoint(custody, bytes)?;
     recheck(store, &durable)?;
     Ok(durable)
+}
+
+/// A possible rotated credential is retained privately before the subsequent models request.
+/// This journal issues no receipt, publication, fresh start or retry permission.
+pub(super) fn retain_rotated(
+    store: &ExistingAccountImportStore, custody: &mut super::LiveImportCustody<'_>,
+    proof: &AuthenticatedNativeImport, original_body: &[u8], context: &crate::native_import::NativeImportContext<'_>,
+    rotated: &gateway_core::source_json::SourceJson,
+) -> Result<(), GatewayError> {
+    use std::io::Write;
+    custody.check_live(store, proof, original_body, context)?;
+    let binding = custody.binding();
+    store.require_binding(binding)?;
+    let current = credentials(&read_fixed(&store.directory, "auth.json", AUTH_LIMIT)?)?;
+    let next = super::import_documents::credentials(rotated)?;
+    if current.routing_account_hash() != binding.account_id_hash || current.generation_hash() != binding.source_native_generation
+        || next.account_id != current.account_id || next.external_user_id.is_some() { return Err(unavailable()); }
+    let name = format!(".uos-import-{}.rotated", binding.action_ref);
+    let mut file = File::from(openat(&store.directory, &name,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::RUSR | Mode::WUSR).map_err(|_| unavailable())?);
+    custody.check_live(store, proof, original_body, context)?;
+    file.write_all(rotated.as_bytes()).map_err(|_| unavailable())?;
+    custody.check_live(store, proof, original_body, context)?;
+    file.sync_all().map_err(|_| unavailable())?;
+    custody.check_live(store, proof, original_body, context)?;
+    rustix::fs::fsync(&store.directory).map_err(|_| unavailable())?;
+    custody.check_live(store, proof, original_body, context)
 }

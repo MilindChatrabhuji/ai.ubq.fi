@@ -396,20 +396,29 @@ impl OwnedRuntime {
     }
     // Kernel/actual-Child adapter only. These methods never read credential bytes or generations.
     pub(super) fn require_owned_child(&self) -> Result<(), GatewayError> {
-        if self.settled || self.child.is_none() { return Err(fail()); }
+        if self.settled || self.child.is_none() {
+            return Err(fail());
+        }
         self.check_epoch(Phase::Running)
     }
     pub(super) fn custody_stop(&mut self, deadline: Instant) -> Result<(), GatewayError> {
         self.require_owned_child()?;
         self.stop_kernel(deadline)
     }
-    pub(super) fn custody_snapshot(&self, deadline: Instant) -> Result<super::custodian_runtime::KernelSnapshot, GatewayError> {
-        if !self.settled || self.child.is_some() { return Err(fail()); }
+    pub(super) fn custody_snapshot(
+        &self,
+        deadline: Instant,
+    ) -> Result<super::custodian_runtime::KernelSnapshot, GatewayError> {
+        if !self.settled || self.child.is_some() {
+            return Err(fail());
+        }
         self.owner.recheck(deadline)?;
         self.check_epoch(Phase::Stopped)?;
         let epoch = self.epoch.as_ref().ok_or_else(fail)?;
         Ok(super::custodian_runtime::KernelSnapshot {
-            epoch: epoch.boot.clone(), root_device: epoch.root_device, root_inode: epoch.root_inode,
+            epoch: epoch.boot.clone(),
+            root_device: epoch.root_device,
+            root_inode: epoch.root_inode,
         })
     }
     pub(super) fn matches_custody_owner(&self, owner: &str, account: &str) -> bool {

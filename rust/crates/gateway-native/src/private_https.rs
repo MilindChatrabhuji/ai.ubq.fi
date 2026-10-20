@@ -151,6 +151,15 @@ impl PrivateHttps {
         {
             return Err(unavailable());
         }
+        Self::connected_url(url, socket, roots)
+    }
+    /// Only the native import ModelsValidation operation may use this fixed GET/query target.
+    pub(crate) fn models_connected(socket: TcpStream, roots: ureq::tls::RootCerts, client_version: &str) -> Result<Self, GatewayError> {
+        let mut url = url::Url::parse("https://chatgpt.com/backend-api/codex/models").map_err(|_| unavailable())?;
+        url.query_pairs_mut().append_pair("client_version", client_version);
+        Self::connected_url(url, socket, roots)
+    }
+    fn connected_url(url: url::Url, socket: TcpStream, roots: ureq::tls::RootCerts) -> Result<Self, GatewayError> {
         let uri: Uri = url.as_str().parse().map_err(|_| unavailable())?;
         let address = socket.peer_addr().map_err(|_| unavailable())?;
         let config = ureq::Agent::config_builder()
@@ -175,6 +184,23 @@ impl PrivateHttps {
             target: url.into(),
             agent,
         })
+    }
+    /// Fixed models GET only. This does not widen any old POST target or old response limit.
+    pub(crate) fn get_models(&self, headers: &[(String, String)], deadline: Instant) -> Result<PrivateResponse, GatewayError> {
+        let target = url::Url::parse(&self.target).map_err(|_| unavailable())?;
+        if target.host_str() != Some("chatgpt.com") || target.path() != "/backend-api/codex/models" { return Err(unavailable()); }
+        let remaining = deadline.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()).ok_or_else(unavailable)?;
+        let mut request = self.agent.get(&self.target).header("Accept", "application/json");
+        for (name, value) in headers { request = request.header(name, value); }
+        let mut response = request.config().timeout_global(Some(remaining)).build().call().map_err(|_| unknown())?;
+        let status = response.status().as_u16();
+        let headers = response.headers().iter().map(|(name, value)| value.to_str()
+            .map(|value| (name.as_str().to_owned(), value.to_owned())).map_err(|_| unknown()))
+            .collect::<Result<Vec<_>, _>>()?;
+        // The original upload validation buffers response.text() without a new numeric raw-body cap.
+        // The existing safe normalized snapshot ceiling is enforced by the shared catalog planner.
+        let body = response.body_mut().with_config().limit(u64::MAX).read_to_vec().map_err(|_| unknown())?;
+        Ok(PrivateResponse { status, headers, body })
     }
     pub fn send(
         &self,

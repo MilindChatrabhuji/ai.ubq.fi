@@ -16,12 +16,12 @@ mod custodian_runtime;
 #[path = "import_durability.rs"]
 mod durability;
 mod exclusive_owner;
-mod live_custody;
 mod import_documents;
+mod live_custody;
 mod owner_runtime;
 mod validation;
-pub use exclusive_owner::ExclusiveManagedOwner;
 pub use custodian_runtime::CustodianRuntime;
+pub use exclusive_owner::ExclusiveManagedOwner;
 pub use live_custody::LiveImportCustody;
 pub use owner_runtime::{ExclusiveOwnerLease, OwnedRuntime};
 /// Fixed helper-only entry; it accepts no path, command, environment or arbitrary descriptor selector.
