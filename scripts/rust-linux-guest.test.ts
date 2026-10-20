@@ -10,6 +10,8 @@ import {
   parseArtifact,
   probeRequest,
   qemuArgv,
+  overlayResizeArgv,
+  ROOT_GROWTH_CONFIG,
   validateReceipt,
   verifyBytes,
   verifyChecksum,
@@ -250,4 +252,31 @@ test("oversize actual child output is capped, original log-limit error survives 
   );
   assert(bytes <= 2 * 8 * 1024 * 1024);
   assert(terminal.includes('"serialBytes":8388608') && terminal.includes('"groupAbsent":true') && terminal.includes("Command log limit exceeded"));
+});
+
+test("disk growth is fixed at eight GiB and can resize only the private overlay with sufficient remaining headroom", () => {
+  const work = "/nonexistent/uos-linux-guest-owned",
+    target = join(work, "overlay.qcow2"),
+    base = join(work, "disk.img"),
+    capacity = 8 * 1024 ** 3;
+  assert.deepEqual(overlayResizeArgv(work, target, base, capacity / 2, capacity), ["/usr/bin/qemu-img", "resize", "-f", "qcow2", target, "8589934592"]);
+  assert.throws(() => overlayResizeArgv(work, base, base, capacity / 2, capacity));
+  assert.throws(() => overlayResizeArgv(work, "/unowned/overlay.qcow2", base, capacity / 2, capacity));
+  assert.throws(() => overlayResizeArgv("/unowned", "/unowned/overlay.qcow2", base, capacity / 2, capacity));
+  assert.throws(() => overlayResizeArgv(work, target, base, capacity + 1, capacity));
+  assert.throws(() => overlayResizeArgv(work, target, base, capacity / 2, capacity - 1));
+  assert.equal(ROOT_GROWTH_CONFIG, "growpart:\n  mode: auto\n  devices: [/]\n  ignore_growroot_disabled: false\nresize_rootfs: true\n");
+  const controller = readFileSync(new URL("./rust-linux-guest.ts", import.meta.url), "utf8");
+  const resize = controller.indexOf("await checked(overlayResizeArgv("),
+    boot = controller.indexOf('console.log("UOS_LINUX_GUEST_STAGE qemu:start")');
+  assert(resize >= 0 && boot > resize);
+  assert(
+    controller.includes("metadata.isFile()") && controller.includes("metadata.nlink === 1") && controller.includes("metadata.uid === process.geteuid?.()")
+  );
+  const provision = readFileSync(new URL("./rust-linux-guest/provision.sh", import.meta.url), "utf8");
+  const install = provision.indexOf('dpkg -i "$seed/modules.deb"');
+  for (const marker of ["findmnt -n -o SOURCE,FSTYPE /", "df -k /"]) {
+    const diagnostic = provision.indexOf(marker);
+    assert(diagnostic >= 0 && install > diagnostic);
+  }
 });
