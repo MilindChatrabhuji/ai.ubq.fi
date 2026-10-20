@@ -32,8 +32,8 @@ fn prepare() -> (Fixture, NativeImportMetadata) {
     let session = PasskeySession {
         token: token.clone(),
         user_id: "user-fixture".into(),
-        created_at_ms: wall() - 1,
-        expires_at_ms: wall() + 90_000,
+        created_at_ms: f.store.now.load(Ordering::SeqCst) - 1,
+        expires_at_ms: f.store.now.load(Ordering::SeqCst) + 90_000,
         audience_origin: None,
     };
     f.store
@@ -46,7 +46,7 @@ fn prepare() -> (Fixture, NativeImportMetadata) {
     );
     let metadata = run(async {
         let mut ctx = context("passkey-user:user-fixture", None);
-        ctx.started_at_ms = wall();
+        ctx.started_at_ms = f.store.now.load(Ordering::SeqCst);
         let actor = actor::authenticate_admin_actor(
             &f.authority,
             &Host::new(&f.store),
