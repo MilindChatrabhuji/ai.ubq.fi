@@ -154,8 +154,8 @@ async function originalQuestions(body: Record<string, unknown>, mode: "failure" 
     ]
   );
   for (const call of calls) {
-    const tool: ToolUse | undefined = transcript.messages[call.callIndex]?.toolUses[0];
-    const result: ToolResult | undefined = transcript.messages[call.resultIndex]?.toolResults?.[0];
+    const tool: ToolUse | undefined = transcript.messages.at(call.callIndex)?.toolUses.at(0);
+    const result: ToolResult | undefined = transcript.messages.at(call.resultIndex)?.toolResults?.at(0);
     assert(tool && result);
     assert.equal(tool.tool_use_id, call.tool_use_id);
     assert.equal(result.tool_use_id, call.tool_use_id);
