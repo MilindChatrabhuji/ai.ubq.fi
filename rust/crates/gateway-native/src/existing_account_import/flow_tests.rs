@@ -83,29 +83,47 @@ impl Drop for CaseRoot { fn drop(&mut self){if thread::panicking(){eprintln!("PR
 fn artifact(name:&str)->PathBuf {let path=std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join(name);assert!(path.is_file(),"build exact fixture artifact before controlled parent");fs::canonicalize(path).unwrap()}
 
 #[derive(Default)]
-struct Traffic { authority:Mutex<Vec<Vec<u8>>>, models:AtomicUsize, oauth:AtomicUsize, drop_publication:AtomicBool }
-struct Servers { authority:std::net::SocketAddr,models:std::net::SocketAddr,oauth:std::net::SocketAddr,stop:Arc<AtomicBool>,joins:Vec<thread::JoinHandle<()>>,traffic:Arc<Traffic> }
+struct Traffic { authority:Mutex<Vec<Vec<u8>>>, models:AtomicUsize, oauth:AtomicUsize, drop_publication:AtomicBool,
+    accepted:[AtomicUsize;3], tls_complete:[AtomicUsize;3], requests:[AtomicUsize;3], phases:Mutex<Vec<&'static str>>, errors:Mutex<Vec<String>> }
+impl Traffic {
+    fn retain(&self, path:&Path) {
+        let counts=|values:&[AtomicUsize;3]|values.iter().map(|n|n.load(Ordering::SeqCst)).collect::<Vec<_>>();
+        let value=serde_json::json!({"accepted":counts(&self.accepted),"tls_complete":counts(&self.tls_complete),"requests":counts(&self.requests),
+            "closed_phases":self.phases.lock().unwrap().iter().take(64).copied().collect::<Vec<_>>(),"error_codes":self.errors.lock().unwrap().iter().take(64).cloned().collect::<Vec<_>>()});
+        let mut file=fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(path).unwrap();file.write_all(&serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+}
+struct Servers { authority:std::net::SocketAddr,models:std::net::SocketAddr,oauth:std::net::SocketAddr,stop:Arc<AtomicBool>,joins:Vec<thread::JoinHandle<()>>,traffic:Arc<Traffic>,structural_path:PathBuf }
 impl Servers {
     fn start(store:base::Store,home:PathBuf)->Self {
         let stop=Arc::new(AtomicBool::new(false));let traffic=Arc::new(Traffic::default());let mut joins=Vec::new();let mut addresses=Vec::new();
         for role in 0..3 {
             let listener=TcpListener::bind((std::net::Ipv4Addr::LOCALHOST,0)).unwrap();addresses.push(listener.local_addr().unwrap());listener.set_nonblocking(true).unwrap();
             let stop=stop.clone();let traffic=traffic.clone();let store=store.clone();let home=home.clone();
-            joins.push(thread::spawn(move||{let mut tasks=Vec::new();while !stop.load(Ordering::Acquire){match listener.accept(){Ok((socket,_))=>{let store=store.clone();let home=home.clone();let traffic=traffic.clone();tasks.push(thread::spawn(move||{serve_tls(socket,role,store,&home,traffic)}));},Err(e)if e.kind()==std::io::ErrorKind::WouldBlock=>thread::sleep(Duration::from_millis(2)),Err(e)=>panic!("fixture listener {e}")}}for task in tasks{task.join().unwrap();}}));
+            joins.push(thread::spawn(move||{let mut tasks=Vec::new();while !stop.load(Ordering::Acquire){match listener.accept(){Ok((socket,_))=>{traffic.accepted[role as usize].fetch_add(1,Ordering::SeqCst);let store=store.clone();let home=home.clone();let traffic=traffic.clone();tasks.push(thread::spawn(move||{serve_tls(socket,role,store,&home,traffic)}));},Err(e)if e.kind()==std::io::ErrorKind::WouldBlock=>thread::sleep(Duration::from_millis(2)),Err(e)=>panic!("fixture listener {e}")}}for task in tasks{task.join().unwrap();}}));
         }
-        Self{authority:addresses[0],models:addresses[1],oauth:addresses[2],stop,joins,traffic}
+        Self{authority:addresses[0],models:addresses[1],oauth:addresses[2],stop,joins,traffic,structural_path:home.parent().unwrap().join("server-structural.json")}
     }
 }
-impl Drop for Servers { fn drop(&mut self){self.stop.store(true,Ordering::Release);for join in self.joins.drain(..){join.join().unwrap();}} }
+impl Drop for Servers { fn drop(&mut self){self.stop.store(true,Ordering::Release);for join in self.joins.drain(..){join.join().unwrap();}self.traffic.retain(&self.structural_path);} }
 fn tls(socket:TcpStream)->StreamOwned<ServerConnection,TcpStream>{socket.set_read_timeout(Some(Duration::from_secs(55))).unwrap();socket.set_write_timeout(Some(Duration::from_secs(5))).unwrap();let cert=include_bytes!("../../tests/fixtures/import-tls/leaf.der");let key=include_bytes!("../../tests/fixtures/import-tls/leaf.pk8.der");let config=ServerConfig::builder().with_no_client_auth().with_single_cert(vec![CertificateDer::from(cert.to_vec())],PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec()))).unwrap();StreamOwned::new(ServerConnection::new(Arc::new(config)).unwrap(),socket)}
-fn read_request(tls:&mut StreamOwned<ServerConnection,TcpStream>)->Option<(String,BTreeMap<String,String>,Vec<u8>)>{
+fn read_request(tls:&mut StreamOwned<ServerConnection,TcpStream>,traffic:&Traffic,role:usize,tls_recorded:&mut bool)->Option<(String,BTreeMap<String,String>,Vec<u8>)>{
     let mut bytes=Vec::new();loop{if let Some(end)=bytes.windows(4).position(|p|p==b"\r\n\r\n"){let text=std::str::from_utf8(&bytes[..end]).ok()?;let mut lines=text.split("\r\n");let path=lines.next()?.split_whitespace().nth(1)?.to_owned();let headers:BTreeMap<String,String>=lines.map(|line|line.split_once(':')).collect::<Option<Vec<_>>>()?.into_iter().map(|(k,v)|(k.to_ascii_lowercase(),v.trim().to_owned())).collect();let len:usize=headers.get("content-length").map(|v|v.parse().ok()).unwrap_or(Some(0))?;if len>gateway_publication::import_publication_max_bytes().max(gateway_auth::native::NATIVE_MAX_BODY_BYTES){return None;}if bytes.len()>=end+4+len{return Some((path,headers,bytes[end+4..end+4+len].to_vec()));}}
-        let mut part=[0u8;8192];let n=tls.read(&mut part).ok()?;if n==0{return None;}bytes.extend_from_slice(&part[..n]);
+        let mut part=[0u8;8192];let read=tls.read(&mut part);
+        if !*tls_recorded&&!tls.conn.is_handshaking(){traffic.tls_complete[role].fetch_add(1,Ordering::SeqCst);*tls_recorded=true;}
+        let n=match read{Ok(n)=>n,Err(error)=>{let code=match error.get_ref().and_then(|e|e.downcast_ref::<rustls::Error>()){Some(rustls::Error::AlertReceived(alert))=>format!("tls_alert_{alert:?}"),_=>format!("tls_io_{:?}",error.kind())};traffic.errors.lock().unwrap().push(code);return None;}};
+        if n==0{return None;}bytes.extend_from_slice(&part[..n]);
     }
 }
 fn serve_tls(socket:TcpStream,role:u8,store:base::Store,home:&Path,traffic:Arc<Traffic>){
-    let mut stream=tls(socket);
-    while let Some((path,headers,body))=read_request(&mut stream){
+    let mut stream=tls(socket);let mut tls_recorded=false;
+    while let Some((path,headers,body))=read_request(&mut stream,&traffic,role as usize,&mut tls_recorded){
+        traffic.requests[role as usize].fetch_add(1,Ordering::SeqCst);
+        let phase=if path==NATIVE_PUBLICATION_PATH{"publication"}else if let Ok(request)=gateway_auth::native_import::authority::ImportAuthorityRequestData::parse(&body){
+            use gateway_auth::native_import::authority::ImportAuthorityCommand as C;
+            match request.command{C::Admit{..}=>"admit",C::FinishCurrent{..}=>"finish",C::Current{..}=>"current",C::Claim{..}=>"claim",C::Start{..}=>"start",C::Unknown{..}=>"unknown",C::Terminal{..}=>"terminal",C::CustodyTerminal{..}=>"custody_terminal"}
+        }else if gateway_auth::native_import::catalog_seed::ImportCatalogSeedRequestData::parse(&body).is_ok(){"catalog_seed"}else if role==1{"models"}else if role==2{"oauth"}else{"started_handler"};
+        traffic.phases.lock().unwrap().push(phase);
         let (status,mut response,response_headers)=if role==0{
             traffic.authority.lock().unwrap().push(body.clone());
             let identity=id();let authority=authority(&store);let config=base::config();let owner=RegisteredRenewalOwner::configured("native-owner".into(),home.to_str().unwrap().into()).unwrap();let cancel=base::Cancel;let control=NativeRenewalAuthority::configured(&authority,&identity,&owner,&config,&cancel);
@@ -118,7 +136,7 @@ fn serve_tls(socket:TcpStream,role:u8,store:base::Store,home:&Path,traffic:Arc<T
             }else{
                 let result=futures_executor::block_on(async{let peer=control.authenticate_import_authority(NativeAuthHeaders { version:&headers[NATIVE_VERSION_HEADER], key_id:&headers[NATIVE_KEY_HEADER], time_ms:&headers[NATIVE_TIME_HEADER], nonce:&headers[NATIVE_NONCE_HEADER], mac:&headers[NATIVE_MAC_HEADER] },&body).await?;
                     if gateway_auth::native_import::catalog_seed::ImportCatalogSeedRequestData::parse(&body).is_ok(){control.handle_import_catalog_seed(&peer,&body).await}else if gateway_auth::native_import::authority::ImportAuthorityRequestData::parse(&body).is_ok(){control.handle_import_authority(&peer,&body).await}else{control.handle_import_started(&peer,&body).await}});
-                let (status,reply)=match result{Ok(reply)=>(200,reply),Err(error)=>(error.status,serde_json::to_vec(&error.envelope).unwrap())};
+                let (status,reply)=match result{Ok(reply)=>(200,reply),Err(error)=>{traffic.errors.lock().unwrap().push(error.envelope.error.code.clone().unwrap_or_else(||"no_code".into()));(error.status,serde_json::to_vec(&error.envelope).unwrap())}};
                 let nonce=headers.get(NATIVE_NONCE_HEADER).unwrap();let signature=identity.sign_authority_response(nonce,&body,status,&reply).unwrap();
                 (status,reply,vec![(NATIVE_RESPONSE_MAC_HEADER.into(),signature)])
             }
