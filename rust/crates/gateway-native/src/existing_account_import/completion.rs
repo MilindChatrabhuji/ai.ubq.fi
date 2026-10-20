@@ -93,7 +93,7 @@ impl VerifiedImportPublication<'_> {
         let publication_revision = self.publication_revision().to_owned();
         let native_receipt_ref = self.native_receipt_ref().to_owned();
         let completion = match self.disposition() {
-            gateway_authority::native_control::import::NativeImportPublicationDisposition::Published => NativeImportCompletion::Published { publication_revision, native_receipt_ref },
+            gateway_authority::native_control::import::NativeImportPublicationDisposition::Applied => NativeImportCompletion::Published { publication_revision, native_receipt_ref },
             gateway_authority::native_control::import::NativeImportPublicationDisposition::AlreadyCurrent => NativeImportCompletion::AlreadyCurrent { publication_revision, native_receipt_ref },
         };
         Ok(NativeImportResult { status: 200, headers: BTreeMap::from([("x-uos-upstream".into(), "chatgpt_codex".into())]), body, completion })
