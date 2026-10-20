@@ -126,17 +126,15 @@ test("partial, duplicate, corrupted, provisioning-error and failed-QEMU results 
     "post-kernel-reboot"
   );
 });
-test("normal CI keeps its required criteria and probe cannot cancel or impersonate it", () => {
+test("the retired guest interface cannot replace required Mac-native and WASM validation", () => {
   const workflow = readFileSync(new URL("../.github/workflows/deno-deploy.yml", import.meta.url), "utf8");
-  assert(workflow.includes("default: false"));
-  assert(workflow.includes("format('probe-{0}', github.run_id)"));
-  assert(workflow.includes("if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.linux_capability_probe == true) }}"));
-  for (const job of ["scope", "docs", "rust-native", "rust-wasm", "validate", "native", "mac-containment", "darwin-native", "verify-artifact"])
-    assert(workflow.includes(`'probe-only / ${job} (not required CI)' || '${job}'`));
+  assert(!workflow.includes("linux_capability_probe") && !workflow.includes("linux-capability-probe:") && !workflow.includes("probe-only /"));
+  const native = workflow.slice(workflow.indexOf("  rust-native:"), workflow.indexOf("  rust-wasm:"));
+  assert(native.includes("runs-on: macos-15") && native.includes("--prepare-ci native") && native.includes("--stage native"));
+  assert(!native.includes("apt-get") && native.includes('test "$(uname -m)" = arm64'));
   assert(workflow.includes('if [ "$RUST_NATIVE_REQUIRED" = true ]; then test "$RUST_NATIVE_RESULT" = success; fi'));
+  assert(workflow.includes('if [ "$RUST_WASM_REQUIRED" = true ]; then test "$RUST_WASM_RESULT" = success; fi'));
   assert(workflow.includes("needs.scope.result == 'success' && needs.scope.outputs.needs_validate == 'true'"));
-  assert(workflow.includes("persist-credentials: false"));
-  assert(!workflow.includes("upload-artifact@", workflow.indexOf("  linux-capability-probe:")));
 });
 test("guest provisioning is offline and arms a separate reboot service without a guest compiler", () => {
   const provision = readFileSync(new URL("./rust-linux-guest/provision.sh", import.meta.url), "utf8");

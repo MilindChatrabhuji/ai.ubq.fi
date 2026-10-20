@@ -787,6 +787,14 @@ const COMPONENTS = [
   ["rustfmt", NATIVE_TARGET, "7d4c136278b61096d46ef23019c29acb7ee5a2a1412cbfee5050316110c6fd8c"],
   ["rust-std", WASM_TARGET, "cf1fcf68880d8b2b90128cede7416cfb82ad3584357ce9fb668f2b6244c26e55"],
 ] as const;
+const MAC_COMPONENTS = [
+  ["clippy", "aarch64-apple-darwin", "1ad080040ff0f4f8af0751bd7fa1fb1901212f8d164cecaa3c47b0654e0916f2"],
+  ["rustfmt", "aarch64-apple-darwin", "86aa28e2f23edb0045a85288c3f69998dd30294fd2d3f1480efa9485cf137bfd"],
+] as const;
+export const rustCiComponents = (host: RustHost = process): readonly (readonly [string, string, string])[] => {
+  rustNativeTarget(host);
+  return host.platform === "darwin" ? MAC_COMPONENTS : COMPONENTS;
+};
 const fetchArchive = async (url: string, path: string, expected: string): Promise<void> => {
   const response = await fetch(url, { signal: AbortSignal.timeout(180_000) });
   if (!response.ok) throw new Error(`Pinned tool archive returned ${response.status}`);
@@ -795,14 +803,17 @@ const fetchArchive = async (url: string, path: string, expected: string): Promis
   writeFileSync(path, bytes, { mode: 0o600 });
 };
 const prepareCi = async (root: string, stage: RustStage): Promise<void> => {
-  if (process.platform !== "linux" || process.arch !== "arm64" || !process.env.RUNNER_TEMP)
-    throw new Error("Rust CI preparation requires the Linux ARM64 runner");
+  rustNativeTarget();
+  if (!process.env.RUNNER_TEMP || (process.platform === "darwin" && stage !== "native"))
+    throw new Error("Rust CI preparation requires ARM64 Linux or native-only Darwin");
   const base = mkdtempSync(join(process.env.RUNNER_TEMP, "uos-rust-gateway-"));
-  const prefix = join(base, "uos-native-kv/toolchain");
+  const prefix =
+    process.platform === "darwin" ? join(base, "rustup/toolchains", `${RUST_VERSION}-aarch64-apple-darwin`) : join(base, "uos-native-kv/toolchain");
   const tools = join(base, "tools");
   const environment: Record<string, string> = {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     RUNNER_TEMP: base,
+    HOME: join(base, "home"),
     CARGO_HOME: join(base, "cargo"),
     RUSTUP_HOME: join(base, "rustup"),
     CARGO_TARGET_DIR: join(base, "tool-target"),
@@ -810,17 +821,26 @@ const prepareCi = async (root: string, stage: RustStage): Promise<void> => {
     TMPDIR: join(base, "tmp"),
     CARGO_BUILD_JOBS: "1",
   };
-  for (const path of [tools, environment.CARGO_HOME, environment.RUSTUP_HOME, environment.XDG_CACHE_HOME, environment.TMPDIR])
+  for (const path of [tools, environment.HOME, environment.CARGO_HOME, environment.RUSTUP_HOME, environment.XDG_CACHE_HOME, environment.TMPDIR])
     mkdirSync(path, { recursive: true });
   await checkedRun(["/bin/bash", "ops/prepare-ci-native-toolchain.sh"], root, environment);
-  for (const [component, target, checksum] of COMPONENTS) {
+  for (const [component, target, checksum] of rustCiComponents()) {
     const name = `${component}-${RUST_VERSION}-${target}`;
     const archive = join(base, `${name}.tar.xz`);
     await fetchArchive(`https://static.rust-lang.org/dist/2026-09-03/${name}.tar.xz`, archive, checksum);
-    await checkedRun(["tar", "-xJf", archive, "-C", base], root, environment);
+    await checkedRun(["/usr/bin/tar", "-xJf", archive, "-C", base], root, environment);
     await checkedRun(["/bin/sh", join(base, name, "install.sh"), `--prefix=${prefix}`, "--disable-ldconfig"], root, environment);
   }
   environment.PATH = `${prefix}/bin:${tools}/bin:${environment.PATH}`;
+  if (process.platform === "darwin") {
+    environment.RUSTUP_TOOLCHAIN = `${RUST_VERSION}-aarch64-apple-darwin`;
+    mkdirSync(join(base, "mac-bootstrap"));
+    writeFileSync(
+      join(base, "mac-bootstrap/check.sb"),
+      `(version 1) (allow default) (deny file-write*) (allow file-write* (subpath ${JSON.stringify(realpathSync(base))})) (allow file-write-data (literal "/dev/null")) (deny network*)`,
+      { mode: 0o600 }
+    );
+  }
   if (stage === "wasm") {
     await checkedRun(["cargo", "install", "worker-build", "--version", `=${WORKER_BUILD_VERSION}`, "--locked", "--root", tools], root, environment);
     await checkedRun(["cargo", "install", "wasm-bindgen-cli", "--version", "=0.2.129", "--locked", "--root", tools], root, environment);
@@ -841,7 +861,7 @@ const prepareCi = async (root: string, stage: RustStage): Promise<void> => {
       mkdirSync(destination);
       const archive = join(base, `${name}.tar.gz`);
       await fetchArchive(url, archive, checksum);
-      await checkedRun(["tar", "-xzf", archive, "--strip-components=1", "-C", destination], root, environment);
+      await checkedRun(["/usr/bin/tar", "-xzf", archive, "--strip-components=1", "-C", destination], root, environment);
     }
     environment.WASM_BINDGEN_BIN = join(tools, "bin/wasm-bindgen");
     environment.WASM_OPT_BIN = join(tools, "binaryen/bin/wasm-opt");
