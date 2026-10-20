@@ -7,6 +7,7 @@ pub mod claude_body;
 pub mod crypto;
 pub mod outbound;
 pub mod random;
+pub(crate) mod relay_delay;
 pub mod stream;
 pub mod websocket;
 

@@ -26,6 +26,7 @@ use crate::{
     transport::{
         body,
         outbound::{DispatchAttempt, PinnedDestination, send_constructed, send_http},
+        relay_delay::RelayDelay,
         stream::{ObservationHandle, ObservedStream},
     },
 };
@@ -540,7 +541,7 @@ pub async fn run(
                 cancellation: host.cancellation.clone(),
                 lifecycle: lifecycle.clone(),
                 next_sequence: 0,
-                heartbeat: Box::pin(worker::Delay::from(std::time::Duration::from_millis(
+                heartbeat: RelayDelay::new(worker::Delay::from(std::time::Duration::from_millis(
                     gateway_providers::sse::KEEPALIVE_INTERVAL_MS,
                 ))),
             };
@@ -557,7 +558,7 @@ pub async fn run(
                         let incoming = {
                             match futures_util::future::select(
                                 Box::pin(state.source.next()),
-                                state.heartbeat.as_mut(),
+                                std::pin::Pin::new(&mut state.heartbeat),
                             )
                             .await
                             {
@@ -571,10 +572,11 @@ pub async fn run(
                             }
                         };
                         let Some(incoming) = incoming else {
-                            state.heartbeat =
-                                Box::pin(worker::Delay::from(std::time::Duration::from_millis(
+                            state.heartbeat = RelayDelay::new(worker::Delay::from(
+                                std::time::Duration::from_millis(
                                     gateway_providers::sse::KEEPALIVE_INTERVAL_MS,
-                                )));
+                                ),
+                            ));
                             return Some((Ok(b": keep-alive\n\n".to_vec()), state));
                         };
                         let result = match incoming {
@@ -808,7 +810,7 @@ struct Relay {
     cancellation: Rc<crate::transport::outbound::Cancellation>,
     lifecycle: Rc<Lifecycle>,
     next_sequence: u64,
-    heartbeat: std::pin::Pin<Box<worker::Delay>>,
+    heartbeat: RelayDelay<worker::Delay>,
 }
 
 impl Relay {
