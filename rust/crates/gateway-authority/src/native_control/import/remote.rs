@@ -30,10 +30,26 @@ pub struct RemoteImportAuthority<'a, C> {
     client: Arc<()>,
     last_time_ms: Cell<i64>,
 }
+/// Genuine header/current-action admission, before native body consumption.
+/// ```compile_fail
+/// use gateway_authority::native_control::import::RemoteAdmittedImport;
+/// let forged:RemoteAdmittedImport=serde_json::from_str("{}").unwrap();
+/// ```
 pub struct RemoteAdmittedImport {
     admission: NativeImportAdmission,
     state: State,
     client: Arc<()>,
+}
+impl RemoteAdmittedImport {
+    pub fn native_owner_id(&self) -> &str {
+        &self.state.native_owner_id
+    }
+    pub fn account_id_hash(&self) -> &str {
+        &self.state.account_id_hash
+    }
+    pub fn target(&self) -> &NativeImportTarget {
+        &self.state.target
+    }
 }
 /// Authenticated current catalog presence only, not catalog content or permission.
 pub struct AuthenticatedImportCatalogObservation {

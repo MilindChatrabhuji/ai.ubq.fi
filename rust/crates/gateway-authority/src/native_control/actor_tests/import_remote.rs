@@ -271,6 +271,11 @@ fn actual_tls_local_body_mac_original_claim_start_and_readonly_b1_agree() {
     let cancel = CancelNow::default();
     let client = client(socket, &cancel);
     let admitted = client.admit_import(admission(&metadata, 101)).unwrap();
+    assert_eq!(admitted.native_owner_id(), "native-owner");
+    let NativeImportTarget::ExistingAccount { account_id_hash } = admitted.target() else {
+        panic!("admission must retain the actual existing-account target");
+    };
+    assert_eq!(admitted.account_id_hash(), account_id_hash);
     let proof = client.finish_import(admitted, PRIVATE_BODY).unwrap();
     assert_eq!(proof.metadata(), &metadata);
     proof.require_body(PRIVATE_BODY, wall()).unwrap();
