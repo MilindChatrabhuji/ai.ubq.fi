@@ -207,7 +207,6 @@ fn read_exact(
                         | std::io::ErrorKind::Interrupted
                 ) =>
             {
-                ()
             }
             Err(_) => return Err(unavailable()),
         }
@@ -260,7 +259,6 @@ pub(crate) fn send(
                         | std::io::ErrorKind::Interrupted
                 ) =>
             {
-                ()
             }
             Err(_) => return Err(unavailable()),
         }

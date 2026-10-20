@@ -71,7 +71,7 @@ impl ImportValidation {
                 original: context.original_proof(), original_error: model_error(&response, &credentials), document: source, credentials, seed_updated_at_ms,
             }));
         }
-        self.finish(context.original_proof(), source, credentials, response, false, seed_updated_at_ms, seed_updated_at_ms, context).map(ValidationOutcome::Valid)
+        self.finish(context.original_proof(), (source, credentials), response, false, (seed_updated_at_ms, seed_updated_at_ms), context).map(ValidationOutcome::Valid)
     }
     fn models(&self, credentials: &NativeCredentials, context: &NativeImportContext<'_>) -> Result<PrivateResponse, GatewayError> {
         context.check()?;
@@ -82,8 +82,10 @@ impl ImportValidation {
             "Upstream validation request failed: Codex upstream request failed: upstream unreachable.", Some("codex_upstream_unreachable")))?;
         context.check()?; Ok(result)
     }
-    fn finish<'a>(&self, original: &'a AuthenticatedNativeImport, source: SourceJson, credentials: NativeCredentials, response: PrivateResponse,
-        refreshed: bool, seed_updated_at_ms: f64, validated_updated_at_ms: f64, context: &NativeImportContext<'_>) -> Result<ValidatedNativeImport<'a>, GatewayError> {
+    fn finish<'a>(&self, original: &'a AuthenticatedNativeImport, document: (SourceJson, NativeCredentials), response: PrivateResponse,
+        refreshed: bool, timestamps: (f64, f64), context: &NativeImportContext<'_>) -> Result<ValidatedNativeImport<'a>, GatewayError> {
+        let (source, credentials) = document;
+        let (seed_updated_at_ms, validated_updated_at_ms) = timestamps;
         context.check()?;
         let content_type = if (200..300).contains(&response.status) {
             response.headers.iter().find(|(name, _)| name.eq_ignore_ascii_case("content-type")).map(|(_, value)| value.clone())
@@ -133,7 +135,7 @@ impl ImportValidation {
         super::durability::retain_rotated(store, custody, proof, body, context, &source)?;
         let result = self.models(&credentials, context).map_err(|_| pending.original_error.clone())?;
         custody.check_live(store, proof, body, context)?;
-        self.finish(proof, source, credentials, result, true, pending.seed_updated_at_ms, refreshed_updated_at_ms, context)
+        self.finish(proof, (source, credentials), result, true, (pending.seed_updated_at_ms, refreshed_updated_at_ms), context)
     }
 }
 fn tokens_replaced(tokens: &SourceJson, rotated: &SourceJson, previous: &NativeCredentials) -> Result<Vec<(JsString16, SourceJson)>, GatewayError> {

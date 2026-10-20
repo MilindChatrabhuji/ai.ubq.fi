@@ -2,10 +2,10 @@
 //! credential provider traffic, fake Start, raw-response issuer or live UID work.
 use super::*;
 use crate::http_server::import_http_tests as base;
-use gateway_auth::{AuthRequest, crypto::{Secret, base64url, sha256_hex}, native::*, native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity}, native_import::*, native_replay::StoreNonceAuthority,
+use gateway_auth::{AuthRequest, crypto::{Secret, base64url, sha256_hex}, native::*, native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity}, native_import::*,
     passkeys::{self, PasskeySession, PasskeyUser}, provider_credentials::{CodexNativeOwner, CodexSourceAccount, CodexSourcePool, ManagedNativeSource, MANAGED_NATIVE_SOURCE_VERSION, codex_source_pool_key}, session_index};
 use gateway_authority::{Authority, keys, native_control::{NativeRenewalAuthority, RegisteredRenewalOwner, actor}, paid_control::PaidControlOwner, routing::{SubscriptionPool, PoolAccount}};
-use gateway_core::{identity::{RequestContext, RequestId, PrincipalId, PoolVersionstamp}, source_json::SourceJson, state::{AuthorityStore, StoredRecord}};
+use gateway_core::{identity::{RequestContext, RequestId, PrincipalId, PoolVersionstamp}, source_json::SourceJson, state::AuthorityStore};
 use gateway_publication::{ConfiguredPaidInputs, PreparedConfigurationPublication, transport::{PublicationReceiver, PublicationRequest, OwnedNativeAuthHeaders}};
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
 use std::{collections::{BTreeMap, BTreeSet}, fs, io::{Read, Write}, net::{TcpListener, TcpStream}, os::unix::{fs::{OpenOptionsExt, PermissionsExt}, process::CommandExt}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, sync::{Arc, Mutex, atomic::{AtomicBool, AtomicUsize, Ordering}}, thread, time::{Duration, Instant}};

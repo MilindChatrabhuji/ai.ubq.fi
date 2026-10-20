@@ -102,6 +102,7 @@ pub(super) struct ImportPublicationHttp {
     transport: PrivateHttps,
 }
 impl ImportPublicationHttp {
+    #[cfg(not(feature = "native-import-fixture"))]
     pub(super) fn from_connected(target: &str, socket: TcpStream, identity: NativeTransportIdentity) -> Result<Self, GatewayError> {
         Ok(Self { identity, transport: PrivateHttps::from_connected(target, NATIVE_PUBLICATION_PATH, socket, ureq::tls::RootCerts::WebPki)? })
     }

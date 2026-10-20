@@ -76,7 +76,7 @@ impl CustodianRuntime {
         config: &[u8], replay: &std::path::Path, endpoints: &super::import_endpoints::ResolvedImportEndpoints,
     ) -> Result<OwnedImportChildChannel, GatewayError> {
         let (owner, account, root) = self.runtime.custody_registry()?;
-        OwnedImportChildChannel::launch(binary, digest, client, config, root, replay, endpoints, owner, account)
+        OwnedImportChildChannel::launch((binary, digest), client, config, root, replay, endpoints, (owner, account))
     }
     pub(super) fn open_import_session(
         &mut self,

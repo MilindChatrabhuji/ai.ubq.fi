@@ -72,9 +72,6 @@ impl ImportChildCommand {
     pub(super) fn is_check(&self) -> bool {
         matches!(self.frame, Frame::CheckStopped(_))
     }
-    pub(super) fn is_cancel(&self) -> bool {
-        matches!(self.frame, Frame::Cancel(_))
-    }
     pub(super) fn publication_revision(&self) -> Option<&str> {
         if let Frame::ReleaseAfterVerifiedTerminal(release) = &self.frame {
             Some(&release.publication_revision)
@@ -99,16 +96,16 @@ impl OwnedImportChildChannel {
     // Fixed role only: no caller arguments, executable choice, environment or arbitrary profile API.
     // The sole trusted supervisor passes its hash-bound adjacent actor and generated exact policy.
     pub(super) fn launch(
-        binary: &Path,
-        digest: &str,
+        artifact: (&Path, &str),
         client: TcpStream,
         daemon_config: &[u8],
         owner_root: &Path,
         replay_directory: &Path,
         endpoints: &ResolvedImportEndpoints,
-        native_owner_id: &str,
-        account_id_hash: &str,
+        registered_owner: (&str, &str),
     ) -> Result<Self, GatewayError> {
+        let (binary, digest) = artifact;
+        let (native_owner_id, account_id_hash) = registered_owner;
         if !cfg!(target_os = "macos") || daemon_config.is_empty() || daemon_config.len() > 65_536 {
             return Err(unavailable());
         }
@@ -143,10 +140,8 @@ impl OwnedImportChildChannel {
             actor.path(),
             owner_root,
             replay_directory,
-            boot.client_local,
-            boot.client_peer,
-            boot.custody_local,
-            boot.custody_peer,
+            (boot.client_local, boot.client_peer),
+            (boot.custody_local, boot.custody_peer),
             &boot.endpoints.addresses(),
         )
         .map_err(|_| unavailable())?;
@@ -270,7 +265,6 @@ impl OwnedImportChildChannel {
             (Some(expected), Some(challenge))
                 if *expected == binding && challenge == h.challenge =>
             {
-                ()
             }
             (None, None) if matches!(frame, Frame::Quiesce(_) | Frame::Cancel(_)) => {
                 self.binding = Some(binding);

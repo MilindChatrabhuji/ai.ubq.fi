@@ -136,12 +136,12 @@ pub(crate) fn import_actor(
     binary: &Path,
     root: &Path,
     replay: &Path,
-    client_local: SocketAddr,
-    client_peer: SocketAddr,
-    custody_local: SocketAddr,
-    custody_peer: SocketAddr,
+    client: (SocketAddr, SocketAddr),
+    custody: (SocketAddr, SocketAddr),
     endpoints: &[SocketAddr; 3],
 ) -> Result<String, ControlError> {
+    let (client_local, client_peer) = client;
+    let (custody_local, custody_peer) = custody;
     let canonical_root = std::fs::canonicalize(root).map_err(|_| ControlError::InvalidFrame)?;
     if canonical_root != root { return Err(ControlError::InvalidFrame); }
     let mut policy = base(binary)?;

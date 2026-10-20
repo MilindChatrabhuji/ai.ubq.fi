@@ -19,7 +19,7 @@ impl Drop for Root {
 }
 fn local(port: u16) -> SocketAddr { SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port)) }
 fn profile(binary: &Path, root: &Root, endpoints: [SocketAddr; 3]) -> Result<String, ControlError> {
-    import_actor(binary, &root.home(), &root.0.join("replay"), local(31001), local(31002), local(31003), local(31004), &endpoints)
+    import_actor(binary, &root.home(), &root.0.join("replay"), (local(31001), local(31002)), (local(31003), local(31004)), &endpoints)
 }
 #[test]
 fn actual_import_profile_exact_names_fixed_ports_process_and_sibling_controls() {
@@ -33,6 +33,11 @@ fn actual_import_profile_exact_names_fixed_ports_process_and_sibling_controls() 
     let denied = std::net::TcpListener::bind(local(0)).unwrap();
     let payload = serde_json::to_vec(&serde_json::json!({"allowed":allowed,"outside":outside,"replay":root.0.join("replay"),"denied_tcp":denied.local_addr().unwrap()})).unwrap();
     let policy = profile(&binary, &root, [local(31005), local(31006), local(31007)]).unwrap();
+    let mut generator = Command::new(&binary).arg("print-import-policy").env_clear().stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    generator.stdin.take().unwrap().write_all(&payload).unwrap();
+    let generated = generator.wait_with_output().unwrap();
+    assert!(generated.status.success());
+    assert_eq!(String::from_utf8(generated.stdout).unwrap(), policy, "compiled fixed probe must use the same shipping import policy");
     let run_probe = |profile: Option<&str>| {
         let mut command = if let Some(profile) = profile {
             let mut command = Command::new("/usr/bin/sandbox-exec");

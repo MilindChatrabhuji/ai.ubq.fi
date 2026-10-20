@@ -50,6 +50,12 @@ fn print_policy(name: &str) {
         return;
     }
     let input = probe_input();
+    if name == "print-import-policy" {
+        let local = |port| SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
+        print!("{}", connector_policy::import_actor(&binary, input.allowed.parent().unwrap(), &input.replay,
+            (local(31001), local(31002)), (local(31003), local(31004)), &[local(31005), local(31006), local(31007)]).unwrap());
+        return;
+    }
     let capabilities = confinement::NativeConfinement {
         readonly_paths: vec![input.allowed],
         list_directories: vec![],

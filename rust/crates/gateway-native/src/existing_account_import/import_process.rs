@@ -102,7 +102,7 @@ fn run_actor() -> Result<(), GatewayError> {
         let connected = endpoints.connect(&cancellation, deadline)?;
         let authority = super::import_endpoints::fixed_authority_client(&origin, connected.authority, authority_identity, &cancellation, deadline)?;
         let document = crate::import_ingress::read_remote_import(&mut client, &head, &identity, &nonces, &authority,
-            &original, &native_owner_id, &account_id_hash)?;
+            &original, (&native_owner_id, &account_id_hash))?;
         let context = crate::native_import::decode_context(&document.proof, &document.metadata, document.body(), &original)?;
         let validation = super::validation::ImportValidation::from_connected(connected.models, Some(connected.oauth),
             context.auth_data().client_version(), super::import_endpoints::validation_roots())?;

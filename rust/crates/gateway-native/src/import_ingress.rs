@@ -214,9 +214,9 @@ pub(crate) fn read_remote_import<C: NativeRenewalCancellation>(
     nonces: &SqliteNonceStore,
     authority: &gateway_authority::native_control::import::RemoteImportAuthority<'_, C>,
     original: &NativeControlContext<'_>,
-    native_owner_id: &str,
-    account_id_hash: &str,
+    registered_target: (&str, &str),
 ) -> Result<RemoteImportDocument, GatewayError> {
+    let (native_owner_id, account_id_hash) = registered_target;
     let metadata = head.metadata()?;
     let header = admit_headers(head, identity, nonces, &metadata, original)?;
     let admitted = authority.admit_import(header)?;
