@@ -114,6 +114,12 @@ impl NativeHttpService {
         }
         Ok(())
     }
+    pub(crate) fn serve_connection(&self, stream: &mut TcpStream) -> Result<(), GatewayError> {
+        if let Err(error) = self.handle(stream) {
+            write_error(stream, error)?;
+        }
+        Ok(())
+    }
     fn handle(&self, stream: &mut TcpStream) -> Result<(), GatewayError> {
         let peer = stream.peer_addr().map_err(|_| unavailable())?;
         if !peer.ip().is_loopback() {
@@ -680,7 +686,7 @@ fn write_json(stream: &mut TcpStream, status: u16, body: &[u8]) -> Result<(), Ga
     // a separately flushed header when unread peer data makes close reset TCP.
     stream.write_all(&response).map_err(|_| unavailable())
 }
-fn write_error(stream: &mut TcpStream, error: GatewayError) -> Result<(), GatewayError> {
+pub(crate) fn write_error(stream: &mut TcpStream, error: GatewayError) -> Result<(), GatewayError> {
     let body = serde_json::to_vec(&error.envelope).map_err(|_| unavailable())?;
     write_json(stream, error.status, &body)
 }

@@ -21,6 +21,7 @@ pub struct LiveDialContext {
     alive: Arc<AtomicBool>,
     downstream: TcpStream,
     deadline: Instant,
+    connector_frame: Option<crate::connector_protocol::ControlFrame>,
 }
 impl LiveDialContext {
     pub(super) fn new(alive: Arc<AtomicBool>, downstream: TcpStream, deadline: Instant) -> Self {
@@ -28,7 +29,32 @@ impl LiveDialContext {
             alive,
             downstream,
             deadline,
+            connector_frame: None,
         }
+    }
+    fn for_authorization(&self, authorization: &LiveAuthorization) -> Result<Self, GatewayError> {
+        self.check()?;
+        let mut context = Self::new(
+            self.alive.clone(),
+            self.downstream.try_clone().map_err(|_| unavailable())?,
+            self.deadline,
+        );
+        let frame = crate::connector_protocol::ControlFrame::Connect {
+            v: 1,
+            channel: crate::connector_protocol::Channel::ProviderLive,
+            action_ref: authorization.action_ref.clone(),
+            connection_id: authorization.connection_id.clone(),
+            authorization_ref: authorization.authorization_ref.clone(),
+        };
+        frame.validate().map_err(|_| unavailable())?;
+        context.connector_frame = Some(frame);
+        Ok(context)
+    }
+    pub(crate) fn connector_frame(
+        &self,
+    ) -> Result<crate::connector_protocol::ControlFrame, GatewayError> {
+        self.check()?;
+        self.connector_frame.clone().ok_or_else(unavailable)
     }
     pub fn check(&self) -> Result<(), GatewayError> {
         if !self.alive.load(Ordering::Acquire)
@@ -103,7 +129,7 @@ pub(super) fn dial(
         drop(access);
         authorization.fence = fence;
         context.check()?;
-        let stream = connector.connect(context)?;
+        let stream = connector.connect(&context.for_authorization(&authorization)?)?;
         context.check()?;
         let mut conn = ClientConnection::new(tls, server_name).map_err(|_| unavailable())?;
         // Only one charged WebSocket frame enters TLS at a time. Its complete
