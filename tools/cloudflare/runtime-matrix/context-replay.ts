@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { DEEPSEEK_WATERFALL_MODEL_ID } from "../../../src/deepseek/waterfall.ts";
 import { MATRIX_MODELS } from "../fixtures/provider-matrix.mjs";
 import { assertSingleAdmission, dispatches, object, post, responseObject, selectProviders, settled, type MatrixContext } from "./contracts.ts";
 
@@ -299,7 +300,7 @@ function compactionInput(marker: string): Record<string, unknown>[] {
   ];
 }
 
-function compactionRequest(context: MatrixContext, marker: string, metadata?: string, stream = true): Promise<Response> {
+function compactionRequest(context: MatrixContext, marker: string, metadata?: string, stream = true, model = "deepseek-flash"): Promise<Response> {
   return fetch(context.url("/v1/responses"), {
     method: "POST",
     headers: {
@@ -308,7 +309,7 @@ function compactionRequest(context: MatrixContext, marker: string, metadata?: st
       connection: "close",
       ...(metadata === undefined ? {} : { "x-codex-turn-metadata": metadata }),
     },
-    body: JSON.stringify({ model: "deepseek-flash", input: compactionInput(marker), stream, reasoning: { effort: "low" }, max_output_tokens: 128 }),
+    body: JSON.stringify({ model, input: compactionInput(marker), stream, reasoning: { effort: "low" }, max_output_tokens: 128 }),
   });
 }
 
@@ -316,7 +317,7 @@ function jevCalls(events: unknown[], marker: string): Record<string, unknown>[] 
   return events.map(object).filter((event) => event.kind === "matrix_compaction_jev" && event.marker === marker);
 }
 
-async function compactionHeaderControls(context: MatrixContext): Promise<void> {
+export async function compactionHeaderControls(context: MatrixContext): Promise<void> {
   const controls = [
     undefined,
     "{not json",
@@ -328,9 +329,9 @@ async function compactionHeaderControls(context: MatrixContext): Promise<void> {
     const response = await compactionRequest(context, marker, metadata, false);
     assert.equal((await responseObject(response)).status, "completed");
     assert.equal(response.headers.get("x-jev-compaction"), null);
-    assertSingleAdmission(await settled(context, response), "lithos");
+    assertSingleAdmission(await settled(context, response), "deepseek");
     assert.equal(jevCalls(await context.events(), marker).length, 0, "Only the exact header predicate may invoke Jev");
-    await oneDispatch(context, marker, "lithos");
+    await oneDispatch(context, marker, "deepseek");
   }
   context.cases.push("matrix_compaction_header_absent_malformed_wrong_implementation_and_ordinary_turn_do_not_invoke_jev");
 }
@@ -346,7 +347,7 @@ async function compactionFailedFallback(context: MatrixContext, mode: "failure" 
   assert(typeof created.token === "string" && typeof created.id === "string");
   const client = { ...context, clientToken: created.token };
   const marker = `fixture:matrix:compaction:${mode}`;
-  const response = await compactionRequest(client, marker, compactionMetadata);
+  const response = await compactionRequest(client, marker, compactionMetadata, true, DEEPSEEK_WATERFALL_MODEL_ID);
   assert.equal((await streamedCompletion(response, "matrix ")).status, "completed");
   assert.equal(response.headers.get("x-jev-compaction"), null, "A failed or partial Jev result cannot become an adopted summary");
   const id = response.headers.get("x-uos-request-id");
@@ -401,6 +402,8 @@ async function compactionFailedFallback(context: MatrixContext, mode: "failure" 
 export async function compactionFallbackCases(context: MatrixContext): Promise<void> {
   await selectProviders(context, ["lithos", "deepseek", "openrouter"]);
   await compactionHeaderControls(context);
+  await selectProviders(context, ["lithos", "deepseek", "openrouter", "ubiquity"]);
   await compactionFailedFallback(context, "failure");
   await compactionFailedFallback(context, "partial");
+  await selectProviders(context, ["lithos", "deepseek", "openrouter"]);
 }
