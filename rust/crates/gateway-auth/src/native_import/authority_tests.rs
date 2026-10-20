@@ -308,7 +308,10 @@ fn actor_completion_preserves_required_nullable_utf16_and_request_specific_ceili
     assert_eq!(completion.account_ids, ["one", "two"]);
     let cap = import_authority_reply_max_bytes_for(&request).unwrap();
     assert!(cap > import_authority_reply_max_bytes());
-    println!("legacy-authority-reply-cap={} actor-completion-reply-cap={cap}", import_authority_reply_max_bytes());
+    println!(
+        "legacy-authority-reply-cap={} actor-completion-reply-cap={cap}",
+        import_authority_reply_max_bytes()
+    );
     let current = ImportAuthorityRequestData::new(ImportAuthorityCommand::Current {
         state,
         claim_ref: None,

@@ -311,7 +311,12 @@ fn terminal_query_requires_exact_matching_guarded_group_and_rejects_foreign_repl
             publication_request_digest: sha256_hex(&body),
         };
         let before = f.snapshot();
-        let ResultData::Terminal { terminal, completion, .. } = f.phase(command.clone(), 92).await else {
+        let ResultData::Terminal {
+            terminal,
+            completion,
+            ..
+        } = f.phase(command.clone(), 92).await
+        else {
             panic!("wrong phase")
         };
         assert_eq!(
