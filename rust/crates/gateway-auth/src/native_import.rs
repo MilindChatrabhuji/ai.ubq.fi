@@ -1,5 +1,6 @@
 //! Native-only import authentication. Neither transport proof grants an effect.
 pub mod authority;
+pub mod catalog_seed;
 pub mod publication;
 use crate::{
     GatewayError,

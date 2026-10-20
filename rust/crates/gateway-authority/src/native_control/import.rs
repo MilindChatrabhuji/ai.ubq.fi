@@ -34,6 +34,7 @@ mod effects;
 mod remote_state;
 mod sources;
 use remote_state::ImportActionState;
+mod catalog_seed;
 #[cfg(all(unix, feature = "native-import-fixture"))]
 mod fixture;
 #[cfg(unix)]
