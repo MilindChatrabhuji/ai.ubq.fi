@@ -372,3 +372,97 @@ fn unfinished_v3_does_not_require_missing_rows_or_reject_unrelated_generation_hi
     store.put(prior.0, prior.1);
     assert!(run(export_rollback_bundle(&store, 2400, context())).is_ok());
 }
+
+#[test]
+fn valid_legacy_renewal_utf16_models_are_untouched_by_v3_terminal_dispatch() {
+    use gateway_authority::native_control::{
+        NativeRenewalContext, NativeRenewalFence, validate_native_control_custody,
+    };
+    use gateway_core::{
+        js_string::JsString16, model::ModelId,
+        source_control::encode_source_control_record, source_serialization as source,
+    };
+    #[derive(serde::Serialize)]
+    struct LegacyRenewalData {
+        v: u8,
+        action_ref: String,
+        actor: Value,
+        created_at_ms: i64,
+        deadline_ms: i64,
+        fence: NativeRenewalFence,
+        checks_digest: String,
+        control_checks_digest: String,
+        account_digests: Vec<String>,
+        operation_id: Option<String>,
+    }
+    // These are the existing renewal_v2::native_action_source_custody_is_lossless_data
+    // vectors, carried by the actual ModelId/NativeRenewalContext types.
+    for units in [
+        vec![0xd800],
+        vec![0xdc00],
+        "fixture-model".encode_utf16().collect(),
+        vec![0xfffd],
+        vec![0xd83d, 0xde80],
+        vec![0, 10, 34, 92],
+        r"\ud800".encode_utf16().collect(),
+        vec![u16::from(b'm'); 4097],
+    ] {
+        let fence = NativeRenewalFence {
+            v: 2,
+            owner_id: "fixture-owner".into(),
+            owner_epoch: "fixture-epoch".into(),
+            owner_revision: "owner-before".into(),
+            native_owner_id: "native-owner".into(),
+            source_revision: "source-before".into(),
+            normalized_revision: "normalized-before".into(),
+            account_id_hash: "b".repeat(64),
+            credential_version: "c".repeat(64),
+            source_native_generation: "d".repeat(64),
+            access_generation: "e".repeat(64),
+            access_expires_at_ms: None,
+            native_refreshed_at: None,
+            principal: "passkey-user:fixture-user-😀".into(),
+            principal_policy_digest: "f".repeat(64),
+            original_request_id: "source-custody-request".into(),
+            context: NativeRenewalContext::Inference {
+                attempt_id: "source-custody-attempt".into(),
+                original_admission_digest: "f".repeat(64),
+                model: ModelId::from_source(JsString16::from_units(units.clone())),
+                slot: 0,
+            },
+        };
+        let reference = gateway_auth::crypto::sha256_hex(&serde_json::to_vec(&(
+            "uos-native-renewal-action-v2", &fence.original_request_id,
+            &fence.context, &fence.source_native_generation,
+        )).unwrap());
+        let document = SourceJson::from_serializable(&LegacyRenewalData {
+            v: 2, action_ref: reference.clone(), actor: action(2)["actor"].clone(),
+            created_at_ms: 2200, deadline_ms: 47200, fence,
+            checks_digest: "1".repeat(64), control_checks_digest: "2".repeat(64),
+            account_digests: vec!["3".repeat(64)], operation_id: None,
+        }).unwrap();
+        let control_key = key("action", &reference);
+        let record = encode_source_control_record("legacy-model-revision", &document, None).unwrap();
+        validate_native_control_custody(&control_key, &record)
+            .expect("actual existing renewal schema must accept the source model before export");
+        println!("VALID_EXISTING_RENEWAL_SCHEMA_BEFORE_REAL_EXPORT");
+        let directory = Directory::new();
+        let path = directory.file("legacy-model.sqlite3");
+        let store = SqliteStore::open(&path);
+        let input: PrivateCapture =
+            serde_json::from_str(include_str!("fixtures/offline-source.json")).unwrap();
+        run(adopt_empty(&store, &prepare(&input, &CanonicalDates).unwrap())).unwrap();
+        store.put(control_key.clone(), record.clone());
+        drop(store);
+        let store = SqliteStore::open(&path);
+        let bundle = run(export_rollback_bundle(&store, 2400, context()))
+            .expect("real exporter must preserve valid legacy source models without scalar projection");
+        let retained = bundle.rust_controls.iter().find(|row| row.key == control_key.0).unwrap();
+        assert_eq!(retained.record, record);
+        let reopened = decode_source_control_record(&retained.record).unwrap();
+        let fence = source::member(&reopened, "fence").unwrap();
+        let context = source::member(&fence, "context").unwrap();
+        let model: ModelId = source::member(&context, "model").unwrap().deserialize().unwrap();
+        assert_eq!(model.as_js_string().as_units(), units);
+    }
+}
