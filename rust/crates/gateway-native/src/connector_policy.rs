@@ -111,8 +111,9 @@ pub(crate) fn validate_unix_control(
     let address = match rustix::net::getpeername(control) {
         Ok(address) => address,
         Err(error) => {
-            let ended = crate::connector_worker::channel_events(control, std::time::Duration::ZERO)?
-                .contains(rustix::event::PollFlags::HUP);
+            let ended =
+                crate::connector_worker::channel_events(control, std::time::Duration::ZERO)?
+                    .contains(rustix::event::PollFlags::HUP);
             if error != rustix::io::Errno::INVAL || !ended {
                 return Err(ControlError::InvalidDescriptor);
             }

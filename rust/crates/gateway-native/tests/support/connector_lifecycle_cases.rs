@@ -129,9 +129,12 @@ fn unexpected_inherited_descriptor_is_refused_without_closing_parent_sentinel() 
     rustix::io::fcntl_setfd(&sentinel, flags).unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
     let status = loop {
-        if let Some(status) = child.try_wait().unwrap() { break status; }
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
         if Instant::now() >= deadline {
-            child.kill().unwrap(); child.wait().unwrap();
+            child.kill().unwrap();
+            child.wait().unwrap();
             panic!("inherited descriptor was not independently rejected");
         }
         thread::sleep(Duration::from_millis(2));
