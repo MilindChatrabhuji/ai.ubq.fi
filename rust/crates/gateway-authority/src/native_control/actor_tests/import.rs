@@ -217,6 +217,9 @@ fn existing_import_uses_actual_admin_source_before_header_and_body_proof() {
             assert!(!json.contains("ORIGINAL_SYNTHETIC_DOCUMENT"));
             assert!(!json.contains(&token));
             let custody_key = crate::native_control::rows::key("action", &meta.action_ref);
+            assert_eq!(row.value["v"], 3);
+            assert!(row.value.as_object().unwrap().contains_key("publication"));
+            assert!(row.value["publication"].is_null());
             crate::native_control::validate_native_control_custody(&custody_key, row).unwrap();
             let mut malformed = row.clone();
             malformed.value["body_sha256"] = json!(sha256_hex(body));
@@ -225,7 +228,7 @@ fn existing_import_uses_actual_admin_source_before_header_and_body_proof() {
                     .is_err()
             );
             malformed = row.clone();
-            malformed.value["v"] = json!(3);
+            malformed.value["v"] = json!(4);
             assert!(
                 crate::native_control::validate_native_control_custody(&custody_key, &malformed)
                     .is_err()
