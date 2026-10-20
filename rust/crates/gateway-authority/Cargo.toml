@@ -15,5 +15,13 @@ serde_json.workspace = true
 # Reuse the exact SHA-256 implementation already pinned in tools/native-kv/Cargo.lock.
 sha2 = "=0.11.0"
 
+[target.'cfg(unix)'.dependencies]
+getrandom = "=0.4.3"
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
+url = "=2.5.8"
+
+[target.'cfg(unix)'.dev-dependencies]
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
+
 [lints]
 workspace = true
