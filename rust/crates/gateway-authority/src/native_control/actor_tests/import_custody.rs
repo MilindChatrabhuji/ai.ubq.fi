@@ -595,3 +595,6 @@ fn ordinary_preparation_stays_v2_and_never_acquires_publication_by_default() {
         crate::native_control::validate_native_control_custody(&key, &row).unwrap();
     });
 }
+
+#[path = "import_publication.rs"]
+mod publication;
