@@ -249,7 +249,7 @@ fn actual_owned_async_child_stop_wait_and_dirty_epoch_do_not_infer_external_abse
     let custody = owner(&home);
     let mut runtime = custody.prepare_runtime().unwrap();
     assert!(!runtime.has_settled_owned_writer());
-    let exe = std::env::current_exe().unwrap();
+    let exe = fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
     let hash = sha256_hex(&fs::read(&exe).unwrap());
     let profile = fixture_profile(&exe, &home.0);
     // The first-party test child obtains only a synthetic output path through argv after '--'.
@@ -286,7 +286,7 @@ fn actual_owned_child_reap_records_stopped_but_reopened_marker_grants_no_lease()
     let home = Home::new();
     let custody = owner(&home);
     let mut runtime = custody.prepare_runtime().unwrap();
-    let exe = std::env::current_exe().unwrap();
+    let exe = fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
     let hash = sha256_hex(&fs::read(&exe).unwrap());
     let profile = fixture_profile(&exe, &home.0);
     runtime

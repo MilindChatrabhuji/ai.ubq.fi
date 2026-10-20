@@ -78,9 +78,12 @@ impl PinnedExecutable {
         {
             return Err(fail());
         }
+        // Seatbelt literals match resolved kernel paths, not the /tmp alias spelling.
+        // The original final component was already opened NOFOLLOW; inode/hash must match again.
+        let canonical = std::fs::canonicalize(path).map_err(|_| fail())?;
         let this = Self {
             file,
-            path: path.into(),
+            path: canonical,
             facts,
             digest: digest.into(),
         };
