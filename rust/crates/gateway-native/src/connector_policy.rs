@@ -108,8 +108,21 @@ pub(crate) fn validate_unix_control(
     {
         return Err(ControlError::InvalidDescriptor);
     }
-    if let Some(address) =
-        rustix::net::getpeername(control).map_err(|_| ControlError::InvalidDescriptor)?
+    let address = match rustix::net::getpeername(control) {
+        Ok(address) => address,
+        Err(error) => {
+            let ended = crate::connector_worker::channel_events(control, std::time::Duration::ZERO)?
+                .contains(rustix::event::PollFlags::HUP);
+            if error != rustix::io::Errno::INVAL || !ended {
+                return Err(ControlError::InvalidDescriptor);
+            }
+            // A closed Darwin Unix peer loses its peer address (EINVAL).
+            // Validate the local domain instead; leave queued data/rights for
+            // the actual receive path rather than treating HUP as EOF.
+            rustix::net::getsockname(control).map_err(|_| ControlError::InvalidDescriptor)?
+        }
+    };
+    if let Some(address) = address
         && address.address_family() != rustix::net::AddressFamily::UNIX
     {
         return Err(ControlError::InvalidDescriptor);
