@@ -259,19 +259,27 @@ test("cleanup reporting retains the primary error identity and every cleanup fai
     { status: "rejected", reason: worker },
   ];
   assert.throws(
-    () => throwCleanupFailures(results, { error: primary }),
+    () => {
+      throwCleanupFailures(results, { error: primary });
+    },
     (error: unknown) =>
       error instanceof AggregateError && error.cause === primary && error.errors[0] === primary && error.errors[1] === native && error.errors[2] === worker
   );
   assert.throws(
-    () => throwCleanupFailures(results.slice(0, 1)),
+    () => {
+      throwCleanupFailures(results.slice(0, 1));
+    },
     (error: unknown) => error === native
   );
   assert.throws(
-    () => throwCleanupFailures(results),
+    () => {
+      throwCleanupFailures(results);
+    },
     (error: unknown) => error instanceof AggregateError && error.errors[0] === native && error.errors[1] === worker
   );
-  assert.doesNotThrow(() => throwCleanupFailures([{ status: "fulfilled", value: undefined }], { error: primary }));
+  assert.doesNotThrow(() => {
+    throwCleanupFailures([{ status: "fulfilled", value: undefined }], { error: primary });
+  });
 });
 
 test("single-profile composition retains the original network boundary/child and adds only a task write restriction", async () => {

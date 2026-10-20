@@ -362,15 +362,15 @@ export function throwCleanupFailures(results: readonly PromiseSettledResult<unkn
 export class NativePort {
   private _child;
   private _lines;
-  private _stderr;
+  private _stderr: Promise<PromiseSettledResult<string>[]> | undefined;
   private _closing: Promise<{ results: PromiseSettledResult<unknown>[]; exit: PromiseSettledResult<number> }> | undefined;
   private _id = 0;
   constructor(binary: string, workspace: string) {
     this._child = Bun.spawn([binary], { cwd: workspace, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     this._lines = privateLines(this._child.stdout)[Symbol.asyncIterator]();
-    this._stderr = Promise.allSettled([new Response(this._child.stderr).text()]);
   }
   async call(command: unknown, expected: string, origin?: string): Promise<ObjectValue> {
+    void this._readStderr();
     const raw = JSON.stringify(command);
     assert(Buffer.byteLength(raw) < PRIVATE_WIRE_MAX_BYTES);
     await this._child.stdin.write(raw + "\n");
@@ -409,7 +409,8 @@ export class NativePort {
   }
   private _timer: ReturnType<typeof setTimeout> | undefined;
   async close(expectSuccess = false): Promise<void> {
-    const cleanup = await (this._closing ??= this._close(expectSuccess));
+    if (this._closing === undefined) this._closing = this._close(expectSuccess);
+    const cleanup = await this._closing;
     const results = [...cleanup.results];
     if (expectSuccess && cleanup.exit.status === "fulfilled") {
       try {
@@ -420,12 +421,17 @@ export class NativePort {
     }
     throwCleanupFailures(results);
   }
+  private _readStderr(): Promise<PromiseSettledResult<string>[]> {
+    this._stderr ??= Promise.allSettled([new Response(this._child.stderr).text()]);
+    return this._stderr;
+  }
   private async _close(graceful: boolean): Promise<{ results: PromiseSettledResult<unknown>[]; exit: PromiseSettledResult<number> }> {
+    const stderr = this._readStderr();
     const input = await Promise.allSettled([Promise.resolve().then(() => this._child.stdin.end())]);
     const termination = await Promise.allSettled([this._settle(graceful)]);
-    const streams = await Promise.allSettled([this._lines.return(undefined), this._stderr]);
+    const streams = await Promise.allSettled([this._lines.return(undefined), stderr]);
     const [exit] = await Promise.allSettled([this._child.exited]);
-    return { results: [...input, ...termination, ...streams, ...(await this._stderr), exit], exit };
+    return { results: [...input, ...termination, ...streams, ...(await stderr), exit], exit };
   }
   private async _settle(graceful: boolean): Promise<void> {
     if (graceful && this._child.exitCode === null) {
