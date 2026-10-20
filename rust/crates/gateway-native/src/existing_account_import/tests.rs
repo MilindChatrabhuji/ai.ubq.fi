@@ -12,7 +12,7 @@ use std::{
     io::Write,
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
@@ -111,6 +111,67 @@ fn owner(home: &Home) -> ExclusiveManagedOwner {
         .prepare_exclusive_owner(&registered, uid, &[uid + 1], &helper, &hash, deadline())
         .unwrap()
 }
+// Failure-only synthetic metadata. Do not replace the original observation error.
+fn report_inspector_failure(directory: &fs::File, helper: &PinnedExecutable, path: &Path) {
+    let ls = fs::read("/bin/ls").map(|bytes| sha256_hex(&bytes));
+    eprintln!(
+        "NATIVE_INSPECTOR_FIRST_FAILURE os={} arch={} fixed_ls_sha256={ls:?} synthetic_leaf={}",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        path.display()
+    );
+    for (kind, metadata) in [
+        ("fixed_ls", fs::symlink_metadata("/bin/ls")),
+        ("synthetic_leaf", directory.metadata()),
+    ] {
+        if let Ok(metadata) = metadata {
+            eprintln!(
+                "NATIVE_INSPECTOR_METADATA kind={kind} uid={} gid={} mode={:o} links={} size={}",
+                metadata.uid(),
+                metadata.gid(),
+                metadata.mode(),
+                metadata.nlink(),
+                metadata.len()
+            );
+        }
+    }
+    let Ok(stdin) = directory.try_clone() else {
+        eprintln!("NATIVE_INSPECTOR_DIAGNOSTIC stdin_clone_failed");
+        return;
+    };
+    let child = Command::new(helper.path())
+        .env_clear()
+        .env("LC_ALL", "C")
+        .env("LANG", "C")
+        .env("TZ", "UTC")
+        .stdin(Stdio::from(stdin))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+    let Ok(mut child) = child else {
+        eprintln!("NATIVE_INSPECTOR_DIAGNOSTIC fixed_helper_spawn_failed");
+        return;
+    };
+    let limit = Instant::now() + Duration::from_secs(3);
+    let timed_out = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break false,
+            Ok(None) if Instant::now() < limit => std::thread::sleep(Duration::from_millis(5)),
+            _ => {
+                let _ = child.kill();
+                break true;
+            }
+        }
+    };
+    if let Ok(output) = child.wait_with_output() {
+        eprintln!(
+            "NATIVE_INSPECTOR_DIAGNOSTIC fixed_helper_exit={:?} timed_out={timed_out} stdout={:?} stderr={:?}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(1024)]),
+            String::from_utf8_lossy(&output.stderr[..output.stderr.len().min(1024)])
+        );
+    }
+}
 #[test]
 fn actual_anchored_inspector_no_acl_preserves_parent_cwd_and_rejects_real_ace() {
     let _fixture_family = FOUNDATION_FIXTURES.lock().unwrap();
@@ -119,7 +180,11 @@ fn actual_anchored_inspector_no_acl_preserves_parent_cwd_and_rejects_real_ace() 
     let (helper, hash) = helper();
     let helper = PinnedExecutable::verify(&helper, &hash).unwrap();
     let cwd = std::env::current_dir().unwrap();
-    acl_inspector::observe(&file, &helper, deadline()).unwrap();
+    let observed = acl_inspector::observe(&file, &helper, deadline());
+    if observed.is_err() {
+        report_inspector_failure(&file, &helper, &home.0);
+    }
+    observed.unwrap();
     assert_eq!(std::env::current_dir().unwrap(), cwd);
     let output = Command::new("/usr/bin/id")
         .arg("-un")
