@@ -84,6 +84,7 @@ fn artifact(name:&str)->PathBuf {let path=std::env::current_exe().unwrap().paren
 
 #[derive(Default)]
 struct Traffic { authority:Mutex<Vec<Vec<u8>>>, models:AtomicUsize, oauth:AtomicUsize, drop_publication:AtomicBool,
+    pause:Mutex<Option<Arc<negatives::PhasePause>>>,
     accepted:[AtomicUsize;3], accepted_nonblocking:[AtomicUsize;3], tls_complete:[AtomicUsize;3], requests:[AtomicUsize;3], phases:Mutex<Vec<&'static str>>, errors:Mutex<Vec<String>> }
 impl Traffic {
     fn retain(&self, path:&Path) {
@@ -124,6 +125,8 @@ fn serve_tls(socket:TcpStream,role:u8,store:base::Store,home:&Path,traffic:Arc<T
             match request.command{C::Admit{..}=>"admit",C::FinishCurrent{..}=>"finish",C::Current{..}=>"current",C::Claim{..}=>"claim",C::Start{..}=>"start",C::Unknown{..}=>"unknown",C::Terminal{..}=>"terminal",C::CustodyTerminal{..}=>"custody_terminal"}
         }else if gateway_auth::native_import::catalog_seed::ImportCatalogSeedRequestData::parse(&body).is_ok(){"catalog_seed"}else if role==1{"models"}else if role==2{"oauth"}else{"started_handler"};
         traffic.phases.lock().unwrap().push(phase);
+        let pause = traffic.pause.lock().unwrap().clone();
+        if let Some(pause) = pause { pause.reached(phase); }
         let (status,mut response,response_headers)=if role==0{
             traffic.authority.lock().unwrap().push(body.clone());
             let identity=id();let authority=authority(&store);let config=base::config();let owner=RegisteredRenewalOwner::configured("native-owner".into(),home.to_str().unwrap().into()).unwrap();let cancel=base::Cancel;let control=NativeRenewalAuthority::configured(&authority,&identity,&owner,&config,&cancel);
@@ -169,7 +172,12 @@ fn controlled_custodian_process(){
     let (client,_)=listener.accept().unwrap();drop(listener);
     let actor=artifact("examples/uos-native-import-fixture");let actor_hash=sha256_hex(&fs::read(&actor).unwrap());
     let endpoints=super::import_endpoints::ResolvedImportEndpoints::fixture(setup.authority,setup.models,setup.oauth).unwrap();
-    runtime.serve_fixture(client,&serde_json::to_vec(&setup.config).unwrap(),&actor,&actor_hash,endpoints).unwrap();
+    let result = runtime.serve_fixture(client,&serde_json::to_vec(&setup.config).unwrap(),&actor,&actor_hash,endpoints);
+    if let Err(error) = result {
+        drop(runtime);
+        eprintln!("CONTROLLED_NATIVE_REFUSAL {}", error.envelope.error.code.as_deref().unwrap_or("native_import_unavailable"));
+        std::process::exit(79);
+    }
 }
 
 struct OwnedGroup { child:Option<Child>, group:u32 }
@@ -235,3 +243,6 @@ fn actual_existing_account_original_start_owned_child_custody_durability_and_pub
     let captured=servers.traffic.authority.lock().unwrap();assert!(captured.iter().any(|body|body.windows(b"codex_auth_import_publish".len()).any(|w|w==b"codex_auth_import_publish")));
     for wire in captured.iter(){let text=String::from_utf8_lossy(wire);assert!(!text.contains("SYNTHETIC_NEW_REFRESH"));assert!(!text.contains(&sha256_hex(NEW)));assert!(!text.contains(&sha256_hex(&bytes)));}
 }
+
+#[path = "flow_negative_tests.rs"]
+mod negatives;

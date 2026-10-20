@@ -228,3 +228,7 @@ impl Drop for LiveImportCustody<'_> {
         let _ = self.channel.socket.shutdown(std::net::Shutdown::Both);
     }
 }
+
+#[cfg(test)]
+#[path = "custody_observation_tests.rs"]
+mod tests;

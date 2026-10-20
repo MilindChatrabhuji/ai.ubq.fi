@@ -200,3 +200,15 @@ impl OwnedRuntime {
         CustodianRuntime::from_owned(self)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn a_stopped_session_rejects_new_kernel_epoch_or_root_identity() {
+        let expected = KernelSnapshot { epoch: "a".repeat(64), root_device: 1, root_inode: 2 };
+        for actual in [KernelSnapshot { epoch: "b".repeat(64), root_device: 1, root_inode: 2 }, KernelSnapshot { epoch: "a".repeat(64), root_device: 3, root_inode: 2 }, KernelSnapshot { epoch: "a".repeat(64), root_device: 1, root_inode: 4 }] {
+            assert!(same_snapshot(&expected, &actual).is_err());
+        }
+    }
+}

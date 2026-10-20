@@ -193,10 +193,12 @@ pub(crate) fn import_actor(
         if endpoint.port() == 0 || endpoint.ip().is_unspecified() || endpoint.ip().is_multicast() {
             return Err(ControlError::InvalidFrame);
         }
-        // The supported Seatbelt TCP host grammar is only localhost or *.
-        // Do not silently widen unsupported external address filters to *.
-        if !endpoint.ip().is_loopback() { return Err(ControlError::UnsupportedPlatform); }
-        policy.push_str(&format!("(allow network-outbound (remote tcp \"localhost:{}\"))\n", endpoint.port()));
+        // Seatbelt has port-only external TCP enforcement, not a hostname ACL.
+        // These are trusted fixed-origin resolved endpoints; TLS binds their hosts.
+        let host = if endpoint.ip().is_loopback() { "localhost" } else if endpoint.port() == 443 {
+            "*"
+        } else { return Err(ControlError::UnsupportedPlatform); };
+        policy.push_str(&format!("(allow network-outbound (remote tcp \"{host}:{}\"))\n", endpoint.port()));
     }
     for (local, peer) in [(client_local, client_peer), (custody_local, custody_peer)] {
         if !local.ip().is_loopback() || !peer.ip().is_loopback() {
@@ -208,50 +210,6 @@ pub(crate) fn import_actor(
 }
 
 
-#[cfg(all(test, target_os = "macos"))]
-mod import_profile_diagnostic {
-    use super::*;
-    use std::{fs, io::Write, os::unix::fs::{OpenOptionsExt, PermissionsExt}, process::Command};
-    #[test]
-    fn source_generated_import_profile_parse() {
-        let output = std::path::Path::new("/private/tmp/ai-rust-wasm-20261018/native-safety-0403/profile-reconstruction-v1");
-        fs::create_dir(output).unwrap();
-        fs::set_permissions(output, fs::Permissions::from_mode(0o700)).unwrap();
-        let actor = std::path::Path::new("/private/tmp/ai-rust-wasm-20261018/mac-target-full-flow-8fff335b7744/debug/examples/uos-native-import-fixture");
-        let home = std::path::Path::new("/private/tmp/ai-rust-wasm-20261018/mac-tmp/native-flow-1530-0/home");
-        let replay = home.parent().unwrap().join("replay");
-        let address = |port| SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
-        let profile = import_actor(actor, home, &replay, address(31001), address(31002), address(31003), address(31004), &[address(31005), address(31006), address(31007)]).unwrap();
-        let save = |name: &str, bytes: &[u8]| {
-            let mut file = fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(output.join(name)).unwrap();
-            file.write_all(bytes).unwrap();
-        };
-        save("source-generated-profile.sb", profile.as_bytes());
-        let result = Command::new("/usr/bin/sandbox-exec").args(["-p", &profile, "/usr/bin/true"]).output().unwrap();
-        save("compiler.stderr", &result.stderr[..result.stderr.len().min(8192)]);
-        save("compiler.stdout", &result.stdout[..result.stdout.len().min(8192)]);
-        save("result.json", &serde_json::to_vec(&serde_json::json!({"reconstructed_not_retained_launch_bytes":true,"status":result.status.code(),"success":result.status.success(),"stderr_bytes":result.stderr.len(),"stdout_bytes":result.stdout.len()})).unwrap());
-        assert!(!result.status.success(), "fixed true target is not granted by the unchanged profile");
-        eprintln!("PROFILE_RECONSTRUCTION_DIAGNOSTIC status={:?} stderr_bytes={}",result.status.code(),result.stderr.len());
-    }
-    #[test]
-    #[ignore = "one fixed source-generated matcher diagnostic, not normal acceptance"]
-    fn source_generated_import_temp_rule_matcher() {
-        let output = std::path::Path::new("/private/tmp/ai-rust-wasm-20261018/native-safety-0403/profile-temp-matcher-unrolled-v1");
-        fs::create_dir(output).unwrap();fs::set_permissions(output,fs::Permissions::from_mode(0o700)).unwrap();
-        let root=fs::canonicalize(output).unwrap();let replay=root.join("replay");fs::create_dir(&replay).unwrap();
-        let address=|port|SocketAddr::from((std::net::Ipv4Addr::LOCALHOST,port));
-        let profile=import_actor(std::path::Path::new("/usr/bin/touch"),&root,&replay,address(31001),address(31002),address(31003),address(31004),&[address(31005),address(31006),address(31007)]).unwrap();
-        let save=|name:&str,bytes:&[u8]|{let mut f=fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(root.join(name)).unwrap();f.write_all(bytes).unwrap();};
-        save("source-generated-profile.sb",profile.as_bytes());let mut rows=Vec::new();
-        for (kind,suffix,length) in [("positive","tmp",64),("negative","tmpx",64),("hash63","tmp",63),("hash65","tmp",65)] {
-            let target=root.join(format!(".uos-import-{}.{}","f".repeat(length),suffix));assert!(!target.exists());
-            let result=Command::new("/usr/bin/sandbox-exec").args(["-p",&profile,"/usr/bin/touch"]).arg(&target).output().unwrap();
-            save(&format!("{kind}.stderr"),&result.stderr[..result.stderr.len().min(8192)]);
-            rows.push(serde_json::json!({"kind":kind,"exit":result.status.code(),"success":result.status.success(),"target_exists":target.exists(),"stderr_bytes":result.stderr.len()}));
-        }
-        save("result.json",&serde_json::to_vec(&serde_json::json!({"source_generated_not_retained_launch":true,"diagnostic_only_not_custody":true,"equivalent_hash_atoms":64,"length_controls":[63,65],"targets":rows})).unwrap());
-        eprintln!("MATCHER_DIAGNOSTIC fixed_positive_and_negative_complete");
-    }
-
-}
+#[cfg(all(test, target_os = "macos", feature = "native-import-fixture"))]
+#[path = "import_policy_tests.rs"]
+mod import_policy_tests;
