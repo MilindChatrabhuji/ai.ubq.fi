@@ -1102,3 +1102,82 @@ fn native_publication_headers_preserve_duplicate_and_missing_auth_rejection() {
     duplicated.push(("X-UOS-NATIVE-MAC".into(), base64url(&[3; 32])));
     assert!(OwnedNativeAuthHeaders::from_pairs(duplicated).is_err());
 }
+
+#[test]
+fn configuration_capture_retains_frozen_constructor_bytes_without_writes() {
+    run(async {
+        let store = Memory::default();
+        let identity = make_identity(NativeCapability::ConfigurationPublish);
+        bootstrap(&store, &identity, now()).await;
+        set(
+            &store,
+            runtime_config_key(),
+            "runtime-r1",
+            json!({"model":"fixture-model","reasoning":"none"}),
+        );
+        let before = serde_json::to_vec(&*store.0.lock().unwrap()).unwrap();
+        let inputs = inputs("fixture-surplus-key");
+        let captured = PreparedConfigurationPublication::capture(
+            &store,
+            &identity,
+            &inputs,
+            "generation-1",
+            now(),
+        )
+        .await
+        .unwrap();
+        // Frozen pre-factor constructor and statement field order, including
+        // serde_json preserve_order, independent role bindings and source check.
+        let expected = r##"{"operation":"configuration_publish","config":{"v":2,"owner_id":"fixture-owner","owner_epoch":"fixture-epoch","generation":"generation-1","configuration_fingerprint":"7e4f95cb2d3e6fc83456a70ee81483136e0a7df605d26c54e35ad2adbee4877a","surplus_binding":"73ca14b414d233bf44ab369bebeb5738a0b40225cf785b51bfc3598592da17f2","openlux_discovery_binding":"0659c996bc5d3905c397ebf64917f0676f4bd6256640548758cce1c3d57dc524","openlux_binding":"0659c996bc5d3905c397ebf64917f0676f4bd6256640548758cce1c3d57dc524","source_checks":[{"key":"tuple-v1:02756f735f6169000272756e74696d655f636f6e6669670002763200","expected_revision":"runtime-r1"}]},"owner_revision":"owner-r1","previous_config_revision":null}"##;
+        assert_eq!(captured.statement(), expected.as_bytes());
+        assert_eq!(
+            serde_json::to_vec(&*store.0.lock().unwrap()).unwrap(),
+            before
+        );
+        set(
+            &store,
+            keys::paid_control_config(),
+            "config-r1",
+            serde_json::to_value(captured.configuration()).unwrap(),
+        );
+        set(
+            &store,
+            runtime_config_key(),
+            "runtime-r2",
+            json!({"model":"fixture-model","reasoning":"none"}),
+        );
+        assert_eq!(
+            PreparedConfigurationPublication::capture(
+                &store,
+                &identity,
+                &inputs,
+                "generation-1",
+                now()
+            )
+            .await
+            .err()
+            .unwrap()
+            .status,
+            409
+        );
+        let next = PreparedConfigurationPublication::capture(
+            &store,
+            &identity,
+            &inputs,
+            "generation-2",
+            now(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            next.configuration().configuration_fingerprint,
+            captured.configuration().configuration_fingerprint
+        );
+        assert_eq!(
+            next.configuration().source_checks[0]
+                .expected_revision
+                .as_deref(),
+            Some("runtime-r2")
+        );
+    });
+}

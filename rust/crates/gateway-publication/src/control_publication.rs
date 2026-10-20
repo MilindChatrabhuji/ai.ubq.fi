@@ -88,6 +88,55 @@ impl ConfiguredPaidInputs {
             )
         })?))
     }
+
+    /// Derive only configuration DATA from trusted current/planned records. The
+    /// caller still owns current-row reads and their atomic revision fences.
+    /// No store, mutation, nonce or publication capability is accepted here.
+    pub(crate) fn candidate_configuration(
+        &self,
+        identity: &NativeTransportIdentity,
+        current_owner: &PaidControlOwner,
+        generation: &str,
+        runtime: Option<&StoredRecord>,
+        previous: Option<&PaidControlConfig>,
+    ) -> Result<PaidControlConfig, GatewayError> {
+        if generation.trim().is_empty() {
+            return Err(unavailable(
+                "Configuration generation is missing",
+                "paid_control_configuration_invalid",
+            ));
+        }
+        let expected = owner(identity);
+        if current_owner != &expected {
+            return Err(unavailable(
+                "Configuration owner changed",
+                "paid_control_owner_mismatch",
+            ));
+        }
+        if previous.is_some_and(|config| config.v != PAID_CONTROL_CONFIG_VERSION) {
+            return Err(unavailable(
+                "Stored configuration has an unsupported private schema",
+                "paid_control_configuration_invalid",
+            ));
+        }
+        let runtime_check = store::check(&runtime_config_key(), runtime);
+        let config = PaidControlConfig {
+            v: PAID_CONTROL_CONFIG_VERSION,
+            owner_id: expected.owner_id,
+            owner_epoch: expected.owner_epoch,
+            generation: generation.into(),
+            configuration_fingerprint: self.fingerprint(runtime)?,
+            surplus_binding: self.binding(PaidProvider::Surplus),
+            openlux_discovery_binding: self.discovery_binding(PaidProvider::Metered),
+            openlux_binding: self.binding(PaidProvider::Metered),
+            source_checks: vec![PaidSourceCheck::from(&runtime_check)],
+        };
+        // Reusing a generation for different source/key bytes is not an update.
+        if previous.is_some_and(|old| old.generation == config.generation && old != &config) {
+            return Err(conflict());
+        }
+        Ok(config)
+    }
 }
 
 pub fn configured_paid_binding(provider: PaidProvider, key: &Secret) -> String {
@@ -251,25 +300,14 @@ impl PreparedConfigurationPublication {
             row.json_value()?;
         }
         let runtime_check = store::check(&runtime_key, runtime_row.as_ref());
-        let config = PaidControlConfig {
-            v: PAID_CONTROL_CONFIG_VERSION,
-            owner_id: expected.owner_id.clone(),
-            owner_epoch: expected.owner_epoch.clone(),
-            generation: generation.into(),
-            configuration_fingerprint: inputs.fingerprint(runtime_row.as_ref())?,
-            surplus_binding: inputs.binding(PaidProvider::Surplus),
-            openlux_discovery_binding: inputs.discovery_binding(PaidProvider::Metered),
-            openlux_binding: inputs.binding(PaidProvider::Metered),
-            source_checks: vec![PaidSourceCheck::from(&runtime_check)],
-        };
+        let config = inputs.candidate_configuration(
+            identity,
+            &current,
+            generation,
+            runtime_row.as_ref(),
+            old.as_ref(),
+        )?;
         let changed = old.as_ref() != Some(&config);
-        // Reusing a generation for different source/key bytes is not an update.
-        if old
-            .as_ref()
-            .is_some_and(|old| old.generation == config.generation && old != &config)
-        {
-            return Err(conflict());
-        }
         let mut checks = vec![
             store::check(&owner_key, owner_row.as_ref()),
             store::check(&config_key, config_row.as_ref()),
@@ -362,4 +400,233 @@ pub(crate) fn conflict() -> GatewayError {
 }
 pub(crate) fn unavailable(message: &str, code: &str) -> GatewayError {
     GatewayError::unavailable(message, code)
+}
+
+#[cfg(test)]
+mod candidate_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn identity() -> NativeTransportIdentity {
+        NativeTransportIdentity::new(
+            "fixture-key".into(),
+            "fixture-owner".into(),
+            "fixture-epoch".into(),
+            [11; 32],
+            BTreeSet::from([NativeCapability::ConfigurationPublish]),
+        )
+        .unwrap()
+    }
+
+    fn inputs() -> ConfiguredPaidInputs {
+        ConfiguredPaidInputs::new(
+            Some(Secret::new("fixture-surplus-key".into())),
+            Some(Secret::new("fixture-discovery-key".into())),
+            Some(Secret::new("fixture-spend-key".into())),
+            json!({"overage_enabled":true}),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn runtime_revision_changes_only_source_check_and_requires_fresh_generation() {
+        let identity = identity();
+        let owner = owner(&identity);
+        let inputs = inputs();
+        let first = StoredRecord::json("runtime-r1", json!({"model":"fixture-model"}), None);
+        let next = StoredRecord::json("runtime-r2", first.value.clone(), None);
+        let old = inputs
+            .candidate_configuration(&identity, &owner, "g1", Some(&first), None)
+            .unwrap();
+        let config = inputs
+            .candidate_configuration(&identity, &owner, "g2", Some(&next), Some(&old))
+            .unwrap();
+        assert_eq!(
+            config.configuration_fingerprint,
+            old.configuration_fingerprint
+        );
+        assert_eq!(
+            config.source_checks,
+            vec![PaidSourceCheck {
+                key: runtime_config_key().0,
+                expected_revision: Some("runtime-r2".into())
+            }]
+        );
+        assert_ne!(config.source_checks, old.source_checks);
+        assert_eq!(
+            inputs
+                .candidate_configuration(&identity, &owner, "g1", Some(&next), Some(&old))
+                .unwrap_err(),
+            conflict()
+        );
+        assert_eq!(
+            inputs
+                .candidate_configuration(&identity, &owner, "g1", Some(&first), Some(&old))
+                .unwrap(),
+            old
+        );
+    }
+
+    #[test]
+    fn runtime_value_change_reuses_existing_fingerprint_constructor() {
+        let identity = identity();
+        let owner = owner(&identity);
+        let inputs = inputs();
+        let first = StoredRecord::json("runtime-r1", json!({"model":"first-model"}), None);
+        let next = StoredRecord::json("runtime-r2", json!({"model":"next-model"}), None);
+        let old = inputs
+            .candidate_configuration(&identity, &owner, "g1", Some(&first), None)
+            .unwrap();
+        let config = inputs
+            .candidate_configuration(&identity, &owner, "g2", Some(&next), Some(&old))
+            .unwrap();
+        assert_ne!(
+            config.configuration_fingerprint,
+            old.configuration_fingerprint
+        );
+        assert_eq!(
+            config.configuration_fingerprint,
+            inputs.fingerprint(Some(&next)).unwrap()
+        );
+        assert_eq!(config.owner_id, old.owner_id);
+        assert_eq!(config.owner_epoch, old.owner_epoch);
+        assert_eq!(config.surplus_binding, old.surplus_binding);
+        assert_eq!(
+            config.openlux_discovery_binding,
+            old.openlux_discovery_binding
+        );
+        assert_eq!(config.openlux_binding, old.openlux_binding);
+        assert_eq!(
+            inputs
+                .candidate_configuration(&identity, &owner, "g1", Some(&next), Some(&old))
+                .unwrap_err(),
+            conflict()
+        );
+    }
+
+    #[test]
+    fn configured_owner_generation_and_previous_schema_remain_required() {
+        let identity = identity();
+        let owner = owner(&identity);
+        let inputs = inputs();
+        for field in 0..4 {
+            let mut wrong = owner.clone();
+            match field {
+                0 => wrong.v = 2,
+                1 => wrong.owner_id.push_str("-other"),
+                2 => wrong.owner_epoch.push_str("-other"),
+                _ => wrong.key_fingerprint.push_str("-other"),
+            }
+            assert_eq!(
+                inputs
+                    .candidate_configuration(&identity, &wrong, "g1", None, None)
+                    .unwrap_err()
+                    .envelope
+                    .error
+                    .code
+                    .as_deref(),
+                Some("paid_control_owner_mismatch")
+            );
+        }
+        assert_eq!(
+            inputs
+                .candidate_configuration(&identity, &owner, " ", None, None)
+                .unwrap_err()
+                .envelope
+                .error
+                .code
+                .as_deref(),
+            Some("paid_control_configuration_invalid")
+        );
+        let mut previous = inputs
+            .candidate_configuration(&identity, &owner, "g1", None, None)
+            .unwrap();
+        previous.v = 1;
+        assert_eq!(
+            inputs
+                .candidate_configuration(&identity, &owner, "g2", None, Some(&previous))
+                .unwrap_err()
+                .envelope
+                .error
+                .code
+                .as_deref(),
+            Some("paid_control_configuration_invalid")
+        );
+    }
+
+    #[test]
+    fn missing_runtime_and_independent_nullable_bindings_stay_explicit() {
+        let identity = identity();
+        let owner = owner(&identity);
+        for (discovery, spend) in [
+            (None, None),
+            (Some("fixture-discovery"), None),
+            (None, Some("fixture-spend")),
+        ] {
+            let inputs = ConfiguredPaidInputs::new(
+                None,
+                discovery.map(|s| Secret::new(s.into())),
+                spend.map(|s| Secret::new(s.into())),
+                json!({}),
+            )
+            .unwrap();
+            let config = inputs
+                .candidate_configuration(&identity, &owner, "g1", None, None)
+                .unwrap();
+            assert_eq!(config.v, PAID_CONTROL_CONFIG_VERSION);
+            assert_eq!(
+                config.source_checks,
+                vec![PaidSourceCheck {
+                    key: runtime_config_key().0,
+                    expected_revision: None
+                }]
+            );
+            let encoded = serde_json::to_value(&config).unwrap();
+            for field in [
+                "surplus_binding",
+                "openlux_discovery_binding",
+                "openlux_binding",
+            ] {
+                assert!(encoded.get(field).is_some());
+                let mut omitted = encoded.clone();
+                omitted.as_object_mut().unwrap().remove(field);
+                assert!(serde_json::from_value::<PaidControlConfig>(omitted).is_err());
+            }
+            assert!(encoded["surplus_binding"].is_null());
+            assert_eq!(
+                config.openlux_discovery_binding.is_some(),
+                discovery.is_some()
+            );
+            assert_eq!(config.openlux_binding.is_some(), spend.is_some());
+        }
+    }
+
+    #[test]
+    fn pure_derivation_has_no_store_capability_and_preserves_all_inputs() {
+        let identity = identity();
+        let owner = owner(&identity);
+        let inputs = inputs();
+        let runtime = StoredRecord::json("planned-runtime", json!({"model":"fixture-model"}), None);
+        let previous = inputs
+            .candidate_configuration(&identity, &owner, "g1", None, None)
+            .unwrap();
+        let before = serde_json::to_vec(&(&owner, &runtime, &previous)).unwrap();
+        let fingerprint = inputs.fingerprint(Some(&runtime)).unwrap();
+        let config = inputs
+            .candidate_configuration(&identity, &owner, "g2", Some(&runtime), Some(&previous))
+            .unwrap();
+        assert_eq!(config.configuration_fingerprint, fingerprint);
+        assert_eq!(
+            before,
+            serde_json::to_vec(&(&owner, &runtime, &previous)).unwrap()
+        );
+        assert_eq!(inputs.fingerprint(Some(&runtime)).unwrap(), fingerprint);
+        let mut invalid = runtime;
+        invalid.schema_version += 1;
+        assert!(
+            inputs
+                .candidate_configuration(&identity, &owner, "g3", Some(&invalid), Some(&config))
+                .is_err()
+        );
+    }
 }
