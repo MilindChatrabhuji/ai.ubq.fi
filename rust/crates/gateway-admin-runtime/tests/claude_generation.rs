@@ -1,13 +1,17 @@
 use gateway_admin_runtime::{
-    claude::{Credential, CredentialKind},
+    claude::{ClaudeSourceSecret, Credential, CredentialKind},
     claude_generation::{StateChange, StateGeneration},
 };
-use gateway_auth::crypto::{Secret, sha256_hex};
+use gateway_auth::crypto::sha256_hex;
+use gateway_core::js_string::JsString16;
+use std::sync::Arc;
 
 fn credential() -> Credential {
     Credential {
         kind: CredentialKind::ApiKey,
-        secret: Secret::new("synthetic-key".into()),
+        secret: Arc::new(ClaudeSourceSecret::from_source(JsString16::from_utf8(
+            "synthetic-key",
+        ))),
         hint: "configured".into(),
         label: None,
         source: "kv".into(),
@@ -53,7 +57,12 @@ fn identity_uses_source_json_numeric_generation_and_null_environment_ids() {
     let owner = StateGeneration::default();
     let snapshot = owner.snapshot();
     assert_eq!(
-        owner.catalog_identity(&snapshot, None, &credential(), Some("wrkspc_fixture")),
+        owner.catalog_identity(
+            &snapshot,
+            None,
+            &credential(),
+            Some(&JsString16::from_utf8("wrkspc_fixture"))
+        ),
         Some(sha256_hex(
             br#"[null,null,"api_key","synthetic-key","wrkspc_fixture",0]"#
         ))
