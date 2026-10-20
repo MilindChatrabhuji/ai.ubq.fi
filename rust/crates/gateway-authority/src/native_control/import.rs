@@ -12,6 +12,8 @@ use gateway_auth::native_import::{
 use gateway_core::{GatewayError, state::AuthorityStore};
 use serde::{Deserialize, Serialize};
 mod custody;
+mod custody_session;
+pub use custody_session::{ImportCustodyStartedRequest, VerifiedCurrentImportStarted};
 mod effects;
 mod sources;
 pub use effects::{NativeImportBinding, NativeImportClaim, NativeImportMode, NativeImportStart};
