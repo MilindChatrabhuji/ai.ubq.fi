@@ -352,6 +352,70 @@ export async function settle(child: { exitCode: number | null; kill: (signal: No
     clearTimeout(timer);
   }
 }
+const NATIVE_PHASES: ReadonlyMap<string, string> = new Map([
+  ["inputs_prepared", "prepare-inputs"],
+  ["candidate", "candidate"],
+  ["runtime_exercised", "exercise-runtime"],
+  ["managed_a_advanced", "advance-managed-a"],
+  ["inverse", "inverse"],
+]);
+class NativeStderr {
+  private readonly _prefix = new Uint8Array(32 * 1024);
+  private readonly _tail = new Uint8Array(32 * 1024);
+  private _prefixBytes = 0;
+  private _tailBytes = 0;
+  private _next = 0;
+  private _total = 0;
+  private _complete = false;
+  async drain(stream: ReadableStream<Uint8Array>): Promise<void> {
+    const reader = stream.getReader();
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          this._complete = true;
+          return;
+        }
+        this._append(chunk.value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  private _append(bytes: Uint8Array): void {
+    this._total += bytes.length;
+    const take = Math.min(bytes.length, this._prefix.length - this._prefixBytes);
+    this._prefix.set(bytes.subarray(0, take), this._prefixBytes);
+    this._prefixBytes += take;
+    const rest = bytes.subarray(take);
+    if (rest.length >= this._tail.length) {
+      this._tail.set(rest.subarray(rest.length - this._tail.length));
+      this._tailBytes = this._tail.length;
+      this._next = 0;
+    } else if (rest.length > 0) {
+      const first = Math.min(rest.length, this._tail.length - this._next);
+      this._tail.set(rest.subarray(0, first), this._next);
+      this._tail.set(rest.subarray(first), 0);
+      this._next = (this._next + rest.length) % this._tail.length;
+      this._tailBytes = Math.min(this._tail.length, this._tailBytes + rest.length);
+    }
+  }
+  snapshot() {
+    const tail =
+      this._tailBytes < this._tail.length
+        ? this._tail.subarray(0, this._tailBytes)
+        : Buffer.concat([this._tail.subarray(this._next), this._tail.subarray(0, this._next)]);
+    return {
+      scope: "process_lifetime",
+      complete: this._complete,
+      total_bytes: this._total,
+      retained_bytes: this._prefixBytes + this._tailBytes,
+      truncated: this._total > this._prefixBytes + this._tailBytes,
+      prefix_base64: Buffer.from(this._prefix.subarray(0, this._prefixBytes)).toString("base64"),
+      tail_base64: Buffer.from(tail).toString("base64"),
+    };
+  }
+}
 export function throwCleanupFailures(results: readonly PromiseSettledResult<unknown>[], primary?: Readonly<{ error: unknown }>): void {
   const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
   if (failures.length === 0) return;
@@ -362,14 +426,19 @@ export function throwCleanupFailures(results: readonly PromiseSettledResult<unkn
 export class NativePort {
   private _child;
   private _lines;
-  private _stderr: Promise<PromiseSettledResult<string>[]> | undefined;
+  private readonly _capture = new NativeStderr();
+  private readonly _workspace;
+  private _phase = "unknown";
+  private _stderr: Promise<PromiseSettledResult<void>[]> | undefined;
   private _closing: Promise<{ results: PromiseSettledResult<unknown>[]; exit: PromiseSettledResult<number> }> | undefined;
   private _id = 0;
   constructor(binary: string, workspace: string) {
+    this._workspace = workspace;
     this._child = Bun.spawn([binary], { cwd: workspace, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     this._lines = privateLines(this._child.stdout)[Symbol.asyncIterator]();
   }
   async call(command: unknown, expected: string, origin?: string): Promise<ObjectValue> {
+    this._phase = NATIVE_PHASES.get(expected) ?? "unknown";
     void this._readStderr();
     const raw = JSON.stringify(command);
     assert(Buffer.byteLength(raw) < PRIVATE_WIRE_MAX_BYTES);
@@ -421,17 +490,31 @@ export class NativePort {
     }
     throwCleanupFailures(results);
   }
-  private _readStderr(): Promise<PromiseSettledResult<string>[]> {
-    this._stderr ??= Promise.allSettled([new Response(this._child.stderr).text()]);
+  private _readStderr(): Promise<PromiseSettledResult<void>[]> {
+    this._stderr ??= Promise.allSettled([this._capture.drain(this._child.stderr)]);
     return this._stderr;
   }
   private async _close(graceful: boolean): Promise<{ results: PromiseSettledResult<unknown>[]; exit: PromiseSettledResult<number> }> {
+    const phase = this._phase;
+    const observedExitBeforeCleanup = this._child.exitCode !== null;
     const stderr = this._readStderr();
     const input = await Promise.allSettled([Promise.resolve().then(() => this._child.stdin.end())]);
     const termination = await Promise.allSettled([this._settle(graceful)]);
     const streams = await Promise.allSettled([this._lines.return(undefined), stderr]);
     const [exit] = await Promise.allSettled([this._child.exited]);
-    return { results: [...input, ...termination, ...streams, ...(await stderr), exit], exit };
+    const artifact = await Promise.allSettled([
+      privateFile(join(this._workspace, `native-${phase}.json`), {
+        v: 1,
+        purpose: "private_native_process_failure_evidence_only",
+        last_phase_at_cleanup: phase,
+        phase_causality: "not_established",
+        exit_code: exit.status === "fulfilled" ? exit.value : null,
+        signal_code: this._child.signalCode,
+        observed_exit_before_cleanup: observedExitBeforeCleanup,
+        stderr: this._capture.snapshot(),
+      }),
+    ]);
+    return { results: [...input, ...termination, ...streams, ...(await stderr), exit, ...artifact], exit };
   }
   private async _settle(graceful: boolean): Promise<void> {
     if (graceful && this._child.exitCode === null) {

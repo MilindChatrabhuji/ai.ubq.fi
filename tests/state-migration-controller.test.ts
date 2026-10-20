@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -401,3 +401,167 @@ test("the original whole-frame limit includes and permits its final requiredLF a
   assert.equal(new TextEncoder().encode(frames[0]).length, PRIVATE_WIRE_MAX_BYTES - 1);
   assert(frames[0].endsWith("{}"));
 }, 10_000);
+
+function diagnosticFixture(kind: "flood" | "signal" | "runtime-eof" | "unsafe") {
+  const directory = mkdtempSync(join(tmpdir(), "uos-native-diagnostic-"));
+  const binary = join(directory, "fixture");
+  const scripts = {
+    flood:
+      "IFS= read -r line\nprintf '%s\\n' '{\"operation\":\"ready\"}'\nprintf 'native-begin\\n' >&2\nprintf '%200000s' P >&2\nprintf '%200000s' T >&2\nprintf 'native-end\\n' >&2\nexit 7\n",
+    signal: "IFS= read -r line\nprintf '%s\\n' '{\"operation\":\"ready\"}'\nkill -TERM $$\n",
+    "runtime-eof": "IFS= read -r line\nprintf '%s\\n' '{\"operation\":\"candidate\"}'\nIFS= read -r line\nprintf 'fixed native failure\\n' >&2\nexit 7\n",
+    unsafe: "IFS= read -r line\nprintf '%s\\n' '{\"operation\":\"../../outside\"}'\nwhile IFS= read -r line; do :; done\nexit 0\n",
+  };
+  writeFileSync(binary, "#!/bin/sh\necho $$ > fixture.pid\n" + scripts[kind], { mode: 0o700 });
+  const port = new NativePort(binary, directory);
+  return { directory, port, pid: () => Number(readFileSync(join(directory, "fixture.pid"), "utf8").trim()) };
+}
+function diagnosticObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function nativeDiagnostic(directory: string, phase: "unknown" | "exercise-runtime" = "unknown") {
+  const path = join(directory, `native-${phase}.json`);
+  const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+  assert(diagnosticObject(value) && diagnosticObject(value.stderr));
+  const stderr = value.stderr;
+  assert(typeof stderr.prefix_base64 === "string" && typeof stderr.tail_base64 === "string");
+  assert(stderr.scope === "process_lifetime" && value.phase_causality === "not_established");
+  assert(value.purpose === "private_native_process_failure_evidence_only");
+  return { path, value, stderr, prefix: Buffer.from(stderr.prefix_base64, "base64"), tail: Buffer.from(stderr.tail_base64, "base64") };
+}
+test("private native diagnostics capture zero exit once across repeated closes without claiming effects", async () => {
+  const fixture = lifecycleFixture();
+  try {
+    await fixture.port.call({ v: 1 }, "ready");
+    assert(!processGone(fixture.pid()));
+    await Promise.all([fixture.port.close(true), fixture.port.close(), fixture.port.close(true)]);
+    const evidence = nativeDiagnostic(fixture.directory);
+    assert(evidence.value.exit_code === 0 && evidence.value.signal_code === null && evidence.value.observed_exit_before_cleanup === false);
+    assert(evidence.stderr.complete === true && evidence.stderr.total_bytes === 131072 && evidence.stderr.retained_bytes === 65536);
+    const before = readFileSync(evidence.path);
+    await fixture.port.close(true);
+    assert(readFileSync(evidence.path).equals(before), "Repeated cleanup must not change captured evidence.");
+    assert(readdirSync(fixture.directory).filter((name) => name.startsWith("native-")).length === 1);
+    assert((statSync(evidence.path).mode & 0o777) === 0o600);
+    assert(processGone(fixture.pid()));
+  } finally {
+    await Promise.allSettled([fixture.port.close()]);
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
+test("private native diagnostics retain exact bounded prefix/tail while draining a larger failing-child stderr", async () => {
+  const fixture = diagnosticFixture("flood");
+  try {
+    await fixture.port.call({ v: 1 }, "ready");
+    await assert.rejects(fixture.port.close(true), (error: unknown) => error instanceof assert.AssertionError && error.actual === 7);
+    const evidence = nativeDiagnostic(fixture.directory);
+    const expected = Buffer.from("native-begin\n" + " ".repeat(199999) + "P" + " ".repeat(199999) + "Tnative-end\n");
+    assert(evidence.value.exit_code === 7 && evidence.value.signal_code === null);
+    assert(evidence.stderr.complete === true && evidence.stderr.truncated === true);
+    assert(evidence.stderr.total_bytes === expected.length && evidence.stderr.retained_bytes === 65536);
+    assert(evidence.prefix.length === 32768 && evidence.prefix.equals(expected.subarray(0, 32768)), "Retained prefix bytes differ.");
+    assert(evidence.tail.length === 32768 && evidence.tail.equals(expected.subarray(-32768)), "Retained tail bytes differ.");
+    assert(processGone(fixture.pid()), "Truncation must not stop the drain or child settlement.");
+  } finally {
+    await Promise.allSettled([fixture.port.close()]);
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
+test("private native diagnostics record the actual signal of a signalled child", async () => {
+  const fixture = diagnosticFixture("signal");
+  try {
+    await fixture.port.call({ v: 1 }, "ready");
+    await assert.rejects(fixture.port.close(true));
+    const evidence = nativeDiagnostic(fixture.directory);
+    assert(evidence.value.signal_code === "SIGTERM" && evidence.value.exit_code === 143);
+    assert(evidence.stderr.complete === true && evidence.stderr.total_bytes === 0 && evidence.stderr.retained_bytes === 0);
+    assert(processGone(fixture.pid()));
+  } finally {
+    await Promise.allSettled([fixture.port.close()]);
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
+test("private native evidence labels the last fixed phase without attributing lifetime stderr to its cause", async () => {
+  const fixture = diagnosticFixture("runtime-eof");
+  try {
+    await fixture.port.call({ v: 1 }, "candidate");
+    await assert.rejects(fixture.port.call({ v: 1, operation: "exercise_runtime" }, "runtime_exercised"), /closed before its phase receipt/);
+    await fixture.port.close();
+    const evidence = nativeDiagnostic(fixture.directory, "exercise-runtime");
+    assert(evidence.value.last_phase_at_cleanup === "exercise-runtime" && evidence.value.exit_code === 7);
+    assert(evidence.stderr.complete === true && evidence.stderr.truncated === false);
+    assert(Buffer.concat([evidence.prefix, evidence.tail]).equals(Buffer.from("fixed native failure\n")), "Exact retained stderr bytes differ.");
+    assert(processGone(fixture.pid()));
+  } finally {
+    await Promise.allSettled([fixture.port.close()]);
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
+test("unknown native phase values use a fixed private filename under the existing task workspace", async () => {
+  const fixture = diagnosticFixture("unsafe");
+  try {
+    await fixture.port.call({ v: 1 }, "../../outside");
+    await fixture.port.close(true);
+    const evidence = nativeDiagnostic(fixture.directory);
+    assert(evidence.value.last_phase_at_cleanup === "unknown");
+    assert(
+      readdirSync(fixture.directory)
+        .filter((name) => name.startsWith("native-"))
+        .join() === "native-unknown.json"
+    );
+    assert((statSync(evidence.path).mode & 0o777) === 0o600);
+    assert(processGone(fixture.pid()));
+  } finally {
+    await Promise.allSettled([fixture.port.close()]);
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
+test("private native capture collision preserves existing bytes while settling the actual child", async () => {
+  const fixture = lifecycleFixture();
+  const path = join(fixture.directory, "native-unknown.json");
+  const before = Buffer.from("existing private diagnostic evidence\n");
+  writeFileSync(path, before, { mode: 0o600, flag: "wx" });
+  try {
+    await fixture.port.call({ v: 1 }, "ready");
+    await assert.rejects(fixture.port.close(true), (error: unknown) => diagnosticObject(error) && error.code === "EEXIST");
+    assert(readFileSync(path).equals(before), "Existing diagnostic evidence must not be overwritten.");
+    assert(processGone(fixture.pid()), "Capture failure must not prevent process settlement.");
+  } finally {
+    await Promise.allSettled([fixture.port.close()]);
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
+test("a real native phase error stays first and causal when private capture also fails", async () => {
+  const fixture = diagnosticFixture("runtime-eof");
+  const path = join(fixture.directory, "native-exercise-runtime.json");
+  const before = Buffer.from("existing private diagnostic evidence\n");
+  writeFileSync(path, before, { mode: 0o600, flag: "wx" });
+  try {
+    await fixture.port.call({ v: 1 }, "candidate");
+    let primary: unknown;
+    try {
+      await fixture.port.call({ v: 1, operation: "exercise_runtime" }, "runtime_exercised");
+      assert.fail("The fixed native failure must not return a phase receipt.");
+    } catch (error) {
+      primary = error;
+    }
+    assert(primary instanceof assert.AssertionError && primary.message.includes("closed before its phase receipt"));
+    const cleanup = await Promise.allSettled([fixture.port.close()]);
+    assert.throws(
+      () => {
+        throwCleanupFailures(cleanup, { error: primary });
+      },
+      (error: unknown) =>
+        error instanceof AggregateError &&
+        error.cause === primary &&
+        error.errors[0] === primary &&
+        diagnosticObject(error.errors[1]) &&
+        error.errors[1].code === "EEXIST"
+    );
+    assert(readFileSync(path).equals(before));
+    assert(processGone(fixture.pid()));
+  } finally {
+    await Promise.allSettled([fixture.port.close()]);
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
