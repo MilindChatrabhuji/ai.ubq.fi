@@ -117,13 +117,17 @@ jobs:
           import re
           from pathlib import Path
           source = Path("rust/crates/gateway-native/src/existing_account_import/acl_inspector.rs").read_text()
-          required = re.findall(r'^const LS_SHA256: &str = "([0-9a-f]{64})";$', source, re.MULTILINE)
-          if len(required) != 1:
-              raise SystemExit("Cannot resolve the one current source-pinned Darwin ls dependency")
+          blocks = re.findall(r'^const LS_SHA256S: \[&str; 2\] = \[(.*?)^\];$', source, re.MULTILINE | re.DOTALL)
+          if len(blocks) != 1:
+              raise SystemExit("Cannot resolve the one current source-pinned Darwin ls identity set")
+          required = re.findall(r'"([0-9a-f]{64})"', blocks[0])
+          literal_set = ",".join(f'"{value}"' for value in required) + ","
+          if len(required) != 2 or len(set(required)) != 2 or re.sub(r'\s+', '', blocks[0]) != literal_set:
+              raise SystemExit("Darwin ls identities must be exactly two distinct source-literal SHA256 values")
           actual = hashlib.sha256(Path("/bin/ls").read_bytes()).hexdigest()
           print(f"Darwin inspector preflight: os={platform.system()}-{platform.mac_ver()[0]} kernel={os.uname().release} arch={os.uname().machine}", flush=True)
-          print(f"fixed_path=/bin/ls required_sha256={required[0]} actual_sha256={actual}", flush=True)
-          if actual != required[0]:
+          print(f"fixed_path=/bin/ls required_sha256s={','.join(required)} actual_sha256={actual}", flush=True)
+          if actual not in required:
               raise SystemExit("Runner /bin/ls is incompatible with the current source-pinned Darwin inspector dependency; no bootstrap or compilation was attempted")
           PYTHON
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6

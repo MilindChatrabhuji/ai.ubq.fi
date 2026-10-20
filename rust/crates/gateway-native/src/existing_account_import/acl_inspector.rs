@@ -15,7 +15,10 @@ use std::{
     time::Duration,
 };
 #[cfg(target_os = "macos")]
-const LS_SHA256: &str = "a1cb6fd856f9414ada4cc9682f137c343261d777b8374df1abac7a931fb66f7a";
+const LS_SHA256S: [&str; 2] = [
+    "a1cb6fd856f9414ada4cc9682f137c343261d777b8374df1abac7a931fb66f7a",
+    "24752389e1d97c9555dd153b644902fadd460dfbe1a166251876c67bbacb0810",
+];
 #[cfg(target_os = "macos")]
 const OUTPUT_LIMIT: usize = 1024;
 #[cfg(target_os = "macos")]
@@ -28,7 +31,14 @@ pub fn entry() -> Result<(), GatewayError> {
     }
     #[cfg(target_os = "macos")]
     {
-        let tool = PinnedExecutable::verify(std::path::Path::new("/bin/ls"), LS_SHA256)?;
+        // Each reviewed identity still goes through the complete descriptor,
+        // NOFOLLOW, metadata and exact-hash verifier; no host/version input grants trust.
+        let tool = LS_SHA256S
+            .iter()
+            .find_map(|digest| {
+                PinnedExecutable::verify(std::path::Path::new("/bin/ls"), digest).ok()
+            })
+            .ok_or_else(fail)?;
         if tool.facts.uid != 0 {
             return Err(fail());
         }
@@ -218,4 +228,28 @@ pub(super) fn parse(output: &[u8], facts: &Facts) -> Result<(), GatewayError> {
         return Err(fail());
     }
     Ok(())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod pin_tests {
+    use super::LS_SHA256S;
+    #[test]
+    fn only_two_exact_reviewed_readonly_os_tool_digests_are_eligible() {
+        let local = "a1cb6fd856f9414ada4cc9682f137c343261d777b8374df1abac7a931fb66f7a";
+        let hosted = "24752389e1d97c9555dd153b644902fadd460dfbe1a166251876c67bbacb0810";
+        assert_eq!(LS_SHA256S, [local, hosted]);
+        let accepts = |digest: &str| LS_SHA256S.contains(&digest);
+        assert!(accepts(local));
+        assert!(accepts(hosted));
+        let mut one_byte_wrong = hosted.to_owned();
+        one_byte_wrong.replace_range(63..64, "1");
+        assert!(!accepts(&one_byte_wrong));
+        assert!(!accepts(
+            "3be943172b502b245545fbfd57706c210fabb9ee058829c5bf00c3f67c8fb474"
+        ));
+        assert!(!accepts(&hosted[..63]));
+        assert!(!accepts(&format!("{hosted}0")));
+        assert!(!accepts(&hosted.to_ascii_uppercase()));
+        assert!(!accepts(&format!(" {hosted}")));
+    }
 }
