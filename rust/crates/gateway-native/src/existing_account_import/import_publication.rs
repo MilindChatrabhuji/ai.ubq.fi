@@ -11,7 +11,6 @@ pub(super) struct PreparedImportPublication<'a> {
     original: &'a AuthenticatedNativeImport,
     command: ImportPublicationCommandData,
     body: Vec<u8>,
-    credential_version: String,
 }
 impl<'a> PreparedImportPublication<'a> {
     pub(super) fn from_durable(
@@ -46,12 +45,11 @@ impl<'a> PreparedImportPublication<'a> {
         custody.bind_publication(&sha256_hex(&body))?;
         custody.check_live(store, proof, original_body, context)?;
         durability::recheck(store, receipt)?;
-        Ok(Self { original: proof, command, body, credential_version: access.credential_version.0 })
+        Ok(Self { original: proof, command, body })
     }
     pub(super) fn command(&self) -> &ImportPublicationCommandData { &self.command }
     pub(super) fn body(&self) -> &[u8] { &self.body }
     pub(super) fn request_digest(&self) -> String { sha256_hex(&self.body) }
-    pub(super) fn credential_version(&self) -> &str { &self.credential_version }
 }
 /// Actual matching signed network reply only; not a native durability or final completion proof.
 pub(super) struct AuthenticatedImportPublicationReply {
@@ -61,25 +59,6 @@ pub(super) struct AuthenticatedImportPublicationReply {
 impl AuthenticatedImportPublicationReply {
     pub(super) fn publication(&self) -> &NativeImportPublication { &self.publication }
     pub(super) fn request_digest(&self) -> &str { &self.request_digest }
-}
-pub(super) fn validate_reply(command: &ImportPublicationCommandData, credential_version: &str,
-    reply: &NativeImportPublication) -> Result<(), GatewayError> {
-    command.validate()?; reply.publication.validate()?;
-    let p = &reply.publication;
-    if reply.v != 1 || reply.operation_id != command.operation_id || reply.action_ref != command.action_ref
-        || p.operation_id != command.operation_id || p.claim_ref != command.claim_ref
-        || p.publication_revision != command.publication_revision || p.native_receipt_ref != command.native_receipt_ref
-        || p.native_source_generation != command.native_source_generation || p.access_generation != command.access_generation
-        || p.credential_version != credential_version || p.publication_request_digest != sha256_hex(&command.bytes()?)
-        || p.source_revision != command.publication_revision || p.normalized_revision != command.publication_revision
-        || p.catalog_disposition != command.catalog.disposition() { return Err(unavailable()); }
-    match &command.catalog {
-        ImportCatalogData::Normalized { .. } if [p.catalog_revision.as_deref(), p.runtime_revision.as_deref(),
-            p.auth_generation_revision.as_deref(), p.paid_control_config_revision.as_deref()]
-            .iter().any(|r| *r != Some(command.publication_revision.as_str())) => Err(unavailable()),
-        ImportCatalogData::AuthenticatedLimited { .. } if p.catalog_revision.is_none() => Err(unavailable()),
-        _ => Ok(()),
-    }
 }
 
 use crate::private_https::PrivateHttps;
@@ -110,14 +89,14 @@ impl ImportPublicationHttp {
         }
         custody.check_live(store, proof, context.original_body(), context)?;
         durability::recheck(store, receipt)?;
-        let reply = self.exchange_data(prepared.command(), prepared.credential_version(), context.deadline())?;
+        let reply = self.exchange_data(prepared.command(), context.deadline())?;
         context.check_document(proof, proof.metadata(), context.original_body())?;
         durability::recheck(store, receipt)?;
         // Current authoritative terminal and original private claim are additionally
         // required by the final completion producer. This reply alone is not it.
         Ok(reply)
     }
-    fn exchange_data(&self, command: &ImportPublicationCommandData, credential_version: &str, deadline: Instant)
+    fn exchange_data(&self, command: &ImportPublicationCommandData, deadline: Instant)
         -> Result<AuthenticatedImportPublicationReply, GatewayError> {
         let body = command.bytes()?;
         let mut random = [0u8; 32]; getrandom::fill(&mut random).map_err(|_| unavailable())?;
@@ -130,8 +109,11 @@ impl ImportPublicationHttp {
         if signatures.len() != 1 { return Err(unavailable()); }
         self.identity.verify_publication_response(&nonce, &body, response.status, &response.body, &signatures[0].1).map_err(|_| unavailable())?;
         if response.status != 200 { return Err(unavailable()); }
-        let publication: NativeImportPublication = serde_json::from_slice(&response.body).map_err(|_| unavailable())?;
-        validate_reply(command, credential_version, &publication)?;
+        let publication = NativeImportPublication::parse_for(&response.body, &body)?;
         Ok(AuthenticatedImportPublicationReply { publication, request_digest: sha256_hex(&body) })
     }
 }
+
+#[cfg(test)]
+#[path = "import_publication_tests.rs"]
+mod tests;

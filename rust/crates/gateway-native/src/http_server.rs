@@ -477,6 +477,12 @@ enum IncomingRequest {
     Legacy(HttpRequest),
     Import(crate::import_ingress::ImportHead),
 }
+pub(crate) fn read_import_head(stream: &mut TcpStream) -> Result<crate::import_ingress::ImportHead, GatewayError> {
+    match read_request(stream)? {
+        IncomingRequest::Import(head) => Ok(head),
+        IncomingRequest::Legacy(_) => Err(invalid()),
+    }
+}
 fn read_request(stream: &mut TcpStream) -> Result<IncomingRequest, GatewayError> {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut bytes = Vec::new();

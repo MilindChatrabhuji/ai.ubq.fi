@@ -146,6 +146,18 @@ pub async fn dispatch_import<
     check_original_document(proof, metadata, body, original)?;
     authority.recheck_import(proof).await?;
     check_original_document(proof, metadata, body, original)?;
+    let context = decode_context(proof, metadata, body, original)?;
+    handler.import_document(proof, metadata, body, &context)
+}
+/// Both fixed local/remote receivers reach this one original-body decoder only
+/// after their actual authority admission and finish-current exchange.
+pub(crate) fn decode_context<'a>(
+    proof: &'a AuthenticatedNativeImport,
+    metadata: &NativeImportMetadata,
+    body: &'a [u8],
+    original: &'a NativeControlContext<'a>,
+) -> Result<NativeImportContext<'a>, GatewayError> {
+    check_original_document(proof, metadata, body, original)?;
     if proof.target().kind() != NativeImportKind::CodexAuth {
         return Err(GatewayError::unavailable(
             "Native profile import is unavailable",
@@ -155,13 +167,9 @@ pub async fn dispatch_import<
     let auth = NativeAuthImportData {
         body: import_body::decode_auth(body, None).map_err(|_| auth_body_error())?,
     };
-    let context = NativeImportContext {
-        original,
-        proof,
-        auth,
-    };
+    let context = NativeImportContext { original, proof, auth };
     context.check_document(proof, metadata, body)?;
-    handler.import_document(proof, metadata, body, &context)
+    Ok(context)
 }
 
 #[cfg(all(test, unix))]

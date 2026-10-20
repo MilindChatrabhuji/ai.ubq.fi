@@ -1,5 +1,5 @@
 //! Safe fixed-role Child/bootstrap channel. Neither an accepted socket nor JSON is custody.
-use super::exclusive_owner::PinnedExecutable;
+use super::{exclusive_owner::PinnedExecutable, import_endpoints::{ImportEndpointData, ResolvedImportEndpoints}};
 use crate::import_custody_protocol::{
     self as wire, Frame, Header, HeaderView, Stopped, unavailable,
 };
@@ -15,7 +15,6 @@ use std::{
     time::{Duration, Instant},
 };
 const SANDBOX_SHA: &str = "e3d7a792c58a5d3783d2f7274c82d70062393830d8cb1ded713ca554a470bd2f";
-const BOOTSTRAP_MAX: usize = 512;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Bootstrap {
@@ -25,6 +24,7 @@ pub(super) struct Bootstrap {
     client_peer: SocketAddr,
     custody_local: SocketAddr,
     custody_peer: SocketAddr,
+    endpoints: ImportEndpointData,
 }
 impl Bootstrap {
     fn validate(&self) -> Result<(), GatewayError> {
@@ -42,8 +42,16 @@ impl Bootstrap {
         {
             return Err(unavailable());
         }
-        Ok(())
+        self.endpoints.validate()
     }
+}
+fn bootstrap_max_bytes() -> usize {
+    use std::net::{Ipv6Addr, SocketAddrV6};
+    let local = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, u16::MAX, u32::MAX, u32::MAX));
+    let remote = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0x7777,0x7777,0x7777,0x7777,0x7777,0x7777,0x7777,0x7777), u16::MAX, u32::MAX, u32::MAX));
+    serde_json::to_vec(&Bootstrap { v: 1, session_ref: "f".repeat(64), client_local: local, client_peer: local,
+        custody_local: local, custody_peer: local, endpoints: ImportEndpointData { authority: remote, models: remote, oauth: remote } })
+        .expect("Finite fixed TCP bootstrap shape").len()
 }
 /// A command obtained only by a live actual Child's retained opposite channel.
 /// It is deliberately not a wire-deserializable authorization.
@@ -94,10 +102,13 @@ impl OwnedImportChildChannel {
         daemon_config: &[u8],
         owner_root: &Path,
         replay_directory: &Path,
+        endpoints: &ResolvedImportEndpoints,
+        authority_origin: &str,
     ) -> Result<Self, GatewayError> {
         if !cfg!(target_os = "macos") || daemon_config.is_empty() || daemon_config.len() > 65_536 {
             return Err(unavailable());
         }
+        endpoints.require_origin(authority_origin)?;
         let actor = PinnedExecutable::verify(binary, digest)?;
         let sandbox = PinnedExecutable::verify(Path::new("/usr/bin/sandbox-exec"), SANDBOX_SHA)?;
         let listener =
@@ -113,6 +124,7 @@ impl OwnedImportChildChannel {
             client_peer: client.peer_addr().map_err(|_| unavailable())?,
             custody_local: actor_socket.local_addr().map_err(|_| unavailable())?,
             custody_peer: actor_socket.peer_addr().map_err(|_| unavailable())?,
+            endpoints: endpoints.data()?,
         };
         boot.validate()?;
         let profile = crate::connector_policy::import_actor(
@@ -123,6 +135,7 @@ impl OwnedImportChildChannel {
             boot.client_peer,
             boot.custody_local,
             boot.custody_peer,
+            &boot.endpoints.addresses(),
         )
         .map_err(|_| unavailable())?;
         client.set_nonblocking(false).map_err(|_| unavailable())?;
@@ -163,7 +176,7 @@ impl OwnedImportChildChannel {
             challenge: None,
         };
         let bootstrap = serde_json::to_vec(&this.boot).map_err(|_| unavailable())?;
-        if bootstrap.len() > BOOTSTRAP_MAX {
+        if bootstrap.len() > bootstrap_max_bytes() {
             return Err(unavailable());
         }
         let input = this.input.as_mut().ok_or_else(unavailable)?;
@@ -316,6 +329,7 @@ pub(super) struct ActorBootstrap {
     pub(super) config: Vec<u8>,
     pub(super) client: TcpStream,
     pub(super) custody: InheritedCustodyChannel,
+    pub(super) endpoints: ImportEndpointData,
 }
 impl ActorBootstrap {
     // Only the fixed parameterless import role calls this, before any thread or FD clone.
@@ -332,7 +346,7 @@ impl ActorBootstrap {
         }
         let mut input = stdin.lock();
         let config = bootstrap_part(&mut input, 65_536)?;
-        let boot: Bootstrap = serde_json::from_slice(&bootstrap_part(&mut input, BOOTSTRAP_MAX)?)
+        let boot: Bootstrap = serde_json::from_slice(&bootstrap_part(&mut input, bootstrap_max_bytes())?)
             .map_err(|_| unavailable())?;
         boot.validate()?;
         let stdout = std::io::stdout();
@@ -366,6 +380,7 @@ impl ActorBootstrap {
         Ok(Self {
             config,
             client,
+            endpoints: boot.endpoints,
             custody: InheritedCustodyChannel {
                 socket,
                 session_ref: boot.session_ref,
