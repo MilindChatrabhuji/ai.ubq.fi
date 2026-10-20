@@ -115,6 +115,117 @@ fn parameter_commas(s: &[u16]) -> std::collections::BTreeSet<usize> {
     }
     result
 }
+// The source callback exception reads at most 512 JavaScript UTF16 code units.
+const CALLBACK_BODY_LIMIT: usize = 512;
+fn callback_id_end(s: &[u16], start: usize) -> Option<usize> {
+    let first = *s.get(start)?;
+    if !(first <= 127 && (first as u8).is_ascii_alphabetic() || first == 95 || first == 36) {
+        return None;
+    }
+    let mut end = start + 1;
+    while s.get(end).is_some_and(|c| ascii(*c) || *c == 36) {
+        end += 1;
+    }
+    Some(end)
+}
+fn callback_identifier(s: &[u16]) -> bool {
+    callback_id_end(s, 0) == Some(s.len())
+}
+fn callback_trim(mut s: &[u16]) -> &[u16] {
+    while s.first().is_some_and(|c| white(*c)) {
+        s = &s[1..];
+    }
+    while s.last().is_some_and(|c| white(*c)) {
+        s = &s[..s.len() - 1];
+    }
+    s
+}
+fn callback_tail(s: &[u16], at: usize) -> bool {
+    s.get(skip(s, at)).is_some_and(|c| [44, 41, 59].contains(c))
+}
+fn callback_declaration(s: &[u16]) -> &[u16] {
+    for word in ["const", "let", "var"] {
+        if !starts(s, 0, word) || !s.get(word.len()).is_some_and(|c| white(*c)) {
+            continue;
+        }
+        let Some(end) = callback_id_end(s, skip(s, word.len())) else {
+            return s;
+        };
+        let equals = skip(s, end);
+        if s.get(equals) == Some(&61) {
+            return &s[skip(s, equals + 1)..];
+        }
+    }
+    s
+}
+/// Only the same positively recognized source JS callback bodies may bypass masking.
+fn ordinary_callback_body(s: &[u16], key: Key) -> bool {
+    let parameter = callback_trim(&s[key.start..key.separator]);
+    if !callback_identifier(parameter) {
+        return false;
+    }
+    let value = skip(s, key.separator + 2);
+    let body = &s[value..s.len().min(value.saturating_add(CALLBACK_BODY_LIMIT))];
+    if let Some(first_end) = callback_id_end(body, 0) {
+        let mut at = first_end;
+        let mut called = false;
+        while body.get(at) == Some(&46) {
+            let Some(end) = callback_id_end(body, at + 1) else {
+                break;
+            };
+            at = end;
+            if starts(body, at, "()") {
+                called = true;
+                at += 2;
+            }
+            if callback_tail(body, at) {
+                return body[..first_end] == *parameter && called;
+            }
+        }
+    }
+    if body.first() != Some(&123) {
+        return false;
+    }
+    let Some(close) = body.iter().position(|c| *c == 125) else {
+        return false;
+    };
+    if !callback_tail(body, close + 1) {
+        return false;
+    }
+    let statements = callback_trim(&body[1..close]);
+    if statements.last() != Some(&59) {
+        return false;
+    }
+    let mut uses_parameter = false;
+    for statement in statements[..statements.len() - 1].split(|c| *c == 59) {
+        let call = callback_declaration(callback_trim(statement));
+        let Some(open) = call.iter().position(|c| *c == 40) else {
+            return false;
+        };
+        if open == 0
+            || call.last() != Some(&41)
+            || call[open + 1..call.len() - 1]
+                .iter()
+                .any(|c| [40, 41].contains(c))
+        {
+            return false;
+        }
+        if !call[..open]
+            .split(|c| *c == 46)
+            .all(|part| callback_identifier(callback_trim(part)))
+        {
+            return false;
+        }
+        for argument in call[open + 1..call.len() - 1].split(|c| *c == 44) {
+            let argument = callback_trim(argument);
+            if !callback_identifier(argument) {
+                return false;
+            }
+            uses_parameter |= argument == parameter;
+        }
+    }
+    uses_parameter
+}
 fn arrow_parameter(s: &[u16], key: Key, commas: &std::collections::BTreeSet<usize>) -> bool {
     if key.quoted || !starts(s, key.separator, "=>") {
         return false;
@@ -123,7 +234,9 @@ fn arrow_parameter(s: &[u16], key: Key, commas: &std::collections::BTreeSet<usiz
     while before > 0 && white(s[before - 1]) {
         before -= 1;
     }
-    before > 0 && (s[before - 1] == 40 || commas.contains(&(before - 1)))
+    before > 0
+        && (s[before - 1] == 40 || commas.contains(&(before - 1)))
+        && ordinary_callback_body(s, key)
 }
 fn keys(s: &[u16], segments: bool, filter_arrow: bool) -> Vec<Key> {
     let mut out = Vec::new();

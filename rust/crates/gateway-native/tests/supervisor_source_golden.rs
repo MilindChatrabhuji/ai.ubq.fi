@@ -36,6 +36,18 @@ fn source_redaction_golden_preserves_text_counts_and_split_records() {
             ));
         }
     }
+    let repeated = &data["redactionRepeated"];
+    let entry = repeated["entry"].as_str().unwrap();
+    let count = repeated["count"].as_u64().unwrap() as usize;
+    let input = format!("configure({}); done", entry.repeat(count));
+    let actual = redaction::redact(&input);
+    let actual = json!({"text":actual.text,"redactions":actual.redactions});
+    if actual != repeated["expected"] {
+        failures.push(format!(
+            "bounded repeated source redaction mismatch: expected={} actual={actual}",
+            repeated["expected"]
+        ));
+    }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 #[test]
