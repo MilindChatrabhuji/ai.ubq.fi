@@ -12,7 +12,9 @@ use gateway_auth::native_import::{
 use gateway_core::{GatewayError, state::AuthorityStore};
 use serde::{Deserialize, Serialize};
 mod action;
+mod owner_selection;
 use action::ImportActionRow;
+pub(super) use owner_selection::read as owner_selection;
 mod publication;
 pub use publication::{
     NativeImportPublication, NativeImportPublicationDisposition, PreparedNativeImportPublication,

@@ -364,3 +364,6 @@ mod catalog_seed;
 
 #[path = "import_auth_timestamp.rs"]
 mod auth_timestamp;
+
+#[path = "import_owner_selection.rs"]
+mod owner_selection;

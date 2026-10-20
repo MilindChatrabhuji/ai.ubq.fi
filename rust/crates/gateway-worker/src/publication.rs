@@ -43,6 +43,15 @@ pub async fn handle(
         )
         .await;
     }
+    if serde_json::from_slice::<Operation>(&raw_body)
+        .ok()
+        .is_some_and(|value| value.operation == "codex_auth_import_publish")
+    {
+        return crate::native_authority::import_publication(
+            &request, env, native, &store, receiver, &raw_body,
+        )
+        .await;
+    }
     let receiver = receiver.ok_or_else(|| {
         GatewayError::unavailable(
             "The native publication receiver is not configured.",
