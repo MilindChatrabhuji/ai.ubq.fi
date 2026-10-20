@@ -44,6 +44,38 @@ pub(super) async fn completion_metadata<
     publication: &ImportPublicationDataV1,
 ) -> Result<NativeImportCompletionProjection, GatewayError> {
     verify(control, tx, row, publication).await?;
+    // Match Worker storage::prepare_transition's persisted-row invariant, not
+    // a new scalar cap. Matching immutable revision/expiry fences this raw
+    // reread to the same cached row; the transaction still commits its checks.
+    for key in [codex_source_pool_key(), catalog_store::codex_snapshot_key()] {
+        let record = control
+            .authority
+            .store
+            .read(&key)
+            .await?
+            .ok_or_else(unavailable)?;
+        if tx.revision(&key).as_deref() != Some(record.revision.as_str())
+            || tx.expiry(&key) != record.expires_at_ms
+        {
+            return Err(unavailable());
+        }
+        record.validate_version()?;
+        let sort_key = gateway_core::tuple_key::TupleKey::from_record_key(&key)?;
+        let payload = serde_json::to_string(&record.value).map_err(|_| unavailable())?;
+        let encoding = serde_json::to_value(record.value_encoding).map_err(|_| unavailable())?;
+        let encoding = encoding.as_str().ok_or_else(unavailable)?;
+        let bytes = key
+            .0
+            .len()
+            .checked_add(sort_key.sort_bytes().len())
+            .and_then(|size| size.checked_add(record.revision.len()))
+            .and_then(|size| size.checked_add(payload.len()))
+            .and_then(|size| size.checked_add(encoding.len()))
+            .and_then(|size| size.checked_add(48));
+        if bytes.is_none_or(|size| size > 2_000_000) {
+            return Err(unavailable());
+        }
+    }
     let source = tx
         .read(&codex_source_pool_key())
         .await?

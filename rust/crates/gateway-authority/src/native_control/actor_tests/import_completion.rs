@@ -213,3 +213,48 @@ fn completion_foreign_source_catalog_wrong_slot_and_selected_account_refuse_read
         }
     });
 }
+
+#[test]
+fn completion_oversized_or_revision_changed_consumed_rows_refuse_readonly() {
+    run(async {
+        for source in [true, false] {
+            for oversized in [true, false] {
+                let f = Fixture::new();
+                f.catalog_seed();
+                let started = publish(&f, false).await;
+                let key = if source {
+                    codex_source_pool_key()
+                } else {
+                    catalog_store::codex_snapshot_key()
+                };
+                let mut replacement = f.store.rows.lock().unwrap().get(&key.0).unwrap().clone();
+                if oversized {
+                    // Shape-readable but noncanonical stored state: Worker
+                    // prepare_transition could never persist this 2MB+ row.
+                    replacement.value["oversized_legacy_payload"] = json!("x".repeat(2_000_000));
+                    f.store
+                        .rows
+                        .lock()
+                        .unwrap()
+                        .insert(key.0.clone(), replacement.clone());
+                } else {
+                    replacement.revision = "changed-after-cached-read".into();
+                    f.store.race(key.clone(), Some(replacement.clone()));
+                }
+                let mut expected = f.snapshot();
+                if !oversized {
+                    expected[&key.0] = serde_json::to_value(replacement).unwrap();
+                }
+                let tokens = f.authority.tokens.0.load(Ordering::SeqCst);
+                let nonces = f.replay.calls.load(Ordering::SeqCst);
+                assert!(
+                    f.control()
+                        .completion_metadata_fixture(&started.action_ref)
+                        .await
+                        .is_err()
+                );
+                f.assert_readonly(&expected, tokens, nonces);
+            }
+        }
+    });
+}
