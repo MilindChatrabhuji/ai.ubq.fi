@@ -143,7 +143,7 @@ pub(super) async fn initialize(
     let source_key = codex_source_pool_key();
     let source_rev = "fixture-import-source-v1";
     let account_id = "fixture-import-account";
-    let account = CodexSourceAccount {
+    let mut account = CodexSourceAccount {
         account_id: account_id.into(),
         access_token: Secret::new("fixture-import-old-access".into()),
         refresh_token: Secret::new(String::new()),
@@ -153,10 +153,18 @@ pub(super) async fn initialize(
             generation_hash: sha256_hex(b"physical-before-import"),
             native_refreshed_at: None,
             external_user_id: None,
-            managed_source: None,
+            managed_source: Some(gateway_auth::provider_credentials::ManagedNativeSource {
+                v: gateway_auth::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
+                generation_hash: sha256_hex(b"physical-before-import"),
+            }),
         }),
     };
     let credential = account.identity();
+    account
+        .native_owner
+        .as_mut()
+        .ok_or_else(setup::invalid)?
+        .generation_hash = credential.native_generation_hash.clone();
     let pool = CodexSourcePool {
         accounts: vec![account],
         updated_at_ms: time as f64,
