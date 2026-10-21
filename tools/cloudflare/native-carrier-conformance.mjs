@@ -1,14 +1,16 @@
 // Controlled physical TLS endpoints exercise the shipping Rust HTTPS carrier.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash, createHmac, createPrivateKey, X509Certificate } from "node:crypto";
 import { createServer } from "node:https";
 import { connect } from "node:net";
 import { lookup } from "node:dns/promises";
+import { writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadWebSocketModule } from "../../src/runtime/http.ts";
-import { testNetworkArgv } from "../../scripts/test-network.ts";
+import { systemTool, testNetworkArgv } from "../../scripts/test-network.ts";
 
 const childMode = process.argv[2] === "--fixture-child";
 const [sha, build, binary, schema, parent, controlAddress] = process.argv.slice(childMode ? 3 : 2);
@@ -18,6 +20,9 @@ const root = process.cwd();
 const q = JSON.stringify;
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const pause = (ms) => Bun.sleep(ms);
+function processIdentity(pid) {
+  return execFileSync(systemTool("ps"), ["-p", String(pid), "-o", "pid=,ppid=,pgid=,uid=,lstart=,comm="], { encoding: "utf8" }).trim();
+}
 async function tcp(address, denied = false) {
   await new Promise((done, reject) => {
     const socket = connect({ host: address, port: 443 });
@@ -42,6 +47,7 @@ async function tcp(address, denied = false) {
 async function outer() {
   await mkdir(resolve(parent), { recursive: true });
   const workspace = await mkdtemp(join(resolve(parent), "run-"));
+  await writeFile(join(workspace, "outer-owner.json"), JSON.stringify({ identity: processIdentity(process.pid), script: fileURLToPath(import.meta.url) }));
   const address = (await lookup("developers.cloudflare.com", { family: 4 })).address;
   await tcp(address);
   const command = testNetworkArgv([
@@ -63,6 +69,7 @@ async function outer() {
     stdout: "pipe",
     stderr: "pipe",
   });
+  await writeFile(join(workspace, "supervisor-owner.json"), JSON.stringify({ pid: task.pid, identity: processIdentity(task.pid) }));
   const stop = () => {
     if (task.exitCode === null) task.kill("SIGTERM");
   };
@@ -86,6 +93,14 @@ async function outer() {
 async function run() {
   await tcp(controlAddress, true);
   const workspace = resolve(parent);
+  const owner = {
+    identity: processIdentity(process.pid),
+    uid: process.getuid(),
+    script: fileURLToPath(import.meta.url),
+    script_sha256: hash(await readFile(fileURLToPath(import.meta.url))),
+    workerd_binary: resolve(binary),
+    workerd_sha256: hash(await readFile(resolve(binary))),
+  };
   await mkdir(join(workspace, "state"));
   const fixture = resolve("rust/crates/gateway-native/tests/fixtures/native-tls");
   const ca = new X509Certificate(await readFile(join(fixture, "ca.der"))).toString();
@@ -184,10 +199,16 @@ async function run() {
   });
   wss.on("connection", (socket) => {
     events.push({ kind: "native_websocket_open" });
+    checkpoint("peer_websocket_open");
     socket.on("message", (data, binaryMessage) => socket.send(data, { binary: binaryMessage }));
-    socket.once("close", () => events.push({ kind: "native_websocket_closed" }));
+    socket.once("close", () => {
+      events.push({ kind: "native_websocket_closed" });
+      checkpoint("peer_websocket_closed");
+    });
   });
   server.on("upgrade", (request, socket, head) => {
+    events.push({ kind: "native_websocket_upgrade", method: request.method, path: request.url });
+    checkpoint("peer_upgrade_request");
     try {
       assert.equal(request.method, "GET");
       assert.equal(request.url, "/v1/native/live");
@@ -208,6 +229,7 @@ async function run() {
     return port;
   };
   let task;
+  let workerdIdentity = null;
   let sequence = 0;
   async function start(trust) {
     const label = `${++sequence}-${trust}`;
@@ -240,6 +262,8 @@ const config :Workerd.Config = (services = [
         stderr: Bun.file(join(workspace, `workerd-${label}.stderr.log`)),
       }
     );
+    workerdIdentity = processIdentity(task.pid);
+    checkpoint("workerd_spawned");
     const origin = `http://127.0.0.1:${port}`;
     const publicOrigin = `http://127.0.0.1:${publicPort}`;
     const deadline = Date.now() + 10_000;
@@ -269,6 +293,28 @@ const config :Workerd.Config = (services = [
     }
   }
   const cases = ["os_external_tcp_denied"];
+  function checkpoint(stage) {
+    writeFileSync(
+      join(workspace, "phase.json"),
+      JSON.stringify(
+        {
+          stage,
+          owner,
+          pid: process.pid,
+          workerd_pid: task?.pid,
+          workerd_identity: workerdIdentity,
+          workerd_exit_code: task?.exitCode,
+          tls_port: tlsPort,
+          cases,
+          events,
+          failures,
+          at_ms: Date.now(),
+        },
+        null,
+        2
+      ) + "\n"
+    );
+  }
   const admin = { authorization: "Bearer fixture-admin" };
   const followPath = (thread) => `/admin/codex/supervisor/output?source=fixture&id=${thread}`;
   async function until(predicate) {
@@ -277,6 +323,7 @@ const config :Workerd.Config = (services = [
     assert(predicate(), "Actual native socket event was not observed");
   }
   try {
+    checkpoint("starting_workerd");
     let running = await start(false);
     const untrusted = await fetch(running.publicOrigin + "/admin/codex/supervisor/sessions", { headers: admin });
     assert.equal(untrusted.status, 503);
@@ -335,12 +382,15 @@ const config :Workerd.Config = (services = [
     const created = await fetch(running.publicOrigin + "/v1/live", { method: "POST", headers: { authorization: "Bearer fixture-access" }, body: form });
     assert.equal(created.status, 201, await created.clone().text());
     await created.arrayBuffer();
+    checkpoint("live_created");
     const socket = new WebSocket(running.publicOrigin.replace("http:", "ws:") + "/v1/live/rtc_fixture_live", {
       headers: { authorization: "Bearer fixture-access" },
     });
     await new Promise((done, reject) => {
       socket.once("error", reject);
       socket.once("upgrade", (response) => {
+        events.push({ kind: "client_websocket_upgrade", status: response.statusCode, status_text: response.statusMessage });
+        checkpoint("client_websocket_upgrade");
         try {
           assert.equal(response.statusCode, 101);
           assert.equal(response.statusMessage, "Fixture Native Upgrade");
@@ -349,10 +399,14 @@ const config :Workerd.Config = (services = [
           reject(error);
         }
       });
-      socket.once("open", done);
+      socket.once("open", () => {
+        checkpoint("client_websocket_open");
+        done();
+      });
     });
     const echo = new Promise((done, reject) => {
       socket.once("message", (bytes) => {
+        checkpoint("client_websocket_message");
         try {
           assert.equal(bytes.toString(), "native\0echo");
           done();
@@ -361,6 +415,7 @@ const config :Workerd.Config = (services = [
         }
       });
     });
+    checkpoint("sending_websocket_echo");
     socket.send("native\0echo");
     await echo;
     socket.close(1000, "fixture done");
@@ -427,10 +482,13 @@ const config :Workerd.Config = (services = [
     await writeFile(join(workspace, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
     console.log(JSON.stringify({ source_sha: sha, status: "passed", cases, evidence: workspace }));
   } finally {
+    checkpoint("cleanup_workerd");
     await stop();
+    checkpoint("cleanup_sockets");
     for (const socket of wss.clients) socket.terminate();
     for (const socket of sockets) socket.destroy();
     await new Promise((done) => server.close(done));
+    checkpoint("cleanup_complete");
     await writeFile(join(workspace, "observed-cases.json"), JSON.stringify({ cases, events, failures }, null, 2) + "\n");
   }
 }
