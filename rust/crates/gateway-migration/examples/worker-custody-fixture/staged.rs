@@ -49,7 +49,7 @@ fn mark(directory: &str, stage: &str) -> Result<(), MigrationError> {
         &serde_json::json!({"stage":stage,"pid":std::process::id(),"epoch_ms":epoch_ms}),
     )
 }
-pub fn run(directory: &str, now_ms: i64) -> Result<(), MigrationError> {
+pub fn run(directory: &str, now_ms: i64, prepare_only: bool) -> Result<(), MigrationError> {
     let prepared: Prepared = serde_json::from_str(
         &serde_json::to_string(&inputs::prepare(directory, now_ms)?).map_err(port::error)?,
     )
@@ -83,10 +83,21 @@ pub fn run(directory: &str, now_ms: i64) -> Result<(), MigrationError> {
     }
     mark(directory, "native_audit_stage_plan")?;
     let fixed = host::Host::from_stopped_fixture(&prepared.directory, &source, time.runtime())?;
-    let candidate = support_run(sanitize_native_capture(&source, &fixed))?;
-    let mut plan = StagePlan::from_prepared(prepare_native(&candidate)?)?;
-    drop(candidate);
+    let mut plan = StagePlan::from_prepared(support_run(prepare_native_with_custody(
+        source.clone(),
+        &fixed,
+    ))?)?;
     mark(directory, "staged_begin_append")?;
+    if prepare_only {
+        let mut frames = 0;
+        let mut maximum = 0;
+        while let Some(batch) = plan.next_batch()? {
+            maximum = maximum.max(serde_json::to_vec(&batch).map_err(port::error)?.len());
+            frames += 1;
+        }
+        mark(directory, "prepared_only_complete")?;
+        return port::write(&serde_json::json!({"operation":"staged_prepared_only","source_bytes":source_bytes,"source_rows":source.entries.len(),"bounded_frames":frames,"max_stage_frame_bytes":maximum,"target_touched":false})).map_err(Into::into);
+    }
     let store = port::Store::default();
     support_run(execute_staged(&store, plan.begin()))?;
     let first = plan

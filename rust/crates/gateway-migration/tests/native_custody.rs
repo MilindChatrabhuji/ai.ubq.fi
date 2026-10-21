@@ -138,6 +138,16 @@ impl NativeCustody for FixedLocal {
     }
 }
 
+fn artifact_context() -> ArtifactContext {
+    ArtifactContext {
+        rust_git_sha: "a".repeat(40),
+        rust_git_tree: "b".repeat(40),
+        wasm_sha256: "c".repeat(64),
+        native_sha256: "d".repeat(64),
+        native_nonce_capture_sha256: None,
+    }
+}
+
 #[test]
 fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_native_custody() {
     let directory = Directory::new();
@@ -198,7 +208,15 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
         serde_json::to_vec(&rotated).unwrap(),
     )
     .unwrap();
-    assert!(run(export_native_with_custody(&store, 2300, &host)).is_err());
+    assert!(
+        run(export_native_rollback_with_custody(
+            &store,
+            2300,
+            &host,
+            artifact_context()
+        ))
+        .is_err()
+    );
     // Controlled current publication changes only this account, with a new source revision.
     let mut local = host.generation("managed-a");
     local.fence.generation_hash = local.credentials.generation_hash();
@@ -254,9 +272,31 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
     }
     drop(store);
     let store = SqliteStore::open(&path);
-    let inverse = run(export_native_with_custody(&store, 2400, &host))
-        .unwrap()
-        .into_private_capture();
+    let (inverse, controls, artifacts) = run(export_native_rollback_with_custody(
+        &store,
+        2400,
+        &host,
+        artifact_context(),
+    ))
+    .unwrap()
+    .into_private_parts();
+    assert_eq!(
+        serde_json::to_value(&artifacts).unwrap(),
+        serde_json::to_value(artifact_context()).unwrap()
+    );
+    assert!(
+        controls
+            .iter()
+            .any(|control| control.key == gateway_authority::keys::pool().0)
+    );
+    for control in &controls {
+        assert_eq!(
+            run(store.read(&RecordKey(control.key.clone())))
+                .unwrap()
+                .as_ref(),
+            Some(&control.record)
+        );
+    }
     assert!(prepare_native(&inverse).is_err());
     let restored = inverse
         .entries
@@ -335,7 +375,15 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
     corrupt.value["accounts"][0]["native_owner"]["managed_source"]["generation_hash"] =
         json!("f".repeat(64));
     store.put(pool_key, corrupt);
-    assert!(run(export_native_with_custody(&store, 2400, &host)).is_err());
+    assert!(
+        run(export_native_rollback_with_custody(
+            &store,
+            2400,
+            &host,
+            artifact_context()
+        ))
+        .is_err()
+    );
 }
 
 #[test]

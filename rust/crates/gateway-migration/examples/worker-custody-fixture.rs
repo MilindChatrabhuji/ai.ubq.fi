@@ -71,6 +71,11 @@ fn main() -> Result<(), gateway_migration::MigrationError> {
             directory: String,
             now_ms: i64,
         },
+        StagedPrepareOnly {
+            v: u32,
+            directory: String,
+            now_ms: i64,
+        },
     }
     // Inspect only the finite operation selector, then deserialize the ORIGINAL
     // raw document. Untagged serde buffering must not erase NativeCapture SourceJson.
@@ -90,7 +95,14 @@ fn main() -> Result<(), gateway_migration::MigrationError> {
                 directory,
                 now_ms,
             } => {
-                return crate::staged::run(&directory, now_ms);
+                return crate::staged::run(&directory, now_ms, false);
+            }
+            Preparation::StagedPrepareOnly {
+                v: 1,
+                directory,
+                now_ms,
+            } => {
+                return crate::staged::run(&directory, now_ms, true);
             }
             Preparation::PrepareInputs {
                 v: 1,

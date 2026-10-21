@@ -34,7 +34,8 @@ pub use inverse::{
 pub use native_capture::{NativeCapture, NativeEntry, NativeRevision, NativeValue, prepare_native};
 pub use native_custody::{
     LocalNativeCapture, LocalNativeRollbackBundle, NativeCustody, OwnedNativeSnapshot,
-    export_native_rollback_with_custody, export_native_with_custody, sanitize_native_capture,
+    export_native_rollback_with_custody, export_native_with_custody, prepare_native_with_custody,
+    sanitize_native_capture,
 };
 pub use native_inverse::{
     NativeRollbackBundle, export_native_latest, export_native_rollback_bundle,

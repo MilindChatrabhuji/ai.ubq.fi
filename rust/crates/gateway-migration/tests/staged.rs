@@ -88,3 +88,55 @@ fn bounded_closed_frames_and_global_source_audit_are_not_per_batch_guesses() {
     source.entries.push(source.entries[0].clone());
     assert!(prepare_native(&source).is_err());
 }
+
+#[test]
+fn moved_complete_audit_retains_expired_typed_metadata_and_rejects_orphan_coupling() {
+    use gateway_core::{
+        tuple_key::{KeyPart, TupleKey},
+        value::PortableValue,
+    };
+    let source = fixture();
+    let mut corrupt = source.clone();
+    corrupt.entries.retain(|entry| {
+        TupleKey::from_sort_bytes(entry.raw_key.clone())
+            .unwrap()
+            .to_record_key()
+            != gateway_auth::api_keys::id_key("offline-key")
+    });
+    assert_eq!(corrupt.entries.len(), source.entries.len() - 1);
+    assert!(
+        prepare_native(&corrupt).is_err(),
+        "the same complete hash/ID audit must reject an orphan"
+    );
+    let mut source = source;
+    let tuple = TupleKey::from_parts(&[
+        KeyPart::String("default".into()),
+        KeyPart::String("expired-audit-owned".into()),
+    ])
+    .unwrap();
+    let revision = source.data_revision.clone();
+    let expiry = source.captured_at_ms - 1;
+    source.entries.insert(
+        1,
+        NativeEntry {
+            raw_key: tuple.sort_bytes().to_vec(),
+            value: NativeValue::CounterLe64(u64::MAX.to_le_bytes().to_vec()),
+            revision: revision.clone(),
+            expiration_ms: expiry,
+        },
+    );
+    let directory = Directory::new();
+    let store = SqliteStore::open(&directory.file("owned-audit.sqlite3"));
+    let result = run(adopt_empty(&store, &prepare_native(&source).unwrap())).unwrap();
+    assert_eq!(result.source_rows, source.entries.len());
+    let retained = run(store.read(&tuple.to_record_key())).unwrap().unwrap();
+    assert_eq!(
+        retained.revision,
+        format!("native-v1:{}:{}", revision.version, revision.sequence)
+    );
+    assert_eq!(retained.expires_at_ms, Some(expiry));
+    assert_eq!(
+        retained.portable_value().unwrap(),
+        PortableValue::KvU64(u64::MAX.to_string())
+    );
+}

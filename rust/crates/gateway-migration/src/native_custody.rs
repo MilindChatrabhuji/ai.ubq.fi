@@ -84,7 +84,24 @@ pub async fn sanitize_native_capture<H: NativeCustody>(
     source: &NativeCapture,
     host: &H,
 ) -> Result<NativeCapture, MigrationError> {
-    let mut candidate = source.clone();
+    let candidate = normalize_owned(source.clone(), host).await?;
+    prepare_native(&candidate)?;
+    Ok(candidate)
+}
+
+/// Trusted native staging consumes its input and returns the SAME complete audit
+/// result instead of constructing/discarding it and auditing it a second time.
+pub async fn prepare_native_with_custody<H: NativeCustody>(
+    source: NativeCapture,
+    host: &H,
+) -> Result<PreparedAdoption, MigrationError> {
+    prepare_native(&normalize_owned(source, host).await?)
+}
+
+async fn normalize_owned<H: NativeCustody>(
+    mut candidate: NativeCapture,
+    host: &H,
+) -> Result<NativeCapture, MigrationError> {
     for entry in &mut candidate.entries {
         if !codex_key(&entry.raw_key)? {
             continue;
@@ -125,8 +142,7 @@ pub async fn sanitize_native_capture<H: NativeCustody>(
         }
         entry.value = pool_value(&pool)?;
     }
-    // This is the exact cloud/common-candidate gate, after local normalization.
-    prepare_native(&candidate)?;
+    // Both callers run the exact complete-candidate gate before any result exits.
     Ok(candidate)
 }
 

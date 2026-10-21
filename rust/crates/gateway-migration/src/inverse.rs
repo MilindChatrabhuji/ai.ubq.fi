@@ -300,19 +300,12 @@ pub(crate) async fn export_rows<S: QueryStore>(
                 .0,
             )
         {
-            controls.push(CustodyRecord {
-                key: k.clone(),
-                record: record.clone(),
-            });
+            controls.push(k.clone());
             continue;
         }
         if let Some(mapping) = all.get(&mapping_key(&manifest.capture_id, k).0) {
             let mapping: Mapping = decode(mapping.json_value()?)?;
-            entries.push(LatestRow {
-                key,
-                record: record.clone(),
-                mapping: Some(mapping),
-            });
+            entries.push((key, Some(mapping)));
             continue;
         }
         if starts(&p, &["uos_ai", "migration"]) {
@@ -332,17 +325,11 @@ pub(crate) async fn export_rows<S: QueryStore>(
                     .ok_or_else(|| invalid("Native live custody reference is invalid"))?,
                 record.json_value()?,
             )?;
-            controls.push(CustodyRecord {
-                key: k.clone(),
-                record: record.clone(),
-            });
+            controls.push(k.clone());
             continue;
         }
         if starts(&p, &["uos_ai", "routing_runtime"]) {
-            controls.push(CustodyRecord {
-                key: k.clone(),
-                record: record.clone(),
-            });
+            controls.push(k.clone());
             continue;
         }
         if starts(
@@ -378,26 +365,17 @@ pub(crate) async fn export_rows<S: QueryStore>(
                     return Err(invalid("Pending live-call retirement custody is malformed"));
                 }
             }
-            controls.push(CustodyRecord {
-                key: k.clone(),
-                record: record.clone(),
-            });
+            controls.push(k.clone());
             continue;
         }
         if key == gateway_auth::native_replay::native_nonce_key() {
             record.validate_version()?;
-            controls.push(CustodyRecord {
-                key: k.clone(),
-                record: record.clone(),
-            });
+            controls.push(k.clone());
             continue;
         }
         if starts(&p, &["uos_ai", "authority", "native_owner_renewal"]) {
             gateway_authority::native_control::validate_native_control_custody(&key, record)?;
-            controls.push(CustodyRecord {
-                key: k.clone(),
-                record: record.clone(),
-            });
+            controls.push(k.clone());
             continue;
         }
         if starts(&p, &["uos_ai", "authority"]) {
@@ -456,10 +434,7 @@ pub(crate) async fn export_rows<S: QueryStore>(
                 .contains(&s)
             }) {
                 record.validate_version()?;
-                controls.push(CustodyRecord {
-                    key: k.clone(),
-                    record: record.clone(),
-                });
+                controls.push(k.clone());
                 continue;
             }
             if p.get(3).and_then(Value::as_str).is_some_and(|s| {
@@ -491,13 +466,30 @@ pub(crate) async fn export_rows<S: QueryStore>(
                 "Latest target includes an unmapped source key family",
             ));
         }
-        entries.push(LatestRow {
-            key,
-            record: record.clone(),
-            mapping: None,
-        });
+        entries.push((key, None));
     }
     native_import_custody::validate(&all)?;
+    // No payload moves until ALL inventory/journal/import checks above succeed.
+    let entries = entries
+        .into_iter()
+        .map(|(key, mapping)| {
+            let record = all
+                .remove(&key.0)
+                .expect("validated current inverse source");
+            LatestRow {
+                key,
+                record,
+                mapping,
+            }
+        })
+        .collect();
+    let controls = controls
+        .into_iter()
+        .map(|key| CustodyRecord {
+            record: all.remove(&key).expect("validated current inverse custody"),
+            key,
+        })
+        .collect();
     Ok((manifest, entries, controls))
 }
 

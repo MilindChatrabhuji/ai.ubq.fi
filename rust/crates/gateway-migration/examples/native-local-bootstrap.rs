@@ -70,11 +70,11 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => return Err("Expected exactly one private capture input".into()),
     };
-    let candidate = run(prepare_local_bootstrap(&capture, registrations))?;
     if input.staged {
-        let mut plan = gateway_migration::staged::StagePlan::from_prepared(
-            gateway_migration::prepare_native(&candidate)?,
-        )?;
+        let mut plan = run(gateway_migration::native_operator::prepare_local_stage(
+            capture,
+            registrations,
+        ))?;
         let mut output = std::io::stdout().lock();
         serde_json::to_writer(&mut output, &plan.begin())?;
         output.write_all(b"\n")?;
@@ -86,6 +86,7 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
         output.write_all(b"\n")?;
         return Ok(());
     }
+    let candidate = run(prepare_local_bootstrap(&capture, registrations))?;
     let output = serde_json::to_vec(&candidate)?;
     if output.len() > maximum {
         return Err("Private candidate exceeds bound".into());

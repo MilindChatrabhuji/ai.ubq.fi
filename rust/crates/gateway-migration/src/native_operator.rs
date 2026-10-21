@@ -195,12 +195,13 @@ impl ConfiguredNativeCustody {
 /// Native-only full audit/custody preparation. Only bounded canonical stage frames
 /// leave this process. Ordinary profile/capture codecs and atomic adoption stay intact.
 pub async fn prepare_local_stage(
-    source: &crate::NativeCapture,
+    source: crate::NativeCapture,
     registrations: Vec<NativeCustodyRegistration>,
 ) -> Result<crate::staged::StagePlan, crate::MigrationError> {
-    let candidate = prepare_local_bootstrap(source, registrations).await?;
+    let custody = ConfiguredNativeCustody::new(registrations)?;
+    custody.verify_existing_access_only(&source).await?;
     Ok(crate::staged::StagePlan::from_prepared(
-        crate::prepare_native(&candidate)?,
+        crate::prepare_native_with_custody(source, &custody).await?,
     )?)
 }
 
