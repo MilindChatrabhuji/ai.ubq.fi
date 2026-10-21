@@ -242,6 +242,13 @@ impl NativeTransport {
     }
 }
 
+pub(super) fn unavailable() -> GatewayError {
+    GatewayError::unavailable(
+        "The trusted native carrier is not configured or available",
+        "native_carrier_unavailable",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::NativeOrigin;
@@ -286,11 +293,4 @@ mod tests {
             assert!(NativeOrigin::new(origin).is_err(), "accepted {origin:?}");
         }
     }
-}
-
-pub(super) fn unavailable() -> GatewayError {
-    GatewayError::unavailable(
-        "The trusted native carrier is not configured or available",
-        "native_carrier_unavailable",
-    )
 }
