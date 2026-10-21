@@ -509,7 +509,7 @@ fn fetch_binding_exposes_only_original_fixed_roster_identity() {
 }
 
 #[test]
-fn capacity_materialization_keeps_stable_ambiguous_reset_lookup_only() {
+fn capacity_materialization_reconciles_a_newer_sample_over_stale_ambiguous_reset() {
     let (store, authority) = setup();
     run(authority.select_account(
         &"gpt-test".into(),
@@ -538,16 +538,60 @@ fn capacity_materialization_keeps_stable_ambiguous_reset_lookup_only() {
     let block = state.slots[0]
         .quota_block_for(gateway_core::provider::CodexQuotaClass::Standard)
         .unwrap();
-    assert!(block.reset_ambiguous);
-    assert_eq!(block.reset_at_ms, Some(NOW + 30_000));
+    assert!(!block.reset_ambiguous);
+    assert!(block.reset_is_stable);
+    assert_eq!(block.reset_at_ms, Some(NOW + 60_000));
     assert_eq!(block.blocked_until_ms, NOW + 60_000);
-    assert_eq!(block.observed_at_ms, Some(NOW + 1000));
-    assert!(state.slots[0].reset_identity_ambiguous);
+    assert_eq!(block.observed_at_ms, Some(NOW));
+    assert!(!state.slots[0].reset_identity_ambiguous);
     assert_eq!(
         parse_capacity_store(&store.inner.row(&keys::capacity()).unwrap().value)
             .unwrap()
             .updated_at_ms,
         NOW
+    );
+}
+
+#[test]
+fn capacity_materialization_cannot_replace_a_newer_live_quota_signal() {
+    use gateway_core::provider::CodexQuotaClass;
+    let (store, authority) = setup();
+    run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap();
+    let mut state = parse_routing_state(&store.inner.row(&keys::routing()).unwrap().value).unwrap();
+    let prior = QuotaBlock {
+        blocked_until_ms: NOW + 30_000,
+        source: QuotaBlockSource::BodyResetsAt,
+        legacy_fallback: false,
+        observed_at_ms: Some(NOW + 10),
+        reset_at_ms: Some(NOW + 30_000),
+        reset_is_stable: true,
+        reset_ambiguous: false,
+        recovery_pending: false,
+    };
+    state.slots[0]
+        .quota_blocks
+        .insert("standard".into(), prior.clone());
+    state.slots[0].quota_blocked_until_ms = Some(prior.blocked_until_ms);
+    state.slots[0].quota_block_source = Some(prior.source);
+    state.slots[0].quota_blocked_classes = vec!["standard".into()];
+    state.slots[0].retained_reset_at_ms = prior.reset_at_ms;
+    state.slots[0].reset_identity_stable = true;
+    store.inner.seed(keys::routing(), &state);
+
+    let fence = run(authority.begin_codex_capacity_observation(&[reference()])).unwrap();
+    run(authority.record_codex_capacity_observations(&fence, &[sample(NOW, 100.0)])).unwrap();
+    assert!(
+        !run(authority.materialize_capacity_quota_blocks(
+            &"gpt-test".into(),
+            CodexQuotaClass::Standard,
+            NOW + 1000
+        ))
+        .unwrap()
+    );
+    let state = parse_routing_state(&store.inner.row(&keys::routing()).unwrap().value).unwrap();
+    assert_eq!(
+        state.slots[0].quota_block_for(CodexQuotaClass::Standard),
+        Some(prior)
     );
 }
 

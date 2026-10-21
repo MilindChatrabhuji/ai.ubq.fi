@@ -451,12 +451,14 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     continue;
                 };
                 let prior = view.state.slots[slot].quota_block_for(class);
-                if prior.as_ref().is_some_and(|block| {
-                    block.blocked_until_ms > now
-                        || block
-                            .observed_at_ms
-                            .is_some_and(|at| at >= observation.snapshot_at_ms)
-                }) {
+                // A live quota signal observed after this sample remains newer
+                // and authoritative. An older but still-future block must not
+                // suppress reconciliation of a changed provider window.
+                if prior
+                    .as_ref()
+                    .and_then(|block| block.observed_at_ms)
+                    .is_some_and(|at| at >= observation.snapshot_at_ms)
+                {
                     continue;
                 }
                 let current = &mut view.state.slots[slot];
@@ -467,7 +469,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 if current.probe_lease.is_some() && !foreign_probe {
                     continue;
                 }
-                let block = current.capacity_quota_block(class, reset, now);
+                let block = current.capacity_quota_block(class, reset, observation.snapshot_at_ms);
                 current.insert_quota_block(class, block);
                 if !foreign_probe {
                     current.generation = next_generation(current.generation)?;

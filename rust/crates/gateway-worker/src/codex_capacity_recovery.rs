@@ -127,8 +127,15 @@ where
     current(store, proof, host.now_ms()).await?;
     host.accept_capacity_observations(&fence, &samples).await?;
     check_original().await?;
-    // New C invalidates the original cohort proof. Preserve genuine exhaustion
-    // by handing the existing reset evaluator a new ordinary selection/proof.
+    // Reconcile each exhausted account's class block from this current sample
+    // before reselecting. Otherwise a retained ambiguous deadline can leave the
+    // full-pool reset fence stale even though the provider window is current.
+    authority
+        .materialize_capacity_quota_blocks(model, proof.quota_class(), host.now_ms())
+        .await?;
+    check_original().await?;
+    // New C and the materialized class blocks invalidate the original proof.
+    // Preserve genuine exhaustion through a new ordinary selection/proof.
     Ok(Some(
         authority
             .select_account(model, proof.quota_class(), host.now_ms())
