@@ -313,3 +313,9 @@ pub(crate) fn bind(
     }
     Ok(derived)
 }
+
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+#[path = "indexes_spool.rs"]
+mod disk;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+pub(crate) use disk::bind_spooled;

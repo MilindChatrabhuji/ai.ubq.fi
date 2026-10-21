@@ -83,20 +83,31 @@ pub fn run(directory: &str, now_ms: i64, prepare_only: bool) -> Result<(), Migra
     }
     mark(directory, "native_audit_stage_plan")?;
     let fixed = host::Host::from_stopped_fixture(&prepared.directory, &source, time.runtime())?;
-    let mut plan = StagePlan::from_prepared(support_run(prepare_native_with_custody(
-        source.clone(),
-        &fixed,
-    ))?)?;
+    let source_rows = source.entries.len();
+    drop(source);
+    let source_inventory = native_stage::Captured::read(
+        &source_path,
+        &native_stage::directory(Path::new(directory))?,
+    )?;
+    let mut plan = support_run(
+        native_stage::Captured::read(
+            &source_path,
+            &native_stage::directory(Path::new(directory))?,
+        )?
+        .prepare(&fixed),
+    )?;
     mark(directory, "staged_begin_append")?;
     if prepare_only {
         let mut frames = 0;
         let mut maximum = 0;
-        while let Some(batch) = plan.next_batch()? {
-            maximum = maximum.max(serde_json::to_vec(&batch).map_err(port::error)?.len());
+        let mut frame = Vec::new();
+        while plan.write_next_batch(&mut frame)? {
+            maximum = maximum.max(frame.len());
             frames += 1;
+            frame.clear();
         }
         mark(directory, "prepared_only_complete")?;
-        return port::write(&serde_json::json!({"operation":"staged_prepared_only","source_bytes":source_bytes,"source_rows":source.entries.len(),"bounded_frames":frames,"max_stage_frame_bytes":maximum,"target_touched":false})).map_err(Into::into);
+        return port::write(&serde_json::json!({"operation":"staged_prepared_only","source_bytes":source_bytes,"source_rows":source_rows,"bounded_frames":frames,"max_stage_frame_bytes":maximum,"target_touched":false})).map_err(Into::into);
     }
     let store = port::Store::default();
     support_run(execute_staged(&store, plan.begin()))?;
@@ -120,7 +131,7 @@ pub fn run(directory: &str, now_ms: i64, prepare_only: bool) -> Result<(), Migra
         return Err(port::error("Partial staged target became accepted").into());
     }
     port::write(
-        &serde_json::json!({"operation":"staged_partial","source_bytes":source_bytes,"source_rows":source.entries.len(),"unsealed_refused":true}),
+        &serde_json::json!({"operation":"staged_partial","source_bytes":source_bytes,"source_rows":source_rows,"unsealed_refused":true}),
     )?;
     let resume: Resume = port::read()?;
     if resume.v != 1 || resume.operation != "staged_resume" {
@@ -165,28 +176,41 @@ pub fn run(directory: &str, now_ms: i64, prepare_only: bool) -> Result<(), Migra
         &mut file(&controls_path)?,
     ))?;
     mark(directory, "inverse_verification")?;
-    let latest: NativeCapture =
-        serde_json::from_reader(std::fs::File::open(&latest_path).map_err(port::error)?)
-            .map_err(port::error)?;
-    for original in source.entries.iter().filter(|e| {
-        e.raw_key
+    let latest = native_stage::Captured::read(
+        &latest_path,
+        &native_stage::directory(Path::new(directory))?,
+    )?;
+    let mut keys = std::collections::BTreeMap::new();
+    let mut ordinal = 0;
+    latest.visit_entries(&mut |entry| {
+        if keys.insert(entry.raw_key.clone(), ordinal).is_some() {
+            return Err(port::error("Duplicate latest raw key"));
+        }
+        ordinal += 1;
+        Ok(())
+    })?;
+    source_inventory.visit_entries(&mut |entry| {
+        if entry
+            .raw_key
             .windows(b"staged-history-".len())
             .any(|w| w == b"staged-history-")
-    }) {
-        let current = latest
-            .entries
-            .iter()
-            .find(|e| e.raw_key == original.raw_key)
-            .ok_or_else(|| port::error("Large historical row missing from latest inverse"))?;
-        if serde_json::to_vec(original).map_err(port::error)?
-            != serde_json::to_vec(current).map_err(port::error)?
         {
-            return Err(port::error("Large historical metadata/value changed in inverse").into());
+            let index = keys
+                .get(&entry.raw_key)
+                .ok_or_else(|| port::error("Large historical row missing from latest inverse"))?;
+            if serde_json::to_vec(entry).map_err(port::error)?
+                != serde_json::to_vec(&latest.entry(*index)?).map_err(port::error)?
+            {
+                return Err(port::error(
+                    "Large historical metadata/value changed in inverse",
+                ));
+            }
         }
-    }
+        Ok(())
+    })?;
     mark(directory, "finished")?;
     port::write(
-        &serde_json::json!({"operation":"staged_exercised","source_bytes":source_bytes,"latest_bytes":std::fs::metadata(latest_path).map_err(port::error)?.len(),"source_rows":source.entries.len(),"latest_rows":rows,"max_stage_frame_bytes":wire_max,"receipt":sealed,"runtime":runtime,"source_file":source_path.to_str(),"latest_file":Path::new(directory).join("large-latest.json").to_str(),"custody_file":controls_path.to_str(),"historical_roundtrip_exact":true,"cases":["complete_native_audit_before_staging","over32mib_bounded_common_do_transfer","reordered_corrupt_duplicate_batches_refused","partial_seal_and_inverse_refused","partial_common_do_restart_resumed","staged_seal_not_atomic_adoption_or_activation","actual_post_restart_auth_admission_latest_write_delete","native_private_latest_sink_exact_large_history"]}),
+        &serde_json::json!({"operation":"staged_exercised","source_bytes":source_bytes,"latest_bytes":std::fs::metadata(latest_path).map_err(port::error)?.len(),"source_rows":source_rows,"latest_rows":rows,"max_stage_frame_bytes":wire_max,"receipt":sealed,"runtime":runtime,"source_file":source_path.to_str(),"latest_file":Path::new(directory).join("large-latest.json").to_str(),"custody_file":controls_path.to_str(),"historical_roundtrip_exact":true,"cases":["complete_native_audit_before_staging","over32mib_bounded_common_do_transfer","reordered_corrupt_duplicate_batches_refused","partial_seal_and_inverse_refused","partial_common_do_restart_resumed","staged_seal_not_atomic_adoption_or_activation","actual_post_restart_auth_admission_latest_write_delete","native_private_latest_sink_exact_large_history"]}),
     )?;
     Ok(())
 }

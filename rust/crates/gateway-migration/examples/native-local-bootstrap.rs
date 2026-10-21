@@ -50,6 +50,31 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
         .into_iter()
         .map(|r| NativeCustodyRegistration::existing(r.home, r.fence))
         .collect::<Result<Vec<_>, _>>()?;
+    if input.staged && input.capture.is_none() {
+        let path = input
+            .capture_file
+            .as_ref()
+            .ok_or("Expected exactly one private capture input")?;
+        let directory = gateway_migration::native_stage::directory(
+            path.parent().ok_or("Missing stopped-file parent")?,
+        )?;
+        let mut plan = run(
+            gateway_migration::native_operator::prepare_local_stage_file(
+                path,
+                &directory,
+                registrations,
+            ),
+        )?;
+        let mut output = std::io::stdout().lock();
+        serde_json::to_writer(&mut output, &plan.begin())?;
+        output.write_all(b"\n")?;
+        while plan.write_next_batch(&mut output)? {
+            output.write_all(b"\n")?;
+        }
+        serde_json::to_writer(&mut output, &plan.seal())?;
+        output.write_all(b"\n")?;
+        return Ok(());
+    }
     let capture = match (input.capture, input.capture_file, input.staged) {
         (Some(capture), None, _) => capture,
         (None, Some(path), true) => {
@@ -78,8 +103,7 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
         let mut output = std::io::stdout().lock();
         serde_json::to_writer(&mut output, &plan.begin())?;
         output.write_all(b"\n")?;
-        while let Some(batch) = plan.next_batch()? {
-            serde_json::to_writer(&mut output, &batch)?;
+        while plan.write_next_batch(&mut output)? {
             output.write_all(b"\n")?;
         }
         serde_json::to_writer(&mut output, &plan.seal())?;

@@ -43,7 +43,7 @@ fn inventory(request: &SourceJson) -> Vec<ObservedRow> {
     ]
 }
 fn inspect(rows: &[ObservedRow]) -> audit::Audit {
-    audit::inspect_paid(
+    inspect_paid(
         rows,
         &BTreeSet::from(["fixture-key".into()]),
         &BTreeSet::new(),
@@ -147,7 +147,7 @@ fn scalar_paid_source_stays_json_and_wrong_physical_codec_is_not_reinterpreted()
     )
     .unwrap();
     assert!(
-        audit::inspect_paid(
+        inspect_paid(
             &rows,
             &BTreeSet::from(["fixture-key".into()]),
             &BTreeSet::new(),
@@ -155,4 +155,30 @@ fn scalar_paid_source_stays_json_and_wrong_physical_codec_is_not_reinterpreted()
         )
         .is_err()
     );
+}
+
+// Independent decoded row lifetimes model the replayable native spool contract.
+struct Replay<'a>(&'a [ObservedRow]);
+impl audit::AuditInventory for Replay<'_> {
+    fn visit(
+        &self,
+        callback: &mut dyn FnMut(&ObservedRow) -> Result<(), gateway_core::GatewayError>,
+    ) -> Result<(), gateway_core::GatewayError> {
+        for row in self.0 {
+            let decoded = row.clone();
+            callback(&decoded)?;
+        }
+        Ok(())
+    }
+}
+fn inspect_paid(
+    rows: &[ObservedRow],
+    known: &BTreeSet<String>,
+    unlimited: &BTreeSet<String>,
+    now: i64,
+) -> Result<audit::Audit, gateway_core::GatewayError> {
+    let result = audit::inspect_paid(rows, known, unlimited, now);
+    let replay = audit::inspect_paid_inventory(&Replay(rows), known, unlimited, now);
+    assert_eq!(format!("{result:?}"), format!("{replay:?}"));
+    result
 }

@@ -11,7 +11,13 @@ mod native_capture;
 mod native_custody;
 mod native_inverse;
 #[cfg(all(unix, not(target_arch = "wasm32")))]
+mod native_latest;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
 pub mod native_operator;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+mod native_spool;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+pub mod native_stage;
 pub mod operational;
 mod paid_controls;
 mod profile_bindings;
@@ -74,8 +80,9 @@ pub(crate) struct Mapping {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     native_origin: Option<native_capture::NativeOrigin>,
 }
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct Row {
+    #[serde(with = "crate::staged::record_key_wire")]
     key: RecordKey,
     parts: Vec<Value>,
     record: StoredRecord,

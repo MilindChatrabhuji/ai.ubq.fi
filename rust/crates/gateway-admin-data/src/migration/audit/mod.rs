@@ -3,11 +3,13 @@ mod keys;
 mod paid;
 mod source_fields;
 mod source_model;
-pub use source_model::inspect_model_snapshot;
+pub use source_model::{inspect_model_inventory, inspect_model_snapshot};
 mod usage;
 pub use keys::{AuditedKeyPair, inspect_key_pairs, valid_key_policy, valid_source_key_policy};
-pub use paid::{inspect_paid, valid_source_paid_request};
-pub use usage::{inspect_api_usage, inspect_kernel};
+pub use paid::{inspect_paid, inspect_paid_inventory, valid_source_paid_request};
+pub use usage::{
+    inspect_api_inventory, inspect_api_usage, inspect_kernel, inspect_kernel_inventory,
+};
 
 use super::{ObservedRow, starts};
 use crate::{integer, number, text};
@@ -16,6 +18,66 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+/// Replayable complete inventory. Each visit starts at the original first row and
+/// must validate its complete EOF before success; callback/I/O errors propagate.
+pub trait AuditInventory {
+    fn visit(
+        &self,
+        row: &mut dyn FnMut(&ObservedRow) -> Result<(), GatewayError>,
+    ) -> Result<(), GatewayError>;
+}
+pub struct SliceInventory<'a>(pub &'a [ObservedRow]);
+impl AuditInventory for SliceInventory<'_> {
+    fn visit(
+        &self,
+        row: &mut dyn FnMut(&ObservedRow) -> Result<(), GatewayError>,
+    ) -> Result<(), GatewayError> {
+        for value in self.0 {
+            row(value)?;
+        }
+        Ok(())
+    }
+}
+/// Same six complete coupled audits used by native preparation, without owning
+/// every source payload or collecting all complete model-bearing policy pairs.
+pub fn inspect_inventory(rows: &dyn AuditInventory, now: i64) -> Result<Audit, GatewayError> {
+    let mut known = std::collections::BTreeSet::new();
+    let mut unlimited = std::collections::BTreeSet::new();
+    let mut api = usage::ApiAudit::new();
+    let mut kernel = usage::KernelAudit::new();
+    let mut paid = paid::PaidAudit::new(now);
+    let mut reset = Audit::default();
+    let mut reset_error = None;
+    let mut model = source_model::ModelAudit::default();
+    let mut audit = keys::visit_key_pairs_with(
+        rows,
+        &mut |pair| {
+            if pair.unlimited_paid {
+                unlimited.insert(pair.key_id.clone());
+            }
+            known.insert(pair.key_id);
+            Ok(())
+        },
+        &mut |row| {
+            api.accept(row);
+            kernel.accept(row);
+            paid.accept(row);
+            if reset_error.is_none() {
+                reset_error = inspect_reset_row(row, &mut reset).err();
+            }
+            model.accept(row);
+        },
+    )?;
+    audit.merge(api.finish(&known)?);
+    audit.merge(kernel.finish()?);
+    audit.merge(paid.finish(&known, &unlimited)?);
+    if let Some(error) = reset_error {
+        return Err(error);
+    }
+    audit.merge(reset);
+    audit.errors.extend(model.finish()?);
+    Ok(audit)
+}
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Audit {
     pub counts: BTreeMap<String, usize>,
@@ -161,34 +223,39 @@ pub fn valid_kernel_policy(v: &Value, scope: &str, owner: &str, repo: Option<&st
     super::kernel::normalize_policy(v, scope, owner, repo).is_some()
 }
 pub fn inspect_reset_usage(rows: &[ObservedRow]) -> Result<Audit, GatewayError> {
+    inspect_reset_inventory(&SliceInventory(rows))
+}
+pub fn inspect_reset_inventory(rows: &dyn AuditInventory) -> Result<Audit, GatewayError> {
     let mut audit = Audit::default();
-    for row in rows
-        .iter()
-        .filter(|r| under(&r.parts, &["uos_ai", "codex_reset_usage"]))
-    {
-        audit.count("codex_reset_usage");
-        let p = &row.parts;
-        let valid = p.len() == 5
-            && p[2] == "account"
-            && p[3] == "v1"
-            && p[4].as_str().is_some_and(|s| !s.is_empty());
-        if !valid {
-            audit.errors.push(
-                format!("codex reset usage key is malformed: {}", reference(p))
-                    .as_str()
-                    .into(),
-            );
-            continue;
-        }
-        if !row.value()?.get("enabled").is_some_and(Value::is_boolean) {
-            audit.errors.push(
-                format!("codex reset usage record is malformed: {}", reference(p))
-                    .as_str()
-                    .into(),
-            );
-        }
-    }
+    rows.visit(&mut |row| inspect_reset_row(row, &mut audit))?;
     Ok(audit)
+}
+fn inspect_reset_row(row: &ObservedRow, audit: &mut Audit) -> Result<(), GatewayError> {
+    if !under(&row.parts, &["uos_ai", "codex_reset_usage"]) {
+        return Ok(());
+    }
+    audit.count("codex_reset_usage");
+    let p = &row.parts;
+    let valid = p.len() == 5
+        && p[2] == "account"
+        && p[3] == "v1"
+        && p[4].as_str().is_some_and(|s| !s.is_empty());
+    if !valid {
+        audit.errors.push(
+            format!("codex reset usage key is malformed: {}", reference(p))
+                .as_str()
+                .into(),
+        );
+        return Ok(());
+    }
+    if !row.value()?.get("enabled").is_some_and(Value::is_boolean) {
+        audit.errors.push(
+            format!("codex reset usage record is malformed: {}", reference(p))
+                .as_str()
+                .into(),
+        );
+    }
+    Ok(())
 }
 pub fn inspect_source_rows(
     rows: &[ObservedRow],

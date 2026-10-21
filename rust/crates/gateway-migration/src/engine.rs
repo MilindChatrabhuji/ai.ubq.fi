@@ -89,20 +89,7 @@ fn validate_source_inventories(
             expired.push(row);
         }
     }
-    let (pairs, mut findings) = audit::inspect_key_pairs(&observed)?;
-    let known = pairs.iter().map(|pair| pair.key_id.clone()).collect();
-    let unlimited = pairs
-        .iter()
-        .filter(|pair| pair.unlimited_paid)
-        .map(|pair| pair.key_id.clone())
-        .collect();
-    findings.merge(audit::inspect_api_usage(&observed, &known)?);
-    findings.merge(audit::inspect_kernel(&observed)?);
-    findings.merge(audit::inspect_paid(&observed, &known, &unlimited, now)?);
-    findings.merge(audit::inspect_reset_usage(&observed)?);
-    findings
-        .errors
-        .extend(audit::inspect_model_snapshot(&observed)?);
+    let findings = audit::inspect_inventory(&audit::SliceInventory(&observed), now)?;
     let mut live = observed
         .into_iter()
         .zip(mappings)

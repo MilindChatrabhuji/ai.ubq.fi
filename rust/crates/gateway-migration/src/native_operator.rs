@@ -123,7 +123,7 @@ impl ConfiguredNativeCustody {
     // The existing sanitizer handles refresh-bearing source rows. Existing
     // access-only rows still require actual observation; this returns unit only,
     // never an OwnedNativeSnapshot/managed grant for an external account.
-    async fn verify_existing_access_only(
+    pub(crate) async fn verify_existing_access_only(
         &self,
         capture: &crate::NativeCapture,
     ) -> Result<(), crate::MigrationError> {
@@ -200,9 +200,10 @@ pub async fn prepare_local_stage(
 ) -> Result<crate::staged::StagePlan, crate::MigrationError> {
     let custody = ConfiguredNativeCustody::new(registrations)?;
     custody.verify_existing_access_only(&source).await?;
-    Ok(crate::staged::StagePlan::from_prepared(
-        crate::prepare_native_with_custody(source, &custody).await?,
-    )?)
+    let directory = crate::native_stage::directory(&std::env::temp_dir())?;
+    crate::native_stage::Captured::owned(source, &directory)?
+        .prepare(&custody)
+        .await
 }
 
 /// Private file/pipe sinks only: current full credentials remain native. The
@@ -222,45 +223,19 @@ pub async fn write_private_latest<
     source_sink: &mut W,
     custody_sink: &mut C,
 ) -> Result<usize, crate::MigrationError> {
-    let bounded = LatestPages(store);
-    let bundle =
-        crate::export_native_rollback_with_custody(&bounded, now_ms, host, artifacts).await?;
-    let (source, controls, artifacts) = bundle.into_private_parts();
-    serde_json::to_writer(source_sink, &source)
-        .map_err(|_| crate::invalid("Private latest source sink failed"))?;
-    serde_json::to_writer(
-        custody_sink,
-        &serde_json::json!({"rust_controls":controls,"artifacts":artifacts}),
-    )
-    .map_err(|_| crate::invalid("Private latest custody sink failed"))?;
-    Ok(source.entries.len())
+    crate::native_latest::write_latest(store, now_ms, host, artifacts, source_sink, custody_sink)
+        .await
 }
-struct LatestPages<'a, S>(&'a S);
-impl<S: gateway_core::query::QueryStore> gateway_core::state::AuthorityStore
-    for LatestPages<'_, S>
-{
-    async fn read(
-        &self,
-        key: &gateway_core::state::RecordKey,
-    ) -> Result<Option<gateway_core::state::StoredRecord>, GatewayError> {
-        self.0.read(key).await
-    }
-    async fn commit(
-        &self,
-        transition: gateway_core::state::AtomicTransition,
-    ) -> Result<gateway_core::state::CommitOutcome, GatewayError> {
-        self.0.commit(transition).await
-    }
-}
-impl<S: gateway_core::query::QueryStore> gateway_core::query::QueryStore for LatestPages<'_, S> {
-    async fn query(
-        &self,
-        mut request: gateway_core::query::QueryRequest,
-    ) -> Result<gateway_core::query::QueryPage, GatewayError> {
-        // An arbitrary accepted source row can approach the private wire bound;
-        // a row-count page of256 is not a byte bound. Keep this operator's page
-        // to one row without changing ordinary query semantics or interfaces.
-        request.limit = 1;
-        self.0.query(request).await
-    }
+
+/// Same configured custody, with a stopped owner-only source file and private
+/// sealed spool. No source payload inventory is collected by the operator.
+pub async fn prepare_local_stage_file(
+    path: &std::path::Path,
+    directory: &std::path::Path,
+    registrations: Vec<NativeCustodyRegistration>,
+) -> Result<crate::staged::StagePlan, crate::MigrationError> {
+    let custody = ConfiguredNativeCustody::new(registrations)?;
+    let source = crate::native_stage::Captured::read(path, directory)?;
+    source.verify_configured(&custody).await?;
+    source.prepare(&custody).await
 }
