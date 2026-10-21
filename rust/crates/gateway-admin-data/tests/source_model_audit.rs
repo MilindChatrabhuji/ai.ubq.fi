@@ -45,12 +45,12 @@ fn source_model_snapshot_matches_actual_units_not_literal_escape_text() {
         r#""\ud83d\ude00""#,
     ] {
         assert!(
-            audit::inspect_model_snapshot(&rows(model, model))
+            inspect_model_snapshot(&rows(model, model))
                 .unwrap()
                 .is_empty()
         );
     }
-    let errors = audit::inspect_model_snapshot(&rows(r#""\ud800""#, r#""\\ud800""#)).unwrap();
+    let errors = inspect_model_snapshot(&rows(r#""\ud800""#, r#""\\ud800""#)).unwrap();
     let mut expected = "default model is not present in codex model snapshot: "
         .encode_utf16()
         .collect::<Vec<_>>();
@@ -60,7 +60,7 @@ fn source_model_snapshot_matches_actual_units_not_literal_escape_text() {
 
 #[test]
 fn audit_wire_is_the_original_string_array_with_lossless_model_mismatch() {
-    let errors = audit::inspect_model_snapshot(&rows(r#""\ud800""#, r#""different""#)).unwrap();
+    let errors = inspect_model_snapshot(&rows(r#""\ud800""#, r#""different""#)).unwrap();
     let audit = Audit {
         counts: BTreeMap::new(),
         errors: errors.clone(),
@@ -78,7 +78,7 @@ fn audit_wire_is_the_original_string_array_with_lossless_model_mismatch() {
 
 #[test]
 fn scalar_model_audit_wording_order_and_serialized_bytes_are_unchanged() {
-    let errors = audit::inspect_model_snapshot(&rows(r#""missing""#, r#""other""#)).unwrap();
+    let errors = inspect_model_snapshot(&rows(r#""missing""#, r#""other""#)).unwrap();
     assert_eq!(
         errors,
         vec![JsString16::from_utf8(
@@ -94,4 +94,27 @@ fn scalar_model_audit_wording_order_and_serialized_bytes_are_unchanged() {
         audit.error_message("prefix: ").try_utf8().unwrap(),
         "prefix: default model is not present in codex model snapshot: missing"
     );
+}
+
+// Independent decoded row lifetimes model the replayable native spool contract.
+struct Replay<'a>(&'a [ObservedRow]);
+impl audit::AuditInventory for Replay<'_> {
+    fn visit(
+        &self,
+        callback: &mut dyn FnMut(&ObservedRow) -> Result<(), gateway_core::GatewayError>,
+    ) -> Result<(), gateway_core::GatewayError> {
+        for row in self.0 {
+            let decoded = row.clone();
+            callback(&decoded)?;
+        }
+        Ok(())
+    }
+}
+fn inspect_model_snapshot(
+    rows: &[ObservedRow],
+) -> Result<Vec<JsString16>, gateway_core::GatewayError> {
+    let result = audit::inspect_model_snapshot(rows);
+    let replay = audit::inspect_model_inventory(&Replay(rows));
+    assert_eq!(format!("{result:?}"), format!("{replay:?}"));
+    result
 }

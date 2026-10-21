@@ -123,7 +123,7 @@ impl ConfiguredNativeCustody {
     // The existing sanitizer handles refresh-bearing source rows. Existing
     // access-only rows still require actual observation; this returns unit only,
     // never an OwnedNativeSnapshot/managed grant for an external account.
-    async fn verify_existing_access_only(
+    pub(crate) async fn verify_existing_access_only(
         &self,
         capture: &crate::NativeCapture,
     ) -> Result<(), crate::MigrationError> {
@@ -190,4 +190,52 @@ impl ConfiguredNativeCustody {
         }
         Ok(())
     }
+}
+
+/// Native-only full audit/custody preparation. Only bounded canonical stage frames
+/// leave this process. Ordinary profile/capture codecs and atomic adoption stay intact.
+pub async fn prepare_local_stage(
+    source: crate::NativeCapture,
+    registrations: Vec<NativeCustodyRegistration>,
+) -> Result<crate::staged::StagePlan, crate::MigrationError> {
+    let custody = ConfiguredNativeCustody::new(registrations)?;
+    custody.verify_existing_access_only(&source).await?;
+    let directory = crate::native_stage::directory(&std::env::temp_dir())?;
+    crate::native_stage::Captured::owned(source, &directory)?
+        .prepare(&custody)
+        .await
+}
+
+/// Private file/pipe sinks only: current full credentials remain native. The
+/// complete latest inverse is computed by the existing custody/transform engine,
+/// not a source backup. This native memory requirement must be measured before
+/// private production captures; no full bundle crosses the WASM wire.
+pub async fn write_private_latest<
+    S: gateway_core::query::QueryStore,
+    H: crate::NativeCustody,
+    W: std::io::Write,
+    C: std::io::Write,
+>(
+    store: &S,
+    now_ms: i64,
+    host: &H,
+    artifacts: crate::ArtifactContext,
+    source_sink: &mut W,
+    custody_sink: &mut C,
+) -> Result<usize, crate::MigrationError> {
+    crate::native_latest::write_latest(store, now_ms, host, artifacts, source_sink, custody_sink)
+        .await
+}
+
+/// Same configured custody, with a stopped owner-only source file and private
+/// sealed spool. No source payload inventory is collected by the operator.
+pub async fn prepare_local_stage_file(
+    path: &std::path::Path,
+    directory: &std::path::Path,
+    registrations: Vec<NativeCustodyRegistration>,
+) -> Result<crate::staged::StagePlan, crate::MigrationError> {
+    let custody = ConfiguredNativeCustody::new(registrations)?;
+    let source = crate::native_stage::Captured::read(path, directory)?;
+    source.verify_configured(&custody).await?;
+    source.prepare(&custody).await
 }

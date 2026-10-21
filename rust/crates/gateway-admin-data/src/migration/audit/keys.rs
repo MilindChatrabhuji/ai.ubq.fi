@@ -1,4 +1,6 @@
-use super::{Audit, api_id, reference, source_fields as source, under};
+use super::{
+    Audit, AuditInventory, SliceInventory, api_id, reference, source_fields as source, under,
+};
 use crate::migration::ObservedRow;
 use gateway_core::{
     GatewayError, js_string::JsString16, source_control::decode_source_control_record,
@@ -93,14 +95,63 @@ pub struct AuditedKeyPair {
 pub fn inspect_key_pairs(
     rows: &[ObservedRow],
 ) -> Result<(Vec<AuditedKeyPair>, Audit), GatewayError> {
+    let mut pairs = Vec::new();
+    let audit = visit_key_pairs(&SliceInventory(rows), &mut |pair| {
+        pairs.push(pair);
+        Ok(())
+    })?;
+    Ok((pairs, audit))
+}
+pub(super) fn visit_key_pairs(
+    rows: &dyn AuditInventory,
+    emit: &mut dyn FnMut(AuditedKeyPair) -> Result<(), GatewayError>,
+) -> Result<Audit, GatewayError> {
+    visit_key_pairs_with(rows, emit, &mut |_| {})
+}
+pub(super) fn visit_key_pairs_with(
+    rows: &dyn AuditInventory,
+    emit: &mut dyn FnMut(AuditedKeyPair) -> Result<(), GatewayError>,
+    observe: &mut dyn FnMut(&ObservedRow),
+) -> Result<Audit, GatewayError> {
     let mut audit = Audit::default();
     let mut hashes = BTreeMap::new();
     let mut refs: BTreeMap<String, usize> = BTreeMap::new();
-    let mut pairs = vec![];
-    for row in rows
-        .iter()
-        .filter(|r| under(&r.parts, &["ubq_ai", "api_keys", "hash"]))
-    {
+    let mut ordinal = 0usize;
+    let mut baselines = Audit::default();
+    let mut baseline_error = None;
+    let mut bounded_counters = 0;
+    rows.visit(&mut |row| {
+        observe(row);
+        let current = ordinal;
+        ordinal += 1;
+        if under(&row.parts, &["uos_ai", "api_key_usage", "v2"]) {
+            bounded_counters += 1;
+        }
+        if under(
+            &row.parts,
+            &[
+                "uos_ai",
+                "migrations",
+                "kv_read_incident_v2",
+                "api_key_usage_baseline",
+            ],
+        ) && baseline_error.is_none()
+        {
+            baselines.count("api_key_bounded_counter_baselines_v2");
+            match row.value() {
+                Ok(value) => {
+                    if super::super::counter::valid_baseline(value)
+                        && !value["reconciled_at_ms"].is_null()
+                    {
+                        baselines.count("api_key_bounded_counter_reconciled_baselines_v2");
+                    }
+                }
+                Err(error) => baseline_error = Some(error),
+            }
+        }
+        if !under(&row.parts, &["ubq_ai", "api_keys", "hash"]) {
+            return Ok(());
+        }
         audit.count("api_key_hashes");
         let p = &row.parts;
         let value = decode_source_control_record(&row.record)?;
@@ -110,7 +161,7 @@ pub fn inspect_key_pairs(
                     .as_str()
                     .into(),
             );
-            continue;
+            return Ok(());
         }
         let hash = p[3].as_str().unwrap_or("");
         if !valid_source_key_policy(&value, false) {
@@ -119,14 +170,15 @@ pub fn inspect_key_pairs(
                     .as_str()
                     .into(),
             );
-            continue;
+            return Ok(());
         }
-        hashes.insert(hash.to_owned(), value.clone());
-    }
-    for row in rows
-        .iter()
-        .filter(|r| under(&r.parts, &["ubq_ai", "api_keys", "id"]))
-    {
+        hashes.insert(hash.to_owned(), current);
+        Ok(())
+    })?;
+    rows.visit(&mut |row| {
+        if !under(&row.parts, &["ubq_ai", "api_keys", "id"]) {
+            return Ok(());
+        }
         audit.count("api_key_ids");
         let p = &row.parts;
         let v = decode_source_control_record(&row.record)?;
@@ -136,7 +188,7 @@ pub fn inspect_key_pairs(
                     .as_str()
                     .into(),
             );
-            continue;
+            return Ok(());
         }
         let id = p[3].as_str().unwrap_or("");
         if !valid_source_key_policy(&v, true) {
@@ -145,7 +197,7 @@ pub fn inspect_key_pairs(
                     .as_str()
                     .into(),
             );
-            continue;
+            return Ok(());
         }
         if source::text(&v, "id").as_deref() != Some(id) {
             audit.errors.push(
@@ -156,10 +208,20 @@ pub fn inspect_key_pairs(
                 .as_str()
                 .into(),
             );
-            continue;
+            return Ok(());
         }
         let hash = source::text(&v, "hash").unwrap_or_default();
-        let paired = hashes.get(&hash);
+        let mut paired = None;
+        if let Some(expected) = hashes.get(&hash) {
+            let mut ordinal = 0usize;
+            rows.visit(&mut |candidate| {
+                if ordinal == *expected {
+                    paired = Some(decode_source_control_record(&candidate.record)?);
+                }
+                ordinal += 1;
+                Ok(())
+            })?;
+        }
         let fields = [
             "id",
             "expires_at_ms",
@@ -175,22 +237,26 @@ pub fn inspect_key_pairs(
             "paid_fallback_reserved_microcredits",
             "paid_fallback_reservation_request_id",
         ];
-        if paired.is_none_or(|h| fields.iter().any(|f| !source::same(&v, h, f))) {
+        if paired
+            .as_ref()
+            .is_none_or(|h| fields.iter().any(|f| !source::same(&v, h, f)))
+        {
             audit.errors.push(
                 format!("api key hash policy is missing or inconsistent: {id}")
                     .as_str()
                     .into(),
             );
-            continue;
+            return Ok(());
         }
         *refs.entry(hash.to_owned()).or_default() += 1;
-        pairs.push(AuditedKeyPair {
+        emit(AuditedKeyPair {
             key_id: id.to_owned(),
             unlimited_paid: source::equals(&v, "paid_fallback_limit_microcredits", &json!(-1)),
             id: v,
-            hash: paired.cloned().expect("validated paired source policy"),
-        });
-    }
+            hash: paired.expect("validated paired source policy"),
+        })?;
+        Ok(())
+    })?;
     for hash in hashes.keys() {
         match refs.get(hash).copied().unwrap_or(0) {
             0 => audit.errors.push(
@@ -216,28 +282,12 @@ pub fn inspect_key_pairs(
                 .into(),
         );
     }
-    for row in rows.iter().filter(|r| {
-        under(
-            &r.parts,
-            &[
-                "uos_ai",
-                "migrations",
-                "kv_read_incident_v2",
-                "api_key_usage_baseline",
-            ],
-        )
-    }) {
-        audit.count("api_key_bounded_counter_baselines_v2");
-        let value = row.value()?;
-        if super::super::counter::valid_baseline(value) && !value["reconciled_at_ms"].is_null() {
-            audit.count("api_key_bounded_counter_reconciled_baselines_v2");
-        }
+    if let Some(error) = baseline_error {
+        return Err(error);
     }
-    audit.counts.insert(
-        "api_key_bounded_counters_v2".into(),
-        rows.iter()
-            .filter(|r| under(&r.parts, &["uos_ai", "api_key_usage", "v2"]))
-            .count(),
-    );
-    Ok((pairs, audit))
+    audit.merge(baselines);
+    audit
+        .counts
+        .insert("api_key_bounded_counters_v2".into(), bounded_counters);
+    Ok(audit)
 }

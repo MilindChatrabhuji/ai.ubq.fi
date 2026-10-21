@@ -11,10 +11,10 @@ pub(crate) fn bind(
     revision: &str,
 ) -> Result<Vec<(RecordKey, StoredRecord)>, GatewayError> {
     let live = |row: &Row| row.record.expires_at_ms.is_none_or(|n| n > now);
-    let snapshot: BTreeMap<String, StoredRecord> = rows
+    let snapshot: BTreeMap<String, &StoredRecord> = rows
         .iter()
         .filter(|r| live(r))
-        .map(|r| (r.key.0.clone(), r.record.clone()))
+        .map(|r| (r.key.0.clone(), &r.record))
         .collect();
     let mut derived = Vec::new();
     let mut defaults = KernelDefaults::default();
@@ -313,3 +313,9 @@ pub(crate) fn bind(
     }
     Ok(derived)
 }
+
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+#[path = "indexes_spool.rs"]
+mod disk;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+pub(crate) use disk::bind_spooled;

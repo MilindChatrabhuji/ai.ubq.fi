@@ -22,8 +22,11 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
     #[serde(deny_unknown_fields)]
     struct Input {
         v: u32,
-        capture: gateway_migration::NativeCapture,
+        capture: Option<gateway_migration::NativeCapture>,
+        capture_file: Option<std::path::PathBuf>,
         registrations: Vec<Registration>,
+        #[serde(default)]
+        staged: bool,
     }
     let maximum = gateway_migration::operational::PRIVATE_WIRE_MAX_BYTES;
     if std::env::args_os().len() != 1 {
@@ -47,7 +50,67 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
         .into_iter()
         .map(|r| NativeCustodyRegistration::existing(r.home, r.fence))
         .collect::<Result<Vec<_>, _>>()?;
-    let candidate = run(prepare_local_bootstrap(&input.capture, registrations))?;
+    if input.staged && input.capture.is_none() {
+        let path = input
+            .capture_file
+            .as_ref()
+            .ok_or("Expected exactly one private capture input")?;
+        let directory = gateway_migration::native_stage::directory(
+            path.parent().ok_or("Missing stopped-file parent")?,
+        )?;
+        let mut plan = run(
+            gateway_migration::native_operator::prepare_local_stage_file(
+                path,
+                &directory,
+                registrations,
+            ),
+        )?;
+        let mut output = std::io::stdout().lock();
+        serde_json::to_writer(&mut output, &plan.begin())?;
+        output.write_all(b"\n")?;
+        while plan.write_next_batch(&mut output)? {
+            output.write_all(b"\n")?;
+        }
+        serde_json::to_writer(&mut output, &plan.seal())?;
+        output.write_all(b"\n")?;
+        return Ok(());
+    }
+    let capture = match (input.capture, input.capture_file, input.staged) {
+        (Some(capture), None, _) => capture,
+        (None, Some(path), true) => {
+            use std::os::unix::fs::MetadataExt;
+            let before = std::fs::symlink_metadata(&path)?;
+            if !path.is_absolute() || !before.is_file() || before.mode() & 0o077 != 0 {
+                return Err("Private native capture file is not owner-only/regular".into());
+            }
+            let file = std::fs::File::open(&path)?;
+            let opened = file.metadata()?;
+            if opened.dev() != before.dev()
+                || opened.ino() != before.ino()
+                || opened.uid() != before.uid()
+            {
+                return Err("Private native capture file changed before read".into());
+            }
+            serde_json::from_reader(std::io::BufReader::new(file))?
+        }
+        _ => return Err("Expected exactly one private capture input".into()),
+    };
+    if input.staged {
+        let mut plan = run(gateway_migration::native_operator::prepare_local_stage(
+            capture,
+            registrations,
+        ))?;
+        let mut output = std::io::stdout().lock();
+        serde_json::to_writer(&mut output, &plan.begin())?;
+        output.write_all(b"\n")?;
+        while plan.write_next_batch(&mut output)? {
+            output.write_all(b"\n")?;
+        }
+        serde_json::to_writer(&mut output, &plan.seal())?;
+        output.write_all(b"\n")?;
+        return Ok(());
+    }
+    let candidate = run(prepare_local_bootstrap(&capture, registrations))?;
     let output = serde_json::to_vec(&candidate)?;
     if output.len() > maximum {
         return Err("Private candidate exceeds bound".into());

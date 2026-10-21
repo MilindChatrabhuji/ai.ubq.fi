@@ -6,7 +6,7 @@ use gateway_core::{
     value::{PortableValue, ValueEncoding},
 };
 
-fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeValue, GatewayError> {
+pub(crate) fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeValue, GatewayError> {
     if row.record.value_encoding == ValueEncoding::SourceGraphV1 {
         return Ok(NativeValue::SourceGraphV1(
             crate::graph_transport::to_source_graph(&row.record.source_graph_value()?)?,

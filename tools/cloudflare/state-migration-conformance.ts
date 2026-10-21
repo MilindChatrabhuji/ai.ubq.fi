@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { Database } from "bun:sqlite";
 import { testNetworkArgv } from "../../scripts/test-network.ts";
-
 export const PRIVATE_WIRE_MAX_BYTES = 32 * 1024 * 1024;
 const TASK_ROOT = "/tmp/ai-rust-wasm-20261018/state-controller-2101";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -276,6 +275,7 @@ export type Manifest = Readonly<{
   artifact_receipts: readonly FileFact[];
   confinement_receipt: FileFact;
   oracle: Oracle;
+  fixture_scenario?: "history-staged-v1";
 }>;
 function fact(value: unknown): asserts value is FileFact {
   closed(value, ["path", "sha256"]);
@@ -283,6 +283,10 @@ function fact(value: unknown): asserts value is FileFact {
   assert(value.path.startsWith("/"));
   text(value.sha256);
   assert(/^[a-f0-9]{64}$/.test(value.sha256));
+}
+export function fixtureEnvelope(scenario: unknown): number {
+  assert(scenario === undefined || scenario === "history-staged-v1", "Unsupported finite state fixture scenario.");
+  return scenario === undefined ? 120_000 : 360_000;
 }
 export function manifest(value: unknown, expected: string): Manifest {
   closed(value, [
@@ -297,7 +301,9 @@ export function manifest(value: unknown, expected: string): Manifest {
     "artifact_receipts",
     "confinement_receipt",
     "oracle",
+    ...(object(value) && Object.hasOwn(value, "fixture_scenario") ? ["fixture_scenario"] : []),
   ]);
+  fixtureEnvelope(value.fixture_scenario);
   assert.equal(value.v, 1);
   assert(/^[a-f0-9]{40}$/.test(expected));
   assert.equal(value.source_sha, expected);
@@ -358,6 +364,8 @@ const NATIVE_PHASES: ReadonlyMap<string, string> = new Map([
   ["runtime_exercised", "exercise-runtime"],
   ["managed_a_advanced", "advance-managed-a"],
   ["inverse", "inverse"],
+  ["staged_partial", "staged-partial"],
+  ["staged_exercised", "staged-exercised"],
 ]);
 class NativeStderr {
   private readonly _prefix = new Uint8Array(32 * 1024);
@@ -445,9 +453,12 @@ export class NativePort {
     await this._child.stdin.write(raw + "\n");
     await this._child.stdin.flush();
     const timeout = new Promise<never>((_resolve, reject) => {
-      this._timer = setTimeout(() => {
-        reject(new Error("Native fixture phase exceeded twenty seconds."));
-      }, 20_000);
+      this._timer = setTimeout(
+        () => {
+          reject(new Error("Native fixture phase exceeded twenty seconds."));
+        },
+        expected.startsWith("staged_") ? 120_000 : 20_000
+      );
     });
     try {
       for (;;) {
@@ -673,6 +684,60 @@ export function fixtureTime(origin: number): FixtureTime {
 export function assertFixtureBudget(time: FixtureTime, now = Date.now()): void {
   assert(Number.isSafeInteger(now) && now >= time.origin && now < time.deadline, "fixture_time_budget_expired");
 }
+// Same native/common-DO path, a separate unpublished target, no new public route.
+async function stagedCase(input: Manifest): Promise<ObjectValue> {
+  const directory = join(input.run_directory, "large-staged");
+  await mkdir(directory);
+  const stagedInput = { ...input, run_directory: directory };
+  const config = await configuration(stagedInput);
+  let running: Running | undefined;
+  let native: NativePort | undefined;
+  let failure: Readonly<{ error: unknown }> | undefined;
+  try {
+    running = await start(stagedInput, config, 1);
+    native = new NativePort(input.native_fixture.path, directory);
+    const partial = await native.call(
+      { v: 1, operation: "staged_case", directory: join(directory, "native"), now_ms: Date.now() },
+      "staged_partial",
+      running.origin
+    );
+    integer(partial.source_bytes);
+    assert(typeof partial.source_bytes === "number" && partial.source_bytes > PRIVATE_WIRE_MAX_BYTES && partial.unsealed_refused === true);
+    await running.stop();
+    running = await start(stagedInput, config, 2);
+    const artifacts = {
+      rust_git_sha: input.source_sha,
+      rust_git_tree: input.source_tree,
+      wasm_sha256: input.worker_wasm.sha256,
+      native_sha256: input.native_fixture.sha256,
+      native_nonce_capture_sha256: null,
+    };
+    const result = await native.call({ v: 1, operation: "staged_resume", artifacts }, "staged_exercised", running.origin);
+    assert(Array.isArray(result.cases) && result.cases.length === 8 && result.cases.every((value) => typeof value === "string"));
+    assert(
+      object(result.receipt) && result.receipt.sealed === true && result.receipt.activation_authorized === false && !("atomic_committed" in result.receipt)
+    );
+    integer(result.max_stage_frame_bytes);
+    assert(
+      typeof result.max_stage_frame_bytes === "number" && result.max_stage_frame_bytes <= PRIVATE_WIRE_MAX_BYTES && result.historical_roundtrip_exact === true
+    );
+    text(result.latest_file);
+    const target = join(directory, "latest-bun-target");
+    await mkdir(target);
+    await oracle(stagedInput, target, result.latest_file, true);
+    await privateFile(join(directory, "staged-receipt.json"), result);
+    await native.close(true);
+    native = undefined;
+    await running.stop();
+    running = undefined;
+    return result;
+  } catch (error) {
+    failure = { error };
+    throw error;
+  } finally {
+    throwCleanupFailures(await Promise.allSettled([native?.close(), running?.stop()]), failure);
+  }
+}
 async function actualCase(input: Manifest): Promise<ObjectValue> {
   const workspace = input.run_directory;
   const time = fixtureTime(Date.now());
@@ -753,7 +818,14 @@ async function actualCase(input: Manifest): Promise<ObjectValue> {
     ]);
     cases.push(...(runtime.cases as string[]));
     assertFixtureBudget(time);
-    const custody = await native.call({ v: 1, operation: "advance_managed_a" }, "managed_a_advanced", running.origin);
+    const artifacts = {
+      rust_git_sha: input.source_sha,
+      rust_git_tree: input.source_tree,
+      wasm_sha256: input.worker_wasm.sha256,
+      native_sha256: input.native_fixture.sha256,
+      native_nonce_capture_sha256: null,
+    };
+    const custody = await native.call({ v: 1, operation: "advance_managed_a", artifacts }, "managed_a_advanced", running.origin);
     assertFixtureBudget(time);
     producer(custody, "managed_a_advanced", [
       "stale_owner_generation_refused",
@@ -762,13 +834,6 @@ async function actualCase(input: Manifest): Promise<ObjectValue> {
       "current_owner_inverse_accepted",
     ]);
     cases.push(...(custody.cases as string[]));
-    const artifacts = {
-      rust_git_sha: input.source_sha,
-      rust_git_tree: input.source_tree,
-      wasm_sha256: input.worker_wasm.sha256,
-      native_sha256: input.native_fixture.sha256,
-      native_nonce_capture_sha256: null,
-    };
     assertFixtureBudget(time);
     const inverse = await native.call({ v: 1, now_ms: time.inverse, artifacts }, "inverse", running.origin);
     assertFixtureBudget(time);
@@ -813,11 +878,13 @@ async function actualCase(input: Manifest): Promise<ObjectValue> {
     assert.equal(sha256(await readFile(sibling)), siblingHash);
     assert.equal(sha256(await readFile(sourceFile)), sha256(JSON.stringify(source, null, 2) + "\n"));
     assertFixtureBudget(time);
+    const staged = input.fixture_scenario === "history-staged-v1" ? await stagedCase(input) : undefined;
     return {
       source_sha: input.source_sha,
       source_tree: input.source_tree,
       artifacts,
       cases,
+      staged,
       source_database_sha256: stoppedHash,
       latest_target_sha256: targetHash,
       latest_capture_sha256: sha256(await readFile(latest)),
@@ -886,7 +953,6 @@ export function stateFixtureArgv(child: readonly string[], directory: string): s
   encoded[2] += `\n(deny file-write*)\n(allow file-write* (subpath ${JSON.stringify(directory)}))`;
   return [...argv.slice(0, 5), JSON.stringify(encoded)];
 }
-
 async function main(): Promise<void> {
   assert.equal(Bun.version, "1.4.0");
   const child = process.argv[2] === "--fixture-child";
@@ -918,7 +984,7 @@ async function main(): Promise<void> {
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
-  const timer = setTimeout(stop, 120_000);
+  const timer = setTimeout(stop, fixtureEnvelope(input.fixture_scenario));
   try {
     const [code, output, errors] = await Promise.all([processChild.exited, new Response(processChild.stdout).text(), new Response(processChild.stderr).text()]);
     await writeFile(join(input.run_directory, "controller.stderr.log"), errors);

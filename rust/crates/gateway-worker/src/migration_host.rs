@@ -115,3 +115,26 @@ async fn local_operator_adoption(
     let receipt = encode_native_response(&result).map_err(|_| refused())?;
     Ok(Uint8Array::from(receipt.as_slice()))
 }
+
+/// PRIVATE trusted local setup only. No ordinary/public fetch dispatches here.
+/// The operator keeps this common target unpublished throughout begin/append/seal.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn local_operator_stage(env: worker::Env, input: js_sys::Uint8Array) -> js_sys::Promise {
+    worker::wasm_bindgen_futures::future_to_promise(async move {
+        use worker::{js_sys::Uint8Array, wasm_bindgen::JsValue};
+        let refused = || JsValue::from_str("private_local_staged_refused");
+        if input.length() as usize > gateway_migration::staged::STAGED_BATCH_MAX_BYTES {
+            return Err(refused());
+        }
+        let request = gateway_migration::staged::decode_stage_request(&input.to_vec())
+            .map_err(|_| refused())?;
+        let store =
+            crate::authority::RemoteAuthorityStore::from_env(&env).map_err(|_| refused())?;
+        let result = gateway_migration::staged::execute_staged(&store, request)
+            .await
+            .map_err(|_| refused())?;
+        let bytes = serde_json::to_vec(&result).map_err(|_| refused())?;
+        Ok(Uint8Array::from(bytes.as_slice()).into())
+    })
+}

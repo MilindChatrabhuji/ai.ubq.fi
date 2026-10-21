@@ -65,34 +65,53 @@ pub(crate) fn mapping_checksum(
 }
 
 fn validate_source_inventories(
-    rows: &[Row],
+    rows: Vec<Row>,
     now: i64,
-) -> Result<gateway_admin_data::migration::audit::Audit, GatewayError> {
+) -> Result<(Vec<Row>, gateway_admin_data::migration::audit::Audit), GatewayError> {
     use gateway_admin_data::migration::{ObservedRow, audit};
-    let observed: Vec<_> = rows
-        .iter()
-        .filter(|r| r.record.expires_at_ms.is_none_or(|e| e > now))
-        .map(|r| ObservedRow {
-            key: r.key.clone(),
-            parts: r.parts.clone(),
-            record: r.record.clone(),
+    // The SAME complete live cohort is owned by the existing global audit.
+    // Move payloads instead of deep-cloning every expanded typed record.
+    let mut observed = Vec::new();
+    let mut mappings = Vec::new();
+    let mut expired = Vec::new();
+    let mut order = Vec::new();
+    for row in rows {
+        let live = row.record.expires_at_ms.is_none_or(|e| e > now);
+        order.push(live);
+        if live {
+            mappings.push(row.mapping);
+            observed.push(ObservedRow {
+                key: row.key,
+                parts: row.parts,
+                record: row.record,
+            });
+        } else {
+            expired.push(row);
+        }
+    }
+    let findings = audit::inspect_inventory(&audit::SliceInventory(&observed), now)?;
+    let mut live = observed
+        .into_iter()
+        .zip(mappings)
+        .map(|(row, mapping)| Row {
+            key: row.key,
+            parts: row.parts,
+            record: row.record,
+            mapping,
+        });
+    let mut expired = expired.into_iter();
+    let rows = order
+        .into_iter()
+        .map(|live_row| {
+            if live_row {
+                live.next()
+            } else {
+                expired.next()
+            }
+            .expect("exact retained audit order")
         })
         .collect();
-    let (pairs, mut findings) = audit::inspect_key_pairs(&observed)?;
-    let known = pairs.iter().map(|pair| pair.key_id.clone()).collect();
-    let unlimited = pairs
-        .iter()
-        .filter(|pair| pair.unlimited_paid)
-        .map(|pair| pair.key_id.clone())
-        .collect();
-    findings.merge(audit::inspect_api_usage(&observed, &known)?);
-    findings.merge(audit::inspect_kernel(&observed)?);
-    findings.merge(audit::inspect_paid(&observed, &known, &unlimited, now)?);
-    findings.merge(audit::inspect_reset_usage(&observed)?);
-    findings
-        .errors
-        .extend(audit::inspect_model_snapshot(&observed)?);
-    Ok(findings)
+    Ok((rows, findings))
 }
 
 pub fn prepare(
@@ -112,13 +131,13 @@ pub fn prepare(
 }
 
 pub(crate) fn prepare_rows(
-    mut rows: Vec<Row>,
+    rows: Vec<Row>,
     capture_id: String,
     source_git_sha: &str,
     captured_at_ms: i64,
     native_revision: Option<crate::NativeRevision>,
 ) -> Result<PreparedAdoption, MigrationError> {
-    let audited = validate_source_inventories(&rows, captured_at_ms)?;
+    let (mut rows, audited) = validate_source_inventories(rows, captured_at_ms)?;
     if !audited.errors.is_empty() {
         return Err(MigrationError::SourceInventory(audited));
     }
