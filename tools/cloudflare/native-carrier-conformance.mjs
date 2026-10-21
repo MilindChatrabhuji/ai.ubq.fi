@@ -15,6 +15,7 @@ const childMode = process.argv[2] === "--fixture-child";
 const pendingOnly = process.argv.includes("--pending");
 const websocketOnly = process.argv.includes("--websocket-only");
 const traceNative = process.argv.includes("--trace-native");
+const platformProbe = process.argv.includes("--probe-signal");
 const [sha, build, binary, schema, parent, controlAddress] = process.argv.slice(childMode ? 3 : 2);
 assert.match(sha ?? "", /^[a-f0-9]{40}$/u);
 assert.equal(Bun.version, "1.4.0");
@@ -67,6 +68,7 @@ async function outer() {
     ...(pendingOnly ? ["--pending"] : []),
     ...(websocketOnly ? ["--websocket-only"] : []),
     ...(traceNative ? ["--trace-native"] : []),
+    ...(platformProbe ? ["--probe-signal"] : []),
   ]);
   const task = Bun.spawn(command, {
     cwd: root,
@@ -241,12 +243,12 @@ async function run() {
     const port = reserve();
     const publicPort = reserve();
     const diagnosticPort = reserve();
-    const proxySource = `export default {async fetch(r){const h=new Headers();for(const [k,v]of r.headers)if(k.startsWith("x-uos-native-")||k==="upgrade")h.set(k,v);const response=await fetch("https://localhost/v1/native/live",{headers:h,redirect:"manual"});console.error("raw-proxy-result",response.status,response.statusText,!!response.webSocket);return response;}}`;
+    const proxySource = `export default {async fetch(r){const h=new Headers();for(const [k,v]of r.headers)if(k.startsWith("x-uos-native-")||k==="upgrade")h.set(k,v);const signalled=new URL(r.url).pathname==="/signal";const init={method:"GET",headers:h,redirect:"manual"};if(signalled)init.signal=new AbortController().signal;console.error("raw-proxy-start",signalled);const response=await fetch(new Request("https://localhost/v1/native/live",init));console.error("raw-proxy-result",response.status,response.statusText,!!response.webSocket);return response;}}`;
     const traceSource = `import Shipping,{GatewayAuthority} from "./index.js";export {GatewayAuthority};const original=globalThis.fetch;globalThis.fetch=async function(input,init){const native=new URL(input.url??input).pathname==="/v1/native/live";if(native)console.error("native-fetch-start",!!input.signal?.aborted);const response=await original.call(this,input,init);if(native)console.error("native-fetch-resolved",response.status,!!response.webSocket);return response;};export default class extends Shipping{async fetch(request){const upgrade=request.headers.get("upgrade")==="websocket";const response=await super.fetch(request);if(upgrade)console.error("gateway-handler-resolved",response.status,!!response.webSocket);return response;}}`;
     const config = `using Workerd = import ${q(resolve(schema))};
 const config :Workerd.Config = (services = [
  (name="internet",network=(allow=[])),
- (name="raw-proxy",worker=(modules=[(name="proxy.mjs",esModule=${q(proxySource)})],compatibilityDate="2026-10-18",globalOutbound="tls-native")),
+ (name="raw-proxy",worker=(modules=[(name="proxy.mjs",esModule=${q(proxySource)})],compatibilityDate="2026-10-18",compatibilityFlags=["enable_request_signal","request_signal_passthrough"],globalOutbound="tls-native")),
  (name="tls-native",external=(address="127.0.0.1:${tlsPort}",https=(certificateHost="localhost",tlsOptions=(trustBrowserCas=false,trustedCertificates=[${trust ? `embed ${q(join(workspace, "ca.pem"))}` : ""}])))),
  (name="state",disk=(path=${q(join(workspace, "state"))},writable=true)),(name="assets",disk=(path=${q(resolve("static"))})),
  (name="driver",worker=(modules=[(name="driver.mjs",esModule=embed ${q(resolve("tools/cloudflare/fixtures/runtime-driver.mjs"))}),(name="provider-matrix.mjs",esModule=embed ${q(resolve("tools/cloudflare/fixtures/provider-matrix.mjs"))})],compatibilityDate="2026-10-18",compatibilityFlags=["enable_request_signal","request_signal_passthrough"],globalOutbound="internet",bindings=[(name="GATEWAY",service="gateway"),(name="AUTHORITY",durableObjectNamespace=(serviceName="gateway",className="GatewayAuthority")),(name="CONTROL",durableObjectNamespace=(className="FixtureControl"))],durableObjectNamespaces=[(className="FixtureControl",uniqueKey="native-carrier-control",enableSql=true)],durableObjectStorage=(localDisk="state"))),
@@ -463,32 +465,35 @@ const config :Workerd.Config = (services = [
         directSocket.terminate();
       }
     }
-    if (!traceNative) {
-      const probeNonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
-      const probeTime = String(Date.now());
-      const probeAction = "controlled-platform-baseline";
-      const probe = new WebSocket(running.diagnosticOrigin.replace("http:", "ws:") + "/", {
-        handshakeTimeout: 3000,
-        headers: {
-          "x-uos-native-version": "1",
-          "x-uos-native-key-id": "fixture-matrix-key",
-          "x-uos-native-time-ms": probeTime,
-          "x-uos-native-nonce": probeNonce,
-          "x-uos-native-live-action": probeAction,
-          "x-uos-native-mac": hmac(`uos-native-live-upgrade-v1\0GET\0/v1/native/live\0fixture-matrix-key\0${probeTime}\0${probeNonce}\0${probeAction}`),
-        },
-      });
-      try {
-        await new Promise((done, reject) => {
-          probe.once("error", reject);
-          probe.once("open", done);
+    if (!traceNative || platformProbe) {
+      for (const probeSignal of platformProbe ? [false, true] : [false]) {
+        const probeNonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+        const probeTime = String(Date.now());
+        const probeAction = "controlled-platform-baseline";
+        const probe = new WebSocket(running.diagnosticOrigin.replace("http:", "ws:") + (probeSignal ? "/signal" : "/"), {
+          handshakeTimeout: 3000,
+          headers: {
+            "x-uos-native-version": "1",
+            "x-uos-native-key-id": "fixture-matrix-key",
+            "x-uos-native-time-ms": probeTime,
+            "x-uos-native-nonce": probeNonce,
+            "x-uos-native-live-action": probeAction,
+            "x-uos-native-mac": hmac(`uos-native-live-upgrade-v1\0GET\0/v1/native/live\0fixture-matrix-key\0${probeTime}\0${probeNonce}\0${probeAction}`),
+          },
         });
-        cases.push("workerd_javascript_raw_fetch_websocket_proxy");
-        checkpoint("workerd_proxy_passed");
-      } finally {
-        probe.terminate();
+        try {
+          await new Promise((done, reject) => {
+            probe.once("error", reject);
+            probe.once("open", done);
+          });
+          cases.push(probeSignal ? "workerd_javascript_explicit_signal_websocket_proxy" : "workerd_javascript_raw_fetch_websocket_proxy");
+          checkpoint("workerd_proxy_passed");
+        } finally {
+          probe.terminate();
+        }
       }
     }
+    if (platformProbe) return;
     const form = new FormData();
     form.append("sdp", "fixture SDP offer");
     form.append("session", JSON.stringify({ model: "gpt-matrix-test" }));
