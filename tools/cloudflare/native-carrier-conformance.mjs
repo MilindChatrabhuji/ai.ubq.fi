@@ -206,16 +206,18 @@ async function run() {
     socket.once("close", () => sockets.delete(socket));
   });
   const wss = new WebSocketServer({ noServer: true });
+  let connectionSequence = 0;
   wss.on("headers", (headers) => {
     headers[0] = "HTTP/1.1 101 Fixture Native Upgrade";
     headers.push("x-fixture-native-upgrade: original");
   });
   wss.on("connection", (socket) => {
-    events.push({ kind: "native_websocket_open" });
+    const connection = ++connectionSequence;
+    events.push({ kind: "native_websocket_open", connection });
     checkpoint("peer_websocket_open");
     socket.on("message", (data, binaryMessage) => socket.send(data, { binary: binaryMessage }));
     socket.once("close", () => {
-      events.push({ kind: "native_websocket_closed" });
+      events.push({ kind: "native_websocket_closed", connection });
       checkpoint("peer_websocket_closed");
     });
   });
@@ -557,8 +559,9 @@ const config :Workerd.Config = (services = [
     checkpoint("sending_websocket_echo");
     socket.send("native\0echo");
     await echo;
+    const nativeConnection = events.findLast((event) => event.kind === "native_websocket_open").connection;
     socket.close(1000, "fixture done");
-    await until(() => events.some((e) => e.kind === "native_websocket_closed"));
+    await until(() => events.some((e) => e.kind === "native_websocket_closed" && e.connection === nativeConnection));
     cases.push("shipping_fixed_https_preserves_raw_101_status_text_headers_websocket_and_close");
     assert.deepEqual(failures, []);
     const artifacts = await Promise.all(
