@@ -341,7 +341,7 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
 #[test]
 fn configured_operator_composes_access_only_request_and_empty_store_adoption() {
     use gateway_migration::native_operator::{NativeCustodyRegistration, prepare_local_bootstrap};
-    use gateway_migration::operational::{decode_native_request, execute_native};
+    use gateway_migration::operational::{NativeMigrationRequest, NativeOperation, execute_native};
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = Directory::new();
     let home = directory.file("actual-configured-operator");
@@ -381,25 +381,25 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption() {
     });
     assert!(prepare_native(&capture).is_err());
     assert!(run(prepare_local_bootstrap(&capture, vec![])).is_err());
-    let request = run(prepare_local_bootstrap(&capture, vec![registration])).unwrap();
-    let bytes = serde_json::to_vec(&request).unwrap();
+    let candidate = run(prepare_local_bootstrap(&capture, vec![registration])).unwrap();
+    let bytes = serde_json::to_vec(&candidate).unwrap();
     assert!(!String::from_utf8_lossy(&bytes).contains(credentials.refresh_token.expose()));
     assert!(String::from_utf8_lossy(&bytes).contains(credentials.access_token.expose()));
     let store = SqliteStore::open(&directory.file("operator-common.sqlite3"));
-    let decoded = decode_native_request(&bytes).unwrap();
-    let adopted = run(execute_native(&store, decoded)).unwrap();
+    let decode = || NativeMigrationRequest {
+        v: 1,
+        request: NativeOperation::AdoptNative {
+            capture: serde_json::from_slice::<NativeCapture>(&bytes).unwrap(),
+        },
+    };
+    assert_eq!(serde_json::from_slice::<NativeCapture>(&bytes).unwrap().v, 2);
+    let adopted = run(execute_native(&store, decode())).unwrap();
     assert!(
         serde_json::to_string(&adopted)
             .unwrap()
             .contains("atomic_committed\":true")
     );
-    assert!(
-        run(execute_native(
-            &store,
-            decode_native_request(&bytes).unwrap()
-        ))
-        .is_err()
-    );
+    assert!(run(execute_native(&store, decode())).is_err());
     let snapshot = run(read_codex_source_pool(&store, 2300)).unwrap().unwrap();
     assert_eq!(snapshot.pool.accounts[0].account_id, credentials.account_id);
     assert!(snapshot.pool.accounts[0].refresh_token.expose().is_empty());

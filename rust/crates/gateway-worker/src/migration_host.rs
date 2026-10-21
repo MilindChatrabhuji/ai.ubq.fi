@@ -81,17 +81,24 @@ pub async fn local_operator_adopt(
     input: worker::js_sys::Uint8Array,
 ) -> Result<worker::js_sys::Uint8Array, worker::wasm_bindgen::JsValue> {
     use gateway_migration::operational::{
-        NativeOperation, decode_native_request, encode_native_response,
+        NativeMigrationRequest, NativeOperation, encode_native_response,
     };
     use worker::{js_sys::Uint8Array, wasm_bindgen::JsValue};
     let refused = || JsValue::from_str("private_local_bootstrap_refused");
     if input.length() as usize > gateway_migration::operational::PRIVATE_WIRE_MAX_BYTES {
         return Err(refused());
     }
-    let request = decode_native_request(&input.to_vec()).map_err(|_| refused())?;
-    if !matches!(&request.request, NativeOperation::AdoptNative { .. }) {
+    // Decode original NativeCapture v2 bytes directly: the shared public
+    // request decoder remains unchanged and cannot mint this private setup.
+    let capture: gateway_migration::NativeCapture =
+        serde_json::from_slice(&input.to_vec()).map_err(|_| refused())?;
+    if capture.v != 2 {
         return Err(refused());
     }
+    let request = NativeMigrationRequest {
+        v: 1,
+        request: NativeOperation::AdoptNative { capture },
+    };
     let store = crate::authority::RemoteAuthorityStore::from_env(&env).map_err(|_| refused())?;
     let result = execute_native(&store, request)
         .await

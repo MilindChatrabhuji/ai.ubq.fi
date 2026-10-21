@@ -47,8 +47,8 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
         .into_iter()
         .map(|r| NativeCustodyRegistration::existing(r.home, r.fence))
         .collect::<Result<Vec<_>, _>>()?;
-    let request = run(prepare_local_bootstrap(&input.capture, registrations))?;
-    let output = serde_json::to_vec(&request)?;
+    let candidate = run(prepare_local_bootstrap(&input.capture, registrations))?;
+    let output = serde_json::to_vec(&candidate)?;
     if output.len() > maximum {
         return Err("Private candidate exceeds bound".into());
     }

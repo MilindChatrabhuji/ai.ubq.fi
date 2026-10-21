@@ -113,14 +113,10 @@ fn invalid() -> GatewayError {
 pub async fn prepare_local_bootstrap(
     capture: &crate::NativeCapture,
     registrations: Vec<NativeCustodyRegistration>,
-) -> Result<crate::operational::NativeMigrationRequest, crate::MigrationError> {
+) -> Result<crate::NativeCapture, crate::MigrationError> {
     let custody = ConfiguredNativeCustody::new(registrations)?;
     custody.verify_existing_access_only(capture).await?;
-    let candidate = crate::sanitize_native_capture(capture, &custody).await?;
-    Ok(crate::operational::NativeMigrationRequest {
-        v: 1,
-        request: crate::operational::NativeOperation::AdoptNative { capture: candidate },
-    })
+    crate::sanitize_native_capture(capture, &custody).await
 }
 
 impl ConfiguredNativeCustody {
