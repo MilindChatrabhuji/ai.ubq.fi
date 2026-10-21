@@ -134,8 +134,8 @@ const OVERAGE_FALLBACK_REASONS: ReadonlySet<string> = new Set([
  * Plan at most one bounded overage attempt for the current blocked cohort.
  * The best candidate is the credit the evaluator selected (the day-cap
  * refusal), then the current active blocked account, then the first blocked
- * account. Arming (`live_armed`), a completed spend, and fence/config
- * failures are not in the reason set and never fall back.
+ * account. A completed spend and fence/config failures are not in the reason
+ * set and never fall back.
  */
 const planOverageFallback = (
   reason: string,
@@ -583,7 +583,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     const cohort: CodexResetCohortSnapshot = { poolJson: routedPool.poolSnapshotJson, capacityJson: routedPool.capacitySnapshotJson };
     const originalActive = routedPool.activeSnapshot;
     // Consider every blocked account's credit inventory. The original active
-    // snapshot fences inventory, arming and consume; the selected account is
+    // snapshot fences inventory and consume; the selected account is
     // elected only after its reset is verified.
     const localCandidates = blockedAccounts.map(
       (routing) =>

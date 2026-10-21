@@ -1,5 +1,7 @@
 # Codex Banked Reset: Implementation Brief
 
+> Historical implementation brief. Since 2026-10-21 automatic redemptions are live-only; the `CODEX_BANKED_RESET_MODE` selector and separate shadow-arming requirement are retired. See `codex-banked-reset-operations.md` and `DECISIONS.md` for current behavior.
+
 ## Objective
 
 Implement automatic redemption of exactly one banked Codex usage-limit reset when a configured ChatGPT Codex account has
@@ -254,9 +256,8 @@ request handling; redemption has independent persistence, ownership, recovery, a
 Add explicit configuration with safe defaults:
 
 ```text
-CODEX_BANKED_RESET_ENABLED=false
-CODEX_BANKED_RESET_MODE=disabled|shadow|live
-CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY=0
+CODEX_BANKED_RESET_ENABLED=true
+CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY=1
 CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW=1
 ```
 

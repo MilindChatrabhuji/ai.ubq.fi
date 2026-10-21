@@ -758,7 +758,7 @@ test("a partially blocked cohort is served by ordinary capacity with no reset-pr
   }
 });
 
-test("persistent live never arms a partially blocked cohort while ordinary capacity serves", async () => {
+test("persistent live serves a partially blocked cohort without reset-provider contact", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -818,7 +818,7 @@ test("persistent live never arms a partially blocked cohort while ordinary capac
   }
 });
 
-test("persistent live auto-arms an all-blocked cohort before one later consume and reset retry", async () => {
+test("persistent live consumes an all-blocked cohort in one request and retries once", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -880,21 +880,13 @@ test("persistent live auto-arms an all-blocked cohort before one later consume a
   });
 
   try {
-    const armed = await fetchCodexResponses({ input: "persistent-live-all-blocked-arm" }, options("persistent-live-all-blocked-arm"));
-    assert.equal(armed.status, 429);
-    assert.equal((await armed.json()).error.code, "codex_quota_blocked");
+    const consumed = await fetchCodexResponses({ input: "persistent-live-all-blocked" }, options("persistent-live-all-blocked"));
+    assert.equal(consumed.status, 200);
+    assert.ok(getCodexRoutingProbe(consumed));
     assert.deepEqual(
       [...inventoryAccountIds].sort((a, b) => a.localeCompare(b)),
       ["account-one", "account-two"]
     );
-    assert.deepEqual(consumeAccountIds, []);
-    assert.deepEqual(inferenceAccountIds, []);
-
-    const consumed = await fetchCodexResponses({ input: "persistent-live-all-blocked-consume" }, options("persistent-live-all-blocked-consume"));
-    assert.equal(consumed.status, 200);
-    assert.ok(getCodexRoutingProbe(consumed));
-    assert.equal(inventoryAccountIds.filter((accountId) => accountId === "account-one").length, 2);
-    assert.equal(inventoryAccountIds.filter((accountId) => accountId === "account-two").length, 2);
     assert.deepEqual(consumeAccountIds, ["account-one"]);
     assert.deepEqual(inferenceAccountIds, ["account-one"]);
     assert.equal(consumeBodies.length, 1);

@@ -19,7 +19,7 @@ import {
   unavailableCodexUsageResetProvider,
 } from "./helpers/codex-banked-reset-harness.ts";
 
-test("config and durable-record parsers are strict, and an unproven provider contract keeps live mode disabled", async () => {
+test("config and durable-record parsers are strict, and production configuration always selects live", async () => {
   const defaults = parseCodexBankedResetConfig(() => undefined);
   assert.deepEqual(
     {
@@ -28,12 +28,12 @@ test("config and durable-record parsers are strict, and an unproven provider con
       maxPerAccountPerDay: defaults.maxPerAccountPerDay,
       maxPerAccountPerWindow: defaults.maxPerAccountPerWindow,
     },
-    { enabled: true, mode: "shadow", maxPerAccountPerDay: 0, maxPerAccountPerWindow: 1 }
+    { enabled: true, mode: "live", maxPerAccountPerDay: 0, maxPerAccountPerWindow: 1 }
   );
 
   const environment = new Map<string, string>([
     ["CODEX_BANKED_RESET_ENABLED", " true "],
-    ["CODEX_BANKED_RESET_MODE", " LIVE "],
+    ["CODEX_BANKED_RESET_MODE", " shadow "],
     ["CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY", "2"],
     ["CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW", "1"],
   ]);

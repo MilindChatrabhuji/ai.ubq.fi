@@ -223,10 +223,6 @@ export const createCodexResponseState = async (
     newOwnerToken: configuredBankedReset?.newOwnerToken,
     hash: configuredBankedReset?.hash,
     telemetry: configuredBankedReset?.telemetry,
-    // A supplied provider exists only as the hermetic `fetchCodexResponses`
-    // test seam. Real traffic creates its account-bound adapter below and
-    // therefore always enforces a durable decision before live submission.
-    allowLiveWithoutShadowForTest: configuredBankedReset?.provider !== undefined,
   };
   const lastResponse: Response | null = null;
   const lastError: unknown = null;

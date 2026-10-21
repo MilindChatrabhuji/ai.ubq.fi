@@ -55,7 +55,7 @@ export type CodexActiveAccountSelection = Readonly<{
 
 /**
  * The active-selection row exactly as one strong read observed it. A banked
- * reset binds its inventory, arming and consume fences to this snapshot --
+ * reset binds its inventory and consume fences to this snapshot --
  * including a validly absent row -- and only elects its verified account after
  * proving the snapshot was not superseded.
  */
@@ -234,7 +234,7 @@ export type CodexRouteSelection =
        * Canonical strong-read snapshots for pre-election reset fences. Ordered
        * pool membership, credential material, pool update identity, and the
        * stored capacity observations must all stay exactly as observed through
-       * inventory, arming and consume.
+       * inventory and consume.
        */
       poolSnapshotJson: string | null;
       capacitySnapshotJson: string | null;

@@ -56,7 +56,7 @@ export type RouteSelection =
        * Canonical strong-read snapshots for pre-election reset fences. Ordered
        * pool membership, credential material, pool update identity, and the
        * stored capacity observations must all stay exactly as observed through
-       * inventory, arming and consume.
+       * inventory and consume.
        */
       poolSnapshotJson: string | null;
       capacitySnapshotJson: string | null;
