@@ -289,6 +289,14 @@ impl NativeBindings {
                 serde_json::from_slice(&body).map_err(|_| unavailable())?;
             response.validate_for(&envelope)?;
             let mut output = AuthResponse::json(response.status, response.body);
+            if response.stream.is_some() {
+                // The placeholder headers are merged onto the physical follow
+                // response; JSON here would overwrite its actual SSE type.
+                output.headers.insert(
+                    "content-type".into(),
+                    "text/event-stream; charset=utf-8".into(),
+                );
+            }
             output.stream = response.stream;
             Ok(output)
         }
@@ -327,13 +335,20 @@ impl NativeBindings {
             return Err(unavailable());
         }
         let source = exchange.response.stream().map_err(|_| unavailable())?;
+        // Child signals do not own the root's incoming abort listener. Retain
+        // that guard after routing returns headers, until this body finalizes.
+        let caller_cancellation = platform.cancellation.clone();
         let stream = ObservedStream::new(
             source,
             ObservationHandle::default(),
             context,
             exchange.cancellation,
             Some(exchange.deadline),
-            Box::new(|_| Box::pin(async {})),
+            Box::new(move |_| {
+                Box::pin(async move {
+                    drop(caller_cancellation);
+                })
+            }),
         );
         let mut response = stream.into_response().map_err(|_| unavailable())?;
         for (name, value) in [
