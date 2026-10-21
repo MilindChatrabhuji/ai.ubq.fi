@@ -1,23 +1,29 @@
-//! Request-owned native bindings. No environment lookup, default public target,
-//! provider token, arbitrary path, generic control or caller-selected owner.
-use std::rc::Rc;
+//! Trusted native bindings. No request-selected destination, default public
+//! target, provider token, arbitrary path, generic control or caller-selected owner.
+use std::{collections::BTreeSet, rc::Rc};
 
 use gateway_auth::{
     AuthResponse, GatewayError,
+    crypto::{base64url, decode_base64url},
     native::*,
-    native_auth::NativeTransportIdentity,
+    native_auth::{NativeCapability, NativeTransportIdentity},
     native_control::{
         NATIVE_CONTROL_MAX_BYTES, NATIVE_RENEWAL_MAX_MS, NativeControlEnvelope,
         NativeControlResponse, unverified,
     },
 };
-use worker::{Context, Fetcher, Response};
+use serde::Deserialize;
+use worker::{Context, Env, Fetcher, Response};
 
 use crate::{
     host::{PlatformHost, response_bytes},
     native_transport::{NativeTransport, unavailable},
     transport::stream::{ObservationHandle, ObservedStream},
 };
+
+/// One exact deployment binding. No binding-name scan or request-derived destination.
+pub const NATIVE_CARRIER_BINDING: &str = "UOS_NATIVE_CARRIER";
+pub const NATIVE_CARRIER_CONFIG_MAX_BYTES: usize = 16_384;
 
 #[derive(Clone, Default)]
 pub struct NativeBindings {
@@ -26,8 +32,36 @@ pub struct NativeBindings {
 }
 
 impl NativeBindings {
-    /// Trusted injection only. The ordinary entrypoint uses Default and cannot
-    /// acquire this capability from a client body/header or provider credential.
+    /// Read one exact deployment binding. Absence keeps the capability unavailable;
+    /// malformed, partial or unsupported configuration fails closed. The binding is
+    /// parsed before routing and cannot select a destination per request.
+    pub fn from_worker_binding(env: &Env) -> Result<Option<Self>, GatewayError> {
+        let raw = crate::host::setting(env, NATIVE_CARRIER_BINDING);
+        let present = worker::js_sys::Reflect::has(
+            env,
+            &worker::wasm_bindgen::JsValue::from_str(NATIVE_CARRIER_BINDING),
+        )
+        .map_err(|_| invalid_configuration())?;
+        if present && raw.is_none() {
+            return Err(invalid_configuration());
+        }
+        Self::from_binding_value(raw.as_deref())
+    }
+
+    fn from_binding_value(raw: Option<&str>) -> Result<Option<Self>, GatewayError> {
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
+        if raw.len() > NATIVE_CARRIER_CONFIG_MAX_BYTES {
+            return Err(invalid_configuration());
+        }
+        let config: NativeCarrierConfig =
+            serde_json::from_str(raw).map_err(|_| invalid_configuration())?;
+        config.into_bindings().map(Some)
+    }
+
+    /// Trusted injection only. No client body/header or provider credential can
+    /// acquire this capability.
     pub fn configured(carrier: Fetcher, identity: NativeTransportIdentity) -> Self {
         Self {
             transport: Some(NativeTransport::configured(carrier, identity)),
@@ -427,5 +461,203 @@ impl NativeBindings {
         .await;
         exchange.cancellation.abort();
         result
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeCarrierConfig {
+    origin: String,
+    identity: NativeCarrierIdentity,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeCarrierIdentity {
+    key_id: String,
+    owner_id: String,
+    owner_epoch: String,
+    key_base64url: String,
+    capabilities: Vec<NativeCarrierCapability>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NativeCarrierCapability {
+    SupervisorRead,
+    ConfigurationPublish,
+    AccessPublish,
+    OwnerRenewal,
+    CodexAuthImport,
+    NativeProfileImport,
+    LiveSideband,
+}
+
+impl NativeCarrierConfig {
+    fn into_bindings(self) -> Result<NativeBindings, GatewayError> {
+        let key =
+            decode_base64url(&self.identity.key_base64url).map_err(|_| invalid_configuration())?;
+        if key.len() != 32 || base64url(&key) != self.identity.key_base64url {
+            return Err(invalid_configuration());
+        }
+        let key: [u8; 32] = key.try_into().map_err(|_| invalid_configuration())?;
+        let capabilities = self
+            .identity
+            .capabilities
+            .into_iter()
+            .map(NativeCapability::from)
+            .collect::<BTreeSet<_>>();
+        let identity = NativeTransportIdentity::new(
+            self.identity.key_id,
+            self.identity.owner_id,
+            self.identity.owner_epoch,
+            key,
+            capabilities,
+        )?;
+        NativeBindings::configured_https(&self.origin, identity)
+            .map_err(|_| invalid_configuration())
+    }
+}
+
+impl From<NativeCarrierCapability> for NativeCapability {
+    fn from(value: NativeCarrierCapability) -> Self {
+        match value {
+            NativeCarrierCapability::SupervisorRead => Self::SupervisorRead,
+            NativeCarrierCapability::ConfigurationPublish => Self::ConfigurationPublish,
+            NativeCarrierCapability::AccessPublish => Self::AccessPublish,
+            NativeCarrierCapability::OwnerRenewal => Self::OwnerRenewal,
+            NativeCarrierCapability::CodexAuthImport => Self::CodexAuthImport,
+            NativeCarrierCapability::NativeProfileImport => Self::NativeProfileImport,
+            NativeCarrierCapability::LiveSideband => Self::LiveSideband,
+        }
+    }
+}
+
+fn invalid_configuration() -> GatewayError {
+    GatewayError::unavailable(
+        "Native carrier configuration is invalid",
+        "native_configuration_invalid",
+    )
+}
+
+#[cfg(test)]
+mod carrier_config_tests {
+    use super::*;
+
+    fn identity(key: &str, capabilities: &str) -> String {
+        format!(
+            r#"{{"key_id":"native-key","owner_id":"native-owner","owner_epoch":"native-epoch","key_base64url":"{key}","capabilities":[{capabilities}]}}"#
+        )
+    }
+
+    fn config(origin: &str, identity: &str) -> String {
+        format!(r#"{{"origin":"{origin}","identity":{identity}}}"#)
+    }
+
+    fn code(error: GatewayError) -> Option<String> {
+        error.envelope.error.code
+    }
+
+    fn error_code(raw: &str) -> Option<String> {
+        match NativeBindings::from_binding_value(Some(raw)) {
+            Ok(_) => panic!("invalid carrier configuration was accepted"),
+            Err(error) => code(error),
+        }
+    }
+
+    #[test]
+    fn exact_binding_parses_a_fixed_https_transport_identity() {
+        let key = base64url(&[7; 32]);
+        let raw = config(
+            "https://native.example",
+            &identity(&key, r#""live_sideband","supervisor_read""#),
+        );
+        let bindings = NativeBindings::from_binding_value(Some(&raw))
+            .unwrap()
+            .unwrap();
+        let transport = bindings.transport().unwrap();
+        assert_eq!(transport.identity.key_id(), "native-key");
+        assert_eq!(transport.identity.owner_id(), "native-owner");
+        assert_eq!(transport.identity.owner_epoch(), "native-epoch");
+    }
+
+    #[test]
+    fn absent_binding_leaves_the_capability_unavailable() {
+        assert!(NativeBindings::from_binding_value(None).unwrap().is_none());
+    }
+
+    #[test]
+    fn unknown_fields_and_capabilities_fail_closed() {
+        let key = base64url(&[8; 32]);
+        let unknown_capability = config(
+            "https://native.example",
+            &identity(&key, r#""live_sideband","future_capability""#),
+        );
+        let unknown_field = config(
+            "https://native.example",
+            &format!(
+                r#"{{"key_id":"native-key","owner_id":"native-owner","owner_epoch":"native-epoch","key_base64url":"{key}","capabilities":["live_sideband"],"extra":true}}"#
+            ),
+        );
+        for raw in [unknown_capability, unknown_field] {
+            assert_eq!(
+                error_code(&raw).as_deref(),
+                Some("native_configuration_invalid")
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_origins_and_keys_fail_closed() {
+        let key = base64url(&[9; 32]);
+        for origin in [
+            "http://native.example",
+            "https://native.example:8443",
+            "https://user@native.example",
+            "https://native.example/path",
+            "https://native.example?target=elsewhere",
+            "https://native.example#fragment",
+        ] {
+            let raw = config(origin, &identity(&key, r#""live_sideband""#));
+            assert_eq!(
+                error_code(&raw).as_deref(),
+                Some("native_configuration_invalid")
+            );
+        }
+        let short = base64url(&[9; 31]);
+        let raw = config(
+            "https://native.example",
+            &identity(&short, r#""live_sideband""#),
+        );
+        assert_eq!(
+            error_code(&raw).as_deref(),
+            Some("native_configuration_invalid")
+        );
+    }
+
+    #[test]
+    fn empty_or_partial_identity_is_rejected() {
+        let key = base64url(&[10; 32]);
+        for raw in [
+            config(
+                "https://native.example",
+                &identity(&key, r#""live_sideband""#),
+            )
+            .replace(r#","owner_id":"native-owner""#, ""),
+            config("https://native.example", &identity(&key, "")),
+            config("https://native.example", "{}"),
+            String::new(),
+        ] {
+            assert!(NativeBindings::from_binding_value(Some(&raw)).is_err());
+        }
+    }
+
+    #[test]
+    fn oversized_configuration_is_rejected_before_json_parsing() {
+        let raw = "x".repeat(NATIVE_CARRIER_CONFIG_MAX_BYTES + 1);
+        assert_eq!(
+            error_code(&raw).as_deref(),
+            Some("native_configuration_invalid")
+        );
     }
 }

@@ -68,11 +68,16 @@ fn error_response(error: GatewayError) -> Result<Response> {
 
 #[cfg_attr(feature = "entrypoint", event(fetch))]
 pub async fn fetch(request: Request, env: Env, context: Context) -> Result<GatewayResponse> {
-    fetch_with_publication(request, env, context, None).await
+    let native = match NativeBindings::from_worker_binding(&env) {
+        Ok(Some(native)) => native,
+        Ok(None) => NativeBindings::default(),
+        Err(error) => return error_response(error).map(Into::into),
+    };
+    fetch_with_bindings(request, env, context, None, native).await
 }
 
-/// Trusted native capability injection. The ordinary production entrypoint has
-/// no receiver until its dedicated live configuration is separately reviewed.
+/// Trusted publication injection. The exported entrypoint still has no
+/// publication receiver until that separate authority is reviewed.
 pub async fn fetch_with_publication(
     request: Request,
     env: Env,
