@@ -1,6 +1,5 @@
 // Controlled physical TLS endpoints exercise the shipping Rust HTTPS carrier.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { createHash, createHmac, createPrivateKey, X509Certificate } from "node:crypto";
 import { createServer } from "node:https";
 import { connect } from "node:net";
@@ -10,9 +9,10 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadWebSocketModule } from "../../src/runtime/http.ts";
-import { systemTool, testNetworkArgv } from "../../scripts/test-network.ts";
+import { testNetworkArgv } from "../../scripts/test-network.ts";
 
 const childMode = process.argv[2] === "--fixture-child";
+const pendingOnly = process.argv.includes("--pending");
 const [sha, build, binary, schema, parent, controlAddress] = process.argv.slice(childMode ? 3 : 2);
 assert.match(sha ?? "", /^[a-f0-9]{40}$/u);
 assert.equal(Bun.version, "1.4.0");
@@ -21,7 +21,7 @@ const q = JSON.stringify;
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const pause = (ms) => Bun.sleep(ms);
 function processIdentity(pid) {
-  return execFileSync(systemTool("ps"), ["-p", String(pid), "-o", "pid=,ppid=,pgid=,uid=,lstart=,comm="], { encoding: "utf8" }).trim();
+  return { pid, observing_pid: process.pid, observer_uid: process.getuid(), observed_at_ms: Date.now() };
 }
 async function tcp(address, denied = false) {
   await new Promise((done, reject) => {
@@ -62,6 +62,7 @@ async function outer() {
     resolve(schema),
     workspace,
     address,
+    ...(pendingOnly ? ["--pending"] : []),
   ]);
   const task = Bun.spawn(command, {
     cwd: root,
@@ -324,14 +325,7 @@ const config :Workerd.Config = (services = [
   }
   try {
     checkpoint("starting_workerd");
-    let running = await start(false);
-    const untrusted = await fetch(running.publicOrigin + "/admin/codex/supervisor/sessions", { headers: admin });
-    assert.equal(untrusted.status, 503);
-    await untrusted.arrayBuffer();
-    assert.equal(events.filter((e) => e.kind === "https_request").length, 0);
-    cases.push("untrusted_tls_refused_without_service_fallback");
-    await stop();
-    running = await start(true);
+    let running;
     const readChallenge = async (challenge) => {
       const key =
         "tuple-v1:" +
@@ -344,38 +338,48 @@ const config :Workerd.Config = (services = [
       assert.equal(response.status, 200);
       return (await response.json()).record;
     };
-    const sessions = await fetch(running.publicOrigin + "/admin/codex/supervisor/sessions", { headers: admin });
-    assert.equal(sessions.status, 200, await sessions.clone().text());
-    assert.equal((await sessions.json()).source, "controlled-native-tls");
-    cases.push("shipping_fixed_https_rpc_authenticates_original_signed_bytes");
-    redirect = true;
-    const refused = await fetch(running.publicOrigin + "/admin/codex/supervisor/sessions", { headers: admin });
-    assert.equal(refused.status, 503);
-    await refused.arrayBuffer();
-    assert(!events.some((e) => e.path === "/forbidden-redirect"));
-    redirect = false;
-    cases.push("native_manual_redirect_never_selects_another_path");
-    const stream = await fetch(running.publicOrigin + followPath("progress"), { headers: admin });
-    assert.equal(stream.status, 200);
-    assert.match(stream.headers.get("content-type"), /^text\/event-stream/u);
-    const reader = stream.body.getReader();
-    const first = await reader.read();
-    assert.equal(new TextDecoder().decode(first.value), "data: first\n\n");
-    assert(!events.some((e) => e.kind === "follow_second" && e.thread === "progress"), "SSE first event was buffered until completion");
-    const second = await reader.read();
-    assert.equal(new TextDecoder().decode(second.value), "data: second\n\n");
-    assert((await reader.read()).done);
-    cases.push("native_follow_sse_is_progressive_over_actual_tls");
-    for (const thread of ["slow", "cancel"]) {
-      try {
-        const response = await fetch(running.origin + "/public" + followPath(thread), { headers: { ...admin, "x-fixture-explicit-signal": "1" } });
-        await response.arrayBuffer();
-      } catch {
-        /* the real abort can reject headers or body consumption */
+    if (!pendingOnly) {
+      running = await start(false);
+      const untrusted = await fetch(running.publicOrigin + "/admin/codex/supervisor/sessions", { headers: admin });
+      assert.equal(untrusted.status, 503);
+      await untrusted.arrayBuffer();
+      assert.equal(events.filter((e) => e.kind === "https_request").length, 0);
+      cases.push("untrusted_tls_refused_without_service_fallback");
+      await stop();
+      running = await start(true);
+      const sessions = await fetch(running.publicOrigin + "/admin/codex/supervisor/sessions", { headers: admin });
+      assert.equal(sessions.status, 200, await sessions.clone().text());
+      assert.equal((await sessions.json()).source, "controlled-native-tls");
+      cases.push("shipping_fixed_https_rpc_authenticates_original_signed_bytes");
+      redirect = true;
+      const refused = await fetch(running.publicOrigin + "/admin/codex/supervisor/sessions", { headers: admin });
+      assert.equal(refused.status, 503);
+      await refused.arrayBuffer();
+      assert(!events.some((e) => e.path === "/forbidden-redirect"));
+      redirect = false;
+      cases.push("native_manual_redirect_never_selects_another_path");
+      const stream = await fetch(running.publicOrigin + followPath("progress"), { headers: admin });
+      assert.equal(stream.status, 200);
+      assert.match(stream.headers.get("content-type"), /^text\/event-stream/u);
+      const reader = stream.body.getReader();
+      const first = await reader.read();
+      assert.equal(new TextDecoder().decode(first.value), "data: first\n\n");
+      assert(!events.some((e) => e.kind === "follow_second" && e.thread === "progress"), "SSE first event was buffered until completion");
+      const second = await reader.read();
+      assert.equal(new TextDecoder().decode(second.value), "data: second\n\n");
+      assert((await reader.read()).done);
+      cases.push("native_follow_sse_is_progressive_over_actual_tls");
+      for (const thread of ["slow", "cancel"]) {
+        try {
+          const response = await fetch(running.origin + "/public" + followPath(thread), { headers: { ...admin, "x-fixture-explicit-signal": "1" } });
+          await response.arrayBuffer();
+        } catch {
+          /* the real abort can reject headers or body consumption */
+        }
+        await until(() => events.some((e) => e.kind === (thread === "slow" ? "rpc_closed" : "follow_closed") && e.thread === thread && !e.finished));
       }
-      await until(() => events.some((e) => e.kind === (thread === "slow" ? "rpc_closed" : "follow_closed") && e.thread === thread && !e.finished));
-    }
-    cases.push("original_abort_signal_closes_native_tls_before_headers_and_mid_sse");
+      cases.push("original_abort_signal_closes_native_tls_before_headers_and_mid_sse");
+    } else running = await start(true);
     const form = new FormData();
     form.append("sdp", "fixture SDP offer");
     form.append("session", JSON.stringify({ model: "gpt-matrix-test" }));
