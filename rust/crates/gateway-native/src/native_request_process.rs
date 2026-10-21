@@ -34,34 +34,7 @@ pub fn run_native_request() -> ! {
         ) {
             return Err(ControlError::InvalidDescriptor);
         }
-        // Buffered stdin could read past the config and silently discard the
-        // following SCM_RIGHTS packet. Read only the exact prefix/body bytes.
-        let mut input = std::fs::File::from(
-            std::io::stdin()
-                .as_fd()
-                .try_clone_to_owned()
-                .map_err(io_error)?,
-        );
-        let mut header = [0; 4];
-        input.read_exact(&mut header).map_err(io_error)?;
-        let length =
-            usize::try_from(u32::from_be_bytes(header)).map_err(|_| ControlError::InvalidFrame)?;
-        if length == 0 || length > 65_536 {
-            return Err(ControlError::FrameTooLarge);
-        }
-        let mut bytes = vec![0; length];
-        input.read_exact(&mut bytes).map_err(io_error)?;
-        drop(input);
-        let config = NativeDaemonConfig::read_stdin(bytes.as_slice())
-            .map_err(|_| ControlError::InvalidFrame)?;
-        // No guess for the separate reverse authority origin/FD bootstrap.
-        if config.owner_renewal.is_some() {
-            return Err(ControlError::UnsupportedPlatform);
-        }
-        let (reverse, bootstrap) = if config.live_sideband.is_some() {
-            if input_type != rustix::fs::FileType::Socket {
-                return Err(ControlError::InvalidDescriptor);
-            }
+        let bootstrap = if input_type == rustix::fs::FileType::Socket {
             let channel = UnixStream::from(
                 std::io::stdin()
                     .as_fd()
@@ -73,6 +46,43 @@ pub fn run_native_request() -> ! {
                 &channel,
                 Some(Duration::from_secs(10)),
             )?;
+            Some(channel)
+        } else {
+            None
+        };
+        let mut bytes = if let Some(channel) = &bootstrap {
+            crate::daemon_startup::live_bootstrap::read_config(channel, process)?
+        } else {
+            // The retained FIFO transport has no ancillary channel. Keep its
+            // exact bounded, unbuffered framing and existing version rules.
+            let mut input = std::fs::File::from(
+                std::io::stdin()
+                    .as_fd()
+                    .try_clone_to_owned()
+                    .map_err(io_error)?,
+            );
+            let mut header = [0; 4];
+            input.read_exact(&mut header).map_err(io_error)?;
+            let length = usize::try_from(u32::from_be_bytes(header))
+                .map_err(|_| ControlError::InvalidFrame)?;
+            if length == 0 || length > 65_536 {
+                return Err(ControlError::FrameTooLarge);
+            }
+            let mut bytes = vec![0; length];
+            input.read_exact(&mut bytes).map_err(io_error)?;
+            bytes
+        };
+        let config = NativeDaemonConfig::read_stdin(bytes.as_slice())
+            .map_err(|_| ControlError::InvalidFrame)?;
+        // No guess for the separate reverse authority origin/FD bootstrap.
+        if config.owner_renewal.is_some() {
+            return Err(ControlError::UnsupportedPlatform);
+        }
+        let (reverse, bootstrap) = if config.live_sideband.is_some() {
+            if input_type != rustix::fs::FileType::Socket {
+                return Err(ControlError::InvalidDescriptor);
+            }
+            let channel = bootstrap.ok_or(ControlError::InvalidDescriptor)?;
             let socket = crate::daemon_startup::live_bootstrap::receive(&channel, &bytes, process)?;
             crate::daemon_startup::live_bootstrap::read_timeout(&channel, None)?;
             (Some(socket), Some(channel))
@@ -228,3 +238,7 @@ fn unavailable() -> GatewayError {
         "native_connector_unavailable",
     )
 }
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "native_config_ancillary_tests.rs"]
+mod tests;

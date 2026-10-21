@@ -106,6 +106,10 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
             fixture_port
         };
         sender.write_all(&expected_port.to_be_bytes()).unwrap();
+        sender
+            .write_all(&u32::try_from(CONFIG.len()).unwrap().to_be_bytes())
+            .unwrap();
+        sender.write_all(CONFIG).unwrap();
         let connected = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
         assert_eq!(
             send(&sender, CONFIG, connected.try_clone().unwrap()).unwrap_err(),
@@ -221,6 +225,9 @@ fn reverse_fd_receive_child() {
                 .map_err(io_error)?,
         );
         read_timeout(&channel, Some(Duration::from_secs(2)))?;
+        if read_config(&channel, process)? != CONFIG {
+            return Err(ControlError::InvalidFrame);
+        }
         let mut socket = if fixture_port == 443 {
             receive(&channel, CONFIG, process)?
         } else {

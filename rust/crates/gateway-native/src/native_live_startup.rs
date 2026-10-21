@@ -23,6 +23,25 @@ use std::{
 const PURPOSE: &str = "live_authority";
 const MAX_BYTES: usize = 512;
 
+/// Configuration framing permits no ancillary descriptor, including on the
+/// length prefix. The one reverse descriptor belongs only to its later frame.
+pub(crate) fn read_config(
+    channel: &UnixStream,
+    process: &ReceiveProcess,
+) -> Result<Vec<u8>, ControlError> {
+    let mut descriptors = Vec::new();
+    let mut header = [0; 4];
+    read_exact(channel, &mut header, &mut descriptors, process)?;
+    let length =
+        usize::try_from(u32::from_be_bytes(header)).map_err(|_| ControlError::InvalidFrame)?;
+    if length == 0 || length > 65_536 {
+        return Err(ControlError::FrameTooLarge);
+    }
+    let mut bytes = vec![0; length];
+    read_exact(channel, &mut bytes, &mut descriptors, process)?;
+    Ok(bytes)
+}
+
 pub(crate) fn read_timeout(
     channel: &UnixStream,
     timeout: Option<Duration>,
