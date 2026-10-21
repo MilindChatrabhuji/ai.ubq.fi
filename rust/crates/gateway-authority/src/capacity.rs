@@ -158,7 +158,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         let owner: Option<PaidControlOwner> = tx.read(&keys::paid_control_owner()).await?;
         let owner_revision = tx.revision(&keys::paid_control_owner());
         if let Some(owner) = &owner {
-            if owner.v != 1 {
+            if owner.v != 1 || owner_revision.is_none() {
                 return Err(changed());
             }
             text(&owner.owner_id)?;
