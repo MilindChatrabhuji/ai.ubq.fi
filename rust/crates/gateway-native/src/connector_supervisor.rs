@@ -106,6 +106,11 @@ fn run() -> Result<(), ControlError> {
             &connector,
             &policy,
             &connector_profile,
+            config
+                .live_sideband
+                .as_ref()
+                .map(preconnect_live_authority)
+                .transpose()?,
         )?;
         let request_pid = children.request.as_ref().ok_or(ControlError::Closed)?.id();
         let connector_pid = children
@@ -159,6 +164,7 @@ fn launch(
     connector: &Binary,
     main_profile: &str,
     connector_profile: &str,
+    reverse: Option<TcpStream>,
 ) -> Result<RequestChildren, ControlError> {
     // Accept can inherit nonblocking state on Darwin. The owned client enters
     // the existing timed HTTP parser in blocking mode, verified before spawn.
@@ -184,13 +190,26 @@ fn launch(
     let main_fd: OwnedFd = main_control.into();
     let client_fd: OwnedFd = client.into();
     let mut command = request.command(main_profile)?;
+    let (bootstrap, child_input) = if reverse.is_some() {
+        let (parent, child) = UnixStream::pair().map_err(io_error)?;
+        parent
+            .set_write_timeout(Some(Duration::from_secs(10)))
+            .map_err(io_error)?;
+        let child: OwnedFd = child.into();
+        (Some(parent), Stdio::from(child))
+    } else {
+        (None, Stdio::piped())
+    };
     let mut child = command
-        .stdin(Stdio::piped())
+        .stdin(child_input)
         .stdout(Stdio::from(client_fd))
         .stderr(Stdio::from(main_fd))
         .spawn()
         .map_err(io_error)?;
-    let input = child.stdin.take().ok_or(ControlError::Closed)?;
+    let input = match bootstrap {
+        Some(channel) => RequestInput::Unix(channel),
+        None => RequestInput::Pipe(child.stdin.take().ok_or(ControlError::Closed)?),
+    };
     children.request = Some(child);
     children.input = Some(input);
     children
@@ -209,12 +228,50 @@ fn launch(
         .ok_or(ControlError::Closed)?
         .write_all(bytes)
         .map_err(io_error)?;
+    if let Some(socket) = reverse {
+        let Some(RequestInput::Unix(channel)) = children.input.as_ref() else {
+            return Err(ControlError::InvalidDescriptor);
+        };
+        crate::daemon_startup::live_bootstrap::send(channel, bytes, socket)?;
+    }
     Ok(children)
+}
+fn preconnect_live_authority(
+    config: &crate::daemon_config::LiveSidebandConfig,
+) -> Result<TcpStream, ControlError> {
+    use std::net::ToSocketAddrs;
+    let origin =
+        url::Url::parse(config.authority_origin()).map_err(|_| ControlError::InvalidFrame)?;
+    let host = origin.host_str().ok_or(ControlError::InvalidFrame)?;
+    for address in (host, 443).to_socket_addrs().map_err(io_error)? {
+        if let Ok(socket) = TcpStream::connect_timeout(&address, Duration::from_secs(10)) {
+            return Ok(socket);
+        }
+    }
+    Err(ControlError::Closed)
+}
+enum RequestInput {
+    Pipe(ChildStdin),
+    Unix(UnixStream),
+}
+impl Write for RequestInput {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Pipe(pipe) => pipe.write(bytes),
+            Self::Unix(socket) => socket.write(bytes),
+        }
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Pipe(pipe) => pipe.flush(),
+            Self::Unix(socket) => socket.flush(),
+        }
+    }
 }
 pub(crate) struct RequestChildren {
     request: Option<Child>,
     connector: Option<Child>,
-    input: Option<ChildStdin>,
+    input: Option<RequestInput>,
 }
 impl RequestChildren {
     fn wait(&mut self) -> Result<ExitStatus, ControlError> {

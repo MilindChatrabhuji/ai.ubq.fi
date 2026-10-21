@@ -47,6 +47,23 @@ pub struct NativeLiveAuthorityHttp {
     identity: NativeTransportIdentity,
 }
 impl NativeLiveAuthorityHttp {
+    #[cfg(test)]
+    pub(crate) fn with_test_roots(
+        target: &str,
+        socket: TcpStream,
+        identity: NativeTransportIdentity,
+        roots: ureq::tls::RootCerts,
+    ) -> Result<Self, GatewayError> {
+        Ok(Self {
+            transport: PrivateHttps::from_connected(
+                target,
+                NATIVE_LIVE_AUTHORITY_PATH,
+                socket,
+                roots,
+            )?,
+            identity,
+        })
+    }
     pub fn from_connected(
         target: &str,
         socket: TcpStream,
