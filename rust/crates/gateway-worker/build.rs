@@ -23,12 +23,20 @@ fn main() {
         PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo manifest path"));
     let root = PathBuf::from(git(&manifest, &["rev-parse", "--show-toplevel"]));
     let sha = git(&root, &["rev-parse", "HEAD"]);
+    let tree = git(&root, &["rev-parse", "HEAD^{tree}"]);
     assert!(
         sha.len() == 40
             && sha
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
         "a full Git SHA is required"
+    );
+    assert!(
+        tree.len() == 40
+            && tree
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "a full Git tree is required"
     );
     assert!(
         git(&root, &["status", "--porcelain", "--untracked-files=all"]).is_empty(),
@@ -52,5 +60,6 @@ fn main() {
     println!("cargo:rerun-if-changed={reference_path}");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rustc-env=UOS_RUST_BUILD_GIT_SHA={sha}");
+    println!("cargo:rustc-env=UOS_RUST_BUILD_GIT_TREE={tree}");
     println!("cargo:rustc-env=UOS_RUST_BUILD_DEPLOYMENT_ID=cloudflare-{sha}");
 }

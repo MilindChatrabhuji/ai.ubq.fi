@@ -12,6 +12,7 @@ mod agent_messages;
 mod assets;
 pub mod authority;
 mod cache_experiment_host;
+mod candidate_bindings;
 mod catalog;
 mod catalog_host;
 mod claude_host;
@@ -41,6 +42,7 @@ mod native_host;
 mod native_transport;
 mod observability_host;
 mod paid_lookup;
+mod private_installer;
 mod publication;
 mod response;
 mod routing_host;
@@ -51,6 +53,7 @@ pub mod transport;
 
 pub use authority::GatewayAuthority;
 pub use native_host::NativeBindings;
+pub use private_installer::RustInitialControlInstaller;
 pub use response::GatewayResponse;
 
 fn error_response(error: GatewayError) -> Result<Response> {
@@ -68,7 +71,14 @@ fn error_response(error: GatewayError) -> Result<Response> {
 
 #[cfg_attr(feature = "entrypoint", event(fetch))]
 pub async fn fetch(request: Request, env: Env, context: Context) -> Result<GatewayResponse> {
-    fetch_with_publication(request, env, context, None).await
+    let native = match candidate_bindings::native(&env)
+        .and_then(|configured| configured.map(|value| value.bindings()).transpose())
+    {
+        Ok(Some(native)) => native,
+        Ok(None) => NativeBindings::default(),
+        Err(error) => return error_response(error).map(Into::into),
+    };
+    fetch_with_bindings(request, env, context, None, native).await
 }
 
 /// Trusted native capability injection. The ordinary production entrypoint has

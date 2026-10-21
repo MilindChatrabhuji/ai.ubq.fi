@@ -56,7 +56,7 @@ async function inner(): Promise<void> {
     `using Workerd = import ${quote(join(root, "node_modules/workerd/workerd.capnp"))};
 const config :Workerd.Config = (
   services = [(name = "internet", network = (allow = [])), (name = "gateway", worker = (
-    modules = [(name = "index.js", esModule = embed ${quote(join(root, "rust/crates/gateway-worker/build/index.js"))}), (name = "index_bg.wasm", wasm = embed ${quote(join(root, "rust/crates/gateway-worker/build/index_bg.wasm"))})],
+    modules = [(name = "entrypoint.mjs", esModule = embed ${quote(join(root, "rust/crates/gateway-worker/entrypoint.mjs"))}), (name = "build/index.js", esModule = embed ${quote(join(root, "rust/crates/gateway-worker/build/index.js"))}), (name = "build/index_bg.wasm", wasm = embed ${quote(join(root, "rust/crates/gateway-worker/build/index_bg.wasm"))})],
     compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal", "request_signal_passthrough"]
   ))], sockets = [(name = "main", http = (), service = "gateway")]
 );`
