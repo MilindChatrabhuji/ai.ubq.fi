@@ -10,6 +10,8 @@ mod initial_owner;
 mod inverse;
 mod native_capture;
 mod native_custody;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+mod native_history_reconcile;
 mod native_inverse;
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 mod native_latest;
