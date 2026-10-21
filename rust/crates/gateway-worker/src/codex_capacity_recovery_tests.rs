@@ -401,7 +401,7 @@ fn genuine_exhaustion_returns_new_full_cohort_proof_without_reset_or_paid_effect
 fn genuine_exhaustion_reconciles_a_retained_ambiguous_block_before_reselection() {
     let (probe, proof, model, _) = setup(Scenario::Exhausted);
     let mut state = parse_routing_state(
-        &probe.memory.rows.borrow()[&keys::routing().0]
+        probe.memory.rows.borrow()[&keys::routing().0]
             .json_value()
             .unwrap(),
     )
@@ -433,7 +433,7 @@ fn genuine_exhaustion_reconciles_a_retained_ambiguous_block_before_reselection()
     };
     assert!(fresh.full_cohort_exhausted());
     let state = parse_routing_state(
-        &probe.memory.rows.borrow()[&keys::routing().0]
+        probe.memory.rows.borrow()[&keys::routing().0]
             .json_value()
             .unwrap(),
     )
