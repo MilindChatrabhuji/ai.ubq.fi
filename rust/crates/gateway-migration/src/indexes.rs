@@ -35,6 +35,40 @@ pub(crate) fn bind(
             StoredRecord::json(revision, json(&defaults)?, None),
         ));
     }
+    // The raw source pool and the authority routing projection are distinct
+    // records. Derive the latter here, inside the same atomic adoption, using
+    // the canonical account identities and the exact retained source revision.
+    if let Some(source) =
+        snapshot.get(&gateway_auth::provider_credentials::codex_source_pool_key().0)
+    {
+        let pool =
+            gateway_auth::provider_credentials::parse_codex_source_pool(source.json_value()?)?
+                .ok_or_else(|| invalid("Source Codex pool is malformed"))?;
+        let accounts = pool
+            .accounts
+            .iter()
+            .map(|account| {
+                let identity = account.identity();
+                gateway_authority::routing::PoolAccount {
+                    account_id_hash: identity.routing_account_hash,
+                    admin_account_hash: identity.administrative_account_hash,
+                    credential_version: identity.credential_version,
+                    // Same absent-projection initialization as access publication;
+                    // current provider selection is rechecked by the routing reader.
+                    enabled: true,
+                }
+            })
+            .collect();
+        let normalized = gateway_authority::routing::SubscriptionPool {
+            v: 1,
+            pool_versionstamp: gateway_core::identity::PoolVersionstamp(source.revision.clone()),
+            accounts,
+        };
+        derived.push((
+            keys::pool(),
+            StoredRecord::json(revision, json(&normalized)?, None),
+        ));
+    }
     for row in rows.iter().filter(|r| live(r)) {
         if starts(&row.parts, &["ubq_ai", "api_keys", "id"]) {
             let id: gateway_admin::keys::ApiKeyRecord = decode(row.record.json_value()?)?;
