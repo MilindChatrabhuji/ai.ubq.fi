@@ -93,6 +93,7 @@ fn actual_facts(prepared: &PreparedAdoption) -> Result<InitialAdoptionFacts, Gat
     Ok(InitialAdoptionFacts {
         capture_id: prepared.manifest.capture_id.clone(),
         source_git_sha: prepared.manifest.source_git_sha.clone(),
+        source_captured_at_ms: prepared.manifest.captured_at_ms,
         source_native_version: native.version.clone(),
         source_native_sequence: native.sequence.clone(),
         source_pool_revision: source.revision.clone(),

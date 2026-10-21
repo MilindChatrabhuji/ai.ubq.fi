@@ -58,6 +58,8 @@ pub struct InitialAdoptionAccountFacts {
 pub struct InitialAdoptionFacts {
     pub capture_id: String,
     pub source_git_sha: String,
+    /// Exact source capture clock. It cannot follow the sealed local custody observation.
+    pub source_captured_at_ms: i64,
     pub source_native_version: String,
     pub source_native_sequence: String,
     pub source_pool_revision: String,
@@ -147,6 +149,8 @@ impl PreparedInitialControlOwner {
     ) -> Result<(), GatewayError> {
         if actual.capture_id != self.binding.capture_id
             || actual.source_git_sha != self.binding.source_git_sha
+            || !(0..=MAX_SAFE_INTEGER).contains(&actual.source_captured_at_ms)
+            || actual.source_captured_at_ms > self.binding.custody_observed_at_ms
             || actual.source_native_version != self.binding.source_native_version
             || actual.source_native_sequence != self.binding.source_native_sequence
             || actual.source_pool_revision != self.binding.source_pool_revision

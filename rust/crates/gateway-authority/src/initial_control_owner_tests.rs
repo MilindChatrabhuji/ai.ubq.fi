@@ -71,6 +71,7 @@ fn adoption_facts() -> InitialAdoptionFacts {
     InitialAdoptionFacts {
         capture_id: "e".repeat(64),
         source_git_sha: "f".repeat(40),
+        source_captured_at_ms: 900,
         source_native_version: "7".into(),
         source_native_sequence: "2".into(),
         source_pool_revision: "source-r7".into(),
@@ -191,6 +192,18 @@ fn migration_compares_only_reconstructed_source_and_access_projection_facts() {
             .require_adoption_facts(&adoption_facts(), 2001)
             .is_err()
     );
+}
+
+#[test]
+fn capture_clock_cannot_follow_sealed_custody_observation() {
+    let prepared = prepared();
+    let mut facts = adoption_facts();
+    facts.source_captured_at_ms = 1000;
+    assert!(prepared.require_adoption_facts(&facts, 1500).is_ok());
+    facts.source_captured_at_ms = 1001;
+    assert!(prepared.require_adoption_facts(&facts, 1500).is_err());
+    facts.source_captured_at_ms = -1;
+    assert!(prepared.require_adoption_facts(&facts, 1500).is_err());
 }
 
 #[test]
