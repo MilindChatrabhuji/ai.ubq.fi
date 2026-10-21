@@ -27,10 +27,21 @@ pub fn run_native_request() -> ! {
         let mode = rustix::fs::fstat(std::io::stdin())
             .map_err(|_| ControlError::InvalidDescriptor)?
             .st_mode;
-        if rustix::fs::FileType::from_raw_mode(mode) != rustix::fs::FileType::Fifo {
+        let input_type = rustix::fs::FileType::from_raw_mode(mode);
+        if !matches!(
+            input_type,
+            rustix::fs::FileType::Fifo | rustix::fs::FileType::Socket
+        ) {
             return Err(ControlError::InvalidDescriptor);
         }
-        let mut input = std::io::stdin().lock();
+        // Buffered stdin could read past the config and silently discard the
+        // following SCM_RIGHTS packet. Read only the exact prefix/body bytes.
+        let mut input = std::fs::File::from(
+            std::io::stdin()
+                .as_fd()
+                .try_clone_to_owned()
+                .map_err(io_error)?,
+        );
         let mut header = [0; 4];
         input.read_exact(&mut header).map_err(io_error)?;
         let length =
@@ -43,11 +54,34 @@ pub fn run_native_request() -> ! {
         drop(input);
         let config = NativeDaemonConfig::read_stdin(bytes.as_slice())
             .map_err(|_| ControlError::InvalidFrame)?;
-        bytes.fill(0);
         // No guess for the separate reverse authority origin/FD bootstrap.
         if config.owner_renewal.is_some() {
             return Err(ControlError::UnsupportedPlatform);
         }
+        let (reverse, bootstrap) = if config.live_sideband.is_some() {
+            if input_type != rustix::fs::FileType::Socket {
+                return Err(ControlError::InvalidDescriptor);
+            }
+            let channel = UnixStream::from(
+                std::io::stdin()
+                    .as_fd()
+                    .try_clone_to_owned()
+                    .map_err(io_error)?,
+            );
+            crate::connector_policy::validate_unix_control(&channel)?;
+            channel
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .map_err(io_error)?;
+            let socket = crate::daemon_startup::live_bootstrap::receive(&channel, &bytes, process)?;
+            channel.set_read_timeout(None).map_err(io_error)?;
+            (Some(socket), Some(channel))
+        } else {
+            if input_type != rustix::fs::FileType::Fifo {
+                return Err(ControlError::InvalidDescriptor);
+            }
+            (None, None)
+        };
+        bytes.fill(0);
         if rustix::net::sockopt::socket_type(std::io::stdout())
             .map_err(|_| ControlError::InvalidDescriptor)?
             != rustix::net::SocketType::STREAM
@@ -70,20 +104,32 @@ pub fn run_native_request() -> ! {
                 .map_err(io_error)?,
         );
         let completed = Arc::new(AtomicBool::new(false));
-        let _connector_custody =
-            RequestConnector::new(control, process.clone(), completed.clone())?;
+        let connector = Arc::new(RequestConnector::new(
+            control,
+            process.clone(),
+            completed.clone(),
+        )?);
+        let command_process = process.clone();
         thread::spawn(move || {
             // The supervisor is the sole writer. EOF or a finite cancel byte
             // terminates even while another request thread is blocked in I/O.
             loop {
-                let mut command = [0];
-                match std::io::stdin().read(&mut command) {
-                    Ok(1) if command[0] == 1 => completed.store(true, Ordering::Release),
+                let command = if let Some(channel) = &bootstrap {
+                    crate::daemon_startup::live_bootstrap::completion(channel, &command_process)
+                } else {
+                    let mut command = [0];
+                    match std::io::stdin().read(&mut command) {
+                        Ok(1) => Ok(command[0]),
+                        _ => Err(ControlError::Cancelled),
+                    }
+                };
+                match command {
+                    Ok(1) => completed.store(true, Ordering::Release),
                     _ => std::process::exit(ControlError::Cancelled.exit_code()),
                 }
             }
         });
-        crate::daemon_startup::request_service(config)
+        crate::daemon_startup::request_service(config, connector, reverse)
             .map_err(|_| ControlError::InvalidFrame)?
             .serve_connection(&mut client)
             .map_err(|_| ControlError::Closed)

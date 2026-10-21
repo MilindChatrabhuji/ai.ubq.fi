@@ -32,6 +32,34 @@ struct NativeDaemonConfigV2 {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct NativeDaemonConfigV3 {
+    v: u8,
+    listen: SocketAddr,
+    identity: TransportIdentityConfig,
+    nonce_database: PathBuf,
+    sources: Vec<SupervisorSourceConfig>,
+    owner_renewal: Option<OwnerRenewalConfig>,
+    live_sideband: LiveSidebandConfig,
+}
+/// The candidate's reverse channel is startup-owned, never a request destination.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LiveSidebandConfig {
+    authority_origin: String,
+}
+impl LiveSidebandConfig {
+    pub fn authority_origin(&self) -> &str {
+        &self.authority_origin
+    }
+    fn validate(&self) -> Result<(), GatewayError> {
+        if self.authority_origin != "https://rust-candidate.ai.ubq.fi" {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OwnerRenewalConfig {
     authority_origin: String,
     owners: Vec<NativeOwnerConfig>,
@@ -130,6 +158,7 @@ pub struct PreparedNativeDaemonConfig {
     pub nonce_database: PathBuf,
     pub sources: Vec<SupervisorSourceConfig>,
     pub owner_renewal: Option<OwnerRenewalConfig>,
+    pub live_sideband: Option<LiveSidebandConfig>,
 }
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum NativeDaemonRole {
@@ -159,7 +188,28 @@ impl NativeDaemonConfig {
             return Err(invalid());
         }
         let version: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-        if version.get("v").and_then(serde_json::Value::as_u64) == Some(2) {
+        if version.get("v").and_then(serde_json::Value::as_u64) == Some(3) {
+            let config: NativeDaemonConfigV3 =
+                serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+            if config.v != 3 || role == NativeDaemonRole::Import {
+                return Err(invalid());
+            }
+            config.live_sideband.validate()?;
+            if let Some(renewal) = &config.owner_renewal {
+                renewal.validate()?;
+            }
+            let mut prepared = Self {
+                v: 1,
+                listen: config.listen,
+                identity: config.identity,
+                nonce_database: config.nonce_database,
+                sources: config.sources,
+            }
+            .prepare(config.owner_renewal.is_some(), role, true)?;
+            prepared.owner_renewal = config.owner_renewal;
+            prepared.live_sideband = Some(config.live_sideband);
+            Ok(prepared)
+        } else if version.get("v").and_then(serde_json::Value::as_u64) == Some(2) {
             let config: NativeDaemonConfigV2 =
                 serde_json::from_slice(&bytes).map_err(|_| invalid())?;
             if config.v != 2 {
@@ -178,18 +228,19 @@ impl NativeDaemonConfig {
                 nonce_database: config.nonce_database,
                 sources: config.sources,
             }
-            .prepare(config.owner_renewal.is_some(), role)?;
+            .prepare(config.owner_renewal.is_some(), role, false)?;
             prepared.owner_renewal = config.owner_renewal;
             Ok(prepared)
         } else {
             let config: Self = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-            config.prepare(false, role)
+            config.prepare(false, role, false)
         }
     }
     fn prepare(
         self,
         owner_renewal: bool,
         role: NativeDaemonRole,
+        live_sideband: bool,
     ) -> Result<PreparedNativeDaemonConfig, GatewayError> {
         if role == NativeDaemonRole::Import && !owner_renewal {
             return Err(invalid());
@@ -229,6 +280,9 @@ impl NativeDaemonConfig {
                 ordinary.insert(NativeCapability::OwnerRenewal);
                 ordinary.insert(NativeCapability::AccessPublish);
             }
+            if live_sideband {
+                ordinary.insert(NativeCapability::LiveSideband);
+            }
             ordinary
         };
         let identity = NativeTransportIdentity::new(
@@ -244,6 +298,7 @@ impl NativeDaemonConfig {
             nonce_database: self.nonce_database,
             sources: self.sources,
             owner_renewal: None,
+            live_sideband: None,
         })
     }
 }
