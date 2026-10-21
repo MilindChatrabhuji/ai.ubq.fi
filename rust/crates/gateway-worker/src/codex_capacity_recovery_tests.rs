@@ -2,8 +2,10 @@ use super::*;
 #[path = "../../gateway-observability/tests/support/mod.rs"]
 mod support;
 use gateway_auth::{
-    crypto::Secret,
-    provider_credentials::{CodexSourceAccount, CodexSourcePool, codex_source_pool_key},
+    crypto::{Secret, base64url},
+    provider_credentials::{
+        CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
+    },
 };
 use gateway_authority::{
     AuthorityClock, capacity::*, keys, paid_control::PaidControlOwner, routing::*,
@@ -105,10 +107,11 @@ impl ObservabilityHost for Probe {
         self.calls.set(self.calls.get() + 1);
         assert_eq!(account.slot, 1);
         assert_eq!(account.account_id, "fixture-account");
-        assert_eq!(
-            fence.fetch_bindings().next().unwrap().account_id(),
-            account.account_id
-        );
+        let binding = fence.fetch_bindings().next().unwrap();
+        assert_eq!(binding.account_id(), account.account_id);
+        let owner = binding.native_owner().unwrap();
+        assert_eq!(owner.external_user_id.as_deref(), Some("fixture-user"));
+        assert_eq!(owner.generation_hash, binding.native_generation_hash());
         assert_eq!(deadline, fence.observed_at_ms() + 8000);
         self.base.at.set(self.now_ms() + 17);
         match self.scenario {
@@ -180,14 +183,31 @@ fn seed(memory: &Memory, key: gateway_core::state::RecordKey, revision: &str, va
 }
 fn setup(scenario: Scenario) -> (Probe, CohortProof, ModelId, Value) {
     let memory = Memory::default();
-    let source = CodexSourceAccount {
+    // The real local route carries access-only external native ownership. None
+    // of these cases has refresh material or a native renewal capability.
+    let access = format!(
+        "e30.{}.synthetic",
+        base64url(
+            json!({"exp":(NOW + 3_600_000) / 1000,"https://api.openai.com/auth":{"chatgpt_user_id":"fixture-user","chatgpt_account_id":"fixture-account"}})
+                .to_string()
+                .as_bytes()
+        )
+    );
+    let mut source = CodexSourceAccount {
         account_id: "fixture-account".into(),
-        access_token: Secret::new("fixture-access".into()),
-        refresh_token: Secret::new("fixture-refresh".into()),
+        access_token: Secret::new(access),
+        refresh_token: Secret::new(String::new()),
         updated_at_ms: NOW as f64,
         native_owner: None,
     };
     let id = source.identity();
+    source.native_owner = Some(CodexNativeOwner {
+        codex_home: "/tmp/synthetic-capacity-owner".into(),
+        generation_hash: id.native_generation_hash.clone(),
+        native_refreshed_at: None,
+        external_user_id: Some("fixture-user".into()),
+        managed_source: None,
+    });
     let pool = CodexSourcePool {
         accounts: vec![source],
         updated_at_ms: NOW as f64,
@@ -261,7 +281,7 @@ fn setup(scenario: Scenario) -> (Probe, CohortProof, ModelId, Value) {
         .unwrap()
     );
     // Positive but expired. Its timestamp and original standard block stay truthful.
-    let old = json!({"v":1,"observations":[{"slot":0,"account_id_hash":id.routing_account_hash,"state":"available","source_observed_at_ms":NOW-1_800_001,"snapshot_at_ms":NOW-1_800_001,"windows":{"primary":{"limit_window_seconds":18000,"used_percent":93,"reset_at_ms":NOW+3_600_000},"secondary":null},"additional_rate_limits":[]}]});
+    let old = json!({"v":1,"updated_at_ms":NOW-1_800_001,"observations":[{"slot":0,"account_id_hash":id.routing_account_hash,"state":"available","source_observed_at_ms":NOW-1_800_001,"snapshot_at_ms":NOW-1_800_001,"windows":{"primary":{"limit_window_seconds":18000,"used_percent":93,"reset_at_ms":NOW+3_600_000},"secondary":null},"additional_rate_limits":[]}]});
     seed(&probe.memory, keys::capacity(), "old-capacity", old.clone());
     let RouteSelection::QuotaBlocked { proof, .. } =
         run(authority.select_account(&model, CodexQuotaClass::Standard, NOW)).unwrap()
@@ -286,7 +306,7 @@ fn invoke(
     ))
 }
 #[test]
-fn stale_positive_requires_genuine_new_sample_then_ordinary_reselection() {
+fn access_only_stale_positive_requires_genuine_new_sample_then_ordinary_reselection() {
     let (probe, proof, model, _) = setup(Scenario::Positive);
     let before_active = probe.memory.rows.borrow()[&keys::active().0]
         .json_value()
