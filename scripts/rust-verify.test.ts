@@ -597,11 +597,16 @@ test("prelaunch refuses duplicate or missing executable artifacts and zero execu
   }
 });
 
-test("only the two exact owned-child lib cases leave the wrapped inventory, retaining prefix siblings and ordinary tests", async () => {
+test("the serial native library retains ordinary tests and excludes only the two exact owned-child cases", async () => {
   const fixture = nativeArtifacts();
   await executeDarwinNativeTests(fixture.cwd, fixture.environment, "package", fixture.run);
   const wrapped = fixture.calls.filter((command) => command.argv.includes("--skip"));
-  assert.ok(wrapped.length > 0 && wrapped.every((command) => command.isolated && command.argv.includes("--lib") && command.argv.includes("--exact")));
+  assert.ok(
+    wrapped.length > 0 &&
+      wrapped.every(
+        (command) => command.isolated && command.argv.includes("--lib") && command.argv.includes("--exact") && command.argv.includes("--test-threads=1")
+      )
+  );
   for (const command of wrapped)
     assert.deepEqual(
       command.argv.filter((value, index) => command.argv[index - 1] === "--skip"),
@@ -613,6 +618,12 @@ test("only the two exact owned-child lib cases leave the wrapped inventory, reta
     ownedChildCases
   );
   assert.ok(actual.every((command) => command.argv.includes("--exact")));
+  for (const host of [darwin, linux]) {
+    const ordinary = planRustVerification(fixture.root, ["rust/crates/gateway-core/src/lib.rs"], "native", false, host).commands.filter(
+      (command) => command.testRun === true || command.testListing === true
+    );
+    assert.ok(ordinary.length > 0 && ordinary.every((command) => !command.argv.includes("--test-threads=1")));
+  }
 });
 
 test("missing lib artifacts, missing exact cases, overbroad filtered inventory and lib hash drift refuse dispatch", async () => {
