@@ -97,17 +97,10 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     });
                 }
             };
-            let (present, revision, prior) = read_audit(&mut tx, &facts.episode_hash).await?;
+            let (present, _revision, prior) = read_audit(&mut tx, &facts.episode_hash).await?;
             if let Some(decision) = prior.as_ref() {
                 let matches =
                     decision.episode_hash == facts.episode_hash && decision.fences == facts.fences;
-                if facts.config.mode == ResetMode::Live
-                    && (!matches || decision.expires_at_ms <= now)
-                {
-                    return Ok(FullPoolPreparation::Declined {
-                        reason: "shadow_decision_missing_or_expired".into(),
-                    });
-                }
                 if facts.config.mode == ResetMode::Shadow && matches && decision.expires_at_ms > now
                 {
                     let decision = decision.clone();
@@ -125,9 +118,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             if tx.commit().await? {
                 return Ok(FullPoolPreparation::Observe(Box::new(FullPoolResetPlan {
                     facts,
-                    audit_revision: revision,
                     audit_present: present,
-                    prior,
                 })));
             }
         }
@@ -182,8 +173,6 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 .and_then(|selected| selected.credit.expires_at_ms),
             fences: plan.facts.fences.clone(),
         };
-        // Live selection failures do not insert an audit; shadow mode persists the
-        // complete no-selection decision, which later live requests must respect.
         if plan.facts.config.mode == ResetMode::Live && selected.is_none() {
             return Ok(FullPoolEvaluation::Declined {
                 reason: selection.reason.into(),
@@ -207,32 +196,21 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 });
             }
             let key = keys::reset_shadow(&current.episode_hash);
-            let (present, revision, stored) = read_audit(&mut tx, &current.episode_hash).await?;
-            let original_live = current.config.mode == ResetMode::Live && plan.prior.is_some();
-            if original_live {
-                let Some(audit) = stored else {
-                    return Ok(FullPoolEvaluation::Declined {
-                        reason: "shadow_decision_drift".into(),
-                    });
-                };
-                if revision != plan.audit_revision
-                    || audit.expires_at_ms <= at
-                    || audit.episode_hash != current.episode_hash
-                    || audit.fences != current.fences
-                    || audit.selected_account_id_hash != decision.selected_account_id_hash
-                    || audit.selected_credit_id_hash != decision.selected_credit_id_hash
-                    || audit.selected_credit_expires_at_ms != decision.selected_credit_expires_at_ms
-                {
-                    return Ok(FullPoolEvaluation::Declined {
-                        reason: "shadow_decision_drift".into(),
-                    });
-                }
+            if current.config.mode == ResetMode::Live {
                 let selected = selected.ok_or_else(invalid)?;
+                let _ = read_audit(&mut tx, &current.episode_hash).await?;
+                tx.put(&key, &decision, None)?;
+                let audit_revision = tx
+                    .post_checks()
+                    .into_iter()
+                    .find(|check| check.key == key)
+                    .and_then(|check| check.expected_revision)
+                    .ok_or_else(invalid)?;
                 let permit = AutomaticResetPermit {
                     candidate: current.members[selected.member].candidate.clone(),
                     facts: current,
-                    decision: audit,
-                    audit_revision: revision.ok_or_else(invalid)?,
+                    decision: decision.clone(),
+                    audit_revision,
                     credit: selected.credit.clone(),
                     observed_at_ms: selected.observed,
                 };
@@ -243,6 +221,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 }
                 continue;
             }
+            let (present, _revision, stored) = read_audit(&mut tx, &current.episode_hash).await?;
             if present || plan.audit_present {
                 let Some(stored) = stored.filter(|stored| {
                     stored.episode_hash == decision.episode_hash && stored.expires_at_ms > at
@@ -251,18 +230,6 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                         reason: "shadow_decision_unavailable".into(),
                     });
                 };
-                if current.config.mode == ResetMode::Live
-                    && (stored.decision_reason != "selected"
-                        || stored.fences != decision.fences
-                        || stored.selected_account_id_hash != decision.selected_account_id_hash
-                        || stored.selected_credit_id_hash != decision.selected_credit_id_hash
-                        || stored.selected_credit_expires_at_ms
-                            != decision.selected_credit_expires_at_ms)
-                {
-                    return Ok(FullPoolEvaluation::Declined {
-                        reason: "shadow_decision_drift".into(),
-                    });
-                }
                 tx.now = self.fresh_time(at)?;
                 if tx.commit().await? {
                     return Ok(FullPoolEvaluation::Shadow {

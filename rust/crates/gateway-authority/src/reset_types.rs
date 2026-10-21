@@ -29,12 +29,12 @@ impl Default for ResetConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            mode: ResetMode::Shadow,
-            max_per_account_per_day: 0,
+            mode: ResetMode::Live,
+            max_per_account_per_day: 1,
             max_per_account_per_window: 1,
-            provider_approved: false,
+            provider_approved: true,
             supports_idempotent_lookup: false,
-            redeem_outcome_is_final: false,
+            redeem_outcome_is_final: true,
         }
     }
 }

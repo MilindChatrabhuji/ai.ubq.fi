@@ -116,7 +116,7 @@ fn observations(plan: &FullPoolResetPlan, credit: Option<JsString16>) -> Vec<Sou
 }
 
 #[test]
-fn full_no_selection_audit_is_persisted_and_refuses_live_credit_drift() {
+fn full_no_selection_audit_is_replaced_by_one_live_permit() {
     let (store, authority, proof) = setup(ResetMode::Shadow);
     let initial = plan(&authority, &proof);
     let rows = observations(&initial, None);
@@ -135,10 +135,13 @@ fn full_no_selection_audit_is_persisted_and_refuses_live_credit_drift() {
     store.seed(keys::reset_config(), &config(ResetMode::Live));
     let next = plan(&authority, &proof);
     let rows = observations(&next, Some(JsString16::from_utf8("new-credit")));
-    assert!(
-        matches!(run(authority.finish_full_pool_reset(next,&rows,&Collation)).unwrap(),FullPoolEvaluation::Declined {reason} if reason=="shadow_decision_drift")
-    );
-    assert_eq!(
+    let FullPoolEvaluation::Ready(permit) =
+        run(authority.finish_full_pool_reset(next, &rows, &Collation)).unwrap()
+    else {
+        panic!("live mode must use the fresh eligible credit")
+    };
+    assert_eq!(permit.credit_id(), &JsString16::from_utf8("new-credit"));
+    assert_ne!(
         store
             .row(&keys::reset_shadow(&decision.episode_hash))
             .unwrap()
@@ -148,35 +151,17 @@ fn full_no_selection_audit_is_persisted_and_refuses_live_credit_drift() {
 }
 
 #[test]
-fn first_live_call_only_arms_then_same_exact_credit_mints_opaque_permit() {
-    let (store, authority, proof) = setup(ResetMode::Live);
+fn first_live_call_mints_opaque_permit_without_arming() {
+    let (_, authority, proof) = setup(ResetMode::Live);
     let first = plan(&authority, &proof);
     let rows = observations(
         &first,
         Some(JsString16::from_units(vec![b'c' as u16, 0xd800])),
     );
-    let FullPoolEvaluation::Shadow { decision, .. } =
+    let FullPoolEvaluation::Ready(permit) =
         run(authority.finish_full_pool_reset(first, &rows, &Collation)).unwrap()
     else {
-        panic!("first live call must only arm")
-    };
-    assert!(
-        store
-            .row(&keys::reset_redemption(
-                &decision.fences[0].account_id_hash,
-                &decision.fences[0].quota_generation
-            ))
-            .is_none()
-    );
-    let next = plan(&authority, &proof);
-    let rows = observations(
-        &next,
-        Some(JsString16::from_units(vec![b'c' as u16, 0xd800])),
-    );
-    let FullPoolEvaluation::Ready(permit) =
-        run(authority.finish_full_pool_reset(next, &rows, &Collation)).unwrap()
-    else {
-        panic!("exact prior audit required")
+        panic!("first live call must mint the permit")
     };
     let body = permit.consume_body().unwrap();
     assert!(body.as_str().contains("\\ud800"));
@@ -298,9 +283,10 @@ fn expired_audit_never_renews_into_live_permission_or_overwrites_history() {
     );
     assert_eq!(store.row(&key).unwrap().revision, saved.revision);
     store.seed(keys::reset_config(), &config(ResetMode::Live));
-    assert!(
-        matches!(run(authority.prepare_full_pool_reset(&proof, &original())).unwrap(), FullPoolPreparation::Declined { reason } if reason == "shadow_decision_missing_or_expired")
-    );
+    assert!(matches!(
+        run(authority.prepare_full_pool_reset(&proof, &original())).unwrap(),
+        FullPoolPreparation::Observe(_)
+    ));
     assert_eq!(store.row(&key).unwrap().revision, saved.revision);
 }
 
@@ -354,13 +340,8 @@ fn selection_requires_source_collation_for_an_exact_same_slot_expiry_tie() {
     later.credit_id = JsString16::from_units(vec![0xd800]);
     rows[0].credits.push(later);
     rows[0].available_count = 2;
-    assert!(matches!(
-        run(authority.finish_full_pool_reset(first, &rows, &SourceOrder)).unwrap(),
-        FullPoolEvaluation::Shadow { .. }
-    ));
-    let next = plan(&authority, &proof);
     let FullPoolEvaluation::Ready(permit) =
-        run(authority.finish_full_pool_reset(next, &rows, &SourceOrder)).unwrap()
+        run(authority.finish_full_pool_reset(first, &rows, &SourceOrder)).unwrap()
     else {
         panic!("same source-selected credit must mint the permit")
     };
@@ -414,13 +395,8 @@ fn source_golden_collation_controls_selection_and_utf16_credit_hashes() {
             })
             .collect();
         rows[0].available_count = rows[0].credits.len() as i64;
-        assert!(matches!(
-            run(authority.finish_full_pool_reset(first, &rows, &GoldenCollation(&case))).unwrap(),
-            FullPoolEvaluation::Shadow { .. }
-        ));
-        let next = plan(&authority, &proof);
         let FullPoolEvaluation::Ready(permit) =
-            run(authority.finish_full_pool_reset(next, &rows, &GoldenCollation(&case))).unwrap()
+            run(authority.finish_full_pool_reset(first, &rows, &GoldenCollation(&case))).unwrap()
         else {
             panic!("exact source-selected credit required")
         };

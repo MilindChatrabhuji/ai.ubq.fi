@@ -87,9 +87,7 @@ pub(super) struct Facts {
 }
 pub struct FullPoolResetPlan {
     pub(super) facts: Facts,
-    pub(super) audit_revision: Option<String>,
     pub(super) audit_present: bool,
-    pub(super) prior: Option<FullPoolShadowDecision>,
 }
 impl FullPoolResetPlan {
     pub fn bindings(&self) -> impl Iterator<Item = &AccountBinding> {
@@ -126,6 +124,9 @@ impl AutomaticResetPermit {
     }
     pub fn credit_id(&self) -> &JsString16 {
         &self.credit.credit_id
+    }
+    pub fn episode_hash(&self) -> &str {
+        &self.decision.episode_hash
     }
     pub fn original(&self) -> &RequestContext {
         &self.facts.original
