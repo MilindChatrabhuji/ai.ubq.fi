@@ -43,7 +43,7 @@ fn original_route_matches(method: &str, path: &str, route: &str) -> bool {
             | ("POST", "/v1/chat/completions", "chat.completions")
     )
 }
-async fn check_client(
+pub(crate) async fn check_client(
     store: &RemoteAuthorityStore,
     platform: &PlatformHost,
     original: &AuthRequest,

@@ -7,6 +7,7 @@ use gateway_core::GatewayError;
 mod automatic;
 mod manual;
 mod source_inventory;
+pub(crate) use automatic::check_client;
 pub use automatic::recover_full_pool;
 
 /// Request-owned authentication evidence, never decoded from an administrative command.

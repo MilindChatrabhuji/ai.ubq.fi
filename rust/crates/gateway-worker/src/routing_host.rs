@@ -262,13 +262,53 @@ impl RoutingHost for Host {
         proof: &CohortProof,
         model: &gateway_core::model::ModelId,
     ) -> Result<CodexRecovery, GatewayError> {
+        let config = crate::host::auth_config(&self.platform.env);
+        let check_original = || async {
+            if self.cancelled() {
+                return Err(self.cancellation_error());
+            }
+            crate::codex_admin_host::check_client(
+                &self.store,
+                &self.platform,
+                &self.platform.original,
+                &config,
+                &self.original,
+            )
+            .await
+        };
+        let authority = gateway_authority::Authority::with_clock(
+            self.store.clone(),
+            crate::host::PlatformTokens,
+            crate::host::PlatformClock,
+        );
+        let observations = crate::observability_host::bind(
+            &self.original.request_id,
+            &[],
+            self.store.clone(),
+            &self.platform,
+            self.context.clone(),
+        );
+        let selection = crate::codex_capacity_recovery::observe(
+            &self.store,
+            &authority,
+            observations.host(),
+            proof,
+            model,
+            check_original,
+        )
+        .await?;
+        let current_proof = match selection {
+            Some(gateway_authority::routing::RouteSelection::QuotaBlocked { proof, .. }) => proof,
+            Some(_) => return Ok(CodexRecovery::Reselect),
+            None => proof.clone(),
+        };
         crate::codex_admin_host::recover_full_pool(
             &self.store,
             &self.platform,
             &self.platform.original,
-            &crate::host::auth_config(&self.platform.env),
+            &config,
             &self.original,
-            proof,
+            &current_proof,
             model,
         )
         .await
