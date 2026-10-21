@@ -183,7 +183,7 @@ fn setup(scenario: Scenario) -> (Probe, CohortProof, ModelId, Value) {
     let source = CodexSourceAccount {
         account_id: "fixture-account".into(),
         access_token: Secret::new("fixture-access".into()),
-        refresh_token: Secret::new(String::new()),
+        refresh_token: Secret::new("fixture-refresh".into()),
         updated_at_ms: NOW as f64,
         native_owner: None,
     };
