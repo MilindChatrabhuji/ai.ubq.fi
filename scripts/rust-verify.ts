@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectCiScope, isDocumentationPath, isRustGatePath, RUST_NATIVE_ONLY_PACKAGES } from "./test-scope.ts";
@@ -402,6 +402,11 @@ type NativeTestPair = (argv: readonly string[], isolated: boolean, expected?: re
 const runOwnedChildCases = async (library: CargoExecutable, pair: NativeTestPair): Promise<void> => {
   for (const name of OWNED_CHILD_CASES) await pair([library.executable, name, "--exact", "--test-threads=1", "--nocapture"], false, [name]);
 };
+const requirePrivateRuntimeDirectory = (directory: string): void => {
+  const info = lstatSync(directory);
+  if (!info.isDirectory() || info.uid !== process.getuid?.() || (info.mode & 0o777) !== 0o700)
+    throw new Error("Native runtime TMPDIR is not private and owned");
+};
 // An internal acceptance seam, not a CLI escape: only this fixed native target
 // and two exact owned-child lib cases may run without the outer Darwin profile.
 export const executeDarwinNativeTests = async (
@@ -413,9 +418,9 @@ export const executeDarwinNativeTests = async (
   if (run === runCommand && (process.platform !== "darwin" || process.arch !== "arm64")) throw new Error("Prelaunch execution requires Darwin ARM64");
   if (!["package", "prelaunch"].includes(selection)) throw new Error("Unknown native test selection");
   const environment = rustVerificationEnvironment(inherited, { platform: "darwin", arch: "arm64" });
-  const checked = async (command: RustCommand): Promise<CommandResult> => {
+  const checked = async (command: RustCommand, childEnvironment = environment): Promise<CommandResult> => {
     console.log(JSON.stringify({ stage: "native", ...command }));
-    const result = await run(command, environment);
+    const result = await run(command, childEnvironment);
     observeCommandResult(command, result);
     return result;
   };
@@ -464,42 +469,50 @@ export const executeDarwinNativeTests = async (
   await unchanged();
   checkedArtifacts(allArtifacts, target);
   console.log(JSON.stringify({ nativePrelaunchSource: source, tree, artifacts: allArtifacts }));
-  let listed = 0;
-  let passed = 0;
-  const pair = async (argv: readonly string[], isolated: boolean, expected?: readonly string[]): Promise<void> => {
+  // Custody validates every ancestor; compiler/cache roots may sit below a home ACL.
+  const runtimeTmp = realpathSync(mkdtempSync(join(realpathSync("/tmp"), "uos-rust-native-")));
+  try {
+    requirePrivateRuntimeDirectory(runtimeTmp);
+    const checkedRuntime = (command: RustCommand) => checked(command, { ...environment, TMPDIR: runtimeTmp });
+    let listed = 0;
+    let passed = 0;
+    const pair = async (argv: readonly string[], isolated: boolean, expected?: readonly string[]): Promise<void> => {
+      checkedArtifacts(allArtifacts, target);
+      const listing = await checkedRuntime({ argv: [...argv, "--list"], cwd, isolated });
+      const names = nativeTestNames(listing.stdout);
+      if (expected) requireTestNames(names, expected);
+      checkedArtifacts(allArtifacts, target);
+      const result = await checkedRuntime({ argv, cwd, isolated });
+      const executed = [...result.stdout.matchAll(/^test result: ok\.\s+(\d+) passed;/gm)].reduce((sum, match) => sum + Number(match[1]), 0);
+      if (!isolated && (!names.length || executed !== names.length))
+        throw new Error("Selected prelaunch target listed or executed zero passing or incomplete tests");
+      listed += names.length;
+      passed += executed;
+    };
+    const normalLibrary = await nativeLibrarySelection(cargo, flags, cwd, (command) => {
+      checkedArtifacts(allArtifacts, target);
+      return checkedRuntime(command);
+    });
+    if (selection === "package") {
+      await pair(normalLibrary.argv, true, normalLibrary.names);
+      // Cargo's actual default-selection artifacts, not a guessed test directory,
+      // supply every remaining lib/bin/integration/example/bench target exactly once.
+      const normal = tests.filter((item) => item !== prelaunch && item !== library);
+      const selectors = normal.flatMap((item) => (item.kind === "lib" ? ["--lib"] : [`--${item.kind}`, item.name]));
+      if (selectors.length) await pair([cargo, "test", ...flags, ...selectors, "--"], true);
+      // Explicit test selectors suppress doctests; preserve the original Cargo
+      // package default by retaining its separate, still-isolated doc-test pass.
+      if (cargoDoctestsSelected(compile.stdout, cwd)) await pair([cargo, "test", ...flags, "--doc", "--"], true);
+    } else if (tests.length !== 2) throw new Error("Focused prelaunch compilation emitted additional selected tests");
+    await pair([prelaunch.executable, "--test-threads=1", "--nocapture"], false);
+    await runOwnedChildCases(library, pair);
+    await unchanged();
     checkedArtifacts(allArtifacts, target);
-    const listing = await checked({ argv: [...argv, "--list"], cwd, isolated });
-    const names = nativeTestNames(listing.stdout);
-    if (expected) requireTestNames(names, expected);
-    checkedArtifacts(allArtifacts, target);
-    const result = await checked({ argv, cwd, isolated });
-    const executed = [...result.stdout.matchAll(/^test result: ok\.\s+(\d+) passed;/gm)].reduce((sum, match) => sum + Number(match[1]), 0);
-    if (!isolated && (!names.length || executed !== names.length))
-      throw new Error("Selected prelaunch target listed or executed zero passing or incomplete tests");
-    listed += names.length;
-    passed += executed;
-  };
-  const normalLibrary = await nativeLibrarySelection(cargo, flags, cwd, (command) => {
-    checkedArtifacts(allArtifacts, target);
-    return checked(command);
-  });
-  if (selection === "package") {
-    await pair(normalLibrary.argv, true, normalLibrary.names);
-    // Cargo's actual default-selection artifacts, not a guessed test directory,
-    // supply every remaining lib/bin/integration/example/bench target exactly once.
-    const normal = tests.filter((item) => item !== prelaunch && item !== library);
-    const selectors = normal.flatMap((item) => (item.kind === "lib" ? ["--lib"] : [`--${item.kind}`, item.name]));
-    if (selectors.length) await pair([cargo, "test", ...flags, ...selectors, "--"], true);
-    // Explicit test selectors suppress doctests; preserve the original Cargo
-    // package default by retaining its separate, still-isolated doc-test pass.
-    if (cargoDoctestsSelected(compile.stdout, cwd)) await pair([cargo, "test", ...flags, "--doc", "--"], true);
-  } else if (tests.length !== 2) throw new Error("Focused prelaunch compilation emitted additional selected tests");
-  await pair([prelaunch.executable, "--test-threads=1", "--nocapture"], false);
-  await runOwnedChildCases(library, pair);
-  await unchanged();
-  checkedArtifacts(allArtifacts, target);
-  if (!listed || !passed) throw new Error("Selected native tests listed or executed zero passing tests");
-  return listed;
+    if (!listed || !passed) throw new Error("Selected native tests listed or executed zero passing tests");
+    return listed;
+  } finally {
+    rmSync(runtimeTmp, { recursive: true });
+  }
 };
 
 export const NATIVE_IMPORT_CASES = [

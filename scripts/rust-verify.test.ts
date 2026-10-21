@@ -1,6 +1,6 @@
 import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -498,6 +498,35 @@ test("Darwin exact emitted inventory runs each lib/bin/test plus doctests once w
   }
   assert.equal(fixture.calls.filter((command) => command.argv.includes("--doc")).length, 2);
   assert.ok(fixture.calls.findIndex((command) => command.argv[1] === "build") < fixture.calls.findIndex((command) => command.argv.includes("--no-run")));
+});
+
+test("Darwin runtime TMPDIR is private outside compiler/cache ancestry and is cleaned on success or failure", async () => {
+  for (const fail of [false, true]) {
+    const fixture = nativeArtifacts();
+    const inherited = { ...fixture.environment, TMPDIR: join(fixture.root, "compiler-tmp") };
+    const original = rustVerificationEnvironment(inherited, darwin);
+    const directories = new Set<string>();
+    const run: CommandRunner = (command, environment) => {
+      if (command.argv[0] === "git" || command.argv[1] === "build" || command.argv.includes("--no-run")) assert.deepEqual(environment, original);
+      else {
+        const directory = environment.TMPDIR;
+        directories.add(directory);
+        assert.equal(directory, realpathSync(directory));
+        assert.equal(join(directory, ".."), realpathSync("/tmp"));
+        const info = lstatSync(directory);
+        assert.ok(info.isDirectory());
+        assert.equal(info.uid, process.getuid?.());
+        assert.equal(info.mode & 0o777, 0o700);
+        assert.deepEqual({ ...environment, TMPDIR: original.TMPDIR }, original);
+        if (fail && command.argv[0] === fixture.prelaunch.executable) throw new Error("fixed runtime failure");
+      }
+      return fixture.run(command, environment);
+    };
+    if (fail) await assert.rejects(executeDarwinNativeTests(fixture.cwd, inherited, "package", run), /fixed runtime failure/);
+    else assert.equal(await executeDarwinNativeTests(fixture.cwd, inherited, "package", run), 7);
+    assert.equal(directories.size, 1);
+    for (const directory of directories) assert.equal(existsSync(directory), false);
+  }
 });
 
 test("focused internal acceptance compiles and executes only the exact prelaunch target with all its cases", async () => {
