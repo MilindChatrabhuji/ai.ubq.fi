@@ -21,7 +21,7 @@ permissions:
 
 env:
   # Every scope recomputation uses the exact pre-merge base or the manual override.
-  TEST_SCOPE_BASE: ${{ github.event_name == 'pull_request' && format('{0}^1', github.event.pull_request.merge_commit_sha) || inputs.scope_base }}
+  TEST_SCOPE_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.scope_base }}
   # Retain the existing push-diff fallback for manual selection.
   GITHUB_EVENT_BEFORE: ${{ github.event.before }}
   # PR author is stable across owner reruns; github.actor is the initiator.
@@ -33,6 +33,7 @@ jobs:
   scope:
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       docs_only: ${{ steps.scope.outputs.docs_only }}
       needs_docs: ${{ steps.scope.outputs.needs_docs }}
@@ -101,6 +102,7 @@ jobs:
     needs: scope
     if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_docs == 'true') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -118,10 +120,50 @@ jobs:
           git diff --check
           bun --no-env-file --no-install scripts/test-scope.ts --check-docs
 
-  rust-native:
+  portable:
     needs: scope
-    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_rust_native == 'true') }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_validate == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Confirm no portable checks selected
+        if: ${{ needs.scope.outputs.needs_typescript_validate != 'true' }}
+        run: echo "No portable TypeScript checks selected."
+      - if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
+          fetch-depth: 0
+      - if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.0
+      - name: Frozen dependencies
+        if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
+        run: bun --no-env-file install --frozen-lockfile --ignore-scripts --backend=copyfile
+      - name: Strict TypeScript preflight
+        if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
+        run: bun --no-env-file run check
+      - name: OpenAI request-schema drift against the verified, pinned official specification
+        if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bun --no-env-file --no-install run spec:drift --verify-source
+      - name: Prepare the Linux sandbox on the ephemeral runner
+        if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends bubblewrap
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+      - name: Complete portable Bun gates
+        if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
+        run: sh scripts/verify.sh --no-native-kv
+
+  rust-native:
+    needs: [scope, portable]
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_rust_native == 'true') && (needs.portable.result == 'success') }}
     runs-on: macos-26
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -185,9 +227,10 @@ jobs:
         run: bun --no-env-file --no-install scripts/rust-verify.ts --stage native
 
   rust-wasm:
-    needs: scope
-    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_rust_wasm == 'true') }}
+    needs: [scope, portable, rust-native]
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_rust_wasm == 'true') && (needs.rust-native.result == 'success') }}
     runs-on: ubuntu-26.04-arm
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -215,54 +258,30 @@ jobs:
           retention-days: 14
 
   validate:
-    needs: [scope, rust-native, rust-wasm]
+    needs: [scope, portable, rust-native, rust-wasm]
     if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (always() && needs.scope.result == 'success' && needs.scope.outputs.needs_validate == 'true') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Require every selected Rust gate
+      - name: Require every selected gate
         env:
+          PORTABLE_REQUIRED: ${{ needs.scope.outputs.needs_validate }}
+          PORTABLE_RESULT: ${{ needs.portable.result }}
           RUST_NATIVE_REQUIRED: ${{ needs.scope.outputs.needs_rust_native }}
           RUST_NATIVE_RESULT: ${{ needs.rust-native.result }}
           RUST_WASM_REQUIRED: ${{ needs.scope.outputs.needs_rust_wasm }}
           RUST_WASM_RESULT: ${{ needs.rust-wasm.result }}
         run: |
           set -eu
+          if [ "$PORTABLE_REQUIRED" = true ]; then test "$PORTABLE_RESULT" = success; fi
           if [ "$RUST_NATIVE_REQUIRED" = true ]; then test "$RUST_NATIVE_RESULT" = success; fi
           if [ "$RUST_WASM_REQUIRED" = true ]; then test "$RUST_WASM_RESULT" = success; fi
-      - if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
-          fetch-depth: 0
-      - if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: 1.4.0
-      - name: Frozen dependencies
-        if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
-        run: bun --no-env-file install --frozen-lockfile --ignore-scripts --backend=copyfile
-      - name: Strict TypeScript preflight
-        if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
-        run: bun --no-env-file run check
-      - name: OpenAI request-schema drift against the verified, pinned official specification
-        if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bun --no-env-file --no-install run spec:drift --verify-source
-      - name: Prepare the Linux sandbox on the ephemeral runner
-        if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends bubblewrap
-          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
-      - name: Complete portable Bun gates
-        if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
-        run: sh scripts/verify.sh --no-native-kv
 
   native:
-    needs: scope
-    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_native_build == 'true') }}
+    needs: [scope, portable, rust-native, rust-wasm]
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (always() && needs.scope.outputs.needs_native_build == 'true' && needs.portable.result == 'success' && (needs.rust-native.result == 'success' || needs.rust-native.result == 'skipped') && (needs.rust-wasm.result == 'success' || needs.rust-wasm.result == 'skipped')) }}
     runs-on: ubuntu-26.04-arm
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -344,9 +363,10 @@ jobs:
           retention-days: 14
 
   mac-containment:
-    needs: scope
-    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_mac == 'true') }}
+    needs: [scope, portable]
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_mac == 'true') && (needs.portable.result == 'success') }}
     runs-on: macos-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -359,9 +379,10 @@ jobs:
         run: bun --no-env-file --no-install ops/verify-mac-sandbox.ts
 
   darwin-native:
-    needs: scope
-    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_darwin == 'true') }}
+    needs: [scope, portable]
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_darwin == 'true') && (needs.portable.result == 'success') }}
     runs-on: macos-15
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -405,6 +426,7 @@ jobs:
     needs: [scope, validate, native, mac-containment, darwin-native]
     if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (always() && needs.scope.outputs.needs_artifact == 'true' && needs.validate.result == 'success' && needs.native.result == 'success' && (needs.mac-containment.result == 'success' || needs.mac-containment.result == 'skipped') && (needs.darwin-native.result == 'success' || needs.darwin-native.result == 'skipped')) }}
     runs-on: ubuntu-26.04-arm
+    timeout-minutes: 10
     permissions:
       actions: read
       contents: read

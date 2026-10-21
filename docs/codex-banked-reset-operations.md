@@ -27,9 +27,9 @@ This rollout is deliberately **at-most-one**, not generally reconcilable exactly
 The terminal-only path is structurally enabled only when `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY` is exactly `1`.
 The cap is one provider submission per account per UTC day, not one for the lifetime of the deployment. The retired
 `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY` variable is no longer read; remove it from any environment that still sets it.
-The historical one-reset canary returned mode to `shadow` immediately. An explicitly approved persistent production
-rollout may remain in `live`, but every new quota episode still requires a separate read-only arm request before any
-later request can submit.
+Automatic banked resets are live-only. An eligible blocked cohort performs the bounded inventory read and submits the
+selected credit in the same request; no prior shadow decision or separate arm request is required. The enabled switch
+remains the kill switch.
 
 All automated tests use fake providers or mocked transports. They do not call the real reset-credit endpoint.
 
@@ -50,7 +50,7 @@ Banked-reset selection is downstream of the durable Codex routing state:
    error applies only when no ordinary account is eligible and the complete exhaustion proof is unavailable.
 5. Only stable blocked accounts reach inventory or redemption, and the inventory considers every one of them. The
    original active-selection snapshot, the full auth pool, and the stored capacity observations are re-read and
-   compare-and-set fenced through inventory, arming, and consume.
+   compare-and-set fenced through inventory and consume.
 
 Ordinary eligible active capacity always wins: a request is served by the durable active subscription before any
 inventory, redemption, or recovery work, and reset recovery runs only when no ordinary configured account is eligible
@@ -64,14 +64,16 @@ pool is exhausted.
 
 Since the 2026-10-05 incident fix (`docs/incident-codex-banked-reset-capacity-deadlock-2026-10-05.md`), a fresh capacity
 observation at 100% used for the requested class with a future reset deadline is also an authoritative exhaustion
-source: routing yields the blocked identity from that observation, and the blocked-cohort evaluator materializes the
-durable class block (same persisted transition a live 429 uses) before evaluating, so an ordinary request arms and later
-spends. A 100%-used observation without a deadline keeps the account half-open as a bounded probe instead. A live stable
-future deadline supersedes an absent or expired prior observation for the ambiguity gate while the redemption ledger
-keeps each quota window spend-once. Empty blocked cohorts log `codex_banked_reset_preflight` with reason
-`no_blocked_identity` instead of returning silently. The once-per-UTC-day global cap described above was still enforced
-at the time of the incident; it has since been replaced by one redemption per account per UTC day (see Configuration).
-The explicit per-account overage-usage setting remains approved-but-pending as recorded in `docs/DECISIONS.md`.
+source: routing yields the blocked identity from that observation, and the blocked-cohort evaluator reconciles the
+durable class block before evaluating, so an ordinary request can redeem immediately. Since 2026-10-21, a newer exhausted
+sample also replaces a retained future but ambiguous reset identity; a live 429 observed after the sample remains newer
+and therefore authoritative. A 100%-used observation without a deadline keeps the account half-open as a bounded probe.
+A live stable future deadline supersedes an absent or expired prior observation for the ambiguity gate while the
+redemption ledger keeps each quota window spend-once. Empty blocked cohorts log `codex_banked_reset_preflight` with
+reason `no_blocked_identity` instead of returning silently. The once-per-UTC-day global cap described above was still
+enforced at the time of the incident; it has since been replaced by one redemption per account per UTC day (see
+Configuration). The explicit per-account overage-usage setting remains approved-but-pending as recorded in
+`docs/DECISIONS.md`.
 
 ## Overage usage setting
 
@@ -82,16 +84,14 @@ never redeems, and never mutates banked-reset state.
 
 - Off (default): resets first and no overage spend. An exhausted account still evaluates the blocked cohort; if that
   request cannot redeem a reset (`no_eligible_credit`, empty or ineligible inventory, `inventory_unavailable`, or
-  `account_day_limit_reached`), the gateway returns the ordinary quota-blocked response. Arming (`live_armed`), a
-  completed spend, and fence/config failures also never fall back, so the next request can still redeem.
+  `account_day_limit_reached`), the gateway returns the ordinary quota-blocked response. A completed spend and
+  fence/config failures also never fall back, so the next request can still evaluate.
 - On: a fully used capacity class with a future reset routes directly as the bounded half-open probe; when the blocked
   cohort proves no reset is redeemable, the gateway allows exactly one bounded overage probe and logs
   `codex_overage_served` with the reason. Banked resets still redeem when their gates pass.
 
-Shadow-only outcomes count as no redemption because shadow mode never consumes a credit. `shadow_selected` and a
-duplicate `already_would_spend_once` therefore permit the same one bounded overage probe when the account setting is on;
-an unsubmitted local reset claim (`unsubmitted_transaction`) also permits it because no provider submission occurred.
-Live arming, submitted, unknown, in-progress, and completed live redemption remain ineligible.
+Only a proven no-redemption outcome may fall back. A completed live redemption, a submitted or unknown transaction,
+an in-progress transaction, and a fence or configuration failure remain ineligible for overage.
 
 Enabled overage requests do not take the reset recovery-probe lease. That lease exists to serialize reset recovery, not
 ordinary allowed spending, so concurrent requests may each make one bounded upstream attempt without returning a
@@ -135,122 +135,37 @@ use the old API-key disable procedure; configure reset usage on the **Providers*
 
 Subscription choices remain independent, while restored Codex capacity remains shared. The per-subscription setting is
 read strongly at selection and atomically checked before recording an inventory decision or authorizing submission.
-Existing environment mode and caps below still apply, including for non-key authentication. Changing a switch never
-calls the reset provider. A reset already authorized for submission cannot be cancelled or undone. Existing redemption
+Environment caps below still apply, including for non-key authentication. Changing a switch never calls the reset
+provider. A reset already authorized for submission cannot be cancelled or undone. Existing redemption
 and daily-cap records are retained.
 
 Settings are re-read on each gateway request and immediately before the consume boundary.
 
-| Variable                                        | Safe default | Canary requirement                                                              |
+| Variable                                        | Safe default | Requirement                                                                     |
 | ----------------------------------------------- | ------------ | ------------------------------------------------------------------------------- |
-| `CODEX_BANKED_RESET_ENABLED`                    | `true`       | `true` during shadow/live; `false` for fail-closed rollback.                    |
-| `CODEX_BANKED_RESET_MODE`                       | `shadow`     | Canary: `shadow` -> `live` -> `shadow`; persistent rollout: `live`.             |
+| `CODEX_BANKED_RESET_ENABLED`                    | `true`       | `true` for automatic redemptions; `false` for fail-closed rollback.             |
 | `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY`    | `0`          | Exactly `1` for any live submission; `0` (the fail-closed default) disables it. |
 | `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW` | `1`          | Exactly `1`; every other value fails closed.                                    |
-
-Shadow mode may GET inventory for stable blocked accounts and writes one redacted, deduplicated decision for that
-blocked episode. It makes zero consume calls. A repeated selected decision returns `already_would_spend_once` without a
-second inventory GET after current strong fences pass. A repeated non-selection preserves its original reason; it is
-never mislabeled as a spend candidate.
 
 Each account's daily record is charged atomically when a transaction crosses the durable `submitted` boundary. A claim
 that crosses a UTC-day boundary is rejected before provider submission and cannot borrow the next day's capacity.
 
-Never clear routing KV, shadow decisions, the redemption ledger, or daily-cap records during rollout or rollback. The
+Never clear routing KV, the redemption ledger, or daily-cap records during rollout or rollback. The
 retained legacy `global_day` rows are rollback evidence and are never enforced.
 
-## Shadow proof
+## Live redemption flow
 
-1. Deploy the exact candidate while production remains in `shadow`.
-2. Verify both `/health` endpoints serve the same candidate SHA and routed deployment ID:
-   - `https://ai-ubq-fi.ubiquity-dao.deno.net/health`
-   - `https://ai.ubq.fi/health`
-3. Verify the effective configuration remains enabled, in `shadow`, and capped at exactly one.
-4. Confirm `/health/providers` still shows the intended stable exhausted account and a healthy non-probing sibling.
-5. Send one controlled normal inference request. Do not call the reset-credit endpoint directly.
-6. Read `GET /admin/providers/codex/banked-resets/shadow-decisions` and require a current record with:
-   - `decision_reason: "selected"`
-   - a non-null selected account hash and credit hash
-   - an expiry still in the future
-   - the expected blocked-slot routing generation and quota deadline
-7. Require zero `codex_reset_claimed`, `codex_reset_submit_started`, `codex_reset_submitted`, or `codex_reset_verified`
-   events during the shadow request.
-8. A second shadow evaluation for the same current episode must not issue another inventory GET.
+Every eligible blocked cohort uses the same one-request flow:
 
-An empty ledger, an expired decision, any non-`selected` reason, changed fences, or unavailable inventory is a failed
-shadow gate. Stay in `shadow`.
+1. Strongly read and compare every auth-pool, credential, routing and quota fence.
+2. Perform the bounded account-bound inventory reads.
+3. Select one exact eligible credit across the blocked accounts, ranking finite expiry first.
+4. Atomically claim the deterministic redemption identity and reserve the account's one-per-UTC-day budget.
+5. Submit one consume request, verify its terminal result, and make at most one post-reset inference probe.
 
-## Historical one-reset live canary
-
-Freeze one release operator, one exact served SHA, and one production configuration writer. Do not run another deploy,
-workflow retry, console promotion, or Deno configuration change concurrently.
-
-This procedure records the initial one-reset rollout gate. It remains the required canary before approving persistent
-production live mode. Only after the shadow proof above:
-
-1. Change only the existing mode:
-
-   ```sh
-   deno deploy env update-value CODEX_BANKED_RESET_MODE live \
-     --org ubiquity-dao \
-     --app ai-ubq-fi \
-     --token "$DENO_DEPLOY_TOKEN_UBIQUITY_DAO"
-   ```
-
-2. The environment update restarts isolates without creating a new build. Re-read the effective configuration without
-   require mode `live` and both caps `1`, then re-attest both health domains at the unchanged candidate SHA and
-   deployment ID.
-3. Send exactly one controlled normal inference request.
-4. Expect at most:
-   - one fresh account-bound inventory GET for the blocked account;
-   - one consume POST for the exact shadow-selected credit;
-   - one terminal `reset` or `already_redeemed` result;
-   - one post-reset inference probe on the reset account.
-5. Immediately return mode to `shadow`, regardless of whether the outcome was terminal or ambiguous:
-
-   ```sh
-   deno deploy env update-value CODEX_BANKED_RESET_MODE shadow \
-     --org ubiquity-dao \
-     --app ai-ubq-fi \
-     --token "$DENO_DEPLOY_TOKEN_UBIQUITY_DAO"
-   ```
-
-6. Verify the effective mode is again `shadow` and both health domains still report the unchanged candidate SHA and
-   deployment ID after the isolate restart.
-7. Inspect bounded logs for the attested deployment and require:
-   - exactly one `codex_reset_claimed`;
-   - exactly one `codex_reset_submit_started`;
-   - either one terminal `codex_reset_verified` with `redeem_outcome` equal to `reset` or `already_redeemed`, or one
-     durable `codex_reset_unknown`;
-   - at most one `codex_reset_inference_retry` and matching result;
-   - no second submission attempt.
-
-If the live request returns through the healthy sibling after a definitive `401`, `403`, or `429` probe, the reset
-submission may still have succeeded; judge the consume result from the durable transaction event, not only the client
-response.
-
-## Persistent production live
-
-After the historical canary is accepted, mode may remain `live` with both caps fixed at `1` and the full approved Do not
-call the consume route directly. Ordinary inference traffic drives both phases:
-
-1. The first eligible request for a new quota episode strongly reads every cohort fence, performs the bounded
-   account-bound inventory reads, then strongly checks every fence again.
-2. If one exact eligible credit is available, that request atomically writes one redacted decision and returns
-   `live_armed`. It creates no redemption claim, reserves no daily capacity, sends no consume request, and starts no
-   post-reset inference probe. Concurrent first evaluations deduplicate on the same decision and also do not consume.
-3. The arm path runs only when every configured account is authoritatively exhausted, so the arm request returns the
-   ordinary quota-blocked response. A request that still has an eligible active subscription is served normally and
-   never reaches inventory.
-4. A later ordinary request strongly re-reads the persisted decision, repeats inventory and fence validation, and
-   requires the exact selected account, credit hash, credit expiry, and episode fences to match.
-5. Only that later matching request may enter the unchanged durable claim/submission path, atomically reserve the
-   account's daily budget, submit one consume request, and run the single post-reset inference probe.
-
-Invalid, unavailable, expired, or ineligible inventory cannot arm or consume. A negative live observation is not
-persisted, so later requests may repeat the bounded inventory read until the episode becomes eligible. An expired
-decision, changed inventory, changed fence, ambiguous generation, or unavailable KV remains fail-closed. Manual `shadow`
--> `live` promotion remains valid for a controlled canary, and the rollback rules below are unchanged.
+No shadow decision, arm step, or second request is required. Invalid, unavailable, expired, or ineligible inventory
+cannot consume. An ambiguous generation, unavailable KV, stale fence, or cap other than the exact configured one fails
+closed. Concurrent requests share the durable claim and budget, so only one can submit.
 
 ## Durable state and ambiguity
 
@@ -280,7 +195,7 @@ post-reset probe. Only a successfully completed recovery response clears that am
 
 For a terminal-only `submitted` or `unknown` record:
 
-1. Return mode to `shadow`; use the full rollback below if any unexpected activity continues.
+1. Set `CODEX_BANKED_RESET_ENABLED=false`; use the full rollback below if any unexpected activity continues.
 2. Preserve the ledger, routing state, decision, account-day cap records (and the retained legacy global_day rows),
    logs, and exact deployment identity.
 3. Do not repeat the consume request, even with the same `redeem_request_id`.
@@ -289,31 +204,15 @@ For a terminal-only `submitted` or `unknown` record:
 ## Fail-closed rollback
 
 If logs show more than one attempted submission, a fence mismatch, unexpected provider traffic, or any ongoing live
-activity, set both values:
-
-```sh
-deno deploy env update-value CODEX_BANKED_RESET_ENABLED false \
-  --org ubiquity-dao \
-  --app ai-ubq-fi \
-  --token "$DENO_DEPLOY_TOKEN_UBIQUITY_DAO"
-
-deno deploy env update-value CODEX_BANKED_RESET_MODE disabled \
-  --org ubiquity-dao \
-  --app ai-ubq-fi \
-  --token "$DENO_DEPLOY_TOKEN_UBIQUITY_DAO"
-```
-
-Do not delete KV records during rollback.
-
-Run every `deno deploy` command from a temporary directory. The current CLI can otherwise modify repository `deno.json`
-even for administrative commands.
+activity, set `CODEX_BANKED_RESET_ENABLED=false` in the repository-root `.env` on the affected host and restart its
+service. Do not delete KV records during rollback.
 
 ## Validation and observability
 
 Events include `codex_reset_eligible`, `codex_reset_skipped_healthy_fallback`, `codex_reset_claimed`,
 `codex_reset_submit_started`, `codex_reset_submitted`, `codex_reset_unknown`, `codex_reset_rejected`,
 `codex_reset_verified`, `codex_reset_inference_retry`, `codex_reset_inference_retry_result`,
-`codex_reset_duplicate_prevented`, and `codex_reset_shadow_candidate`.
+`codex_reset_duplicate_prevented`.
 
 The terminal verified event includes the safe `redeem_outcome` enum. Logs and KV must never contain raw tokens, auth
 JSON, credentials, raw account IDs, raw credit IDs, or raw idempotency keys.
@@ -321,13 +220,13 @@ JSON, credentials, raw account IDs, raw credit IDs, or raw idempotency keys.
 Before release, run:
 
 ```sh
-deno fmt --check serve.ts src tests scripts docs
-deno lint serve.ts src tests scripts
-deno task build
-deno task test
+bun --no-env-file run format:check
+bun --no-env-file run lint
+bun --no-env-file run check
+bun --no-env-file run test
 git diff --check
 ```
 
-The gateway tests cover complete-cohort shadow selection, persistent-live all-blocked auto-arm, sequential
-deduplication, exact decision-to-live credit matching, one terminal consume, concurrency and the per-account daily cap,
-definitive probe fallback, transport no-replay, inventory timeout, fence and credit drift, and full-pool recovery.
+The gateway tests cover complete-cohort live selection, immediate one-request redemption, one terminal consume,
+concurrency and the per-account daily cap, definitive probe fallback, transport no-replay, inventory timeout, fence and
+credit drift, and full-pool recovery.

@@ -250,7 +250,7 @@ test("all-blocked routing recovers an unknown reset while new submissions are di
   }
 });
 
-test("an all-blocked cohort with credit only on the inactive sibling elects it after the reset", async () => {
+test("an all-blocked cohort with credit only on the inactive sibling redeems it in one request", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -296,11 +296,7 @@ test("an all-blocked cohort with credit only on the inactive sibling elects it a
       throw new Error(`unexpected request ${request.method} ${request.url}`);
     });
 
-    const armed = await fetchCodexResponses({ input: "inactive-sibling-credit-arm" }, bankedResetRequestOptions("inactive-sibling-credit-arm"));
-    assert.equal(armed.status, 429);
-    assert.equal((await armed.json()).error.code, "codex_quota_blocked");
-
-    const consumed = await fetchCodexResponses({ input: "inactive-sibling-credit-consume" }, bankedResetRequestOptions("inactive-sibling-credit-consume"));
+    const consumed = await fetchCodexResponses({ input: "inactive-sibling-credit" }, bankedResetRequestOptions("inactive-sibling-credit"));
     assert.equal(consumed.status, 200);
     assert.ok(getCodexRoutingProbe(consumed));
     assert.deepEqual(consumeAccountIds, ["account-one"]);
