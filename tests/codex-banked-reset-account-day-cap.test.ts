@@ -102,11 +102,11 @@ test("per-window exact-once still prevents a re-spend of the same window", async
   assert.equal(await accountDayCount(kv, "day-account-a", utcDay(clock.nowMs)), 1);
 });
 
-test("live mode requires an exact per-account daily cap of one and shadow never spends", async () => {
+test("live submissions require an exact per-account daily cap of one, and the retired mode flag is ignored", async () => {
   // The parser reads only the new environment variable; the retired global
   // variable is not read at all.
   const declared = parseCodexBankedResetConfig((key) => {
-    if (key === "CODEX_BANKED_RESET_MODE") return "live";
+    if (key === "CODEX_BANKED_RESET_MODE") return "shadow";
     return key === "CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY" ? "2" : undefined;
   });
   assert.equal(declared.mode, "live");

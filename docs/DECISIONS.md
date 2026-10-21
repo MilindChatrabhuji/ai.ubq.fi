@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Automatic banked resets are live-only - 2026-10-21
+
+Automatic banked resets are now live-only. The `CODEX_BANKED_RESET_MODE` selector and shadow-decision arming gate are retired; `CODEX_BANKED_RESET_ENABLED` remains the immediate kill switch. When enabled, an eligible blocked cohort performs fresh inventory, selects one exact credit, claims the deterministic redemption, and submits it in the same request. The existing one-per-account-per-UTC-day and one-per-window caps, exact fence checks, at-most-once transaction, and post-reset probe remain unchanged. Historical shadow decisions remain readable for audit but do not gate a live redemption.
+
+Reason: the owner explicitly required automatic live behavior; shadow mode and arming made a redeemable reset require a prior decision and a later request.
+
+Reversal risk: removing the arming and audit gate allows an external spend on the first eligible blocked request. Exact caps and fences plus the enabled kill switch are mandatory; `unknown` remains possibly spent and is never replayed.
+
 ## Merged-only CI gates expensive jobs behind portable validation - 2026-10-21
 
 This supersedes the merge-group, queue-canary, Sentinel-authored PR, and development-push trigger requirements in "Real CI checks for Sentinel and merge groups" for the current GitHub Actions quota policy. `pull_request: closed` and `workflow_dispatch` are the only triggers, and every job requires a merged pull request or explicit manual dispatch. After `scope`, the portable x64 `portable` gate must pass before `rust-native`; `rust-wasm` follows `rust-native`; `native` and macOS/Darwin work start only after their selected earlier gates pass. The `validate` job remains the required check name and fails closed when a selected portable or Rust gate is missing, skipped, cancelled, or failed. Each job has an explicit timeout, and the workflow never deploys.

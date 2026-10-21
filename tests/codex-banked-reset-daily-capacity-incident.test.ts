@@ -169,7 +169,7 @@ test("a capacity-100% class yields a blocked cohort identity, and only materiali
   }
 });
 
-test("a capacity-blocked live episode arms without spending and then consumes exactly once", async () => {
+test("a capacity-blocked live episode consumes exactly once without an arming step", async () => {
   const kv = new MemoryKv();
   const clock = new TestClock();
   const reset = candidate({ accountId: "incident-account-a", routingGeneration: 7 });
@@ -178,15 +178,6 @@ test("a capacity-blocked live episode arms without spending and then consumes ex
   provider.inventory = inventory("incident-credit-a", clock.nowMs + 20_000);
   const pool = [{ slot: 0, candidate: reset, provider }] as const;
   const deps = dependencies(kv, provider, clock, liveIncidentConfig());
-
-  const armed = await evaluateCodexBankedResetPool(pool, deps);
-  assert.equal(armed.kind, "shadow");
-  assert.equal(armed.reason, "live_armed");
-  assert.equal(armed.reset, null);
-  assert.equal(provider.inventoryInputs.length, 1);
-  assert.equal(provider.redeemInputs.length, 0);
-  assert.equal(provider.commitCount, 0);
-  assert.equal(await accountDayCount(kv, "incident-account-a", utcDay(clock.nowMs)), null);
 
   const consumed = await evaluateCodexBankedResetPool(pool, deps);
   assert.equal(consumed.kind, "verified");

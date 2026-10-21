@@ -871,7 +871,7 @@ test("full-pool shadow reads each account inventory, selects the earliest exact 
   assert.equal(JSON.stringify(decision).includes("credit-b-earlier"), false);
 });
 
-test("a new persistent-live episode auto-arms without spending, then consumes exactly once", async () => {
+test("a new persistent-live episode consumes exactly once without an arming step", async () => {
   const clock = new TestClock();
   const kv = new MemoryKv();
   const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
@@ -888,29 +888,15 @@ test("a new persistent-live episode auto-arms without spending, then consumes ex
     event: (event) => events.push(event),
   });
 
-  const armed = await evaluateCodexBankedResetPool(pool, deps);
-  assert.equal(armed.kind, "shadow");
-  assert.equal(armed.reason, "live_armed");
-  assert.equal(armed.selected?.slot, 0);
-  assert.equal(armed.reset, null);
-  assert.equal(provider.inventoryInputs.length, 1);
-  assert.equal(provider.redeemInputs.length, 0);
-  assert.equal(provider.commitCount, 0);
-  assert.ok(events.includes("codex_reset_eligible"));
-  assert.ok(events.includes("codex_reset_shadow_candidate"));
-  assert.equal(shadowDecisionFrom(kv).decision_reason, "selected");
-  assert.equal(kv.entries.size, 3);
-
-  const day = new Date(clock.nowMs).toISOString().slice(0, 10);
-  assert.equal((await kv.get(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value, null);
-
   const consumed = await evaluateCodexBankedResetPool(pool, deps);
   assert.equal(consumed.kind, "verified");
   assert.equal(consumed.selected?.slot, 0);
-  assert.equal(provider.inventoryInputs.length, 2);
+  assert.equal(provider.inventoryInputs.length, 1);
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.redeemInputs[0]?.creditId, "expiring-credit");
   assert.equal(provider.commitCount, 1);
+  assert.ok(events.includes("codex_reset_eligible"));
+  const day = new Date(clock.nowMs).toISOString().slice(0, 10);
   assert.equal((await kv.get<{ submission_count: number }>(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value?.submission_count, 1);
 
   const repeated = await evaluateCodexBankedResetPool(pool, deps);
@@ -919,7 +905,7 @@ test("a new persistent-live episode auto-arms without spending, then consumes ex
   assert.equal(provider.commitCount, 1);
 });
 
-test("concurrent initial persistent-live evaluations only arm before a later single consume", async () => {
+test("concurrent initial persistent-live evaluations produce one redemption", async () => {
   const clock = new TestClock();
   const kv = new MemoryKv();
   const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
@@ -951,30 +937,21 @@ test("concurrent initial persistent-live evaluations only arm before a later sin
   const initial = await Promise.all([first, second]);
 
   assert.deepEqual(
-    initial.map(({ kind }) => kind),
-    ["shadow", "shadow"]
+    initial.map(({ kind }) => kind).sort((left, right) => left.localeCompare(right)),
+    ["pending", "verified"]
   );
-  assert.deepEqual(
-    initial.map(({ reason }) => reason),
-    ["live_armed", "live_armed"]
-  );
-  assert.equal(provider.redeemInputs.length, 0);
-  assert.equal(provider.commitCount, 0);
-  assert.equal(shadowDecisionFrom(kv).decision_reason, "selected");
-  assert.equal(kv.entries.size, 3);
-  const day = new Date(clock.nowMs).toISOString().slice(0, 10);
-  assert.equal((await kv.get(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value, null);
-
-  const consumed = await evaluateCodexBankedResetPool(pool, deps);
-  assert.equal(consumed.kind, "verified");
-  assert.equal(provider.inventoryInputs.length, 3);
   assert.equal(provider.redeemInputs.length, 1);
-  assert.equal(provider.redeemInputs[0]?.creditId, "expiring-credit");
   assert.equal(provider.commitCount, 1);
+  const day = new Date(clock.nowMs).toISOString().slice(0, 10);
   assert.equal((await kv.get<{ submission_count: number }>(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value?.submission_count, 1);
+
+  const settled = await evaluateCodexBankedResetPool(pool, deps);
+  assert.equal(settled.kind, "verified");
+  assert.equal(provider.redeemInputs.length, 1);
+  assert.equal(provider.commitCount, 1);
 });
 
-test("invalid or ineligible live inventory cannot arm or consume", () =>
+test("invalid or ineligible live inventory cannot consume", () =>
   runSequence(async (step) => {
     for (const scenario of [
       {
@@ -1159,7 +1136,7 @@ test("a subscription disabled after its shadow decision stays fenced on the dupl
   assert.equal(shadowDecisionFrom(kv).selected_account_id_hash, await testHash(reset.accountId));
 });
 
-test("concurrent shadow observations deduplicate one episode, and live consumes only the matching audited account credit", async () => {
+test("concurrent shadow observations deduplicate one episode, while live uses fresh inventory", async () => {
   const clock = new TestClock();
   const kv = new MemoryKv();
   const first = candidate({ accountId: "test-account-a", routingGeneration: 7 });
@@ -1204,7 +1181,7 @@ test("concurrent shadow observations deduplicate one episode, and live consumes 
   assert.equal(secondProvider.redeemInputs.length, 1);
 });
 
-test("one blocked candidate promotes from shadow to one concurrent live redemption and one daily-cap increment", async () => {
+test("an existing shadow decision does not gate one live redemption and one daily-cap increment", async () => {
   const clock = new TestClock();
   const kv = new MemoryKv();
   const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
@@ -1247,7 +1224,7 @@ test("one blocked candidate promotes from shadow to one concurrent live redempti
   assert.equal((await kv.get<{ submission_count: number }>(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value?.submission_count, 1);
 });
 
-test("incomplete, duplicate, expired, and changed inventories never select or consume a shadow-audited credit", () =>
+test("invalid inventories never consume, and live uses only fresh eligible inventory", () =>
   runSequence(async (step) => {
     for (const scenario of ["incomplete", "duplicate", "expired", "changed"] as const) {
       await step(scenario, async () => {
@@ -1261,8 +1238,8 @@ test("incomplete, duplicate, expired, and changed inventories never select or co
         const secondProvider = new FakeCodexUsageResetProvider();
         firstProvider.inventory = inventory("credit-a", clock.nowMs + 40_000);
         secondProvider.inventory = inventory("credit-b", clock.nowMs + 20_000);
-        const shadow = config({
-          mode: "shadow",
+        const live = config({
+          mode: "live",
           maxPerAccountPerDay: 1,
         });
         const pool = fullPool(first, firstProvider, second, secondProvider);
@@ -1278,35 +1255,25 @@ test("incomplete, duplicate, expired, and changed inventories never select or co
                     { id: "credit-b", status: "unavailable", resetType: "codex_rate_limits", expiresAtMs: null },
                   ],
           };
-          const result = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, shadow));
-          assert.equal(result.kind, "shadow");
-          assert.equal(result.selected, null);
-          assert.equal(shadowDecisionFrom(kv).decision_reason, "inventory_response_invalid_or_expired");
-          const firstInventoryCount = firstProvider.inventoryInputs.length;
-          const secondInventoryCount = secondProvider.inventoryInputs.length;
-          const repeat = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, shadow));
-          assert.equal(repeat.kind, "shadow");
-          assert.equal(repeat.reason, "inventory_response_invalid_or_expired");
-          assert.equal(repeat.selected, null);
-          assert.equal(firstProvider.inventoryInputs.length, firstInventoryCount);
-          assert.equal(secondProvider.inventoryInputs.length, secondInventoryCount);
+        } else if (scenario === "expired") {
+          firstProvider.inventory = inventory("credit-a", clock.nowMs - 1);
+          secondProvider.inventory = inventory("credit-b", clock.nowMs - 1);
         } else {
-          const shadowResult = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, shadow));
-          assert.equal(shadowResult.kind, "shadow");
-          if (scenario === "expired") {
-            secondProvider.inventory = inventory("credit-b", clock.nowMs - 1);
-          } else {
-            secondProvider.inventory = inventory("credit-b-changed", clock.nowMs + 20_000);
-          }
-          const live = config({
-            mode: "live",
-            maxPerAccountPerDay: 1,
-          });
-          const result = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, live));
-          assert.equal(result.kind, "skipped");
-          assert.match(result.reason, /shadow_decision_drift|inventory_response_invalid_or_expired/);
+          secondProvider.inventory = inventory("credit-b-changed", clock.nowMs + 20_000);
         }
-        assert.equal(firstProvider.redeemInputs.length + secondProvider.redeemInputs.length, 0);
+        const result = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, live));
+        if (scenario === "changed") {
+          assert.equal(result.kind, "verified");
+          assert.equal(result.selected?.slot, 1);
+          assert.equal(firstProvider.redeemInputs.length, 0);
+          assert.equal(secondProvider.redeemInputs.length, 1);
+          assert.equal(secondProvider.redeemInputs[0]?.creditId, "credit-b-changed");
+          assert.equal(secondProvider.commitCount, 1);
+        } else {
+          assert.equal(result.kind, "skipped");
+          assert.equal(result.reason, "inventory_response_invalid_or_expired");
+          assert.equal(firstProvider.redeemInputs.length + secondProvider.redeemInputs.length, 0);
+        }
       });
     }
   }));

@@ -327,30 +327,32 @@ test("shadow-only reset outcomes still refuse overage when the account setting i
   );
 });
 
-test("a redeemable credit arms the live cohort and never falls back while arming is pending", async () => {
-  const { response, calls, logs } = await runBlockedRequest("overage-fallback-arming-pending", () =>
-    Response.json({
-      available_count: 1,
-      credits: [{ id: "credit-account-one", status: "available", reset_type: "codex_rate_limits", expires_at: null }],
-    })
+test("a redeemable credit is consumed before overage", async () => {
+  const { response, calls, logs } = await runBlockedRequest(
+    "overage-fallback-live-credit",
+    () =>
+      Response.json({
+        available_count: 1,
+        credits: [{ id: "credit-account-one", status: "available", reset_type: "codex_rate_limits", expires_at: null }],
+      }),
+    true
   );
 
-  assert.equal(response.status, 429);
-  assert.equal(getCodexRoutingError(response), "codex_quota_blocked");
-  assert.deepEqual(
-    calls.filter((call) => call.kind === "inference"),
-    []
-  );
+  assert.equal(response.status, 200);
   assert.deepEqual(
     calls.filter((call) => call.kind === "consume"),
-    []
+    [{ kind: "consume", accountId: "account-one" }]
   );
+  assert.deepEqual(
+    calls.filter((call) => call.kind === "inference").map((call) => call.accountId),
+    ["account-one"]
+  );
+  assert.ok(logs.some((line) => line.includes("codex_reset_verified")));
   assert.equal(
     logs.some((line) => line.includes("codex_overage_served")),
     false,
-    "arming must not serve overage"
+    "a live reset must not fall back to overage"
   );
-  assert.ok(logs.some((line) => line.includes("codex_banked_reset_preflight") && line.includes('"reason":"live_armed"')));
 });
 
 beforeEach(installHarness);
