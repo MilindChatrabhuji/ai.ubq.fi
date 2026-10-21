@@ -32,7 +32,10 @@ async function tcp(address, denied = false) {
     });
     socket.once("error", (error) => {
       clearTimeout(timer);
-      denied && ["EPERM", "EACCES"].includes(error.code) ? done() : reject(error);
+      const refused = ["EPERM", "EACCES", "ENETUNREACH", "EHOSTUNREACH"];
+      // The existing Darwin boundary requires paired outside TCP positives.
+      if (process.platform === "darwin") refused.push("ECONNREFUSED");
+      denied && refused.includes(error.code) ? done() : reject(error);
     });
   });
 }
