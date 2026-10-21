@@ -104,6 +104,135 @@ fn source_pool() -> CodexSourcePool {
     }
 }
 
+fn external_source(id: &str) -> gateway_auth::provider_credentials::CodexSourceAccount {
+    use gateway_auth::{
+        crypto::{Secret, base64url},
+        provider_credentials::CodexNativeOwner,
+    };
+    let access = format!(
+        "e30.{}.synthetic",
+        base64url(json!({"exp":(NOW + 3_600_000) / 1000,"https://api.openai.com/auth":{"chatgpt_user_id":"fixture-user","chatgpt_account_id":id}}).to_string().as_bytes())
+    );
+    let mut source = gateway_auth::provider_credentials::CodexSourceAccount {
+        account_id: id.into(),
+        access_token: Secret::new(access),
+        refresh_token: Secret::new(String::new()),
+        updated_at_ms: NOW as f64,
+        native_owner: None,
+    };
+    source.native_owner = Some(CodexNativeOwner {
+        codex_home: format!("/tmp/synthetic-capacity-{id}"),
+        generation_hash: source.identity().native_generation_hash,
+        native_refreshed_at: None,
+        external_user_id: Some("fixture-user".into()),
+        managed_source: None,
+    });
+    source
+}
+
+fn setup_access_pool(
+    accounts: Vec<gateway_auth::provider_credentials::CodexSourceAccount>,
+) -> (CapturedStore, Authority<CapturedStore, Tokens>) {
+    let store = CapturedStore::default();
+    let source = CodexSourcePool {
+        accounts,
+        updated_at_ms: NOW as f64,
+    };
+    store
+        .inner
+        .seed(codex_source_pool_key(), &source.private_source_value());
+    let revision = store.inner.row(&codex_source_pool_key()).unwrap().revision;
+    let pool = SubscriptionPool {
+        v: 1,
+        pool_versionstamp: gateway_core::identity::PoolVersionstamp(revision),
+        accounts: source
+            .accounts
+            .iter()
+            .map(|account| {
+                let id = account.identity();
+                PoolAccount {
+                    account_id_hash: id.routing_account_hash,
+                    admin_account_hash: id.administrative_account_hash,
+                    credential_version: id.credential_version,
+                    enabled: true,
+                }
+            })
+            .collect(),
+    };
+    store.inner.seed(keys::pool(), &pool);
+    let authority = Authority::with_clock(store.clone(), store.tokens.clone(), store.clone());
+    (store, authority)
+}
+
+#[test]
+fn external_access_only_capacity_observation_needs_no_control_registration() {
+    let (store, authority) = setup_access_pool(vec![external_source("a"), external_source("b")]);
+    assert!(store.inner.row(&keys::paid_control_owner()).is_none());
+    let fence = run(authority.begin_codex_capacity_observation(&[reference()])).unwrap();
+    let binding = fence.fetch_bindings().next().unwrap();
+    assert_eq!(
+        binding.native_owner().unwrap().generation_hash,
+        binding.native_generation_hash()
+    );
+    run(authority.record_codex_capacity_observations(&fence, &[sample(NOW, 7.0)])).unwrap();
+    assert!(store.inner.row(&keys::capacity()).is_some());
+    assert!(store.inner.row(&keys::paid_control_owner()).is_none());
+    assert!(store.inner.row(&keys::paid_routing()).is_none());
+}
+
+#[test]
+fn external_access_only_owner_appearance_conflicts_at_capacity_commit() {
+    let (store, authority) = setup_access_pool(vec![external_source("a")]);
+    let fence = run(authority.begin_codex_capacity_observation(&[reference()])).unwrap();
+    store.inner.race(keys::paid_control_owner(), &owner());
+    assert!(
+        run(authority.record_codex_capacity_observations(&fence, &[sample(NOW, 7.0)])).is_err()
+    );
+    assert!(store.inner.row(&keys::capacity()).is_none());
+    assert!(store.inner.row(&keys::routing()).is_none());
+    assert!(store.inner.row(&keys::paid_control_owner()).is_some());
+}
+
+#[test]
+fn external_access_only_absence_does_not_authorize_managed_unowned_or_mixed_pools() {
+    use gateway_auth::provider_credentials::ManagedNativeSource;
+    let mut managed = external_source("a");
+    let native_generation = managed.identity().native_generation_hash;
+    let native = managed.native_owner.as_mut().unwrap();
+    native.external_user_id = None;
+    native.managed_source = Some(ManagedNativeSource {
+        v: 2,
+        generation_hash: native_generation,
+    });
+    let mut refresh_owned = source_account("a", false);
+    let mut owner = external_source("a").native_owner.unwrap();
+    owner.external_user_id = None;
+    owner.generation_hash = refresh_owned.identity().native_generation_hash;
+    refresh_owned.native_owner = Some(owner);
+    let mut unowned = external_source("a");
+    unowned.native_owner = None;
+    let mut wrong_generation = external_source("a");
+    wrong_generation
+        .native_owner
+        .as_mut()
+        .unwrap()
+        .generation_hash = "0".repeat(64);
+    for accounts in [
+        vec![managed],
+        vec![refresh_owned],
+        vec![unowned],
+        vec![wrong_generation],
+        vec![source_account("a", false)],
+        vec![external_source("a"), source_account("b", false)],
+    ] {
+        let (store, authority) = setup_access_pool(accounts);
+        assert!(run(authority.begin_codex_capacity_observation(&[reference()])).is_err());
+        assert!(store.inner.row(&keys::capacity()).is_none());
+        assert!(store.inner.row(&keys::paid_control_owner()).is_none());
+        assert!(store.inner.row(&keys::paid_routing()).is_none());
+    }
+}
+
 #[test]
 fn capture_rejects_unbound_account_duplicate_slot_and_missing_owner() {
     let (store, authority) = setup();

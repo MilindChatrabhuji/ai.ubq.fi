@@ -49,8 +49,8 @@ struct AccountSource {
 struct SourceFacts {
     raw_revision: String,
     pool_revision: String,
-    owner_revision: String,
-    owner: PaidControlOwner,
+    owner_revision: Option<String>,
+    owner: Option<PaidControlOwner>,
     accounts: Vec<AccountSource>,
 }
 /// No caller deserializer, revision list, keys or public constructor.
@@ -155,19 +155,32 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         {
             return Err(changed());
         }
-        let owner: PaidControlOwner =
-            tx.read(&keys::paid_control_owner()).await?.ok_or_else(|| {
-                unavailable(
-                    "codex_capacity_owner_missing",
-                    "Current registered native owner is unavailable.",
-                )
-            })?;
-        if owner.v != 1 {
-            return Err(changed());
+        let owner: Option<PaidControlOwner> = tx.read(&keys::paid_control_owner()).await?;
+        let owner_revision = tx.revision(&keys::paid_control_owner());
+        if let Some(owner) = &owner {
+            if owner.v != 1 || owner_revision.is_none() {
+                return Err(changed());
+            }
+            text(&owner.owner_id)?;
+            text(&owner.owner_epoch)?;
+            text(&owner.key_fingerprint)?;
+        } else if owner_revision.is_some()
+            || snapshot.pool.accounts.iter().any(|source| {
+                !source.refresh_token.expose().is_empty()
+                    || source.native_owner.as_ref().is_none_or(|owner| {
+                        owner.external_user_id.is_none() || owner.managed_source.is_some()
+                    })
+            })
+        {
+            return Err(unavailable(
+                "codex_capacity_owner_missing",
+                "Current registered native owner is unavailable.",
+            ));
         }
-        text(&owner.owner_id)?;
-        text(&owner.owner_epoch)?;
-        text(&owner.key_fingerprint)?;
+        // The source sampler also serves access-only external owners. Their
+        // exact per-account ownership/generation below and the checked global
+        // owner absence fence this read-only observation without minting a
+        // native writer, credential renewal or paid-control registration.
         let mut accounts = Vec::new();
         for (source, normalized) in snapshot.pool.accounts.iter().zip(&pool.accounts) {
             let id = source.identity();
@@ -196,9 +209,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         Ok(SourceFacts {
             raw_revision: snapshot.revision,
             pool_revision: tx.revision(&keys::pool()).ok_or_else(changed)?,
-            owner_revision: tx
-                .revision(&keys::paid_control_owner())
-                .ok_or_else(changed)?,
+            owner_revision,
             owner,
             accounts,
         })

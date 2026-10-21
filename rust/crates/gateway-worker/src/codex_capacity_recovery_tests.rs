@@ -39,6 +39,7 @@ enum Scenario {
     Revoked,
     Rotated,
     Epoch,
+    OwnerAppears,
 }
 struct Probe {
     base: Host,
@@ -137,6 +138,7 @@ impl ObservabilityHost for Probe {
                     StoredRecord::json("successor-epoch", row.json_value()?.clone(), None),
                 );
             }
+            Scenario::OwnerAppears => seed_owner(&self.memory),
             Scenario::Positive | Scenario::Exhausted => {}
         }
         Ok(CapacityProbe::Http {
@@ -180,6 +182,20 @@ fn seed(memory: &Memory, key: gateway_core::state::RecordKey, revision: &str, va
         .rows
         .borrow_mut()
         .insert(key.0, StoredRecord::json(revision, value, None));
+}
+fn seed_owner(memory: &Memory) {
+    seed(
+        memory,
+        keys::paid_control_owner(),
+        "owner-r1",
+        serde_json::to_value(PaidControlOwner {
+            v: 1,
+            owner_id: "owner".into(),
+            owner_epoch: "epoch".into(),
+            key_fingerprint: "fingerprint".into(),
+        })
+        .unwrap(),
+    );
 }
 fn setup(scenario: Scenario) -> (Probe, CohortProof, ModelId, Value) {
     let memory = Memory::default();
@@ -234,18 +250,9 @@ fn setup(scenario: Scenario) -> (Probe, CohortProof, ModelId, Value) {
         })
         .unwrap(),
     );
-    seed(
-        &memory,
-        keys::paid_control_owner(),
-        "owner-r1",
-        serde_json::to_value(PaidControlOwner {
-            v: 1,
-            owner_id: "owner".into(),
-            owner_epoch: "epoch".into(),
-            key_fingerprint: "fingerprint".into(),
-        })
-        .unwrap(),
-    );
+    if matches!(scenario, Scenario::Epoch) {
+        seed_owner(&memory);
+    }
     let base = Host::default();
     base.at.set(NOW);
     let probe = Probe {
@@ -308,6 +315,13 @@ fn invoke(
 #[test]
 fn access_only_stale_positive_requires_genuine_new_sample_then_ordinary_reselection() {
     let (probe, proof, model, _) = setup(Scenario::Positive);
+    assert!(
+        !probe
+            .memory
+            .rows
+            .borrow()
+            .contains_key(&keys::paid_control_owner().0)
+    );
     let mut expected_active = probe.memory.rows.borrow()[&keys::active().0]
         .json_value()
         .unwrap()
@@ -338,6 +352,13 @@ fn access_only_stale_positive_requires_genuine_new_sample_then_ordinary_reselect
             .json_value()
             .unwrap(),
         &expected_active
+    );
+    assert!(
+        !probe
+            .memory
+            .rows
+            .borrow()
+            .contains_key(&keys::paid_control_owner().0)
     );
 }
 #[test]
@@ -390,7 +411,7 @@ fn revocation_during_get_prevents_publication_and_reselection() {
 }
 #[test]
 fn source_revision_or_owner_epoch_race_cannot_publish_successor_capacity() {
-    for scenario in [Scenario::Rotated, Scenario::Epoch] {
+    for scenario in [Scenario::Rotated, Scenario::Epoch, Scenario::OwnerAppears] {
         let (probe, proof, model, old) = setup(scenario);
         assert_eq!(
             invoke(&probe, &proof, &model)
