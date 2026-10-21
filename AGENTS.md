@@ -111,6 +111,20 @@
 - Treat malformed, incomplete, or identity-mismatched review data as fail-closed: preserve the exact evidence, ingest
   nothing, and surface the failure. Never drop findings, salvage a partial parse, or mark a failed review complete.
 
+## GitHub Actions Budget
+
+- The repository is optimizing GitHub Actions usage because the owner's GitHub Free monthly minute allowance is being
+  exhausted. `.github/workflows/deno-deploy.yml` is the problematic high-cost workflow. It may run only after a pull
+  request merge or through explicit manual dispatch; do not add push, pull-request-open/synchronize, merge-group, or
+  scheduled triggers.
+- Do not dispatch, rerun, re-enable, or trigger any workflow merely to validate a branch. Leave a manually disabled
+  workflow disabled unless the owner explicitly asks to enable it. Use the change-scoped local gates and report missing
+  hosted evidence rather than spending minutes on a convenience run.
+- While this quota policy is active, it supersedes the normal expectation of hosted CI before merging a bounded change.
+  Merge after the selected local gates pass, then use the post-merge run as the hosted receipt. Never describe a
+  post-merge run as pre-merge acceptance, and request owner authorization for any extra run that is not the automatic
+  post-merge execution.
+
 ## Repository Completion and Checkout Handoff
 
 - Do not leave completed or accepted work only in a worktree, local branch, or unpushed commit. Commit and push every

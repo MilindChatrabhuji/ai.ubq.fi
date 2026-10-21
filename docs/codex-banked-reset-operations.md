@@ -64,14 +64,16 @@ pool is exhausted.
 
 Since the 2026-10-05 incident fix (`docs/incident-codex-banked-reset-capacity-deadlock-2026-10-05.md`), a fresh capacity
 observation at 100% used for the requested class with a future reset deadline is also an authoritative exhaustion
-source: routing yields the blocked identity from that observation, and the blocked-cohort evaluator materializes the
-durable class block (same persisted transition a live 429 uses) before evaluating, so an ordinary request arms and later
-spends. A 100%-used observation without a deadline keeps the account half-open as a bounded probe instead. A live stable
-future deadline supersedes an absent or expired prior observation for the ambiguity gate while the redemption ledger
-keeps each quota window spend-once. Empty blocked cohorts log `codex_banked_reset_preflight` with reason
-`no_blocked_identity` instead of returning silently. The once-per-UTC-day global cap described above was still enforced
-at the time of the incident; it has since been replaced by one redemption per account per UTC day (see Configuration).
-The explicit per-account overage-usage setting remains approved-but-pending as recorded in `docs/DECISIONS.md`.
+source: routing yields the blocked identity from that observation, and the blocked-cohort evaluator reconciles the
+durable class block before evaluating, so an ordinary request arms and later spends. Since 2026-10-21, a newer exhausted
+sample also replaces a retained future but ambiguous reset identity; a live 429 observed after the sample remains newer
+and therefore authoritative. A 100%-used observation without a deadline keeps the account half-open as a bounded probe.
+A live stable future deadline supersedes an absent or expired prior observation for the ambiguity gate while the
+redemption ledger keeps each quota window spend-once. Empty blocked cohorts log `codex_banked_reset_preflight` with
+reason `no_blocked_identity` instead of returning silently. The once-per-UTC-day global cap described above was still
+enforced at the time of the incident; it has since been replaced by one redemption per account per UTC day (see
+Configuration). The explicit per-account overage-usage setting remains approved-but-pending as recorded in
+`docs/DECISIONS.md`.
 
 ## Overage usage setting
 
