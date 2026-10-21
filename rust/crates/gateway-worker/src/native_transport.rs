@@ -1,5 +1,5 @@
-//! Constructor-only service transport. The synthetic URL supplies a fixed path
-//! to an injected Fetcher; it never selects a public network destination.
+//! Constructor-only native transport. Service bindings use a synthetic origin;
+//! HTTPS carriers pin their origin before any request-owned input is available.
 use std::rc::Rc;
 
 use gateway_auth::{
@@ -11,7 +11,7 @@ use gateway_auth::{
 };
 use worker::js_sys::Uint8Array;
 use worker::worker_sys::ext::ResponseExt;
-use worker::{Fetcher, Headers, Method, Request, RequestInit, RequestRedirect, Response};
+use worker::{Fetcher, Headers, Method, RequestInit, RequestRedirect, Response, Url};
 
 use crate::{
     host::PlatformHost,
@@ -24,7 +24,40 @@ use crate::{
 #[derive(Clone)]
 pub(super) struct NativeTransport {
     pub identity: NativeTransportIdentity,
-    carrier: Fetcher,
+    carrier: NativeCarrier,
+}
+
+#[derive(Clone)]
+enum NativeCarrier {
+    Service(Fetcher),
+    FixedHttps(NativeOrigin),
+}
+
+#[derive(Clone)]
+struct NativeOrigin(String);
+
+impl NativeOrigin {
+    fn new(origin: &str) -> Result<Self, GatewayError> {
+        let (_, address) = origin.split_once("://").ok_or_else(unavailable)?;
+        let url = Url::parse(origin).map_err(|_| unavailable())?;
+        if origin.chars().any(|c| c.is_whitespace() || c.is_control())
+            || origin.contains(['\\', '@'])
+            || url.scheme() != "https"
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.port().is_some_and(|port| port != 443)
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || url.path() != "/"
+            || address
+                .split_once('/')
+                .is_some_and(|(_, path)| !path.is_empty())
+        {
+            return Err(unavailable());
+        }
+        Ok(Self(url.origin().ascii_serialization()))
+    }
 }
 
 pub(super) struct Exchange {
@@ -37,11 +70,51 @@ pub(super) struct Exchange {
 
 impl NativeTransport {
     pub fn configured(carrier: Fetcher, identity: NativeTransportIdentity) -> Self {
-        Self { identity, carrier }
+        Self {
+            identity,
+            carrier: NativeCarrier::Service(carrier),
+        }
     }
 
-    pub(crate) fn carrier(&self) -> &Fetcher {
-        &self.carrier
+    pub fn configured_https(
+        origin: &str,
+        identity: NativeTransportIdentity,
+    ) -> Result<Self, GatewayError> {
+        Ok(Self {
+            identity,
+            carrier: NativeCarrier::FixedHttps(NativeOrigin::new(origin)?),
+        })
+    }
+
+    fn origin(&self) -> &str {
+        match &self.carrier {
+            NativeCarrier::Service(_) => "https://uos-native.internal",
+            NativeCarrier::FixedHttps(origin) => &origin.0,
+        }
+    }
+
+    async fn fetch_raw(
+        &self,
+        request: &worker::web_sys::Request,
+    ) -> Result<worker::web_sys::Response, GatewayError> {
+        use worker::wasm_bindgen::JsCast;
+        use worker::wasm_bindgen_futures::JsFuture;
+        let promise = match &self.carrier {
+            NativeCarrier::Service(carrier) => {
+                let carrier: worker::worker_sys::Fetcher = carrier.clone().into_rpc();
+                carrier.fetch(request).map_err(|_| unavailable())?
+            }
+            NativeCarrier::FixedHttps(_) => {
+                let global: worker::web_sys::WorkerGlobalScope =
+                    worker::js_sys::global().unchecked_into();
+                global.fetch_with_request(request)
+            }
+        };
+        JsFuture::from(promise)
+            .await
+            .map_err(|_| unavailable())?
+            .dyn_into()
+            .map_err(|_| unavailable())
     }
 
     pub(crate) async fn live_upgrade(
@@ -50,8 +123,6 @@ impl NativeTransport {
         platform: &PlatformHost,
     ) -> Result<crate::GatewayResponse, GatewayError> {
         use gateway_auth::native_live::{NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_PATH};
-        use worker::wasm_bindgen::{JsCast, JsValue};
-        use worker::wasm_bindgen_futures::JsFuture;
         let now = crate::storage::now_ms()?;
         let nonce = base64url(&random::random_bytes(32)?);
         let mac = self.identity.sign_live_request(now, &nonce, action_ref)?;
@@ -74,22 +145,16 @@ impl NativeTransport {
         init.set_headers(headers.as_ref());
         init.set_signal(Some(&cancellation.signal()));
         let request = worker::web_sys::Request::new_with_str_and_init(
-            &format!("https://uos-native.internal{NATIVE_LIVE_PATH}"),
+            &format!("{}{NATIVE_LIVE_PATH}", self.origin()),
             &init,
         )
         .map_err(|_| unavailable())?;
         if cancellation.signal().aborted() {
             return Err(unavailable());
         }
-        // The typed platform carrier keeps the original raw Response object;
+        // Both platform carriers keep the original raw Response object;
         // workers-rs conversion would reconstruct its upgrade and status text.
-        let carrier: worker::worker_sys::Fetcher = self.carrier().clone().into_rpc();
-        let promise = carrier.fetch(&request).map_err(|_| unavailable())?;
-        let raw: worker::web_sys::Response = JsFuture::from(promise)
-            .await
-            .map_err(|_: JsValue| unavailable())?
-            .dyn_into()
-            .map_err(|_| unavailable())?;
+        let raw = self.fetch_raw(&request).await?;
         if raw.status() != 101 || raw.websocket().is_none() {
             return Err(unavailable());
         }
@@ -147,7 +212,7 @@ impl NativeTransport {
         let init: worker::web_sys::RequestInit = (&init).into();
         init.set_signal(Some(&cancellation.signal()));
         let request = worker::web_sys::Request::new_with_str_and_init(
-            &format!("https://uos-native.internal{path}"),
+            &format!("{}{path}", self.origin()),
             &init,
         )
         .map_err(|_| unavailable())?;
@@ -157,9 +222,9 @@ impl NativeTransport {
         // A rejected fetch is unknown after this point. The caller must keep
         // its original action reference and must not request another renewal.
         let response = self
-            .carrier
-            .fetch_request(Request::from(request))
+            .fetch_raw(&request)
             .await
+            .map(Response::from)
             .map_err(|_| {
                 if path == NATIVE_CONTROL_PATH {
                     unverified()
@@ -182,4 +247,50 @@ pub(super) fn unavailable() -> GatewayError {
         "The trusted native carrier is not configured or available",
         "native_carrier_unavailable",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NativeOrigin;
+
+    #[test]
+    fn https_origin_is_fixed_and_normalized_before_requests() {
+        for origin in [
+            "https://native.example",
+            "https://native.example/",
+            "https://native.example:443/",
+        ] {
+            assert_eq!(
+                NativeOrigin::new(origin).unwrap().0,
+                "https://native.example"
+            );
+        }
+    }
+
+    #[test]
+    fn https_origin_rejects_alternate_authorities_and_nonroot_input() {
+        for origin in [
+            "http://native.example",
+            "https:native.example",
+            "https:///native.example",
+            "https://native.example:8443",
+            "https://user@native.example",
+            "https://@native.example",
+            "https://user:password@native.example",
+            "https://native.example/path",
+            "https://native.example/../",
+            "https://native.example/%2e/",
+            "https://native.example//",
+            "https://native.example?target=elsewhere",
+            "https://native.example?",
+            "https://native.example#fragment",
+            "https://native.example#",
+            "https://native.example\\elsewhere",
+            "https://native.example\n",
+            " https://native.example",
+            "",
+        ] {
+            assert!(NativeOrigin::new(origin).is_err(), "accepted {origin:?}");
+        }
+    }
 }

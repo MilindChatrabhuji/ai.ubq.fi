@@ -35,6 +35,18 @@ impl NativeBindings {
         }
     }
 
+    /// Trusted injection of one fixed HTTPS origin; never read from a request or
+    /// discovered from the environment. This grants no renewal ownership.
+    pub fn configured_https(
+        origin: &str,
+        identity: NativeTransportIdentity,
+    ) -> Result<Self, GatewayError> {
+        Ok(Self {
+            transport: Some(NativeTransport::configured_https(origin, identity)?),
+            renewal_owners: None,
+        })
+    }
+
     /// The fixed native owner registry is explicit trusted configuration. A
     /// supervisor carrier alone never supplies credential-renewal ownership.
     pub fn with_renewal_owners(

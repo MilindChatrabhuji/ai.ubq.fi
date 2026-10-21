@@ -46,7 +46,14 @@ pub fn auth_config(env: &Env) -> AuthConfig {
         .filter_map(|name| setting(env, name).map(|value| ((*name).to_owned(), value)))
         .collect();
     // The entrypoint independently validates the compile-time full Git identity.
-    AuthConfig::from_source_values(&values, true)
+    let mut config = AuthConfig::from_source_values(&values, true);
+    // This Rust Worker deployment targets the isolated candidate. Trust comes
+    // from its fixed composition, never a request header or discovered origin.
+    config.candidate_passkeys = true;
+    config
+        .extra_relay_origins
+        .insert("https://rust-candidate.ai.ubq.fi".into());
+    config
 }
 
 #[derive(Clone)]
