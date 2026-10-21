@@ -37,7 +37,6 @@ export {
   quotaClass,
   quotaBlockForClass,
   quotaBlocksIncludingLegacy,
-  withLegacyQuotaClassMap,
   quotaSignalObservedAtForClass,
   quotaBlockKeyForClass,
   withoutQuotaClass,
@@ -235,6 +234,25 @@ export const updateRoutingState = async (transform: CodexRoutingTransform): Prom
   } catch {
     return applyLocally();
   }
+};
+
+/**
+ * Persist a class block from one fresh exhausted capacity observation. The
+ * pure transition owns validity and identity rules; this wrapper serializes it
+ * through the same compare-and-set path as every other routing mutation.
+ */
+export const reconcileCapacityQuotaBlock = async (
+  account: RoutingAccount,
+  observation: CodexCapacityRoutingObservation,
+  now = Date.now()
+): Promise<boolean> => {
+  let changed = false;
+  await updateRoutingState((state) => {
+    const next = capacityDecisions.applyCapacityQuotaBlock(state, nativeCodexAccountMetadata(account), observation, now, Date.now());
+    if (next !== null) changed = true;
+    return next;
+  });
+  return changed;
 };
 
 /** Routing state reads and writes fail closed when the KV binding itself is unavailable. */

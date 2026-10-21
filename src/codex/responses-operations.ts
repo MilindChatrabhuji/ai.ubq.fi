@@ -8,11 +8,9 @@ import {
   capacityObservationIsFresh,
   loadCodexCapacityRoutingObservations,
   probeLeaseMatchesRoutingAccount,
-  quotaBlockForClass,
-  quotaClass,
+  reconcileCapacityQuotaBlock,
   routingAccountIdentity,
   slotMatchesRoutingAccount,
-  withLegacyQuotaClassMap,
 } from "./capacity-routing.ts";
 import {
   claimCodexRoutingProbe,
@@ -517,20 +515,12 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     const materializeCapacityQuotaBlocks = async (): Promise<boolean> => {
       const nowMs = Date.now();
       const observations = await loadCodexCapacityRoutingObservations(currentPoolEntry.pool, true);
-      const kv = ctx.bankedResetDependencies.kv ?? (await getKv());
-      const existing = kv ? parseCodexAccountRoutingState((await kv.get(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" })).value) : null;
       let wrote = false;
       for (const [slot, auth] of currentPoolEntry.pool.accounts.entries()) {
         try {
           const identity = await routingAccountIdentity(auth);
-          const blockedClass = quotaClass(ctx.requestedModel ?? null);
-          const currentSlot = existing?.slots.at(slot);
-          const currentBlock = currentSlot ? quotaBlockForClass(withLegacyQuotaClassMap(currentSlot), blockedClass) : null;
-          const blockedUntilMs = currentBlock?.blocked_until_ms;
-          if (blockedUntilMs !== undefined && blockedUntilMs > nowMs) continue;
           const observation = observations.find((candidate) => candidate.account_id_hash === identity.accountIdHash);
-          const resetAtMs = observedCapacityResetDeadline(observation, ctx.requestedModel, nowMs);
-          if (resetAtMs === null) continue;
+          if (observation === undefined || observedCapacityResetDeadline(observation, ctx.requestedModel, nowMs) === null) continue;
           const account: RoutingAccount = {
             auth,
             slot,
@@ -543,15 +533,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
             probeCircuit: null,
             requestedModel: ctx.requestedModel ?? null,
           };
-          await markCodexQuotaBlocked(
-            account,
-            new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-              status: 429,
-              headers: { "Content-Type": "application/json", "Retry-After": new Date(resetAtMs).toUTCString() },
-            }),
-            nowMs
-          );
-          wrote = true;
+          if (await reconcileCapacityQuotaBlock(account, observation, nowMs)) wrote = true;
         } catch {
           // One account's failed materialization must not stop the others.
         }

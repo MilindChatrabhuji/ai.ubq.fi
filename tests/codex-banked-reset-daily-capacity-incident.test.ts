@@ -21,8 +21,6 @@ import {
   RoutingKv,
   codexCredentialVersion,
   getCodexQuotaBlockFence,
-  httpDateQuotaResponse,
-  markCodexQuotaBlocked,
   recordCodexCapacityRoutingObservations,
   required,
   resetCodexAccountRoutingForTest,
@@ -51,6 +49,7 @@ import {
   testHash,
 } from "./helpers/codex-banked-reset-harness.ts";
 import { providerPolicyReason } from "../src/codex/banked-reset.ts";
+import { loadCodexCapacityRoutingObservations, reconcileCapacityQuotaBlock } from "../src/codex/capacity-routing.ts";
 import { sha256Hex } from "../src/utils.ts";
 
 type RoutingAuth = CodexAuthPoolState["accounts"][number];
@@ -149,9 +148,13 @@ test("a capacity-100% class yields a blocked cohort identity, and only materiali
     // Step 2: the in-memory identity alone arms no claim.
     assert.equal(await getCodexQuotaBlockFence(blocked, resetAtMs), null);
 
-    // Step 3: emulate the shipped materialization exactly, a fresh applied
-    // stable deadline from the observation's reset instant.
-    await markCodexQuotaBlocked(blocked, httpDateQuotaResponse(resetAtMs), now + 3);
+    // Step 3: the shipped capacity reconciliation persists the same observed
+    // reset identity without round-tripping a synthetic 429.
+    const observation = required(
+      (await loadCodexCapacityRoutingObservations(singlePool, true)).find((candidate) => candidate.account_id_hash === blocked.accountIdHash),
+      "fresh capacity observation"
+    );
+    assert.equal(await reconcileCapacityQuotaBlock(blocked, observation, now + 3), true);
 
     // Step 4: only now is the durable class-block fence current, and the
     // refreshed selection still reports the same blocked identity.

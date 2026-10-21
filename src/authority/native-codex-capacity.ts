@@ -569,6 +569,89 @@ const capacityObservedSlot = (
   };
 };
 
+/**
+ * Materialize or reconcile the requested class block from a fresh, complete
+ * capacity observation. Unlike a live 429, the usage read describes the
+ * current provider window directly, so a newer exhausted sample may replace a
+ * retained deadline whose identity became ambiguous. A live quota signal that
+ * is newer than the sample remains authoritative.
+ */
+export const applyCapacityQuotaBlock = (
+  state: CodexAccountRoutingState,
+  account: CodexRoutingAccount,
+  observation: CodexCapacityRoutingObservation,
+  now: number,
+  updatedAtMs: number
+): CodexAccountRoutingState | null => {
+  if (!capacityObservationIsFresh(observation, now)) return null;
+  if (observation.slot !== account.slot || observation.account_id_hash !== account.accountIdHash) return null;
+  if (capacityHeadroomForObservation(observation, account.requestedModel ?? null) !== 0) return null;
+  const resetAtMs = observation.windows.primary?.reset_at_ms ?? null;
+  if (!isSafeMs(resetAtMs) || resetAtMs <= now) return null;
+  const current = slotFor(state, account);
+  if (!slotMatchesCodexRoutingAccount(current, account) || current.probe_lease !== null) return null;
+  const requestedQuotaClass = quotaClass(account.requestedModel);
+  const classAwareCurrent = withLegacyQuotaClassMap(current);
+  const priorBlock = quotaBlockForClass(classAwareCurrent, requestedQuotaClass);
+  const priorSignalObservedAtMs = quotaSignalObservedAtForClass(classAwareCurrent, requestedQuotaClass);
+  // A request that reached the provider after the sample may have established
+  // a newer authoritative circuit. The older sample cannot replace it.
+  if (priorSignalObservedAtMs !== null && priorSignalObservedAtMs > observation.snapshot_at_ms) return null;
+  const recoveryProbePending = current.banked_reset_recovery_probe_pending || (priorBlock?.banked_reset_recovery_probe_pending ?? false);
+  const nextBlock: CodexQuotaClassBlock = {
+    blocked_until_ms: resetAtMs,
+    source: "header_retry_after",
+    legacy_fallback: false,
+    quota_signal_observed_at_ms: observation.snapshot_at_ms,
+    observed_reset_at_ms: resetAtMs,
+    observed_reset_at_is_stable: true,
+    banked_reset_generation_ambiguous: false,
+    banked_reset_recovery_probe_pending: recoveryProbePending,
+  };
+  if (
+    priorBlock?.blocked_until_ms === nextBlock.blocked_until_ms &&
+    priorBlock.source === nextBlock.source &&
+    priorBlock.observed_reset_at_ms === nextBlock.observed_reset_at_ms &&
+    priorBlock.observed_reset_at_is_stable &&
+    !priorBlock.banked_reset_generation_ambiguous &&
+    priorBlock.banked_reset_recovery_probe_pending === recoveryProbePending
+  )
+    return null;
+  const quotaBlocksByClass = {
+    ...quotaBlocksIncludingLegacy(current),
+    [requestedQuotaClass]: nextBlock,
+  } satisfies Partial<Record<CodexQuotaClass, CodexQuotaClassBlock>>;
+  const blocks = Object.values(quotaBlocksByClass);
+  const latest = blocks.reduce<CodexQuotaClassBlock>(
+    (candidate, block) => (block.blocked_until_ms > candidate.blocked_until_ms ? block : candidate),
+    nextBlock
+  );
+  const observedSignals = blocks.map((block) => block.quota_signal_observed_at_ms).filter((value): value is number => value !== null);
+  const latestSignalObservedAtMs = observedSignals.length ? Math.max(...observedSignals) : observation.snapshot_at_ms;
+  return {
+    ...state,
+    updated_at_ms: updatedAtMs,
+    slots: state.slots.map((slot, index) =>
+      index === account.slot
+        ? {
+            ...current,
+            account_id_hash: account.accountIdHash,
+            quota_blocked_until_ms: latest.blocked_until_ms,
+            quota_block_source: latest.source,
+            quota_blocked_classes: Object.keys(quotaBlocksByClass),
+            quota_blocks_by_class: quotaBlocksByClass,
+            quota_signal_observed_at_ms: latestSignalObservedAtMs,
+            observed_reset_at_ms: latest.observed_reset_at_ms,
+            observed_reset_at_is_stable: latest.observed_reset_at_is_stable,
+            banked_reset_generation_ambiguous: blocks.some((block) => block.banked_reset_generation_ambiguous),
+            banked_reset_recovery_probe_pending: blocks.some((block) => block.banked_reset_recovery_probe_pending),
+            generation: current.generation + 1,
+          }
+        : slot
+    ),
+  };
+};
+
 export const applyCapacityObservation = (
   state: CodexAccountRoutingState,
   observation: CodexCapacityRoutingObservation,

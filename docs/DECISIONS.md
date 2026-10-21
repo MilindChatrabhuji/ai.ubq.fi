@@ -6,6 +6,21 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Fresh capacity exhaustion reconciles a retained ambiguous reset identity - 2026-10-21
+
+A fresh `100%`-used capacity observation with a future reset deadline now reconciles an existing class block even when the
+block still carries an older future stable observation. It replaces that observation with the sample's deadline, clears
+`banked_reset_generation_ambiguous`, and preserves the credential/account fences, probe lease, and recovery-probe
+pending state. A live `429` observed after the sample remains newer and cannot be replaced by the older sample.
+
+Reason: the older identity kept a creditless sibling ambiguous while the pool was otherwise fully exhausted. The
+automatic reset evaluator rechecked every blocked account, returned `routing_fence_stale`, and the intentionally
+conservative overage fallback refused that reason. Both enabled bonus paths therefore dead-ended on a gateway quota
+refusal even though another account held an available reset.
+
+Reversal risk: allowing any stale identity to override a newer live signal can spend a reset against the wrong quota
+window. The observation timestamp, account identity, credential fence, and active probe lease remain hard gates.
+
 ## TypeScript-only VPS releases reuse verified payloads - 2026-10-19
 
 The VPS deploy CLI reuses the selected immutable release's `node_modules` and `.native/kv` payload when the root lockfile
