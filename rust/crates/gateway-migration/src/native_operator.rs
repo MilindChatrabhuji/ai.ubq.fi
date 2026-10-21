@@ -106,3 +106,18 @@ fn invalid() -> GatewayError {
         "migration_native_custody_required",
     )
 }
+
+/// Compose only the existing real native custody and candidate validators.
+/// The host supplies the capture and registrations through independent private
+/// operator inputs. This creates no native writer, renewal or ownership grant.
+pub async fn prepare_local_bootstrap(
+    capture: &crate::NativeCapture,
+    registrations: Vec<NativeCustodyRegistration>,
+) -> Result<crate::operational::NativeMigrationRequest, crate::MigrationError> {
+    let custody = ConfiguredNativeCustody::new(registrations)?;
+    let candidate = crate::sanitize_native_capture(capture, &custody).await?;
+    Ok(crate::operational::NativeMigrationRequest {
+        v: 1,
+        request: crate::operational::NativeOperation::AdoptNative { capture: candidate },
+    })
+}

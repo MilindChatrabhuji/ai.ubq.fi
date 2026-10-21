@@ -68,3 +68,32 @@ pub async fn execute_native<S: QueryStore>(
 ) -> Result<NativeMigrationResponse, MigrationError> {
     gateway_migration::operational::execute_native(store, request).await
 }
+
+/// Private host startup export, NOT an HTTP route. The trusted local operator
+/// owns the AUTHORITY namespace capability and withholds public traffic until
+/// this empty-target adoption settles. Ordinary fetch never calls this export.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub async fn local_operator_adopt(
+    env: worker::Env,
+    input: worker::js_sys::Uint8Array,
+) -> Result<worker::js_sys::Uint8Array, worker::wasm_bindgen::JsValue> {
+    use gateway_migration::operational::{
+        NativeOperation, decode_native_request, encode_native_response,
+    };
+    use worker::{js_sys::Uint8Array, wasm_bindgen::JsValue};
+    let refused = || JsValue::from_str("private_local_bootstrap_refused");
+    if input.length() as usize > gateway_migration::operational::PRIVATE_WIRE_MAX_BYTES {
+        return Err(refused());
+    }
+    let request = decode_native_request(&input.to_vec()).map_err(|_| refused())?;
+    if !matches!(&request.request, NativeOperation::AdoptNative { .. }) {
+        return Err(refused());
+    }
+    let store = crate::authority::RemoteAuthorityStore::from_env(&env).map_err(|_| refused())?;
+    let result = execute_native(&store, request)
+        .await
+        .map_err(|_| refused())?;
+    let receipt = encode_native_response(&result).map_err(|_| refused())?;
+    Ok(Uint8Array::from(receipt.as_slice()))
+}
