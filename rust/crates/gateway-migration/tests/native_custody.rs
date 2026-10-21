@@ -392,7 +392,10 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption() {
             capture: serde_json::from_slice::<NativeCapture>(&bytes).unwrap(),
         },
     };
-    assert_eq!(serde_json::from_slice::<NativeCapture>(&bytes).unwrap().v, 2);
+    assert_eq!(
+        serde_json::from_slice::<NativeCapture>(&bytes).unwrap().v,
+        2
+    );
     let adopted = run(execute_native(&store, decode())).unwrap();
     assert!(
         serde_json::to_string(&adopted)
