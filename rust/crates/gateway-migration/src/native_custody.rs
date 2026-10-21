@@ -52,7 +52,7 @@ fn custody_error() -> GatewayError {
     )
 }
 
-fn source_pool(value: &NativeValue) -> Result<CodexSourcePool, GatewayError> {
+pub(crate) fn source_pool(value: &NativeValue) -> Result<CodexSourcePool, GatewayError> {
     let NativeValue::SourceGraphV1(graph) = value else {
         return Err(invalid(
             "Codex source pool requires its explicit graph representation",
@@ -71,7 +71,7 @@ fn pool_value(pool: &CodexSourcePool) -> Result<NativeValue, GatewayError> {
         )?)?,
     ))
 }
-fn codex_key(raw: &[u8]) -> Result<bool, GatewayError> {
+pub(crate) fn codex_key(raw: &[u8]) -> Result<bool, GatewayError> {
     Ok(starts(
         &parts(&TupleKey::from_sort_bytes(raw.to_vec())?.to_record_key())?,
         &["ubq_ai", "codex_auth"],

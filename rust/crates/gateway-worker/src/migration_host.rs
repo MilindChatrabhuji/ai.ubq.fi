@@ -4,6 +4,8 @@ pub mod wire;
 use gateway_core::{GatewayError, query::QueryStore};
 pub use gateway_migration::MigrationError;
 pub use gateway_migration::operational::{NativeMigrationRequest, NativeMigrationResponse};
+#[cfg(target_arch = "wasm32")]
+use worker::wasm_bindgen_futures;
 
 pub async fn execute_profile<S: QueryStore>(
     store: &S,
@@ -67,4 +69,40 @@ pub async fn execute_native<S: QueryStore>(
     request: NativeMigrationRequest,
 ) -> Result<NativeMigrationResponse, MigrationError> {
     gateway_migration::operational::execute_native(store, request).await
+}
+
+/// Private host startup export, NOT an HTTP route. The trusted local operator
+/// owns the AUTHORITY namespace capability and withholds public traffic until
+/// this empty-target adoption settles. Ordinary fetch never calls this export.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub async fn local_operator_adopt(
+    env: worker::Env,
+    input: worker::js_sys::Uint8Array,
+) -> Result<worker::js_sys::Uint8Array, worker::wasm_bindgen::JsValue> {
+    use gateway_migration::operational::{
+        NativeMigrationRequest, NativeOperation, encode_native_response,
+    };
+    use worker::{js_sys::Uint8Array, wasm_bindgen::JsValue};
+    let refused = || JsValue::from_str("private_local_bootstrap_refused");
+    if input.length() as usize > gateway_migration::operational::PRIVATE_WIRE_MAX_BYTES {
+        return Err(refused());
+    }
+    // Decode original NativeCapture v2 bytes directly: the shared public
+    // request decoder remains unchanged and cannot mint this private setup.
+    let capture: gateway_migration::NativeCapture =
+        serde_json::from_slice(&input.to_vec()).map_err(|_| refused())?;
+    if capture.v != 2 {
+        return Err(refused());
+    }
+    let request = NativeMigrationRequest {
+        v: 1,
+        request: NativeOperation::AdoptNative { capture },
+    };
+    let store = crate::authority::RemoteAuthorityStore::from_env(&env).map_err(|_| refused())?;
+    let result = execute_native(&store, request)
+        .await
+        .map_err(|_| refused())?;
+    let receipt = encode_native_response(&result).map_err(|_| refused())?;
+    Ok(Uint8Array::from(receipt.as_slice()))
 }

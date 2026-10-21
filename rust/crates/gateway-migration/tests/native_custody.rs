@@ -337,3 +337,128 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
     store.put(pool_key, corrupt);
     assert!(run(export_native_with_custody(&store, 2400, &host)).is_err());
 }
+
+#[test]
+fn configured_operator_composes_access_only_request_and_empty_store_adoption() {
+    use gateway_migration::native_operator::{NativeCustodyRegistration, prepare_local_bootstrap};
+    use gateway_migration::operational::{NativeMigrationRequest, NativeOperation, execute_native};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = Directory::new();
+    let home = directory.file("actual-configured-operator");
+    std::fs::create_dir(&home).unwrap();
+    let mut doc = document("managed-operator", 1);
+    let expiry = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    let access = format!(
+        "e30.{}.synthetic",
+        base64url(json!({"exp":expiry}).to_string().as_bytes())
+    );
+    doc["tokens"]["access_token"] = json!(access);
+    doc["tokens"]["id_token"] = doc["tokens"]["access_token"].clone();
+    let original = serde_json::to_vec(&doc).unwrap();
+    std::fs::write(home.join("auth.json"), &original).unwrap();
+    let credentials = parse_native_document(&doc).unwrap();
+    let registration = NativeCustodyRegistration::existing(
+        home.clone(),
+        OwnerFence {
+            owner: NativeOwnerId("existing-synthetic-operator".into()),
+            account_id: credentials.account_id.clone(),
+            generation_hash: credentials.generation_hash(),
+            authority_revision: "native-v1:14:0".into(),
+        },
+    )
+    .unwrap();
+    let mut capture: NativeCapture =
+        serde_json::from_str(include_str!("fixtures/native-source.json")).unwrap();
+    capture.entries.push(NativeEntry {
+        raw_key: TupleKey::from_record_key(&codex_source_pool_key()).unwrap().sort_bytes().to_vec(),
+        value: wire(&json!({"accounts":[{"account_id":credentials.account_id,"access_token":credentials.access_token.expose(),"refresh_token":credentials.refresh_token.expose(),"updated_at_ms":2200,"native_owner":{"codex_home":home.to_str().unwrap(),"generation_hash":credentials.generation_hash(),"native_refreshed_at":credentials.native_refreshed_at}}],"updated_at_ms":2200})),
+        revision: NativeRevision {version:"14".into(),sequence:"0".into()},
+        expiration_ms:-1,
+    });
+    assert!(prepare_native(&capture).is_err());
+    assert!(run(prepare_local_bootstrap(&capture, vec![])).is_err());
+    let candidate = run(prepare_local_bootstrap(&capture, vec![registration])).unwrap();
+    let bytes = serde_json::to_vec(&candidate).unwrap();
+    assert!(!String::from_utf8_lossy(&bytes).contains(credentials.refresh_token.expose()));
+    assert!(String::from_utf8_lossy(&bytes).contains(credentials.access_token.expose()));
+    let store = SqliteStore::open(&directory.file("operator-common.sqlite3"));
+    let decode = || NativeMigrationRequest {
+        v: 1,
+        request: NativeOperation::AdoptNative {
+            capture: serde_json::from_slice::<NativeCapture>(&bytes).unwrap(),
+        },
+    };
+    assert_eq!(serde_json::from_slice::<NativeCapture>(&bytes).unwrap().v, 2);
+    let adopted = run(execute_native(&store, decode())).unwrap();
+    assert!(
+        serde_json::to_string(&adopted)
+            .unwrap()
+            .contains("atomic_committed\":true")
+    );
+    assert!(run(execute_native(&store, decode())).is_err());
+    let snapshot = run(read_codex_source_pool(&store, 2300)).unwrap().unwrap();
+    assert_eq!(snapshot.pool.accounts[0].account_id, credentials.account_id);
+    assert!(snapshot.pool.accounts[0].refresh_token.expose().is_empty());
+    assert_eq!(std::fs::read(home.join("auth.json")).unwrap(), original);
+}
+
+#[test]
+fn configured_operator_observes_existing_external_access_and_refuses_stale_input() {
+    use gateway_migration::native_operator::{NativeCustodyRegistration, prepare_local_bootstrap};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = Directory::new();
+    let home = directory.file("external-operator");
+    std::fs::create_dir(&home).unwrap();
+    let expiry = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    let token = format!("e30.{}.synthetic",base64url(json!({"exp":expiry,"https://api.openai.com/auth":{"chatgpt_user_id":"external-user","chatgpt_account_id":"external-account"}}).to_string().as_bytes()));
+    let doc = json!({"auth_mode":"chatgptAuthTokens","OPENAI_API_KEY":null,"tokens":{"account_id":"external-account","access_token":token,"id_token":token,"refresh_token":""}});
+    let bytes = serde_json::to_vec(&doc).unwrap();
+    std::fs::write(home.join("auth.json"), &bytes).unwrap();
+    let native = parse_native_document(&doc).unwrap();
+    let fence = OwnerFence {
+        owner: NativeOwnerId("existing-external-reader".into()),
+        account_id: native.account_id.clone(),
+        generation_hash: native.generation_hash(),
+        authority_revision: "native-v1:14:0".into(),
+    };
+    let mut capture: NativeCapture =
+        serde_json::from_str(include_str!("fixtures/native-source.json")).unwrap();
+    capture.entries.push(NativeEntry {raw_key:TupleKey::from_record_key(&codex_source_pool_key()).unwrap().sort_bytes().to_vec(),value:wire(&json!({"accounts":[{"account_id":native.account_id,"access_token":native.access_token.expose(),"refresh_token":"","updated_at_ms":2200,"native_owner":{"codex_home":home.to_str().unwrap(),"generation_hash":native.generation_hash(),"auth_mode":"chatgptAuthTokens","chatgpt_user_id":"external-user"}}],"updated_at_ms":2200})),revision:NativeRevision{version:"14".into(),sequence:"0".into()},expiration_ms:-1});
+    let registration =
+        |f: OwnerFence| vec![NativeCustodyRegistration::existing(home.clone(), f).unwrap()];
+    assert!(
+        run(prepare_local_bootstrap(
+            &capture,
+            registration(fence.clone())
+        ))
+        .is_ok()
+    );
+    let mut stale = fence.clone();
+    stale.authority_revision = "native-v1:13:0".into();
+    assert!(run(prepare_local_bootstrap(&capture, registration(stale))).is_err());
+    let mut stale = fence.clone();
+    stale.generation_hash = "0".repeat(64);
+    assert!(run(prepare_local_bootstrap(&capture, registration(stale))).is_err());
+    let mut stale = fence.clone();
+    stale.account_id = "different-account".into();
+    assert!(run(prepare_local_bootstrap(&capture, registration(stale))).is_err());
+    let mut changed = doc.clone();
+    changed["tokens"]["access_token"] = json!("different-access");
+    changed["tokens"]["id_token"] = json!("different-access");
+    std::fs::write(
+        home.join("auth.json"),
+        serde_json::to_vec(&changed).unwrap(),
+    )
+    .unwrap();
+    assert!(run(prepare_local_bootstrap(&capture, registration(fence))).is_err());
+    std::fs::write(home.join("auth.json"), &bytes).unwrap();
+    assert_eq!(std::fs::read(home.join("auth.json")).unwrap(), bytes);
+}
