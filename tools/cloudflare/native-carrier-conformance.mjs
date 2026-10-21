@@ -380,51 +380,6 @@ const config :Workerd.Config = (services = [
       }
       cases.push("original_abort_signal_closes_native_tls_before_headers_and_mid_sse");
     } else running = await start(true);
-    const form = new FormData();
-    form.append("sdp", "fixture SDP offer");
-    form.append("session", JSON.stringify({ model: "gpt-matrix-test" }));
-    const created = await fetch(running.publicOrigin + "/v1/live", { method: "POST", headers: { authorization: "Bearer fixture-access" }, body: form });
-    assert.equal(created.status, 201, await created.clone().text());
-    await created.arrayBuffer();
-    checkpoint("live_created");
-    const socket = new WebSocket(running.publicOrigin.replace("http:", "ws:") + "/v1/live/rtc_fixture_live", {
-      headers: { authorization: "Bearer fixture-access" },
-    });
-    await new Promise((done, reject) => {
-      socket.once("error", reject);
-      socket.once("upgrade", (response) => {
-        events.push({ kind: "client_websocket_upgrade", status: response.statusCode, status_text: response.statusMessage });
-        checkpoint("client_websocket_upgrade");
-        try {
-          assert.equal(response.statusCode, 101);
-          assert.equal(response.statusMessage, "Fixture Native Upgrade");
-          assert.equal(response.headers["x-fixture-native-upgrade"], "original");
-        } catch (error) {
-          reject(error);
-        }
-      });
-      socket.once("open", () => {
-        checkpoint("client_websocket_open");
-        done();
-      });
-    });
-    const echo = new Promise((done, reject) => {
-      socket.once("message", (bytes) => {
-        checkpoint("client_websocket_message");
-        try {
-          assert.equal(bytes.toString(), "native\0echo");
-          done();
-        } catch (error) {
-          reject(error);
-        }
-      });
-    });
-    checkpoint("sending_websocket_echo");
-    socket.send("native\0echo");
-    await echo;
-    socket.close(1000, "fixture done");
-    await until(() => events.some((e) => e.kind === "native_websocket_closed"));
-    cases.push("shipping_fixed_https_preserves_raw_101_status_text_headers_websocket_and_close");
     const candidate = "https://rust-candidate.ai.ubq.fi";
     for (const invalid of [
       "https://foreign.workers.dev",
@@ -470,6 +425,78 @@ const config :Workerd.Config = (services = [
     assert.deepEqual(await readChallenge(loginBody.publicKey.challenge), loginChallenge);
     assert.deepEqual(await readChallenge(directBody.publicKey.challenge), directChallenge);
     cases.push("candidate_challenge_origins_and_audiences_persist_in_common_do_across_restart");
+    checkpoint("candidate_auth_passed");
+    const directNonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+    const directTime = String(Date.now());
+    const directAction = "controlled-peer-baseline";
+    const directSocket = new WebSocket(`wss://127.0.0.1:${tlsPort}/v1/native/live`, {
+      ca,
+      servername: "localhost",
+      handshakeTimeout: 3000,
+      headers: {
+        "x-uos-native-version": "1",
+        "x-uos-native-key-id": "fixture-matrix-key",
+        "x-uos-native-time-ms": directTime,
+        "x-uos-native-nonce": directNonce,
+        "x-uos-native-live-action": directAction,
+        "x-uos-native-mac": hmac(`uos-native-live-upgrade-v1\0GET\0/v1/native/live\0fixture-matrix-key\0${directTime}\0${directNonce}\0${directAction}`),
+      },
+    });
+    try {
+      await new Promise((done, reject) => {
+        directSocket.once("error", reject);
+        directSocket.once("open", done);
+      });
+      cases.push("controlled_tls_peer_direct_websocket_handshake");
+      checkpoint("direct_peer_websocket_passed");
+    } finally {
+      directSocket.terminate();
+    }
+    const form = new FormData();
+    form.append("sdp", "fixture SDP offer");
+    form.append("session", JSON.stringify({ model: "gpt-matrix-test" }));
+    const created = await fetch(running.publicOrigin + "/v1/live", { method: "POST", headers: { authorization: "Bearer fixture-access" }, body: form });
+    assert.equal(created.status, 201, await created.clone().text());
+    await created.arrayBuffer();
+    checkpoint("live_created");
+    const socket = new WebSocket(running.publicOrigin.replace("http:", "ws:") + "/v1/live/rtc_fixture_live", {
+      headers: { authorization: "Bearer fixture-access" },
+    });
+    await new Promise((done, reject) => {
+      socket.once("error", reject);
+      socket.once("upgrade", (response) => {
+        events.push({ kind: "client_websocket_upgrade", status: response.statusCode, status_text: response.statusMessage });
+        checkpoint("client_websocket_upgrade");
+        try {
+          assert.equal(response.statusCode, 101);
+          assert.equal(response.statusMessage, "Fixture Native Upgrade");
+          assert.equal(response.headers["x-fixture-native-upgrade"], "original");
+        } catch (error) {
+          reject(error);
+        }
+      });
+      socket.once("open", () => {
+        checkpoint("client_websocket_open");
+        done();
+      });
+    });
+    const echo = new Promise((done, reject) => {
+      socket.once("message", (bytes) => {
+        checkpoint("client_websocket_message");
+        try {
+          assert.equal(bytes.toString(), "native\0echo");
+          done();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    checkpoint("sending_websocket_echo");
+    socket.send("native\0echo");
+    await echo;
+    socket.close(1000, "fixture done");
+    await until(() => events.some((e) => e.kind === "native_websocket_closed"));
+    cases.push("shipping_fixed_https_preserves_raw_101_status_text_headers_websocket_and_close");
     assert.deepEqual(failures, []);
     const artifacts = await Promise.all(
       ["index.js", "index_bg.wasm"].map(async (name) => ({ name, sha256: hash(await readFile(join(resolve(build), name))) }))
