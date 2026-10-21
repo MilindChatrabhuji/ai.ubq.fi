@@ -69,11 +69,12 @@ pub fn run_native_request() -> ! {
                     .map_err(io_error)?,
             );
             crate::connector_policy::validate_unix_control(&channel)?;
-            channel
-                .set_read_timeout(Some(Duration::from_secs(10)))
-                .map_err(io_error)?;
+            crate::daemon_startup::live_bootstrap::read_timeout(
+                &channel,
+                Some(Duration::from_secs(10)),
+            )?;
             let socket = crate::daemon_startup::live_bootstrap::receive(&channel, &bytes, process)?;
-            channel.set_read_timeout(None).map_err(io_error)?;
+            crate::daemon_startup::live_bootstrap::read_timeout(&channel, None)?;
             (Some(socket), Some(channel))
         } else {
             if input_type != rustix::fs::FileType::Fifo {

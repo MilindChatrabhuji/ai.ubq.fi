@@ -17,10 +17,27 @@ use std::{
         fd::{AsFd, OwnedFd},
         unix::net::UnixStream,
     },
+    time::Duration,
 };
 
 const PURPOSE: &str = "live_authority";
 const MAX_BYTES: usize = 512;
+
+pub(crate) fn read_timeout(
+    channel: &UnixStream,
+    timeout: Option<Duration>,
+) -> Result<(), ControlError> {
+    // Darwin rejects timeout changes after peer close. As in the existing
+    // control receiver, retain queued final bytes/rights until recvmsg/EOF.
+    if let Err(error) = channel.set_read_timeout(timeout)
+        && (error.kind() != std::io::ErrorKind::InvalidInput
+            || !crate::connector_worker::channel_events(channel, Duration::ZERO)?
+                .contains(rustix::event::PollFlags::HUP))
+    {
+        return Err(io_error(error));
+    }
+    Ok(())
+}
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

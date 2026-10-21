@@ -72,6 +72,7 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
         "peer",
         "completion-rights",
         "production-port",
+        "closed-valid",
     ] {
         let (mut sender, receiver) = UnixStream::pair().unwrap();
         #[cfg(target_os = "macos")]
@@ -82,22 +83,23 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
         };
         #[cfg(not(target_os = "macos"))]
         let mut command = Command::new(&binary);
-        let mut child = ReceiverChild(
-            command
-                .args([
-                    "--ignored",
-                    "--exact",
-                    "daemon_startup::live_bootstrap::tests::reverse_fd_receive_child",
-                    "--nocapture",
-                    "--test-threads=1",
-                ])
-                .stdin(Stdio::from(OwnedFd::from(receiver)))
-                .env_clear()
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap(),
-        );
+        command
+            .args([
+                "--ignored",
+                "--exact",
+                "daemon_startup::live_bootstrap::tests::reverse_fd_receive_child",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .stdin(Stdio::from(OwnedFd::from(receiver)))
+            .env_clear()
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        let mut child = if matches!(scenario, "valid" | "completion-rights") {
+            Some(ReceiverChild(command.spawn().unwrap()))
+        } else {
+            None
+        };
         let expected_port = if scenario == "production-port" {
             443
         } else {
@@ -114,12 +116,14 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
         witness
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
-        if matches!(scenario, "valid" | "completion-rights") {
+        if matches!(scenario, "valid" | "completion-rights" | "closed-valid") {
             send_bound(&sender, CONFIG, connected, fixture_port).unwrap();
-            let mut marker = [0; 8];
-            witness.read_exact(&mut marker).unwrap();
-            assert_eq!(&marker, b"received");
-            if scenario == "valid" {
+            if scenario != "closed-valid" {
+                let mut marker = [0; 8];
+                witness.read_exact(&mut marker).unwrap();
+                assert_eq!(&marker, b"received");
+            }
+            if matches!(scenario, "valid" | "closed-valid") {
                 sender.write_all(&[1]).unwrap();
             } else {
                 inject(&sender, &[1], vec![File::open("/dev/null").unwrap().into()]);
@@ -161,9 +165,15 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
             }
         }
         drop(sender);
-        let status = child.0.wait().unwrap();
+        // These cases start only after sender close: queued rights must survive
+        // the actual Darwin HUP/timeout race, not depend on lucky scheduling.
+        if child.is_none() {
+            child = Some(ReceiverChild(command.spawn().unwrap()));
+        }
+        drop(command);
+        let status = child.as_mut().unwrap().0.wait().unwrap();
         let expected = match scenario {
-            "valid" => 0,
+            "valid" | "closed-valid" => 0,
             "extra" | "late" | "completion-rights" => {
                 ControlError::UnexpectedDescriptor.exit_code()
             }
@@ -174,6 +184,11 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
             _ => ControlError::InvalidFrame.exit_code(),
         };
         assert_eq!(status.code(), Some(expected), "{scenario}: {status}");
+        if scenario == "closed-valid" {
+            let mut marker = [0; 8];
+            witness.read_exact(&mut marker).unwrap();
+            assert_eq!(&marker, b"received");
+        }
         // No sender copy or request-process descriptor may keep this peer alive.
         assert_eq!(witness.read(&mut [0]).unwrap(), 0, "{scenario}");
     }
@@ -205,9 +220,7 @@ fn reverse_fd_receive_child() {
                 .try_clone_to_owned()
                 .map_err(io_error)?,
         );
-        channel
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .map_err(io_error)?;
+        read_timeout(&channel, Some(Duration::from_secs(2)))?;
         let mut socket = if fixture_port == 443 {
             receive(&channel, CONFIG, process)?
         } else {
