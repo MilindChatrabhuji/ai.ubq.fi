@@ -398,6 +398,57 @@ fn genuine_exhaustion_returns_new_full_cohort_proof_without_reset_or_paid_effect
     );
 }
 #[test]
+fn genuine_exhaustion_reconciles_a_retained_ambiguous_block_before_reselection() {
+    let (probe, proof, model, _) = setup(Scenario::Exhausted);
+    let mut state = parse_routing_state(
+        &probe.memory.rows.borrow()[&keys::routing().0]
+            .json_value()
+            .unwrap(),
+    )
+    .unwrap();
+    let stale = state.slots[0]
+        .quota_blocks
+        .get_mut("standard")
+        .expect("setup block");
+    stale.blocked_until_ms = NOW + 30_000;
+    stale.observed_at_ms = Some(NOW - 3_000_000);
+    stale.reset_at_ms = Some(NOW + 30_000);
+    stale.reset_is_stable = true;
+    stale.reset_ambiguous = true;
+    state.slots[0].quota_blocked_until_ms = Some(NOW + 30_000);
+    state.slots[0].retained_reset_at_ms = Some(NOW + 30_000);
+    state.slots[0].reset_identity_stable = true;
+    state.slots[0].reset_identity_ambiguous = true;
+    seed(
+        &probe.memory,
+        keys::routing(),
+        "stale-routing",
+        serde_json::to_value(state).unwrap(),
+    );
+
+    let Some(RouteSelection::QuotaBlocked { proof: fresh, .. }) =
+        invoke(&probe, &proof, &model).unwrap()
+    else {
+        panic!("real exhausted sample must remain blocked")
+    };
+    assert!(fresh.full_cohort_exhausted());
+    let state = parse_routing_state(
+        &probe.memory.rows.borrow()[&keys::routing().0]
+            .json_value()
+            .unwrap(),
+    )
+    .unwrap();
+    let block = state.slots[0]
+        .quota_block_for(CodexQuotaClass::Standard)
+        .expect("materialized block");
+    assert!(!block.reset_ambiguous);
+    assert!(block.reset_is_stable);
+    assert_eq!(block.blocked_until_ms, NOW + 3_600_000);
+    assert_eq!(block.reset_at_ms, Some(NOW + 3_600_000));
+    assert_eq!(block.observed_at_ms, Some(NOW));
+}
+
+#[test]
 fn revocation_during_get_prevents_publication_and_reselection() {
     let (probe, proof, model, old) = setup(Scenario::Revoked);
     assert_eq!(invoke(&probe, &proof, &model).unwrap_err().status, 401);
