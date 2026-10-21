@@ -12,6 +12,9 @@ mod port;
 #[path = "worker-custody-fixture/producers.rs"]
 mod producers;
 #[cfg(not(target_arch = "wasm32"))]
+#[path = "worker-custody-fixture/staged.rs"]
+mod staged;
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), gateway_migration::MigrationError> {
     use gateway_core::state::AuthorityStore;
     use gateway_migration::{operational::ArtifactInput, *};
@@ -41,7 +44,7 @@ fn main() -> Result<(), gateway_migration::MigrationError> {
     #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
     enum Phase {
         ExerciseRuntime { v: u32 },
-        AdvanceManagedA { v: u32 },
+        AdvanceManagedA { v: u32, artifacts: ArtifactInput },
     }
     #[derive(Serialize)]
     struct Inverse {
@@ -63,6 +66,11 @@ fn main() -> Result<(), gateway_migration::MigrationError> {
             directory: String,
             now_ms: i64,
         },
+        StagedCase {
+            v: u32,
+            directory: String,
+            now_ms: i64,
+        },
     }
     // Inspect only the finite operation selector, then deserialize the ORIGINAL
     // raw document. Untagged serde buffering must not erase NativeCapture SourceJson.
@@ -77,6 +85,13 @@ fn main() -> Result<(), gateway_migration::MigrationError> {
         initial.deserialize()?
     } else {
         match initial.deserialize::<Preparation>()? {
+            Preparation::StagedCase {
+                v: 1,
+                directory,
+                now_ms,
+            } => {
+                return crate::staged::run(&directory, now_ms);
+            }
             Preparation::PrepareInputs {
                 v: 1,
                 directory,
@@ -115,12 +130,12 @@ fn main() -> Result<(), gateway_migration::MigrationError> {
     let runtime = producers::exercise(&store, time)?;
     time.check()?;
     port::write(&runtime)?;
-    match port::read::<Phase>()? {
-        Phase::AdvanceManagedA { v: 1 } => {}
+    let artifacts: ArtifactContext = match port::read::<Phase>()? {
+        Phase::AdvanceManagedA { v: 1, artifacts } => artifacts.into(),
         _ => return Err(port::error("Expected the fixed managed-a producer phase").into()),
-    }
+    };
     time.check()?;
-    let (fixed, receipt) = fixed.advance_managed_a(&store, time)?;
+    let (fixed, receipt) = fixed.advance_managed_a(&store, time, &artifacts)?;
     time.check()?;
     port::write(&receipt)?;
     let export: Export = port::read()?;

@@ -10,6 +10,7 @@ import {
   compareLatest,
   decodeStoreMessage,
   fixtureTime,
+  fixtureEnvelope,
   manifest,
   privateLines,
   rawMember,
@@ -596,4 +597,15 @@ test("fixture budget refuses expiry or clock reversal without refreshing its ori
     assertFixtureBudget(time, time.origin - 1);
   }, /fixture_time_budget_expired/);
   assert.equal(time.deadline - time.origin, 300_000);
+});
+
+test("only the finite staged-history fixture receives the assigned six-minute outer envelope", () => {
+  const normal = manifest(prepared(), sha);
+  assert.equal(fixtureEnvelope(normal.fixture_scenario), 120_000);
+  const staged = manifest({ ...prepared(), fixture_scenario: "history-staged-v1" }, sha);
+  assert.equal(fixtureEnvelope(staged.fixture_scenario), 360_000);
+  for (const fixtureScenario of [null, "arbitrary", 360_001]) {
+    assert.throws(() => manifest({ ...prepared(), fixture_scenario: fixtureScenario }, sha));
+    assert.throws(() => fixtureEnvelope(fixtureScenario));
+  }
 });

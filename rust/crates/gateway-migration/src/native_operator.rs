@@ -191,3 +191,75 @@ impl ConfiguredNativeCustody {
         Ok(())
     }
 }
+
+/// Native-only full audit/custody preparation. Only bounded canonical stage frames
+/// leave this process. Ordinary profile/capture codecs and atomic adoption stay intact.
+pub async fn prepare_local_stage(
+    source: &crate::NativeCapture,
+    registrations: Vec<NativeCustodyRegistration>,
+) -> Result<crate::staged::StagePlan, crate::MigrationError> {
+    let candidate = prepare_local_bootstrap(source, registrations).await?;
+    Ok(crate::staged::StagePlan::from_prepared(
+        crate::prepare_native(&candidate)?,
+    )?)
+}
+
+/// Private file/pipe sinks only: current full credentials remain native. The
+/// complete latest inverse is computed by the existing custody/transform engine,
+/// not a source backup. This native memory requirement must be measured before
+/// private production captures; no full bundle crosses the WASM wire.
+pub async fn write_private_latest<
+    S: gateway_core::query::QueryStore,
+    H: crate::NativeCustody,
+    W: std::io::Write,
+    C: std::io::Write,
+>(
+    store: &S,
+    now_ms: i64,
+    host: &H,
+    artifacts: crate::ArtifactContext,
+    source_sink: &mut W,
+    custody_sink: &mut C,
+) -> Result<usize, crate::MigrationError> {
+    let bounded = LatestPages(store);
+    let bundle =
+        crate::export_native_rollback_with_custody(&bounded, now_ms, host, artifacts).await?;
+    let (source, controls, artifacts) = bundle.into_private_parts();
+    serde_json::to_writer(source_sink, &source)
+        .map_err(|_| crate::invalid("Private latest source sink failed"))?;
+    serde_json::to_writer(
+        custody_sink,
+        &serde_json::json!({"rust_controls":controls,"artifacts":artifacts}),
+    )
+    .map_err(|_| crate::invalid("Private latest custody sink failed"))?;
+    Ok(source.entries.len())
+}
+struct LatestPages<'a, S>(&'a S);
+impl<S: gateway_core::query::QueryStore> gateway_core::state::AuthorityStore
+    for LatestPages<'_, S>
+{
+    async fn read(
+        &self,
+        key: &gateway_core::state::RecordKey,
+    ) -> Result<Option<gateway_core::state::StoredRecord>, GatewayError> {
+        self.0.read(key).await
+    }
+    async fn commit(
+        &self,
+        transition: gateway_core::state::AtomicTransition,
+    ) -> Result<gateway_core::state::CommitOutcome, GatewayError> {
+        self.0.commit(transition).await
+    }
+}
+impl<S: gateway_core::query::QueryStore> gateway_core::query::QueryStore for LatestPages<'_, S> {
+    async fn query(
+        &self,
+        mut request: gateway_core::query::QueryRequest,
+    ) -> Result<gateway_core::query::QueryPage, GatewayError> {
+        // An arbitrary accepted source row can approach the private wire bound;
+        // a row-count page of256 is not a byte bound. Keep this operator's page
+        // to one row without changing ordinary query semantics or interfaces.
+        request.limit = 1;
+        self.0.query(request).await
+    }
+}
