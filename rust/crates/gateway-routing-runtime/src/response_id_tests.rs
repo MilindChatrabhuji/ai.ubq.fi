@@ -427,11 +427,13 @@ fn native_responses_and_original_chat_ids_are_not_relabelled() {
     plan.provider = UpstreamProvider::ChatgptCodex;
     plan.decode = ResponseDecode::Responses;
     let body = json!({"id":"resp_original_native_ABCDEFGHIJKLMNOPQRSTUVWXYZ","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"native"}]}]});
+    let event = json!({"type":"response.completed","response":&body});
+    let bytes = format!("event: response.completed\ndata: {event}\n\n");
     let decoded = decode_response(
         &plan,
         200,
         &headers(&[("x-request-id", "ignored")]),
-        &serde_json::to_vec(&body).unwrap(),
+        bytes.as_bytes(),
     )
     .unwrap();
     assert_eq!(scalar(&decoded.body)["id"], body["id"]);
