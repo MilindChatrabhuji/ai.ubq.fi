@@ -97,7 +97,12 @@ fn validate_routing(all: &DiskMap) -> Result<(), GatewayError> {
     }
     Ok(())
 }
-type LatestInventory = (Manifest, Vec<(RecordKey, Option<String>)>, Vec<String>);
+type LatestInventory = (
+    Manifest,
+    Vec<(RecordKey, Option<String>)>,
+    Vec<String>,
+    BTreeSet<String>,
+);
 fn validate(
     all: &DiskMap,
     manifest: Manifest,
@@ -318,7 +323,8 @@ fn validate(
         entries.push((key, None));
     }
     native_import::validate(all)?;
-    Ok((manifest, entries, controls))
+    let mapping_keys = mapping_digests.into_iter().map(|(key, _)| key).collect();
+    Ok((manifest, entries, controls, mapping_keys))
 }
 
 pub(crate) async fn write_latest<
@@ -334,6 +340,26 @@ pub(crate) async fn write_latest<
     source_sink: &mut W,
     custody_sink: &mut C,
 ) -> Result<usize, MigrationError> {
+    write_latest_for_reconciliation(store, now_ms, host, artifacts, source_sink, custody_sink)
+        .await
+        .map(|(count, _, _)| count)
+}
+
+/// Internal composition data, returned only after the same complete latest
+/// inverse, mapping checksum, source audit and current-custody path succeeds.
+pub(crate) async fn write_latest_for_reconciliation<
+    S: QueryStore,
+    H: NativeCustody,
+    W: std::io::Write,
+    C: std::io::Write,
+>(
+    store: &S,
+    now_ms: i64,
+    host: &H,
+    artifacts: ArtifactContext,
+    source_sink: &mut W,
+    custody_sink: &mut C,
+) -> Result<(usize, Manifest, BTreeSet<String>), MigrationError> {
     crate::inverse::validate_artifacts(&artifacts)?;
     let manifest = store
         .read(&manifest_key())
@@ -345,9 +371,10 @@ pub(crate) async fn write_latest<
     }
     let directory = crate::native_stage::directory(&std::env::temp_dir())?;
     let all = collect(store, now_ms, &directory).await?;
-    let (manifest, rows, controls) = validate(&all, manifest, now_ms)?;
+    let (manifest, rows, controls, mapping_keys) = validate(&all, manifest, now_ms)?;
     let old = manifest
         .native_revision
+        .clone()
         .ok_or_else(|| unavailable("An ordinary profile capture has no native revision custody"))?;
     let (version, _) = old.numbers()?;
     let mut changed = rows.len() != manifest.source_rows;
@@ -412,7 +439,7 @@ pub(crate) async fn write_latest<
     };
     let header = NativeCapture {
         v: 2,
-        source_git_sha: manifest.source_git_sha,
+        source_git_sha: manifest.source_git_sha.clone(),
         captured_at_ms: now_ms,
         source_codec: "bun-jsc-v1".into(),
         native_schema_version: 3,
@@ -482,5 +509,5 @@ pub(crate) async fn write_latest<
     custody_sink
         .write_all(b"}")
         .map_err(|_| invalid("Private latest custody sink failed"))?;
-    Ok(count)
+    Ok((count, manifest, mapping_keys))
 }
