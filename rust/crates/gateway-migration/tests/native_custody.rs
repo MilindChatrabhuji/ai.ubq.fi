@@ -407,6 +407,61 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption() {
     assert_eq!(snapshot.pool.accounts[0].account_id, credentials.account_id);
     assert!(snapshot.pool.accounts[0].refresh_token.expose().is_empty());
     assert_eq!(std::fs::read(home.join("auth.json")).unwrap(), original);
+    let expected = snapshot.pool.accounts[0].identity();
+    let normalized = run(store.read(&gateway_authority::keys::pool()))
+        .unwrap()
+        .unwrap();
+    let normalized: gateway_authority::routing::SubscriptionPool =
+        serde_json::from_value(normalized.value).unwrap();
+    assert_eq!(normalized.pool_versionstamp.0, snapshot.revision);
+    assert_eq!(normalized.accounts.len(), 1);
+    assert_eq!(
+        normalized.accounts[0].account_id_hash,
+        expected.routing_account_hash
+    );
+    assert_eq!(
+        normalized.accounts[0].credential_version,
+        expected.credential_version
+    );
+    struct Tokens(std::sync::atomic::AtomicU64);
+    impl gateway_authority::TokenSource for Tokens {
+        fn next_token(&self) -> Result<String, GatewayError> {
+            Ok(format!(
+                "operator-route-{}",
+                self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ))
+        }
+    }
+    struct Clock;
+    impl gateway_authority::AuthorityClock for Clock {
+        fn now_ms(&self) -> Result<i64, GatewayError> {
+            Ok(2300)
+        }
+    }
+    let authority = gateway_authority::Authority::with_clock(
+        store,
+        Tokens(std::sync::atomic::AtomicU64::new(1)),
+        Clock,
+    );
+    let model = gateway_core::model::ModelId::from_scalar("gpt-6.1-sol");
+    let selected = run(authority.select_account(
+        &model,
+        gateway_authority::routing::model_quota_class(&model),
+        2300,
+    ))
+    .unwrap();
+    let gateway_authority::routing::RouteSelection::Eligible(selected) = selected else {
+        panic!("The adopted real routing projection did not select the source account");
+    };
+    assert_eq!(
+        selected.binding.account_id_hash,
+        expected.routing_account_hash
+    );
+    assert_eq!(
+        selected.binding.credential_version,
+        expected.credential_version
+    );
+    assert_eq!(selected.binding.pool_versionstamp.0, snapshot.revision);
 }
 
 #[test]
