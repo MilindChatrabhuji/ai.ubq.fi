@@ -36,8 +36,16 @@ pub(crate) fn send(
     config: &[u8],
     socket: TcpStream,
 ) -> Result<(), ControlError> {
+    send_bound(channel, config, socket, 443)
+}
+fn send_bound(
+    channel: &UnixStream,
+    config: &[u8],
+    socket: TcpStream,
+    expected_port: u16,
+) -> Result<(), ControlError> {
     let peer = socket.peer_addr().map_err(io_error)?;
-    if peer.port() != 443 || peer.ip().is_unspecified() || peer.ip().is_multicast() {
+    if peer.port() != expected_port || peer.ip().is_unspecified() || peer.ip().is_multicast() {
         return Err(ControlError::InvalidDescriptor);
     }
     let body = serde_json::to_vec(&Bootstrap {
@@ -79,6 +87,14 @@ pub(crate) fn receive(
     config: &[u8],
     process: &ReceiveProcess,
 ) -> Result<TcpStream, ControlError> {
+    receive_bound(channel, config, process, 443)
+}
+fn receive_bound(
+    channel: &UnixStream,
+    config: &[u8],
+    process: &ReceiveProcess,
+    expected_port: u16,
+) -> Result<TcpStream, ControlError> {
     let mut descriptors = Vec::new();
     let mut header = [0; 4];
     read_part(channel, &mut header[..1], true, &mut descriptors, process)?;
@@ -107,7 +123,7 @@ pub(crate) fn receive(
     let socket = TcpStream::from(descriptor);
     let peer = socket.peer_addr().map_err(io_error)?;
     if peer != boot.peer
-        || peer.port() != 443
+        || peer.port() != expected_port
         || peer.ip().is_unspecified()
         || peer.ip().is_multicast()
     {

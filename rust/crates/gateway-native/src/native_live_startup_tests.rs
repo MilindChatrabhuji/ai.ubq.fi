@@ -56,7 +56,8 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
         "127.0.0.1:31002".parse().unwrap(),
     )
     .unwrap();
-    let listener = TcpListener::bind("127.0.0.1:443").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let fixture_port = listener.local_addr().unwrap().port();
     for scenario in [
         "valid",
         "digest",
@@ -70,6 +71,7 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
         "ancillary-truncated",
         "peer",
         "completion-rights",
+        "production-port",
     ] {
         let (mut sender, receiver) = UnixStream::pair().unwrap();
         #[cfg(target_os = "macos")]
@@ -96,13 +98,24 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
                 .spawn()
                 .unwrap(),
         );
+        let expected_port = if scenario == "production-port" {
+            443
+        } else {
+            fixture_port
+        };
+        sender.write_all(&expected_port.to_be_bytes()).unwrap();
         let connected = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        assert_eq!(
+            send(&sender, CONFIG, connected.try_clone().unwrap()).unwrap_err(),
+            ControlError::InvalidDescriptor,
+            "production sender must still require port443"
+        );
         let (mut witness, _) = listener.accept().unwrap();
         witness
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
         if matches!(scenario, "valid" | "completion-rights") {
-            send(&sender, CONFIG, connected).unwrap();
+            send_bound(&sender, CONFIG, connected, fixture_port).unwrap();
             let mut marker = [0; 8];
             witness.read_exact(&mut marker).unwrap();
             assert_eq!(&marker, b"received");
@@ -149,11 +162,18 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
         }
         drop(sender);
         let status = child.0.wait().unwrap();
-        assert_eq!(
-            status.success(),
-            scenario == "valid",
-            "{scenario}: {status}"
-        );
+        let expected = match scenario {
+            "valid" => 0,
+            "extra" | "late" | "completion-rights" => {
+                ControlError::UnexpectedDescriptor.exit_code()
+            }
+            "ancillary-truncated" => ControlError::AncillaryTruncated.exit_code(),
+            "truncated" => ControlError::Truncated.exit_code(),
+            "peer" | "production-port" => ControlError::InvalidDescriptor.exit_code(),
+            "not-socket" => ControlError::Io(std::io::ErrorKind::Other).exit_code(),
+            _ => ControlError::InvalidFrame.exit_code(),
+        };
+        assert_eq!(status.code(), Some(expected), "{scenario}: {status}");
         // No sender copy or request-process descriptor may keep this peer alive.
         assert_eq!(witness.read(&mut [0]).unwrap(), 0, "{scenario}");
     }
@@ -164,6 +184,21 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
 #[ignore = "only the bounded parent fixture launches this expendable receiver"]
 fn reverse_fd_receive_child() {
     ReceiveProcess::run(|process| {
+        // Test-only transport metadata; neither product entrypoint accepts a
+        // caller-selected port. Unbuffered reads preserve the following rights.
+        let mut input = File::from(
+            std::io::stdin()
+                .as_fd()
+                .try_clone_to_owned()
+                .map_err(io_error)?,
+        );
+        let mut port = [0; 2];
+        input.read_exact(&mut port).map_err(io_error)?;
+        drop(input);
+        let fixture_port = u16::from_be_bytes(port);
+        if fixture_port < 1024 && fixture_port != 443 {
+            return Err(ControlError::InvalidFrame);
+        }
         let channel = UnixStream::from(
             std::io::stdin()
                 .as_fd()
@@ -173,7 +208,11 @@ fn reverse_fd_receive_child() {
         channel
             .set_read_timeout(Some(Duration::from_secs(2)))
             .map_err(io_error)?;
-        let mut socket = receive(&channel, CONFIG, process)?;
+        let mut socket = if fixture_port == 443 {
+            receive(&channel, CONFIG, process)?
+        } else {
+            receive_bound(&channel, CONFIG, process, fixture_port)?
+        };
         assert!(
             fcntl_getfd(&socket)
                 .map_err(errno)?
