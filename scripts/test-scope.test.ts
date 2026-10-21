@@ -317,20 +317,82 @@ describe("Sentinel complete CI check set", () => {
     expect(verify.stdout).not.toContain("==> native KV");
   });
 
-  test("workflow binds PR author and runs the real jobs while preserving test and deployment boundaries", () => {
-    type Step = { name?: string; run?: string; if?: string };
-    const workflow = parse(readFileSync(join(ROOT, ".github/workflows/deno-deploy.yml"), "utf8")) as {
-      jobs: Record<string, { if?: string; env?: Record<string, string>; outputs?: Record<string, string>; steps: Step[] }>;
+  test("workflow is merged-only and gates expensive jobs behind fast validation", () => {
+    type Step = { name?: string; run?: string; if?: string; uses?: string; with?: Record<string, unknown> };
+    type Job = {
+      needs?: string | string[];
+      if?: string;
       env?: Record<string, string>;
-      concurrency: { group: string; "cancel-in-progress": string };
+      outputs?: Record<string, string>;
+      steps: Step[];
+      "timeout-minutes"?: number;
+    };
+    const workflow = parse(readFileSync(join(ROOT, ".github/workflows/deno-deploy.yml"), "utf8")) as {
+      on?: {
+        pull_request?: { types?: string[] };
+        workflow_dispatch?: { inputs?: Record<string, { required?: boolean }> };
+        push?: unknown;
+        merge_group?: unknown;
+      };
+      jobs: Record<string, Job>;
+      env?: Record<string, string>;
+      concurrency: { group: string; "cancel-in-progress": boolean };
     };
     const { jobs } = workflow;
+    const mergedOnly =
+      "github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)";
+    expect(workflow.on?.pull_request?.types).toEqual(["closed"]);
+    expect(workflow.on?.workflow_dispatch?.inputs?.scope_base.required).toBe(false);
+    expect(workflow.on?.push).toBeUndefined();
+    expect(workflow.on?.merge_group).toBeUndefined();
+    expect(workflow.env?.TEST_SCOPE_BASE).toContain("github.event.pull_request.base.sha");
+    expect(workflow.env?.TEST_SCOPE_BASE).toContain("inputs.scope_base");
     expect(workflow.env?.GITHUB_EVENT_BEFORE).toBe("${{ github.event.before }}");
     expect(Object.values(jobs).every((job) => job.env?.GITHUB_EVENT_BEFORE === undefined)).toBe(true);
-    const jobNames = Object.keys(jobs).sort((left, right) => left.localeCompare(right));
-    expect(jobNames).toEqual(["darwin-native", "docs", "mac-containment", "native", "rust-native", "rust-wasm", "scope", "validate", "verify-artifact"]);
     expect(workflow.env?.GITHUB_PR_AUTHOR).toBe("${{ github.event.pull_request.user.login }}");
     expect(Object.values(jobs).every((job) => job.env?.GITHUB_PR_AUTHOR === undefined)).toBe(true);
+    for (const job of Object.values(jobs)) expect(job.if).toContain(mergedOnly);
+    const jobNames = Object.keys(jobs).sort((left, right) => left.localeCompare(right));
+    expect(jobNames).toEqual([
+      "darwin-native",
+      "docs",
+      "mac-containment",
+      "native",
+      "portable",
+      "rust-native",
+      "rust-wasm",
+      "scope",
+      "validate",
+      "verify-artifact",
+    ]);
+    expect(jobs.scope.needs).toBeUndefined();
+    expect(jobs.docs.needs).toBe("scope");
+    expect(jobs.portable.needs).toBe("scope");
+    expect(jobs["rust-native"].needs).toEqual(["scope", "portable"]);
+    expect(jobs["rust-wasm"].needs).toEqual(["scope", "portable", "rust-native"]);
+    expect(jobs.native.needs).toEqual(["scope", "portable", "rust-native", "rust-wasm"]);
+    expect(jobs["mac-containment"].needs).toEqual(["scope", "portable"]);
+    expect(jobs["darwin-native"].needs).toEqual(["scope", "portable"]);
+    expect(jobs.validate.needs).toEqual(["scope", "portable", "rust-native", "rust-wasm"]);
+    expect(jobs["verify-artifact"].needs).toEqual(["scope", "validate", "native", "mac-containment", "darwin-native"]);
+    expect(jobs.scope["timeout-minutes"]).toBe(5);
+    expect(jobs.docs["timeout-minutes"]).toBe(10);
+    expect(jobs.portable["timeout-minutes"]).toBe(20);
+    expect(jobs["rust-native"]["timeout-minutes"]).toBe(30);
+    expect(jobs["rust-wasm"]["timeout-minutes"]).toBe(30);
+    expect(jobs.validate["timeout-minutes"]).toBe(5);
+    expect(jobs.native["timeout-minutes"]).toBe(45);
+    expect(jobs["mac-containment"]["timeout-minutes"]).toBe(10);
+    expect(jobs["darwin-native"]["timeout-minutes"]).toBe(15);
+    expect(jobs["verify-artifact"]["timeout-minutes"]).toBe(10);
+    for (const [name, job] of Object.entries(jobs)) {
+      const checkout = job.steps.find((step) => step.uses?.startsWith("actions/checkout@"));
+      if (name === "validate") {
+        expect(checkout).toBeUndefined();
+        continue;
+      }
+      expect(String(checkout?.with?.ref), name).toContain("github.event.pull_request.merge_commit_sha || github.sha");
+    }
     for (const output of [
       "needs_docs",
       "needs_validate",
@@ -356,7 +418,8 @@ describe("Sentinel complete CI check set", () => {
     const workerPreparation = jobs.native.steps.find((step) => step.name === "Prepare pinned mixed-client Worker test runtime");
     expect(workerPreparation?.if).toBe("${{ needs.scope.outputs.needs_worker_runtime == 'true' }}");
     expect(workerPreparation?.run).toBe("bun --no-env-file --no-install scripts/prepare-worker-test-runtime.ts");
-    expect(jobs.docs.if).toBe("${{ needs.scope.outputs.needs_docs == 'true' }}");
+    expect(jobs.docs.if).toContain("needs.scope.outputs.needs_docs == 'true'");
+    expect(jobs.portable.if).toContain("needs.scope.outputs.needs_validate == 'true'");
     expect(jobs.native.steps.find((step) => step.name === "Preflight deployment and immutable release fixtures")?.if).toBe(
       "${{ needs.scope.outputs.needs_native == 'true' }}"
     );
@@ -372,25 +435,60 @@ describe("Sentinel complete CI check set", () => {
       .join("\n");
     expect(commands).not.toContain("TEST_SCOPE_FORCE");
     expect(commands).not.toMatch(/(?:run deploy:|ops\/deploy(?:-mac)?\.ts|(?:cf|wrangler)\s+(?:deploy|publish))/);
-    expect(jobs["rust-native"].if).toBe("${{ needs.scope.outputs.needs_rust_native == 'true' }}");
-    expect(jobs["rust-wasm"].if).toBe("${{ needs.scope.outputs.needs_rust_wasm == 'true' }}");
+    const portableCommands = jobs.portable.steps.map((step) => step.run ?? "").join("\n");
+    expect(portableCommands).toContain("bun --no-env-file install --frozen-lockfile");
+    expect(portableCommands).toContain("bun --no-env-file run check");
+    expect(portableCommands).toContain("spec:drift --verify-source");
+    expect(portableCommands).toContain("sh scripts/verify.sh --no-native-kv");
+    expect(jobs["rust-native"].if).toContain("needs.portable.result == 'success'");
+    expect(jobs["rust-wasm"].if).toContain("needs.rust-native.result == 'success'");
+    expect(jobs.native.if).toContain("needs.portable.result == 'success'");
+    expect(jobs.native.if).toContain("needs.rust-native.result == 'skipped'");
+    expect(jobs.native.if).toContain("needs.rust-wasm.result == 'skipped'");
     expect(jobs["rust-native"].steps.some((step) => step.run?.includes("scripts/rust-verify.ts --stage native"))).toBe(true);
     expect(jobs["rust-wasm"].steps.some((step) => step.run?.includes("scripts/rust-verify.ts --stage wasm"))).toBe(true);
-    const requiredRust = jobs.validate.steps.find((step) => step.name === "Require every selected Rust gate")?.run ?? "";
-    expect(requiredRust).toContain('test "$RUST_NATIVE_RESULT" = success');
-    expect(requiredRust).toContain('test "$RUST_WASM_RESULT" = success');
+    const requiredGates = jobs.validate.steps.find((step) => step.name === "Require every selected gate")?.run ?? "";
+    expect(requiredGates).toContain('test "$PORTABLE_RESULT" = success');
+    expect(requiredGates).toContain('test "$RUST_NATIVE_RESULT" = success');
+    expect(requiredGates).toContain('test "$RUST_WASM_RESULT" = success');
     for (const result of ["failure", "cancelled", "skipped"]) {
-      const rejected = spawnSync("/bin/sh", ["-c", requiredRust], {
-        env: { RUST_NATIVE_REQUIRED: "true", RUST_NATIVE_RESULT: result, RUST_WASM_REQUIRED: "false", RUST_WASM_RESULT: "skipped" },
+      const rejected = spawnSync("/bin/sh", ["-c", requiredGates], {
+        env: {
+          PORTABLE_REQUIRED: "false",
+          PORTABLE_RESULT: "skipped",
+          RUST_NATIVE_REQUIRED: "true",
+          RUST_NATIVE_RESULT: result,
+          RUST_WASM_REQUIRED: "false",
+          RUST_WASM_RESULT: "skipped",
+        },
       });
       expect(rejected.status).not.toBe(0);
     }
-    const accepted = spawnSync("/bin/sh", ["-c", requiredRust], {
-      env: { RUST_NATIVE_REQUIRED: "true", RUST_NATIVE_RESULT: "success", RUST_WASM_REQUIRED: "true", RUST_WASM_RESULT: "success" },
+    const portableRejected = spawnSync("/bin/sh", ["-c", requiredGates], {
+      env: {
+        PORTABLE_REQUIRED: "true",
+        PORTABLE_RESULT: "failure",
+        RUST_NATIVE_REQUIRED: "false",
+        RUST_NATIVE_RESULT: "skipped",
+        RUST_WASM_REQUIRED: "false",
+        RUST_WASM_RESULT: "skipped",
+      },
+    });
+    expect(portableRejected.status).not.toBe(0);
+    const accepted = spawnSync("/bin/sh", ["-c", requiredGates], {
+      env: {
+        PORTABLE_REQUIRED: "true",
+        PORTABLE_RESULT: "success",
+        RUST_NATIVE_REQUIRED: "true",
+        RUST_NATIVE_RESULT: "success",
+        RUST_WASM_REQUIRED: "true",
+        RUST_WASM_RESULT: "success",
+      },
     });
     expect(accepted.status).toBe(0);
-    expect(workflow.concurrency.group).toContain("github.event_name == 'push' || github.event_name == 'merge_group'");
-    expect(workflow.concurrency["cancel-in-progress"]).toBe("${{ github.event_name != 'push' && github.event_name != 'merge_group' }}");
+    expect(workflow.concurrency.group).toContain("github.event_name");
+    expect(workflow.concurrency.group).toContain("github.event.pull_request.merge_commit_sha");
+    expect(workflow.concurrency["cancel-in-progress"]).toBe(false);
   });
 });
 

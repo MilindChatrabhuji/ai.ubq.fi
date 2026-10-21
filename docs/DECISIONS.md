@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Merged-only CI gates expensive jobs behind portable validation - 2026-10-21
+
+This supersedes the merge-group, queue-canary, Sentinel-authored PR, and development-push trigger requirements in "Real CI checks for Sentinel and merge groups" for the current GitHub Actions quota policy. `pull_request: closed` and `workflow_dispatch` are the only triggers, and every job requires a merged pull request or explicit manual dispatch. After `scope`, the portable x64 `portable` gate must pass before `rust-native`; `rust-wasm` follows `rust-native`; `native` and macOS/Darwin work start only after their selected earlier gates pass. The `validate` job remains the required check name and fails closed when a selected portable or Rust gate is missing, skipped, cancelled, or failed. Each job has an explicit timeout, and the workflow never deploys.
+
+Reason: recent failed runs spent 70-90 job-minutes because `native`, `rust-wasm`, and macOS work started even after `rust-native` failed, while `validate` waited for both Rust jobs before running portable checks. The dependency chain preserves every selected check but skips work that cannot be accepted once an earlier selected gate fails.
+
+Reversal risk: removing the dependencies restores parallel quota consumption on failures; treating skipped or cancelled dependencies as success would hide missing checks. Manual dispatch with an explicit `scope_base` remains necessary for squash or rebase merges, whose commits are not ancestry-preserving merge commits.
+
 ## Fresh capacity exhaustion reconciles a retained ambiguous reset identity - 2026-10-21
 
 A fresh `100%`-used capacity observation with a future reset deadline now reconciles an existing class block even when the
