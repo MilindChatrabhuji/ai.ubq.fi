@@ -6,6 +6,7 @@ mod error;
 pub mod graph_transport;
 mod graph_tree;
 mod indexes;
+mod initial_owner;
 mod inverse;
 mod native_capture;
 mod native_custody;
@@ -31,9 +32,12 @@ mod source_metadata;
 pub mod staged;
 
 pub use capture::{PrivateCapture, SourceEntry};
-pub use engine::{AdoptionReceipt, PreparedAdoption, adopt_empty, prepare};
+pub use engine::{
+    AdoptionReceipt, PreparedAdoption, adopt_empty, adopt_empty_with_initial_control_owner, prepare,
+};
 pub use error::MigrationError;
 pub use gateway_admin_data::profile::{CanonicalDates, SourceDateHost};
+pub use initial_owner::InitialControlOwnerAdoptionReceipt;
 pub use inverse::{
     ArtifactContext, CustodyRecord, PrivateRollbackBundle, export_latest, export_rollback_bundle,
 };

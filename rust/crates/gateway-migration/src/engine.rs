@@ -256,3 +256,14 @@ pub async fn adopt_empty<S: QueryStore>(
         atomic_committed: true,
     })
 }
+
+/// Private initial installation only, using an independently prepared capability.
+/// The host retains the ordinary empty-target, unpublished/quiescent obligation.
+pub async fn adopt_empty_with_initial_control_owner<S: QueryStore>(
+    store: &S,
+    prepared: &PreparedAdoption,
+    owner: &gateway_authority::initial_control_owner::PreparedInitialControlOwner,
+    now_ms: i64,
+) -> Result<crate::InitialControlOwnerAdoptionReceipt, GatewayError> {
+    crate::initial_owner::adopt(store, prepared, owner, now_ms).await
+}
