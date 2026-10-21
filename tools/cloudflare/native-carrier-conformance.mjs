@@ -144,7 +144,11 @@ async function run() {
         assert.equal(request.headers.host, "chatgpt.com");
         assert.equal(request.method, "POST");
         assert.equal(JSON.parse(bytes).sdp, "fixture SDP offer");
-        response.writeHead(201, "Fixture Accepted", { "content-type": "application/sdp", location: "https://chatgpt.com/realtime/calls/rtc_fixture_live" });
+        response.writeHead(201, "Fixture Accepted", {
+          "content-type": "application/sdp",
+          connection: "close",
+          location: "https://chatgpt.com/realtime/calls/rtc_fixture_live",
+        });
         response.end("fixture SDP answer");
         return;
       }
@@ -467,7 +471,8 @@ const config :Workerd.Config = (services = [
         directSocket.terminate();
       }
     }
-    if (!traceNative || platformProbe) {
+    let platformStatusText;
+    {
       for (const probeSignal of httpSequence ? ["after-http"] : platformProbe ? [false, true] : [false]) {
         const probeNonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
         const probeTime = String(Date.now());
@@ -489,6 +494,9 @@ const config :Workerd.Config = (services = [
         try {
           await new Promise((done, reject) => {
             probe.once("error", reject);
+            probe.once("upgrade", (response) => {
+              platformStatusText = response.statusMessage;
+            });
             probe.once("open", done);
           });
           cases.push(
@@ -523,7 +531,8 @@ const config :Workerd.Config = (services = [
         checkpoint("client_websocket_upgrade");
         try {
           assert.equal(response.statusCode, 101);
-          assert.equal(response.statusMessage, "Fixture Native Upgrade");
+          // Compare with the actual platform response; workerd normalizes the wire reason.
+          assert.equal(response.statusMessage, platformStatusText);
           assert.equal(response.headers["x-fixture-native-upgrade"], "original");
         } catch (error) {
           reject(error);
