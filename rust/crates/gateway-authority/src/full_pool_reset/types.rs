@@ -102,7 +102,7 @@ impl FullPoolResetPlan {
     }
 }
 
-/// Minted only by the full current source audit transaction; never reconstructed from wire.
+/// Minted only by live evaluation in the current complete source transaction; never reconstructed from wire.
 /// ```compile_fail
 /// use gateway_authority::full_pool_reset::AutomaticResetPermit;
 /// let _: AutomaticResetPermit = serde_json::from_str("{}").unwrap();
@@ -111,7 +111,6 @@ pub struct AutomaticResetPermit {
     pub(super) facts: Facts,
     pub(super) candidate: ResetCandidate,
     pub(super) decision: FullPoolShadowDecision,
-    pub(super) audit_revision: String,
     pub(super) credit: SourceResetCredit,
     pub(super) observed_at_ms: i64,
 }

@@ -1,4 +1,4 @@
-//! Source banked-reset-pool.ts. Audits are data; only a current complete audit mints a permit.
+//! Source banked-reset-pool.ts. Shadow audits are data; live selection is direct and fail-closed.
 mod audit;
 mod facts;
 mod selection;
@@ -41,10 +41,9 @@ fn reason(error: GatewayError) -> String {
 async fn read_audit<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     episode_hash: &str,
-) -> Result<(bool, Option<String>, Option<FullPoolShadowDecision>), GatewayError> {
+) -> Result<(bool, Option<FullPoolShadowDecision>), GatewayError> {
     let key = keys::reset_shadow(episode_hash);
     let row = tx.read_full_pool_reset_audit(episode_hash).await?;
-    let revision = tx.revision(&key);
     let present = match row.as_ref() {
         None => false,
         Some(row) => match row.value_encoding {
@@ -61,7 +60,7 @@ async fn read_audit<S: AuthorityStore, I: TokenSource>(
     } else {
         None
     };
-    Ok((present, revision, parsed))
+    Ok((present, parsed))
 }
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
@@ -97,28 +96,32 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     });
                 }
             };
-            let (present, _revision, prior) = read_audit(&mut tx, &facts.episode_hash).await?;
-            if let Some(decision) = prior.as_ref() {
-                let matches =
-                    decision.episode_hash == facts.episode_hash && decision.fences == facts.fences;
-                if facts.config.mode == ResetMode::Shadow && matches && decision.expires_at_ms > now
-                {
-                    let decision = decision.clone();
-                    tx.now = self.fresh_time(now)?;
-                    if decision.expires_at_ms <= tx.now {
+            let audit_present = if facts.config.mode == ResetMode::Shadow {
+                let (present, prior) = read_audit(&mut tx, &facts.episode_hash).await?;
+                if let Some(decision) = prior.as_ref() {
+                    let matches = decision.episode_hash == facts.episode_hash
+                        && decision.fences == facts.fences;
+                    if matches && decision.expires_at_ms > now {
+                        let decision = decision.clone();
+                        tx.now = self.fresh_time(now)?;
+                        if decision.expires_at_ms <= tx.now {
+                            continue;
+                        }
+                        if tx.commit().await? {
+                            return Ok(FullPoolPreparation::Cached { decision });
+                        }
                         continue;
                     }
-                    if tx.commit().await? {
-                        return Ok(FullPoolPreparation::Cached { decision });
-                    }
-                    continue;
                 }
-            }
+                present
+            } else {
+                false
+            };
             tx.now = self.fresh_time(now)?;
             if tx.commit().await? {
                 return Ok(FullPoolPreparation::Observe(Box::new(FullPoolResetPlan {
                     facts,
-                    audit_present: present,
+                    audit_present,
                 })));
             }
         }
@@ -195,22 +198,12 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     reason: "routing_fence_stale".into(),
                 });
             }
-            let key = keys::reset_shadow(&current.episode_hash);
             if current.config.mode == ResetMode::Live {
                 let selected = selected.ok_or_else(invalid)?;
-                let _ = read_audit(&mut tx, &current.episode_hash).await?;
-                tx.put(&key, &decision, None)?;
-                let audit_revision = tx
-                    .post_checks()
-                    .into_iter()
-                    .find(|check| check.key == key)
-                    .and_then(|check| check.expected_revision)
-                    .ok_or_else(invalid)?;
                 let permit = AutomaticResetPermit {
                     candidate: current.members[selected.member].candidate.clone(),
                     facts: current,
                     decision: decision.clone(),
-                    audit_revision,
                     credit: selected.credit.clone(),
                     observed_at_ms: selected.observed,
                 };
@@ -221,7 +214,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 }
                 continue;
             }
-            let (present, _revision, stored) = read_audit(&mut tx, &current.episode_hash).await?;
+            let key = keys::reset_shadow(&current.episode_hash);
+            let (present, stored) = read_audit(&mut tx, &current.episode_hash).await?;
             if present || plan.audit_present {
                 let Some(stored) = stored.filter(|stored| {
                     stored.episode_hash == decision.episode_hash && stored.expires_at_ms > at
@@ -287,21 +281,6 @@ pub(crate) async fn validate_automatic_permit<S: AuthorityStore, I: TokenSource>
     let current = facts::capture(tx, &permit.facts.proof, &permit.facts.original).await?;
     if current.config.mode != ResetMode::Live || !facts::same(&current, &permit.facts) {
         return Err(declined("routing_fence_stale"));
-    }
-    let key = keys::reset_shadow(&permit.decision.episode_hash);
-    let raw = tx
-        .read_full_pool_reset_audit(&permit.decision.episode_hash)
-        .await?;
-    if tx.revision(&key).as_deref() != Some(&permit.audit_revision) {
-        return Err(declined("shadow_decision_drift"));
-    }
-    let audit = FullPoolShadowDecision::validate_record(&key, raw.as_ref().ok_or_else(invalid)?)?;
-    if audit != permit.decision
-        || audit.fences != current.fences
-        || audit.selected_credit_id_hash.as_deref()
-            != Some(&audit::credit_hash(&permit.credit.credit_id))
-    {
-        return Err(declined("shadow_decision_drift"));
     }
     Ok(())
 }

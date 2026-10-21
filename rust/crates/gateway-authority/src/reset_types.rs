@@ -30,7 +30,8 @@ impl Default for ResetConfig {
         Self {
             enabled: true,
             mode: ResetMode::Live,
-            max_per_account_per_day: 1,
+            // An absent configuration must never authorize an external spend.
+            max_per_account_per_day: 0,
             max_per_account_per_window: 1,
             provider_approved: true,
             supports_idempotent_lookup: false,

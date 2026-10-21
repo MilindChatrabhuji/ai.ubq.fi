@@ -2,7 +2,7 @@ use crate::support::*;
 use gateway_authority::{
     full_pool_reset::*,
     keys,
-    reset::{ResetConfig, ResetMode},
+    reset::{ResetConfig, ResetMode, reset_invocation, utc_day},
     routing::RouteSelection,
 };
 use gateway_core::{
@@ -11,7 +11,7 @@ use gateway_core::{
     js_string::JsString16,
     provider::CodexQuotaClass,
     source_json::SourceJson,
-    state::StoredRecord,
+    state::{RecordKey, StoredRecord},
 };
 use serde_json::{Value, json};
 use std::cmp::Ordering;
@@ -53,6 +53,22 @@ fn setup(
     TestAuthority,
     gateway_authority::routing::CohortProof,
 ) {
+    setup_with_config(Some(mode))
+}
+fn setup_without_reset_config() -> (
+    MemoryStore,
+    TestAuthority,
+    gateway_authority::routing::CohortProof,
+) {
+    setup_with_config(None)
+}
+fn setup_with_config(
+    mode: Option<ResetMode>,
+) -> (
+    MemoryStore,
+    TestAuthority,
+    gateway_authority::routing::CohortProof,
+) {
     let store = MemoryStore::default();
     seed_pool(&store, &pool());
     let authority = authority(&store);
@@ -65,7 +81,9 @@ fn setup(
     else {
         panic!("actual exhausted cohort required")
     };
-    store.seed(keys::reset_config(), &config(mode));
+    if let Some(mode) = mode {
+        store.seed(keys::reset_config(), &config(mode));
+    }
     store.seed(
         gateway_auth::store::key(json!([
             "uos_ai",
@@ -75,6 +93,17 @@ fn setup(
         &json!({"completed_at_ms":NOW,"preserved_opt_out":false}),
     );
     (store, authority, proof)
+}
+fn assert_history_unchanged(store: &MemoryStore, key: &RecordKey, saved: &StoredRecord) {
+    let current = store.row(key).expect("historical shadow row must remain");
+    assert_eq!(current.schema_version, saved.schema_version);
+    assert_eq!(current.value_encoding, saved.value_encoding);
+    assert_eq!(current.revision, saved.revision);
+    assert_eq!(current.expires_at_ms, saved.expires_at_ms);
+    assert_eq!(
+        serde_json::to_vec(&current.value).unwrap(),
+        serde_json::to_vec(&saved.value).unwrap()
+    );
 }
 fn plan(
     authority: &TestAuthority,
@@ -116,23 +145,59 @@ fn observations(plan: &FullPoolResetPlan, credit: Option<JsString16>) -> Vec<Sou
 }
 
 #[test]
-fn full_no_selection_audit_is_replaced_by_one_live_permit() {
+fn absent_reset_config_uses_fail_closed_default_and_spends_nothing() {
+    let default = ResetConfig::default();
+    assert!(default.enabled);
+    assert_eq!(default.mode, ResetMode::Live);
+    assert_eq!(default.max_per_account_per_day, 0);
+    assert_eq!(default.max_per_account_per_window, 1);
+
+    let (store, authority, proof) = setup_without_reset_config();
+    assert!(matches!(
+        run(authority.prepare_full_pool_reset(&proof, &original())).unwrap(),
+        FullPoolPreparation::Declined { reason } if reason == "per_account_day_limit_invalid"
+    ));
+    let day = utc_day(NOW).unwrap();
+    let reset = block().reset_at_ms.unwrap();
+    for account in pool().accounts {
+        let invocation = reset_invocation(
+            &account.admin_account_hash.0,
+            &account.credential_version.0,
+            reset,
+        )
+        .unwrap();
+        assert!(
+            store
+                .row(&keys::reset_redemption(
+                    &invocation.identity.account_id_hash,
+                    &invocation.identity.quota_generation
+                ))
+                .is_none()
+        );
+        assert!(
+            store
+                .row(&keys::reset_day(&invocation.identity.account_id_hash, &day))
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn live_selection_preserves_selected_shadow_history_without_reading_it() {
     let (store, authority, proof) = setup(ResetMode::Shadow);
     let initial = plan(&authority, &proof);
-    let rows = observations(&initial, None);
+    let rows = observations(&initial, Some(JsString16::from_utf8("shadow-credit")));
     let FullPoolEvaluation::Shadow { decision, .. } =
         run(authority.finish_full_pool_reset(initial, &rows, &Collation)).unwrap()
     else {
-        panic!("no-selection decision required")
+        panic!("selected shadow decision required")
     };
-    assert_eq!(decision.decision_reason, "no_eligible_credit");
-    assert!(decision.selected_account_id_hash.is_none());
-    assert_eq!(decision.fences.len(), 2);
-    let saved = store
-        .row(&keys::reset_shadow(&decision.episode_hash))
-        .unwrap();
-    assert!(saved.expires_at_ms.is_none());
+    assert_eq!(decision.decision_reason, "selected");
+    let key = keys::reset_shadow(&decision.episode_hash);
+    let saved = store.row(&key).unwrap();
     store.seed(keys::reset_config(), &config(ResetMode::Live));
+    // A live read of this historical key would consume the jump and expire the fresh inventory.
+    store.jump_on_read(key.clone(), NOW + 30_001);
     let next = plan(&authority, &proof);
     let rows = observations(&next, Some(JsString16::from_utf8("new-credit")));
     let FullPoolEvaluation::Ready(permit) =
@@ -141,18 +206,12 @@ fn full_no_selection_audit_is_replaced_by_one_live_permit() {
         panic!("live mode must use the fresh eligible credit")
     };
     assert_eq!(permit.credit_id(), &JsString16::from_utf8("new-credit"));
-    assert_ne!(
-        store
-            .row(&keys::reset_shadow(&decision.episode_hash))
-            .unwrap()
-            .revision,
-        saved.revision
-    );
+    assert_history_unchanged(&store, &key, &saved);
 }
 
 #[test]
 fn first_live_call_mints_opaque_permit_without_arming() {
-    let (_, authority, proof) = setup(ResetMode::Live);
+    let (store, authority, proof) = setup(ResetMode::Live);
     let first = plan(&authority, &proof);
     let rows = observations(
         &first,
@@ -178,6 +237,11 @@ fn first_live_call_mints_opaque_permit_without_arming() {
         &[99, 0xd800]
     );
     assert_eq!(permit.original().request_id, original().request_id);
+    assert!(
+        store
+            .row(&keys::reset_shadow(permit.episode_hash()))
+            .is_none()
+    );
 }
 
 fn audit_value() -> Value {
@@ -262,32 +326,39 @@ fn cached_profile_audit_preserves_unrelated_utf16_source_leaves() {
 }
 
 #[test]
-fn expired_audit_never_renews_into_live_permission_or_overwrites_history() {
-    let (store, authority, proof) = setup(ResetMode::Shadow);
-    let first = plan(&authority, &proof);
-    let rows = observations(&first, Some(JsString16::from_utf8("fixture-credit")));
-    let FullPoolEvaluation::Shadow { mut decision, .. } =
-        run(authority.finish_full_pool_reset(first, &rows, &Collation)).unwrap()
-    else {
-        panic!("source audit required")
-    };
-    decision.created_at_ms = NOW - 2;
-    decision.expires_at_ms = NOW - 1;
-    let key = keys::reset_shadow(&decision.episode_hash);
-    store.seed(key.clone(), &decision);
-    let saved = store.row(&key).unwrap();
-    let next = plan(&authority, &proof);
-    let rows = observations(&next, Some(JsString16::from_utf8("fixture-credit")));
-    assert!(
-        matches!(run(authority.finish_full_pool_reset(next, &rows, &Collation)).unwrap(), FullPoolEvaluation::Declined { reason } if reason == "shadow_decision_unavailable")
-    );
-    assert_eq!(store.row(&key).unwrap().revision, saved.revision);
-    store.seed(keys::reset_config(), &config(ResetMode::Live));
-    assert!(matches!(
-        run(authority.prepare_full_pool_reset(&proof, &original())).unwrap(),
-        FullPoolPreparation::Observe(_)
-    ));
-    assert_eq!(store.row(&key).unwrap().revision, saved.revision);
+fn extended_or_expired_shadow_history_never_blocks_or_overwrites_live() {
+    for (label, created_at_ms, expires_at_ms) in [
+        ("expired", NOW - 2, NOW - 1),
+        ("extended", NOW - 1, NOW + 120_000),
+    ] {
+        let (store, authority, proof) = setup(ResetMode::Shadow);
+        let first = plan(&authority, &proof);
+        let rows = observations(&first, None);
+        let FullPoolEvaluation::Shadow { mut decision, .. } =
+            run(authority.finish_full_pool_reset(first, &rows, &Collation)).unwrap()
+        else {
+            panic!("source audit required")
+        };
+        decision.created_at_ms = created_at_ms;
+        decision.expires_at_ms = expires_at_ms;
+        let key = keys::reset_shadow(&decision.episode_hash);
+        store.seed_with_revision(
+            key.clone(),
+            &decision,
+            &format!("historical-shadow-{label}"),
+        );
+        let saved = store.row(&key).unwrap();
+        store.seed(keys::reset_config(), &config(ResetMode::Live));
+        let next = plan(&authority, &proof);
+        let rows = observations(&next, Some(JsString16::from_utf8("fresh-credit")));
+        let FullPoolEvaluation::Ready(permit) =
+            run(authority.finish_full_pool_reset(next, &rows, &Collation)).unwrap()
+        else {
+            panic!("{label} historical decision must not gate live")
+        };
+        assert_eq!(permit.credit_id(), &JsString16::from_utf8("fresh-credit"));
+        assert_history_unchanged(&store, &key, &saved);
+    }
 }
 
 #[test]

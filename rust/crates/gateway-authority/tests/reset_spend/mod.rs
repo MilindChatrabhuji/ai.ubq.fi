@@ -252,16 +252,12 @@ fn full_pool_spend_uses_one_existing_budget_and_unknown_never_resubmits() {
 }
 
 #[test]
-fn full_pool_audit_settings_and_policy_races_cannot_spend_the_day_budget() {
-    for changed in ["audit", "settings", "policy"] {
+fn full_pool_settings_and_policy_races_cannot_spend_the_day_budget() {
+    for changed in ["settings", "policy"] {
         let (store, authority) = setup();
-        let (permit, episode) = ready(&authority, NOW);
+        let (permit, _) = ready(&authority, NOW);
         let claimed = claim(&authority, &permit);
         match changed {
-            "audit" => {
-                let key = keys::reset_shadow(&episode);
-                store.race(key.clone(), &store.row(&key).unwrap().value);
-            }
             "settings" => store.race(
                 keys::reset_usage(&pool().accounts[1].admin_account_hash.0),
                 &json!({"enabled":false}),
@@ -278,6 +274,38 @@ fn full_pool_audit_settings_and_policy_races_cannot_spend_the_day_budget() {
         );
         assert!(store.row(&budget_key(&permit)).is_none(), "{changed}");
     }
+}
+
+#[test]
+fn interleaved_live_prepares_keep_first_permit_submit_capable_with_one_ledger() {
+    let (store, authority) = setup();
+    let (first, first_episode) = ready(&authority, NOW);
+    let (second, _) = ready(&authority, NOW);
+    let claimed = claim(&authority, &first);
+    let ResetClaim::InProgress(interleaved) =
+        run(authority.claim_full_pool_reset(&second)).unwrap()
+    else {
+        panic!("the existing claim must win without minting a second submission")
+    };
+    assert_eq!(interleaved.identity, claimed.identity);
+
+    // A later prepare after the claim must not change any shadow revision or invalidate `first`.
+    let _ = ready(&authority, NOW);
+    let submitted = run(authority.prepare_full_pool_reset_submission(&first, &claimed)).unwrap();
+    assert_eq!(submitted.state, ResetState::Submitted);
+    let (after_submit_permit, _) = ready(&authority, NOW);
+    let renewed = run(authority.renew_full_pool_reset_before_redeem(&first, &submitted)).unwrap();
+    assert_eq!(renewed.state, ResetState::Submitted);
+    assert!(store.row(&keys::reset_shadow(&first_episode)).is_none());
+    let ResetClaim::InProgress(after_submit_record) =
+        run(authority.claim_full_pool_reset(&after_submit_permit)).unwrap()
+    else {
+        panic!("the durable ledger must refuse a second live claim")
+    };
+    assert_eq!(after_submit_record.identity, claimed.identity);
+    let budget: AccountDayBudget =
+        serde_json::from_value(store.row(&budget_key(&first)).unwrap().value).unwrap();
+    assert_eq!(budget.submission_count, 1);
 }
 
 #[test]
