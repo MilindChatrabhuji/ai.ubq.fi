@@ -324,6 +324,15 @@ fn decode_anthropic(
         .ok_or_else(|| malformed("Anthropic terminal is absent."))?;
     Ok((body, events))
 }
+/// The fixed Codex Responses request always speaks SSE. The source consumer
+/// reads every successful Codex body as SSE even when the upstream omits its
+/// media type; no other provider or explicit non-SSE media type is inferred.
+pub fn is_event_stream(provider: UpstreamProvider, status: u16, headers: &Headers) -> bool {
+    match header(headers, "content-type") {
+        Some(value) => value.contains("text/event-stream"),
+        None => provider == UpstreamProvider::ChatgptCodex && (200..300).contains(&status),
+    }
+}
 pub fn decode_response(
     plan: &DecodePlan,
     status: u16,
@@ -369,7 +378,7 @@ pub fn decode_response(
             raw_body: Some(bytes.to_vec()),
         });
     }
-    if header(headers, "content-type").is_some_and(|v| v.contains("text/event-stream")) {
+    if is_event_stream(plan.provider, status, headers) {
         let mut decoder = crate::sse::StreamDecoder::new(plan.clone());
         let mut events = decoder.push(bytes)?;
         events.extend(decoder.finish()?);

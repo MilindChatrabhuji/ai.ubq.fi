@@ -147,3 +147,88 @@ fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
         .deserialize()
         .expect("This frozen regression fixture has scalar text")
 }
+
+#[test]
+fn successful_codex_without_media_type_uses_strict_sse_in_both_client_modes() {
+    let terminal = completed();
+    for stream in [false, true] {
+        let plan = plan(stream);
+        assert!(response::is_event_stream(
+            plan.provider,
+            200,
+            &Headers::new()
+        ));
+        let decoded = decode_response(
+            &plan,
+            200,
+            &Headers::new(),
+            &frames(std::slice::from_ref(&terminal)),
+        )
+        .unwrap();
+        assert_eq!(decoded.status, 200);
+        assert_eq!(decoded.terminal, Some(SemanticTerminal::Completed));
+        assert_eq!(scalar(&decoded.body), terminal["response"]);
+        assert_eq!(decoded.usage, terminal["response"].get("usage").cloned());
+        assert_eq!(decoded.events.len(), 1);
+        assert_eq!(
+            decoded.headers["Content-Type"],
+            if stream {
+                "text/event-stream"
+            } else {
+                "application/json"
+            }
+        );
+    }
+}
+
+#[test]
+fn absent_codex_media_type_never_accepts_non_sse_or_missing_terminal_as_completion() {
+    let partial = frames(&[
+        json!({"type":"response.output_text.delta","response_id":"resp_fixture","delta":"partial"}),
+    ]);
+    for stream in [false, true] {
+        for bytes in [
+            b"<html>not an SSE response</html>".as_slice(),
+            b"data: {\"type\":\"response.completed\"",
+            &partial,
+        ] {
+            let error = decode_response(&plan(stream), 200, &Headers::new(), bytes).unwrap_err();
+            assert_eq!(error.status, 502);
+        }
+        let error = json!({"type":"error","code":"provider_busy","message":"Still refused."});
+        let decoded =
+            decode_response(&plan(stream), 200, &Headers::new(), &frames(&[error])).unwrap();
+        assert_eq!(decoded.terminal, Some(SemanticTerminal::Error));
+        assert!(decoded.usage.is_none());
+        assert_eq!(decoded.status, if stream { 200 } else { 502 });
+    }
+}
+
+#[test]
+fn missing_media_type_is_inferred_only_for_successful_fixed_codex_protocol() {
+    for status in [199, 300, 400, 403, 429, 500] {
+        assert!(!response::is_event_stream(
+            UpstreamProvider::ChatgptCodex,
+            status,
+            &Headers::new()
+        ));
+    }
+    for provider in [
+        UpstreamProvider::Openrouter,
+        UpstreamProvider::Surplus,
+        UpstreamProvider::Cerebras,
+    ] {
+        assert!(!response::is_event_stream(provider, 200, &Headers::new()));
+    }
+    let json_headers = Headers::from([("Content-Type".into(), "application/json".into())]);
+    assert!(!response::is_event_stream(
+        UpstreamProvider::ChatgptCodex,
+        200,
+        &json_headers
+    ));
+    let body = br#"{"error":{"code":"quota_exhausted","message":"unchanged"}}"#;
+    let decoded = decode_response(&plan(true), 429, &Headers::new(), body).unwrap();
+    assert_eq!(decoded.status, 429);
+    assert_eq!(decoded.raw_body, Some(body.to_vec()));
+    assert_eq!(decoded.terminal, Some(SemanticTerminal::Error));
+}

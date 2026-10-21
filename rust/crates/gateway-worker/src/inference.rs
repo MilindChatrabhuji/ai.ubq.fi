@@ -490,9 +490,7 @@ pub async fn run(
             store: store.clone(),
             pricing,
         });
-        let event_stream = headers.iter().any(|(name, value)| {
-            name.eq_ignore_ascii_case("content-type") && value.contains("text/event-stream")
-        });
+        let event_stream = gateway_providers::response::is_event_stream(provider, status, &headers);
         let observation = ObservationHandle::default();
         let usage = Rc::new(RefCell::new(None));
         let finish = finish_hook(lifecycle.clone(), usage.clone(), permit, capture.clone());
