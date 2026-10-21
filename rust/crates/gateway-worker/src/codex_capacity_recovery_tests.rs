@@ -11,14 +11,14 @@ use gateway_authority::{
 use gateway_core::{identity::PoolVersionstamp, provider::CodexQuotaClass, state::StoredRecord};
 use gateway_observability::host_types::*;
 use serde_json::{Value, json};
-use std::{cell::Cell, rc::Rc};
+use std::cell::Cell;
 use support::{Host, Memory, run};
 const NOW: i64 = 1_800_000_000_000;
 #[derive(Clone)]
-struct Clock(Host);
+struct Clock(i64);
 impl AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
-        Ok(self.0.now_ms())
+        Ok(self.0)
     }
 }
 #[derive(Clone)]
@@ -51,7 +51,7 @@ impl Probe {
         Authority::with_clock(
             self.memory.clone(),
             Tokens(self.base.clone()),
-            Clock(self.base.clone()),
+            Clock(self.base.now_ms()),
         )
     }
     async fn check(&self) -> Result<(), GatewayError> {
