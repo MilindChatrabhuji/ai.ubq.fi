@@ -16,6 +16,7 @@ const pendingOnly = process.argv.includes("--pending");
 const websocketOnly = process.argv.includes("--websocket-only");
 const traceNative = process.argv.includes("--trace-native");
 const platformProbe = process.argv.includes("--probe-signal");
+const httpSequence = process.argv.includes("--probe-http");
 const [sha, build, binary, schema, parent, controlAddress] = process.argv.slice(childMode ? 3 : 2);
 assert.match(sha ?? "", /^[a-f0-9]{40}$/u);
 assert.equal(Bun.version, "1.4.0");
@@ -69,6 +70,7 @@ async function outer() {
     ...(websocketOnly ? ["--websocket-only"] : []),
     ...(traceNative ? ["--trace-native"] : []),
     ...(platformProbe ? ["--probe-signal"] : []),
+    ...(httpSequence ? ["--probe-http"] : []),
   ]);
   const task = Bun.spawn(command, {
     cwd: root,
@@ -243,7 +245,7 @@ async function run() {
     const port = reserve();
     const publicPort = reserve();
     const diagnosticPort = reserve();
-    const proxySource = `export default {async fetch(r){const h=new Headers();for(const [k,v]of r.headers)if(k.startsWith("x-uos-native-")||k==="upgrade")h.set(k,v);const signalled=new URL(r.url).pathname==="/signal";const init={method:"GET",headers:h,redirect:"manual"};if(signalled)init.signal=new AbortController().signal;console.error("raw-proxy-start",signalled);const response=await fetch(new Request("https://localhost/v1/native/live",init));console.error("raw-proxy-result",response.status,response.statusText,!!response.webSocket);return response;}}`;
+    const proxySource = `export default {async fetch(r){const h=new Headers();for(const [k,v]of r.headers)if(k.startsWith("x-uos-native-")||k==="upgrade")h.set(k,v);const path=new URL(r.url).pathname;if(path==="/after-http"){const created=await fetch("https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas",{method:"POST",body:JSON.stringify({sdp:"fixture SDP offer"})});await created.arrayBuffer();console.error("raw-proxy-http-drained",created.status);}const signalled=path==="/signal";const init={method:"GET",headers:h,redirect:"manual"};if(signalled)init.signal=new AbortController().signal;console.error("raw-proxy-start",signalled);const response=await fetch(new Request("https://localhost/v1/native/live",init));console.error("raw-proxy-result",response.status,response.statusText,!!response.webSocket);return response;}}`;
     const traceSource = `import Shipping,{GatewayAuthority} from "./index.js";export {GatewayAuthority};const original=globalThis.fetch;globalThis.fetch=async function(input,init){const native=new URL(input.url??input).pathname==="/v1/native/live";if(native)console.error("native-fetch-start",!!input.signal?.aborted);const response=await original.call(this,input,init);if(native)console.error("native-fetch-resolved",response.status,!!response.webSocket);return response;};export default class extends Shipping{async fetch(request){const upgrade=request.headers.get("upgrade")==="websocket";const response=await super.fetch(request);if(upgrade)console.error("gateway-handler-resolved",response.status,!!response.webSocket);return response;}}`;
     const config = `using Workerd = import ${q(resolve(schema))};
 const config :Workerd.Config = (services = [
@@ -466,27 +468,36 @@ const config :Workerd.Config = (services = [
       }
     }
     if (!traceNative || platformProbe) {
-      for (const probeSignal of platformProbe ? [false, true] : [false]) {
+      for (const probeSignal of httpSequence ? ["after-http"] : platformProbe ? [false, true] : [false]) {
         const probeNonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
         const probeTime = String(Date.now());
         const probeAction = "controlled-platform-baseline";
-        const probe = new WebSocket(running.diagnosticOrigin.replace("http:", "ws:") + (probeSignal ? "/signal" : "/"), {
-          handshakeTimeout: 3000,
-          headers: {
-            "x-uos-native-version": "1",
-            "x-uos-native-key-id": "fixture-matrix-key",
-            "x-uos-native-time-ms": probeTime,
-            "x-uos-native-nonce": probeNonce,
-            "x-uos-native-live-action": probeAction,
-            "x-uos-native-mac": hmac(`uos-native-live-upgrade-v1\0GET\0/v1/native/live\0fixture-matrix-key\0${probeTime}\0${probeNonce}\0${probeAction}`),
-          },
-        });
+        const probe = new WebSocket(
+          running.diagnosticOrigin.replace("http:", "ws:") + (probeSignal === "after-http" ? "/after-http" : probeSignal ? "/signal" : "/"),
+          {
+            handshakeTimeout: 3000,
+            headers: {
+              "x-uos-native-version": "1",
+              "x-uos-native-key-id": "fixture-matrix-key",
+              "x-uos-native-time-ms": probeTime,
+              "x-uos-native-nonce": probeNonce,
+              "x-uos-native-live-action": probeAction,
+              "x-uos-native-mac": hmac(`uos-native-live-upgrade-v1\0GET\0/v1/native/live\0fixture-matrix-key\0${probeTime}\0${probeNonce}\0${probeAction}`),
+            },
+          }
+        );
         try {
           await new Promise((done, reject) => {
             probe.once("error", reject);
             probe.once("open", done);
           });
-          cases.push(probeSignal ? "workerd_javascript_explicit_signal_websocket_proxy" : "workerd_javascript_raw_fetch_websocket_proxy");
+          cases.push(
+            probeSignal === "after-http"
+              ? "workerd_javascript_http_then_websocket_proxy"
+              : probeSignal
+                ? "workerd_javascript_explicit_signal_websocket_proxy"
+                : "workerd_javascript_raw_fetch_websocket_proxy"
+          );
           checkpoint("workerd_proxy_passed");
         } finally {
           probe.terminate();
