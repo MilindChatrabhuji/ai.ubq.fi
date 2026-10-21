@@ -20,7 +20,7 @@ use std::{
 // observation intentionally rejects metadata churn while inspecting that anchor.
 // Hold through Home cleanup so siblings cannot change its entries mid-observation.
 static FOUNDATION_FIXTURES: std::sync::Mutex<()> = std::sync::Mutex::new(());
-fn assert_owned_canonical_directory(path: &Path) {
+pub(super) fn assert_owned_canonical_directory(path: &Path) {
     assert_eq!(fs::canonicalize(path).unwrap(), path);
     let metadata = fs::symlink_metadata(path).unwrap();
     assert!(metadata.is_dir() && !metadata.file_type().is_symlink());
