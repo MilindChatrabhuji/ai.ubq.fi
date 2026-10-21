@@ -5,7 +5,7 @@ use gateway_core::{GatewayError, query::QueryStore};
 pub use gateway_migration::MigrationError;
 pub use gateway_migration::operational::{NativeMigrationRequest, NativeMigrationResponse};
 #[cfg(target_arch = "wasm32")]
-use worker::wasm_bindgen_futures;
+use worker::js_sys;
 
 pub async fn execute_profile<S: QueryStore>(
     store: &S,
@@ -76,10 +76,19 @@ pub async fn execute_native<S: QueryStore>(
 /// this empty-target adoption settles. Ordinary fetch never calls this export.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
-pub async fn local_operator_adopt(
+pub fn local_operator_adopt(env: worker::Env, input: js_sys::Uint8Array) -> js_sys::Promise {
+    worker::wasm_bindgen_futures::future_to_promise(async move {
+        local_operator_adoption(env, input)
+            .await
+            .map(worker::wasm_bindgen::JsValue::from)
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn local_operator_adoption(
     env: worker::Env,
-    input: worker::js_sys::Uint8Array,
-) -> Result<worker::js_sys::Uint8Array, worker::wasm_bindgen::JsValue> {
+    input: js_sys::Uint8Array,
+) -> Result<js_sys::Uint8Array, worker::wasm_bindgen::JsValue> {
     use gateway_migration::operational::{
         NativeMigrationRequest, NativeOperation, encode_native_response,
     };
