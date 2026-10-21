@@ -308,7 +308,7 @@ fn invoke(
 #[test]
 fn access_only_stale_positive_requires_genuine_new_sample_then_ordinary_reselection() {
     let (probe, proof, model, _) = setup(Scenario::Positive);
-    let before_active = probe.memory.rows.borrow()[&keys::active().0]
+    let mut expected_active = probe.memory.rows.borrow()[&keys::active().0]
         .json_value()
         .unwrap()
         .clone();
@@ -328,11 +328,16 @@ fn access_only_stale_positive_requires_genuine_new_sample_then_ordinary_reselect
     let c = parse_capacity_store(&value).unwrap();
     assert_eq!(c.observations[0].source_observed_at_ms, Some(NOW));
     assert_eq!(c.observations[0].snapshot_at_ms, NOW);
+    // Ordinary selection retains the active account and election generation,
+    // while syncing its binding to the routing state advanced by the quota block.
+    expected_active["routing_generation"] =
+        json!(expected_active["routing_generation"].as_u64().unwrap() + 1);
+    expected_active["updated_at_ms"] = json!(NOW + 17);
     assert_eq!(
         probe.memory.rows.borrow()[&keys::active().0]
             .json_value()
             .unwrap(),
-        &before_active
+        &expected_active
     );
 }
 #[test]
