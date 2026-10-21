@@ -405,3 +405,60 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption() {
     assert!(snapshot.pool.accounts[0].refresh_token.expose().is_empty());
     assert_eq!(std::fs::read(home.join("auth.json")).unwrap(), original);
 }
+
+#[test]
+fn configured_operator_observes_existing_external_access_and_refuses_stale_input() {
+    use gateway_migration::native_operator::{NativeCustodyRegistration, prepare_local_bootstrap};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = Directory::new();
+    let home = directory.file("external-operator");
+    std::fs::create_dir(&home).unwrap();
+    let expiry = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    let token = format!("e30.{}.synthetic",base64url(json!({"exp":expiry,"https://api.openai.com/auth":{"chatgpt_user_id":"external-user","chatgpt_account_id":"external-account"}}).to_string().as_bytes()));
+    let doc = json!({"auth_mode":"chatgptAuthTokens","OPENAI_API_KEY":null,"tokens":{"account_id":"external-account","access_token":token,"id_token":token,"refresh_token":""}});
+    let bytes = serde_json::to_vec(&doc).unwrap();
+    std::fs::write(home.join("auth.json"), &bytes).unwrap();
+    let native = parse_native_document(&doc).unwrap();
+    let fence = OwnerFence {
+        owner: NativeOwnerId("existing-external-reader".into()),
+        account_id: native.account_id.clone(),
+        generation_hash: native.generation_hash(),
+        authority_revision: "native-v1:14:0".into(),
+    };
+    let mut capture: NativeCapture =
+        serde_json::from_str(include_str!("fixtures/native-source.json")).unwrap();
+    capture.entries.push(NativeEntry {raw_key:TupleKey::from_record_key(&codex_source_pool_key()).unwrap().sort_bytes().to_vec(),value:wire(&json!({"accounts":[{"account_id":native.account_id,"access_token":native.access_token.expose(),"refresh_token":"","updated_at_ms":2200,"native_owner":{"codex_home":home.to_str().unwrap(),"generation_hash":native.generation_hash(),"auth_mode":"chatgptAuthTokens","chatgpt_user_id":"external-user"}}],"updated_at_ms":2200})),revision:NativeRevision{version:"14".into(),sequence:"0".into()},expiration_ms:-1});
+    let registration =
+        |f: OwnerFence| vec![NativeCustodyRegistration::existing(home.clone(), f).unwrap()];
+    assert!(
+        run(prepare_local_bootstrap(
+            &capture,
+            registration(fence.clone())
+        ))
+        .is_ok()
+    );
+    let mut stale = fence.clone();
+    stale.authority_revision = "native-v1:13:0".into();
+    assert!(run(prepare_local_bootstrap(&capture, registration(stale))).is_err());
+    let mut stale = fence.clone();
+    stale.generation_hash = "0".repeat(64);
+    assert!(run(prepare_local_bootstrap(&capture, registration(stale))).is_err());
+    let mut stale = fence.clone();
+    stale.account_id = "different-account".into();
+    assert!(run(prepare_local_bootstrap(&capture, registration(stale))).is_err());
+    let mut changed = doc.clone();
+    changed["tokens"]["access_token"] = json!("different-access");
+    changed["tokens"]["id_token"] = json!("different-access");
+    std::fs::write(
+        home.join("auth.json"),
+        serde_json::to_vec(&changed).unwrap(),
+    )
+    .unwrap();
+    assert!(run(prepare_local_bootstrap(&capture, registration(fence))).is_err());
+    std::fs::write(home.join("auth.json"), &bytes).unwrap();
+    assert_eq!(std::fs::read(home.join("auth.json")).unwrap(), bytes);
+}

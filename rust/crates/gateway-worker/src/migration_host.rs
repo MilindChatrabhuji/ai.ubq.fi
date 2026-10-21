@@ -4,6 +4,8 @@ pub mod wire;
 use gateway_core::{GatewayError, query::QueryStore};
 pub use gateway_migration::MigrationError;
 pub use gateway_migration::operational::{NativeMigrationRequest, NativeMigrationResponse};
+#[cfg(target_arch = "wasm32")]
+use worker::wasm_bindgen_futures;
 
 pub async fn execute_profile<S: QueryStore>(
     store: &S,

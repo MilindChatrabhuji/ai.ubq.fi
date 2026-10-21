@@ -115,9 +115,83 @@ pub async fn prepare_local_bootstrap(
     registrations: Vec<NativeCustodyRegistration>,
 ) -> Result<crate::operational::NativeMigrationRequest, crate::MigrationError> {
     let custody = ConfiguredNativeCustody::new(registrations)?;
+    custody.verify_existing_access_only(capture).await?;
     let candidate = crate::sanitize_native_capture(capture, &custody).await?;
     Ok(crate::operational::NativeMigrationRequest {
         v: 1,
         request: crate::operational::NativeOperation::AdoptNative { capture: candidate },
     })
+}
+
+impl ConfiguredNativeCustody {
+    // The existing sanitizer handles refresh-bearing source rows. Existing
+    // access-only rows still require actual observation; this returns unit only,
+    // never an OwnedNativeSnapshot/managed grant for an external account.
+    async fn verify_existing_access_only(
+        &self,
+        capture: &crate::NativeCapture,
+    ) -> Result<(), crate::MigrationError> {
+        for entry in &capture.entries {
+            if !crate::native_custody::codex_key(&entry.raw_key)? {
+                continue;
+            }
+            let pool = crate::native_custody::source_pool(&entry.value)?;
+            for account in pool
+                .accounts
+                .iter()
+                .filter(|a| a.refresh_token.expose().is_empty())
+            {
+                let registration = self
+                    .registrations
+                    .get(&account.account_id)
+                    .ok_or_else(invalid)?;
+                let credentials = self
+                    .transport
+                    .read_credentials(&registration.fence.owner)
+                    .await?;
+                let at = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|_| invalid())?
+                    .as_millis();
+                let at = i64::try_from(at).map_err(|_| invalid())?;
+                let owner = account.native_owner.as_ref().ok_or_else(invalid)?;
+                if registration.fence.authority_revision != entry.revision.record_revision()?
+                    || registration.fence.account_id != credentials.account_id
+                    || registration.fence.generation_hash != credentials.generation_hash()
+                    || account.account_id != credentials.account_id
+                    || account.access_token != credentials.access_token
+                    || owner.codex_home != registration.home.to_str().ok_or_else(invalid)?
+                    || owner.native_refreshed_at != credentials.native_refreshed_at
+                    || credentials
+                        .access_expires_at_ms()
+                        .is_none_or(|expiry| expiry <= at.saturating_add(120_000))
+                {
+                    return Err(invalid().into());
+                }
+                if let Some(managed) = &owner.managed_source {
+                    let projection =
+                        gateway_auth::managed_access::ManagedAccessProjection::from_native(
+                            &NativeGeneration {
+                                fence: registration.fence.clone(),
+                                credentials,
+                                observed_at_ms: at,
+                            },
+                        )?;
+                    if owner.external_user_id.is_some()
+                        || owner.generation_hash != projection.access_generation()
+                        || managed.generation_hash != projection.native_source_generation()
+                    {
+                        return Err(invalid().into());
+                    }
+                } else if owner.external_user_id.is_none()
+                    || owner.external_user_id != credentials.external_user_id
+                    || !credentials.refresh_token.expose().is_empty()
+                    || owner.generation_hash != credentials.generation_hash()
+                {
+                    return Err(invalid().into());
+                }
+            }
+        }
+        Ok(())
+    }
 }
