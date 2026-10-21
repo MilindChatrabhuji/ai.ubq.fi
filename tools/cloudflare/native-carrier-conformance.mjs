@@ -116,7 +116,8 @@ async function run() {
     try {
       const bytes = Buffer.concat(await Array.fromAsync(request));
       events.push({ kind: "https_request", path: request.url, method: request.method, host: request.headers.host });
-      if (request.url === "/backend-api/codex/realtime/calls") {
+      if (request.url === "/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas") {
+        assert.equal(request.headers.host, "chatgpt.com");
         assert.equal(request.method, "POST");
         assert.equal(JSON.parse(bytes).sdp, "fixture SDP offer");
         response.writeHead(201, "Fixture Accepted", { "content-type": "application/sdp", location: "https://chatgpt.com/realtime/calls/rtc_fixture_live" });
