@@ -68,6 +68,9 @@ impl Captured {
     pub fn count(&self) -> usize {
         self.entries.len()
     }
+    pub(crate) fn metadata(&self) -> &NativeCapture {
+        &self.header
+    }
     pub fn visit_entries(
         &self,
         callback: &mut dyn FnMut(&NativeEntry) -> Result<(), GatewayError>,
