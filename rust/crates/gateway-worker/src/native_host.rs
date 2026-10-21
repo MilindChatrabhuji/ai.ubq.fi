@@ -289,6 +289,14 @@ impl NativeBindings {
                 serde_json::from_slice(&body).map_err(|_| unavailable())?;
             response.validate_for(&envelope)?;
             let mut output = AuthResponse::json(response.status, response.body);
+            if response.stream.is_some() {
+                // The placeholder headers are merged onto the physical follow
+                // response; JSON here would overwrite its actual SSE type.
+                output.headers.insert(
+                    "content-type".into(),
+                    "text/event-stream; charset=utf-8".into(),
+                );
+            }
             output.stream = response.stream;
             Ok(output)
         }

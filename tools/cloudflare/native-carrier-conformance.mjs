@@ -430,6 +430,7 @@ const config :Workerd.Config = (services = [
     for (const socket of wss.clients) socket.terminate();
     for (const socket of sockets) socket.destroy();
     await new Promise((done) => server.close(done));
+    await writeFile(join(workspace, "observed-cases.json"), JSON.stringify({ cases, events, failures }, null, 2) + "\n");
   }
 }
 if (childMode) await run();
