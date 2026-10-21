@@ -129,13 +129,17 @@ jobs:
           print(f"Darwin inspector preflight: os={platform.system()}-{platform.mac_ver()[0]} kernel={os.uname().release} arch={os.uname().machine}", flush=True)
           print(f"fixed_path=/bin/ls required_sha256s={','.join(required)} actual_sha256={actual}", flush=True)
           sandbox_source = Path("rust/crates/gateway-native/src/existing_account_import/owner_runtime.rs").read_text()
-          sandbox_required = re.findall(r'^const SANDBOX_SHA: &str = "([0-9a-f]{64})";$', sandbox_source, re.MULTILINE)
-          if len(sandbox_required) != 1:
-              raise SystemExit("Cannot resolve the one current source-pinned Darwin fixture sandbox identity")
+          sandbox_blocks = re.findall(r'^const SANDBOX_SHA256S: \[&str; 2\] = \[(.*?)^\];$', sandbox_source, re.MULTILINE | re.DOTALL)
+          if len(sandbox_blocks) != 1:
+              raise SystemExit("Cannot resolve the one current source-pinned Darwin fixture sandbox identity set")
+          sandbox_required = re.findall(r'"([0-9a-f]{64})"', sandbox_blocks[0])
+          sandbox_literals = ",".join(f'"{value}"' for value in sandbox_required) + ","
+          if len(sandbox_required) != 2 or len(set(sandbox_required)) != 2 or re.sub(r'\s+', '', sandbox_blocks[0]) != sandbox_literals:
+              raise SystemExit("Darwin fixture sandbox identities must be exactly two distinct source-literal SHA256 values")
           sandbox_path = Path("/usr/bin/sandbox-exec")
           sandbox_metadata = sandbox_path.lstat()
           sandbox_actual = hashlib.sha256(sandbox_path.read_bytes()).hexdigest()
-          print(f"fixed_path=/usr/bin/sandbox-exec required_sha256={sandbox_required[0]} actual_sha256={sandbox_actual}", flush=True)
+          print(f"fixed_path=/usr/bin/sandbox-exec required_sha256s={','.join(sandbox_required)} actual_sha256={sandbox_actual}", flush=True)
           print("Darwin fixture sandbox metadata: " + json.dumps({
               "uid": sandbox_metadata.st_uid, "gid": sandbox_metadata.st_gid,
               "mode": oct(sandbox_metadata.st_mode), "nlink": sandbox_metadata.st_nlink,
@@ -144,7 +148,7 @@ jobs:
           }, sort_keys=True), flush=True)
           if actual not in required:
               raise SystemExit("Runner /bin/ls is incompatible with the current source-pinned Darwin inspector dependency; no bootstrap or compilation was attempted")
-          if sandbox_actual != sandbox_required[0]:
+          if sandbox_actual not in sandbox_required:
               raise SystemExit("Runner /usr/bin/sandbox-exec is incompatible with the current source-pinned Darwin fixture sandbox dependency; no bootstrap or compilation was attempted")
           PYTHON
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
