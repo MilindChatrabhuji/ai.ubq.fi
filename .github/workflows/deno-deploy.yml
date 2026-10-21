@@ -2,25 +2,27 @@ name: Gateway CI
 run-name: Gateway CI ${{ github.sha }}
 
 on:
-  push:
-    branches: [development]
   pull_request:
-  merge_group:
-    types: [checks_requested]
+    types: [closed]
   workflow_dispatch:
+    inputs:
+      scope_base:
+        description: Optional existing Git commit or ref for manual change scope
+        required: false
+        type: string
+        default: ""
 
 concurrency:
-  # pull_request and workflow_dispatch: one group per ref, and a newer run cancels the superseded one.
-  # push and merge_group: one group per event and commit, so a later push or queue entry never cancels
-  # or replaces the run for a development or merge-group commit, and every such commit finishes CI.
-  group: ai-ubq-fi-ci-${{ (github.event_name == 'push' || github.event_name == 'merge_group') && format('{0}-{1}', github.event_name, github.sha) || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'push' && github.event_name != 'merge_group' }}
+  group: ai-ubq-fi-ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.merge_commit_sha || github.sha }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 env:
-  # All job wrappers must resolve the same push diff as the initial scope job.
+  # Every scope recomputation uses the exact pre-merge base or the manual override.
+  TEST_SCOPE_BASE: ${{ github.event_name == 'pull_request' && format('{0}^1', github.event.pull_request.merge_commit_sha) || inputs.scope_base }}
+  # Retain the existing push-diff fallback for manual selection.
   GITHUB_EVENT_BEFORE: ${{ github.event.before }}
   # PR author is stable across owner reruns; github.actor is the initiator.
   # Global so every job's scope recomputation agrees with the scope job:
@@ -29,6 +31,7 @@ env:
 
 jobs:
   scope:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true) }}
     runs-on: ubuntu-latest
     outputs:
       docs_only: ${{ steps.scope.outputs.docs_only }}
@@ -48,7 +51,22 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
           fetch-depth: 0
+      - name: Resolve exact merged-change scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            read -r -a parents <<< "$(git rev-list --parents -n 1 HEAD)"
+            if [ "${#parents[@]}" -ne 3 ]; then
+              echo "::error::Automatic merged-PR scope requires an ancestry-preserving merge commit; dispatch with scope_base for squash or rebase merges."
+              exit 1
+            fi
+            test "$(git rev-parse "$TEST_SCOPE_BASE")" = "${parents[1]}"
+          elif [ -n "$TEST_SCOPE_BASE" ]; then
+            git rev-parse --verify "$TEST_SCOPE_BASE^{commit}" >/dev/null
+          fi
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.0
@@ -81,11 +99,12 @@ jobs:
 
   docs:
     needs: scope
-    if: ${{ needs.scope.outputs.needs_docs == 'true' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_docs == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
           fetch-depth: 0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
@@ -101,11 +120,12 @@ jobs:
 
   rust-native:
     needs: scope
-    if: ${{ needs.scope.outputs.needs_rust_native == 'true' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_rust_native == 'true') }}
     runs-on: macos-26
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
           fetch-depth: 0
       - name: Require the source-pinned Darwin inspector dependency
         run: |
@@ -166,11 +186,12 @@ jobs:
 
   rust-wasm:
     needs: scope
-    if: ${{ needs.scope.outputs.needs_rust_wasm == 'true' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_rust_wasm == 'true') }}
     runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
           fetch-depth: 0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
@@ -195,7 +216,7 @@ jobs:
 
   validate:
     needs: [scope, rust-native, rust-wasm]
-    if: ${{ always() && needs.scope.result == 'success' && needs.scope.outputs.needs_validate == 'true' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (always() && needs.scope.result == 'success' && needs.scope.outputs.needs_validate == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - name: Require every selected Rust gate
@@ -211,6 +232,7 @@ jobs:
       - if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
           fetch-depth: 0
       - if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -239,11 +261,12 @@ jobs:
 
   native:
     needs: scope
-    if: ${{ needs.scope.outputs.needs_native_build == 'true' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_native_build == 'true') }}
     runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
           fetch-depth: 0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
@@ -322,10 +345,13 @@ jobs:
 
   mac-containment:
     needs: scope
-    if: ${{ needs.scope.outputs.needs_mac == 'true' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_mac == 'true') }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.0
@@ -334,11 +360,12 @@ jobs:
 
   darwin-native:
     needs: scope
-    if: ${{ needs.scope.outputs.needs_darwin == 'true' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_darwin == 'true') }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
           fetch-depth: 0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
@@ -376,7 +403,7 @@ jobs:
 
   verify-artifact:
     needs: [scope, validate, native, mac-containment, darwin-native]
-    if: ${{ always() && needs.scope.outputs.needs_artifact == 'true' && needs.validate.result == 'success' && needs.native.result == 'success' && (needs.mac-containment.result == 'success' || needs.mac-containment.result == 'skipped') && (needs.darwin-native.result == 'success' || needs.darwin-native.result == 'skipped') }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (always() && needs.scope.outputs.needs_artifact == 'true' && needs.validate.result == 'success' && needs.native.result == 'success' && (needs.mac-containment.result == 'success' || needs.mac-containment.result == 'skipped') && (needs.darwin-native.result == 'success' || needs.darwin-native.result == 'skipped')) }}
     runs-on: ubuntu-26.04-arm
     permissions:
       actions: read
@@ -384,6 +411,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
           fetch-depth: 0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
