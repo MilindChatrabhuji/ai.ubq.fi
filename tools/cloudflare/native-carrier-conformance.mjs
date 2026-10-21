@@ -13,6 +13,7 @@ import { testNetworkArgv } from "../../scripts/test-network.ts";
 
 const childMode = process.argv[2] === "--fixture-child";
 const pendingOnly = process.argv.includes("--pending");
+const websocketOnly = process.argv.includes("--websocket-only");
 const [sha, build, binary, schema, parent, controlAddress] = process.argv.slice(childMode ? 3 : 2);
 assert.match(sha ?? "", /^[a-f0-9]{40}$/u);
 assert.equal(Bun.version, "1.4.0");
@@ -63,6 +64,7 @@ async function outer() {
     workspace,
     address,
     ...(pendingOnly ? ["--pending"] : []),
+    ...(websocketOnly ? ["--websocket-only"] : []),
   ]);
   const task = Bun.spawn(command, {
     cwd: root,
@@ -236,13 +238,16 @@ async function run() {
     const label = `${++sequence}-${trust}`;
     const port = reserve();
     const publicPort = reserve();
+    const diagnosticPort = reserve();
+    const proxySource = `export default {async fetch(r){const h=new Headers();for(const [k,v]of r.headers)if(k.startsWith("x-uos-native-")||k==="upgrade")h.set(k,v);const response=await fetch("https://localhost/v1/native/live",{headers:h,redirect:"manual"});console.error("raw-proxy-result",response.status,response.statusText,!!response.webSocket);return response;}}`;
     const config = `using Workerd = import ${q(resolve(schema))};
 const config :Workerd.Config = (services = [
  (name="internet",network=(allow=[])),
+ (name="raw-proxy",worker=(modules=[(name="proxy.mjs",esModule=${q(proxySource)})],compatibilityDate="2026-10-18",globalOutbound="tls-native")),
  (name="tls-native",external=(address="127.0.0.1:${tlsPort}",https=(certificateHost="localhost",tlsOptions=(trustBrowserCas=false,trustedCertificates=[${trust ? `embed ${q(join(workspace, "ca.pem"))}` : ""}])))),
  (name="state",disk=(path=${q(join(workspace, "state"))},writable=true)),(name="assets",disk=(path=${q(resolve("static"))})),
  (name="driver",worker=(modules=[(name="driver.mjs",esModule=embed ${q(resolve("tools/cloudflare/fixtures/runtime-driver.mjs"))}),(name="provider-matrix.mjs",esModule=embed ${q(resolve("tools/cloudflare/fixtures/provider-matrix.mjs"))})],compatibilityDate="2026-10-18",compatibilityFlags=["enable_request_signal","request_signal_passthrough"],globalOutbound="internet",bindings=[(name="GATEWAY",service="gateway"),(name="AUTHORITY",durableObjectNamespace=(serviceName="gateway",className="GatewayAuthority")),(name="CONTROL",durableObjectNamespace=(className="FixtureControl"))],durableObjectNamespaces=[(className="FixtureControl",uniqueKey="native-carrier-control",enableSql=true)],durableObjectStorage=(localDisk="state"))),
- (name="gateway",worker=(modules=[(name="index.js",esModule=embed ${q(join(resolve(build), "index.js"))}),(name="index_bg.wasm",wasm=embed ${q(join(resolve(build), "index_bg.wasm"))})],compatibilityDate="2026-10-18",compatibilityFlags=["enable_request_signal","request_signal_passthrough"],globalOutbound="tls-native",bindings=[(name="AUTHORITY",durableObjectNamespace=(className="GatewayAuthority")),(name="ASSETS",service="assets"),(name="UOS_MATRIX_SCENARIO",text="native-carrier"),(name="UOS_AI_TOKEN",text="fixture-access"),(name="DENO_DEPLOY_TOKEN",text="fixture-admin"),(name="DENO_TIMELINE",text="production"),(name="DENO_DEPLOY",text="fixture-workerd")],durableObjectNamespaces=[(className="GatewayAuthority",uniqueKey="native-carrier-common-authority",enableSql=true)],durableObjectStorage=(localDisk="state")))],sockets=[(name="main",http=(),service="driver"),(name="public",http=(),service="gateway")]);`;
+ (name="gateway",worker=(modules=[(name="index.js",esModule=embed ${q(join(resolve(build), "index.js"))}),(name="index_bg.wasm",wasm=embed ${q(join(resolve(build), "index_bg.wasm"))})],compatibilityDate="2026-10-18",compatibilityFlags=["enable_request_signal","request_signal_passthrough"],globalOutbound="tls-native",bindings=[(name="AUTHORITY",durableObjectNamespace=(className="GatewayAuthority")),(name="ASSETS",service="assets"),(name="UOS_MATRIX_SCENARIO",text="native-carrier"),(name="UOS_AI_TOKEN",text="fixture-access"),(name="DENO_DEPLOY_TOKEN",text="fixture-admin"),(name="DENO_TIMELINE",text="production"),(name="DENO_DEPLOY",text="fixture-workerd")],durableObjectNamespaces=[(className="GatewayAuthority",uniqueKey="native-carrier-common-authority",enableSql=true)],durableObjectStorage=(localDisk="state")))],sockets=[(name="main",http=(),service="driver"),(name="public",http=(),service="gateway"),(name="diagnostic",http=(),service="raw-proxy")]);`;
     const configPath = join(workspace, `runtime-${label}.capnp`);
     await writeFile(configPath, config);
     task = Bun.spawn(
@@ -255,6 +260,7 @@ const config :Workerd.Config = (services = [
         "/",
         `--socket-addr=main=127.0.0.1:${port}`,
         `--socket-addr=public=127.0.0.1:${publicPort}`,
+        `--socket-addr=diagnostic=127.0.0.1:${diagnosticPort}`,
       ],
       {
         cwd: workspace,
@@ -274,7 +280,7 @@ const config :Workerd.Config = (services = [
         const health = await fetch(publicOrigin + "/health");
         assert.equal(health.status, 200);
         assert((await health.text()).includes(sha));
-        return { origin, publicOrigin };
+        return { origin, publicOrigin, diagnosticOrigin: `http://127.0.0.1:${diagnosticPort}` };
       } catch {
         await pause(25);
       }
@@ -380,77 +386,103 @@ const config :Workerd.Config = (services = [
       }
       cases.push("original_abort_signal_closes_native_tls_before_headers_and_mid_sse");
     } else running = await start(true);
-    const candidate = "https://rust-candidate.ai.ubq.fi";
-    for (const invalid of [
-      "https://foreign.workers.dev",
-      "http://rust-candidate.ai.ubq.fi",
-      "https://rust-candidate.ai.ubq.fi:8443",
-      "https://user@rust-candidate.ai.ubq.fi",
-      "https://rust-candidate.ai.ubq.fi.evil.example",
-    ]) {
-      const response = await fetch(running.publicOrigin + "/api/auth/login/start", {
+    if (!websocketOnly) {
+      const candidate = "https://rust-candidate.ai.ubq.fi";
+      for (const invalid of [
+        "https://foreign.workers.dev",
+        "http://rust-candidate.ai.ubq.fi",
+        "https://rust-candidate.ai.ubq.fi:8443",
+        "https://user@rust-candidate.ai.ubq.fi",
+        "https://rust-candidate.ai.ubq.fi.evil.example",
+      ]) {
+        const response = await fetch(running.publicOrigin + "/api/auth/login/start", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-uos-candidate-passkeys": "true" },
+          body: JSON.stringify({ relay_origin: invalid }),
+        });
+        assert.equal(response.status, 400, await response.clone().text());
+        await response.arrayBuffer();
+      }
+      const login = await fetch(running.publicOrigin + "/api/auth/login/start", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-uos-candidate-passkeys": "true" },
-        body: JSON.stringify({ relay_origin: invalid }),
+        headers: { origin: candidate, "content-type": "application/json" },
+        body: JSON.stringify({ relay_origin: candidate, client_origin: candidate }),
       });
-      assert.equal(response.status, 400, await response.clone().text());
-      await response.arrayBuffer();
+      assert.equal(login.status, 200, await login.clone().text());
+      const loginBody = await login.json();
+      assert.equal(loginBody.publicKey.rpId, "ai.ubq.fi");
+      const loginChallenge = await readChallenge(loginBody.publicKey.challenge);
+      assert.equal(loginChallenge.value.origin, candidate);
+      assert.equal(loginChallenge.value.audience_origin, candidate);
+      cases.push("shipping_auth_config_exact_candidate_rp_and_relay_with_lookalike_refusals");
+      const direct = await fetch(running.publicOrigin + "/api/auth/register/start", {
+        method: "POST",
+        headers: { ...admin, origin: candidate, "content-type": "application/json" },
+        body: JSON.stringify({ handle: "carrier-fixture", client_origin: candidate }),
+      });
+      assert.equal(direct.status, 200, await direct.clone().text());
+      const directBody = await direct.json();
+      assert.equal(directBody.publicKey.rp.id, "ai.ubq.fi");
+      const directChallenge = await readChallenge(directBody.publicKey.challenge);
+      assert.equal(directChallenge.value.origin, candidate);
+      assert.equal(directChallenge.value.audience_origin, undefined);
+      cases.push("shipping_candidate_direct_same_origin_registration_challenge");
+      await stop();
+      running = await start(true);
+      assert.deepEqual(await readChallenge(loginBody.publicKey.challenge), loginChallenge);
+      assert.deepEqual(await readChallenge(directBody.publicKey.challenge), directChallenge);
+      cases.push("candidate_challenge_origins_and_audiences_persist_in_common_do_across_restart");
+      checkpoint("candidate_auth_passed");
+      const directNonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+      const directTime = String(Date.now());
+      const directAction = "controlled-peer-baseline";
+      const directSocket = new WebSocket(`wss://127.0.0.1:${tlsPort}/v1/native/live`, {
+        ca,
+        servername: "localhost",
+        handshakeTimeout: 3000,
+        headers: {
+          "x-uos-native-version": "1",
+          "x-uos-native-key-id": "fixture-matrix-key",
+          "x-uos-native-time-ms": directTime,
+          "x-uos-native-nonce": directNonce,
+          "x-uos-native-live-action": directAction,
+          "x-uos-native-mac": hmac(`uos-native-live-upgrade-v1\0GET\0/v1/native/live\0fixture-matrix-key\0${directTime}\0${directNonce}\0${directAction}`),
+        },
+      });
+      try {
+        await new Promise((done, reject) => {
+          directSocket.once("error", reject);
+          directSocket.once("open", done);
+        });
+        cases.push("controlled_tls_peer_direct_websocket_handshake");
+        checkpoint("direct_peer_websocket_passed");
+      } finally {
+        directSocket.terminate();
+      }
     }
-    const login = await fetch(running.publicOrigin + "/api/auth/login/start", {
-      method: "POST",
-      headers: { origin: candidate, "content-type": "application/json" },
-      body: JSON.stringify({ relay_origin: candidate, client_origin: candidate }),
-    });
-    assert.equal(login.status, 200, await login.clone().text());
-    const loginBody = await login.json();
-    assert.equal(loginBody.publicKey.rpId, "ai.ubq.fi");
-    const loginChallenge = await readChallenge(loginBody.publicKey.challenge);
-    assert.equal(loginChallenge.value.origin, candidate);
-    assert.equal(loginChallenge.value.audience_origin, candidate);
-    cases.push("shipping_auth_config_exact_candidate_rp_and_relay_with_lookalike_refusals");
-    const direct = await fetch(running.publicOrigin + "/api/auth/register/start", {
-      method: "POST",
-      headers: { ...admin, origin: candidate, "content-type": "application/json" },
-      body: JSON.stringify({ handle: "carrier-fixture", client_origin: candidate }),
-    });
-    assert.equal(direct.status, 200, await direct.clone().text());
-    const directBody = await direct.json();
-    assert.equal(directBody.publicKey.rp.id, "ai.ubq.fi");
-    const directChallenge = await readChallenge(directBody.publicKey.challenge);
-    assert.equal(directChallenge.value.origin, candidate);
-    assert.equal(directChallenge.value.audience_origin, undefined);
-    cases.push("shipping_candidate_direct_same_origin_registration_challenge");
-    await stop();
-    running = await start(true);
-    assert.deepEqual(await readChallenge(loginBody.publicKey.challenge), loginChallenge);
-    assert.deepEqual(await readChallenge(directBody.publicKey.challenge), directChallenge);
-    cases.push("candidate_challenge_origins_and_audiences_persist_in_common_do_across_restart");
-    checkpoint("candidate_auth_passed");
-    const directNonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
-    const directTime = String(Date.now());
-    const directAction = "controlled-peer-baseline";
-    const directSocket = new WebSocket(`wss://127.0.0.1:${tlsPort}/v1/native/live`, {
-      ca,
-      servername: "localhost",
+    const probeNonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+    const probeTime = String(Date.now());
+    const probeAction = "controlled-platform-baseline";
+    const probe = new WebSocket(running.diagnosticOrigin.replace("http:", "ws:") + "/", {
       handshakeTimeout: 3000,
       headers: {
         "x-uos-native-version": "1",
         "x-uos-native-key-id": "fixture-matrix-key",
-        "x-uos-native-time-ms": directTime,
-        "x-uos-native-nonce": directNonce,
-        "x-uos-native-live-action": directAction,
-        "x-uos-native-mac": hmac(`uos-native-live-upgrade-v1\0GET\0/v1/native/live\0fixture-matrix-key\0${directTime}\0${directNonce}\0${directAction}`),
+        "x-uos-native-time-ms": probeTime,
+        "x-uos-native-nonce": probeNonce,
+        "x-uos-native-live-action": probeAction,
+        "x-uos-native-mac": hmac(`uos-native-live-upgrade-v1\0GET\0/v1/native/live\0fixture-matrix-key\0${probeTime}\0${probeNonce}\0${probeAction}`),
       },
     });
     try {
       await new Promise((done, reject) => {
-        directSocket.once("error", reject);
-        directSocket.once("open", done);
+        probe.once("error", reject);
+        probe.once("open", done);
       });
-      cases.push("controlled_tls_peer_direct_websocket_handshake");
-      checkpoint("direct_peer_websocket_passed");
+      cases.push("workerd_javascript_raw_fetch_websocket_proxy");
+      checkpoint("workerd_proxy_passed");
     } finally {
-      directSocket.terminate();
+      probe.terminate();
     }
     const form = new FormData();
     form.append("sdp", "fixture SDP offer");
@@ -461,6 +493,7 @@ const config :Workerd.Config = (services = [
     checkpoint("live_created");
     const socket = new WebSocket(running.publicOrigin.replace("http:", "ws:") + "/v1/live/rtc_fixture_live", {
       headers: { authorization: "Bearer fixture-access" },
+      handshakeTimeout: 3000,
     });
     await new Promise((done, reject) => {
       socket.once("error", reject);
