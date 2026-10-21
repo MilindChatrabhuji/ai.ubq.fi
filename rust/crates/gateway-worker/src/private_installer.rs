@@ -29,10 +29,12 @@ impl RustInitialControlInstaller {
     /// Fixed read-only target description; no object fetch, rows or owner data.
     #[wasm_bindgen(js_name = describeTarget)]
     pub fn describe_target(&self) -> Result<JsValue, JsValue> {
-        let object_id = self
+        let namespace = self
             .env
             .durable_object(INITIAL_AUTHORITY_BINDING)
-            .and_then(|namespace| namespace.id_from_name(INITIAL_AUTHORITY_OBJECT))
+            .map_err(|_| rejected())?;
+        let object_id = namespace
+            .id_from_name(INITIAL_AUTHORITY_OBJECT)
             .map_err(|_| rejected())?
             .to_string();
         let descriptor = serde_json::json!({
