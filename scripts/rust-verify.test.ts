@@ -508,16 +508,13 @@ test("nested-sandbox tests are excluded from the outer profile and run once dire
   const fixture = nativeArtifacts();
   fixture.libraryNames.push(...DARWIN_NESTED_SANDBOX_CASES);
   assert.equal(await executeDarwinNativeTests(fixture.cwd, fixture.environment, "package", fixture.run), 9);
-  const wrapped = fixture.calls.filter(
-    (command) => command.isolated && command.argv.includes("--skip") && !command.argv.includes("--list")
-  );
-  const skipped = (command: RustCommand) =>
-    command.argv.flatMap((value, index) => (command.argv[index - 1] === "--skip" ? [value] : []));
+  const wrapped = fixture.calls.filter((command) => command.isolated && command.argv.includes("--skip") && !command.argv.includes("--list"));
+  const skipped = (command: RustCommand) => command.argv.flatMap((value, index) => (command.argv[index - 1] === "--skip" ? [value] : []));
   assert.equal(wrapped.length, 1);
-  for (const name of DARWIN_NESTED_SANDBOX_CASES) assert.ok(skipped(wrapped[0]!).includes(name));
-  const direct = fixture.calls.filter(
-    (command) => !command.isolated && command.argv[0] === fixture.library.executable && !command.argv.includes("--list")
-  );
+  const wrappedCommand = wrapped[0];
+  assert.ok(wrappedCommand);
+  for (const name of DARWIN_NESTED_SANDBOX_CASES) assert.ok(skipped(wrappedCommand).includes(name));
+  const direct = fixture.calls.filter((command) => !command.isolated && command.argv[0] === fixture.library.executable && !command.argv.includes("--list"));
   for (const name of DARWIN_NESTED_SANDBOX_CASES) assert.equal(direct.filter((command) => command.argv.includes(name)).length, 1);
 });
 
