@@ -7,6 +7,7 @@ use std::{
     marker::PhantomData,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 #[derive(Clone)]
 struct Frame {
@@ -53,14 +54,32 @@ pub(crate) struct Writer<T> {
     frames: Vec<Frame>,
     marker: PhantomData<T>,
 }
-#[derive(Clone)]
 pub(crate) struct Spool<T> {
     path: PathBuf,
-    frames: Vec<Frame>,
+    frames: Arc<Vec<Frame>>,
     bytes: u64,
     device: u64,
     inode: u64,
     marker: PhantomData<T>,
+}
+impl<T> Clone for Spool<T> {
+    fn clone(&self) -> Self {
+        Self {
+            path: self.path.clone(),
+            frames: self.frames.clone(),
+            bytes: self.bytes,
+            device: self.device,
+            inode: self.inode,
+            marker: PhantomData,
+        }
+    }
+}
+/// One owner-only file handle reused for every sequential pass or directed read.
+/// Callers must not open the same spool per row; a fresh Reader is one open.
+pub(crate) struct Reader<T> {
+    spool: Spool<T>,
+    file: File,
+    next: usize,
 }
 fn failure() -> GatewayError {
     invalid("Private native spool is changed, truncated or unreadable")
@@ -85,7 +104,7 @@ impl<T: SpoolValue> Writer<T> {
         let (key, expiry, transform) = value.facts();
         self.push_frame(&bytes, key, expiry, transform)
     }
-    fn push_frame(
+    pub(crate) fn push_frame(
         &mut self,
         bytes: &[u8],
         key: Option<String>,
@@ -112,7 +131,7 @@ impl<T: SpoolValue> Writer<T> {
         let m = self.file.metadata().map_err(|_| failure())?;
         Ok(Spool {
             path: self.path,
-            frames: self.frames,
+            frames: Arc::new(self.frames),
             bytes: m.len(),
             device: m.dev(),
             inode: m.ino(),
@@ -121,6 +140,13 @@ impl<T: SpoolValue> Writer<T> {
     }
 }
 impl<T: SpoolValue> Spool<T> {
+    pub(crate) fn reader(&self) -> Result<Reader<T>, GatewayError> {
+        Ok(Reader {
+            spool: self.clone(),
+            file: self.open()?,
+            next: 0,
+        })
+    }
     pub(crate) fn encoded_size(&self, index: usize) -> usize {
         self.frames[index].size
     }
@@ -169,48 +195,6 @@ impl<T: SpoolValue> Spool<T> {
         }
         Ok(bytes)
     }
-    fn decode(file: &mut File, frame: &Frame) -> Result<T, GatewayError> {
-        serde_json::from_slice(&Self::raw_frame(file, frame)?).map_err(|_| failure())
-    }
-    pub(crate) fn copy_to(&self, index: usize, writer: &mut Writer<T>) -> Result<(), GatewayError> {
-        let frame = &self.frames[index];
-        writer.push_frame(
-            &self.raw(index)?,
-            frame.key.clone(),
-            frame.expiry,
-            frame.transform,
-        )
-    }
-    pub(crate) fn raw(&self, index: usize) -> Result<Vec<u8>, GatewayError> {
-        Self::raw_frame(
-            &mut self.open()?,
-            self.frames.get(index).ok_or_else(failure)?,
-        )
-    }
-    pub(crate) fn verify_end(&self) -> Result<(), GatewayError> {
-        let end = self
-            .frames
-            .last()
-            .map_or(Some(0), |frame| frame.offset.checked_add(frame.size as u64));
-        if end != Some(self.bytes) {
-            return Err(failure());
-        }
-        let mut file = self.open()?;
-        file.seek(SeekFrom::Start(self.bytes))
-            .map_err(|_| failure())?;
-        let mut extra = [0];
-        if file.read(&mut extra).map_err(|_| failure())? != 0 {
-            return Err(failure());
-        }
-        let metadata = file.metadata().map_err(|_| failure())?;
-        if metadata.len() != self.bytes
-            || metadata.dev() != self.device
-            || metadata.ino() != self.inode
-        {
-            return Err(failure());
-        }
-        Ok(())
-    }
     pub(crate) fn key(&self, index: usize) -> Result<&str, GatewayError> {
         self.frames[index].key.as_deref().ok_or_else(failure)
     }
@@ -224,47 +208,111 @@ impl<T: SpoolValue> Spool<T> {
         self.frames[index].transform
     }
     pub(crate) fn get(&self, index: usize) -> Result<T, GatewayError> {
-        Self::decode(
-            &mut self.open()?,
-            self.frames.get(index).ok_or_else(failure)?,
-        )
+        self.reader()?.read(index)
     }
     pub(crate) fn visit(
         &self,
         callback: &mut dyn FnMut(T) -> Result<(), GatewayError>,
     ) -> Result<(), GatewayError> {
         // A fresh open, not try_clone: every nested/repeated pass has its own offset.
-        let mut file = self.open()?;
-        for frame in &self.frames {
-            callback(Self::decode(&mut file, frame)?)?;
+        let mut reader = self.reader()?;
+        while let Some(value) = reader.next()? {
+            callback(value)?;
         }
-        let mut extra = [0];
-        if file.read(&mut extra).map_err(|_| failure())? != 0 {
+        reader.verify_end()
+    }
+}
+impl<T: SpoolValue> Reader<T> {
+    pub(crate) fn spool(&self) -> &Spool<T> {
+        &self.spool
+    }
+    pub(crate) fn next(&mut self) -> Result<Option<T>, GatewayError> {
+        let Some(bytes) = self.next_raw()? else {
+            return Ok(None);
+        };
+        Ok(Some(serde_json::from_slice(&bytes).map_err(|_| failure())?))
+    }
+    pub(crate) fn next_raw(&mut self) -> Result<Option<Vec<u8>>, GatewayError> {
+        let Some(frame) = self.spool.frames.get(self.next) else {
+            return Ok(None);
+        };
+        let bytes = Spool::<T>::raw_frame(&mut self.file, frame)?;
+        self.next += 1;
+        Ok(Some(bytes))
+    }
+    pub(crate) fn read(&mut self, index: usize) -> Result<T, GatewayError> {
+        serde_json::from_slice(&self.read_raw(index)?).map_err(|_| failure())
+    }
+    pub(crate) fn read_raw(&mut self, index: usize) -> Result<Vec<u8>, GatewayError> {
+        Spool::<T>::raw_frame(
+            &mut self.file,
+            self.spool.frames.get(index).ok_or_else(failure)?,
+        )
+    }
+    /// Require the complete sequential inventory to have been consumed.
+    pub(crate) fn verify_end(&mut self) -> Result<(), GatewayError> {
+        if self.next != self.spool.frames.len() {
             return Err(failure());
         }
-        let m = file.metadata().map_err(|_| failure())?;
-        if m.len() != self.bytes || m.dev() != self.device || m.ino() != self.inode {
+        self.verify_file_end()
+    }
+    /// Directed/random-order passes still prove the exact file EOF and identity.
+    /// The path is rechecked on every frame boundary so a replaced file cannot
+    /// keep an already-open inode alive as a stale private inventory.
+    pub(crate) fn verify_file_end(&mut self) -> Result<(), GatewayError> {
+        let before = std::fs::symlink_metadata(&self.spool.path).map_err(|_| failure())?;
+        if !before.is_file()
+            || before.mode() & 0o077 != 0
+            || before.dev() != self.spool.device
+            || before.ino() != self.spool.inode
+            || before.len() != self.spool.bytes
+        {
+            return Err(failure());
+        }
+        let end = self
+            .spool
+            .frames
+            .last()
+            .map_or(Some(0), |frame| frame.offset.checked_add(frame.size as u64));
+        if end != Some(self.spool.bytes) {
+            return Err(failure());
+        }
+        if self.file.metadata().map_err(|_| failure())?.len() != self.spool.bytes {
+            return Err(failure());
+        }
+        self.file
+            .seek(SeekFrom::Start(self.spool.bytes))
+            .map_err(|_| failure())?;
+        let mut extra = [0];
+        if self.file.read(&mut extra).map_err(|_| failure())? != 0 {
+            return Err(failure());
+        }
+        let metadata = self.file.metadata().map_err(|_| failure())?;
+        if metadata.len() != self.spool.bytes
+            || metadata.dev() != self.spool.device
+            || metadata.ino() != self.spool.inode
+        {
             return Err(failure());
         }
         Ok(())
     }
 }
-pub(crate) struct LiveInventory<'a> {
-    pub entries: &'a Spool<NativeEntry>,
-    pub version: i64,
+/// Complete normalized row inventory. Rows were already validated by the same
+/// native validator before this spool was sealed, so the audit does not decode
+/// or rebuild them a second time.
+pub(crate) struct RowInventory<'a> {
+    pub rows: &'a Spool<Row>,
     pub now: i64,
 }
-impl gateway_admin_data::migration::audit::AuditInventory for LiveInventory<'_> {
+impl gateway_admin_data::migration::audit::AuditInventory for RowInventory<'_> {
     fn visit(
         &self,
         callback: &mut dyn FnMut(
             &gateway_admin_data::migration::ObservedRow,
         ) -> Result<(), GatewayError>,
     ) -> Result<(), GatewayError> {
-        self.entries.visit(&mut |entry| {
-            // Rebuild the complete typed row with the same validator, rather
-            // than parse expanded graph-number arrays retained in another spool.
-            let row = crate::native_capture::validate_entry(&entry, self.version)?;
+        let mut reader = self.rows.reader()?;
+        while let Some(row) = reader.next()? {
             if row
                 .record
                 .expires_at_ms
@@ -276,8 +324,8 @@ impl gateway_admin_data::migration::audit::AuditInventory for LiveInventory<'_> 
                     record: row.record,
                 })?;
             }
-            Ok(())
-        })
+        }
+        reader.verify_end()
     }
 }
 

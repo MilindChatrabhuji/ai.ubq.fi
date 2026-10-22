@@ -423,7 +423,9 @@ export default tsEslint.config(
     // state-controller unit fixture paths. Actual runs require absent private
     // task directories and a single OS profile denying writes outside the run;
     // explicit allowed/denied write probes precede real state acceptance.
-    files: ["tools/cloudflare/state-migration-conformance.ts", "tests/state-migration-controller.test.ts"],
+    // The private stage driver joins that same task-root contract: it creates a
+    // NEW 0700 run directory, verifies every input hash, and never reuses state.
+    files: ["tools/cloudflare/state-migration-conformance.ts", "tools/cloudflare/state-migration-stage-driver.ts", "tests/state-migration-controller.test.ts"],
     rules: { "sonarjs/publicly-writable-directories": "off" },
   }
 );

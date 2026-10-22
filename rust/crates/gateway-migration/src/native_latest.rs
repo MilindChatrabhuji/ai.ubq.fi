@@ -1,25 +1,27 @@
 //! Native-private latest state, one genuine row at a time; no store mirror.
 use crate::engine::{Manifest, manifest_key, mapping_key};
-use crate::native_spool::{Spool, Writer};
+use crate::native_spool::Writer;
 use crate::staged::CanonicalRecord;
 use crate::*;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
 use serde_json::json;
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     path::Path,
 };
 #[path = "native_import_spool.rs"]
 mod native_import;
+const LATEST_QUERY_PAGE: u32 = 256;
 pub(super) struct DiskMap {
-    rows: Spool<CanonicalRecord>,
+    reader: RefCell<crate::native_spool::Reader<CanonicalRecord>>,
     index: BTreeMap<String, usize>,
 }
 impl DiskMap {
     fn get(&self, key: &str) -> Result<Option<StoredRecord>, GatewayError> {
         self.index
             .get(key)
-            .map(|index| self.rows.get(*index).map(|row| row.record))
+            .map(|index| self.reader.borrow_mut().read(*index).map(|row| row.record))
             .transpose()
     }
     fn required(&self, key: &str) -> Result<StoredRecord, GatewayError> {
@@ -46,7 +48,9 @@ async fn collect<S: QueryStore>(
                     end: None,
                 },
                 reverse: false,
-                limit: 1,
+                // Bounded pages, not one store RPC per row. The private wire
+                // remains capped independently by the transport.
+                limit: LATEST_QUERY_PAGE,
                 cursor: cursor.clone(),
                 now_ms,
             })
@@ -70,8 +74,9 @@ async fn collect<S: QueryStore>(
             break;
         }
     }
+    let rows = writer.seal()?;
     Ok(DiskMap {
-        rows: writer.seal()?,
+        reader: RefCell::new(rows.reader()?),
         index,
     })
 }

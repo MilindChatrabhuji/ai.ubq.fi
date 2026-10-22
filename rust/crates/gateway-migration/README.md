@@ -1,5 +1,7 @@
 # Offline state adoption
 
+For the Workers Free migration lane, [`CORE_STATE.md`](CORE_STATE.md) defines the measured bounded operational-core profile: 2,317 selected source rows, 5 derived rows, and 4,640 Durable Object row writes. It excludes historical logs, replay, analytics, incidents, telemetry gates, error logs, and historical usage while retaining current auth, routing, capacity, quota, reset, and accounting state. The profile is offline-only and does not weaken the custody or activation gates below.
+
 This library accepts a private full logical capture with explicit original revision and absolute expiry on every row. It does not open a Bun/Deno database, read credentials, refresh tokens or activate a new owner. Ordinary profile NDJSON has no expiry metadata and is not a complete production-state capture. The existing target owner must stop source and target writers and withhold ordinary target traffic until adoption completes; a library over `AuthorityStore` cannot prove those OS conditions or fence arbitrary uncoordinated new-key writers.
 
 `prepare(&PrivateCapture, &SourceDateHost)` validates the codec, full schema inventory and coupled indexes; `adopt_empty(&same_query_store, &prepared)` performs one atomic transition with absent-key checks and persistent inverse metadata. No existing target is overwritten. The target must be the actual common authority used by auth/admin/admission, not an independently live account ledger. Native current credential/publication ownership and proof capabilities are not imported from snapshots.

@@ -22,6 +22,20 @@ pub struct PreparedAdoption {
     pub(crate) rows: Vec<Row>,
     pub(crate) derived: Vec<(RecordKey, StoredRecord)>,
 }
+impl PreparedAdoption {
+    pub fn source_rows(&self) -> usize {
+        self.manifest.source_rows
+    }
+    pub fn derived_rows(&self) -> usize {
+        self.derived.len()
+    }
+    pub fn expected_do_row_writes(&self) -> Option<u64> {
+        (self.source_rows() as u64)
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(self.derived_rows() as u64))
+            .and_then(|value| value.checked_add(1))
+    }
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AdoptionReceipt {
     pub capture_id: String,

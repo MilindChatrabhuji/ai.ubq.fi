@@ -1,6 +1,7 @@
 //! Same index predicates, with native-private independent cursor lookups.
 use super::*;
 use crate::native_spool::{Spool, Writer};
+use std::collections::BTreeSet;
 use std::path::Path;
 type BoundRows = (Spool<Row>, Vec<(RecordKey, StoredRecord)>);
 pub(crate) fn bind_spooled(
@@ -16,12 +17,32 @@ pub(crate) fn bind_spooled(
             snapshot.insert(rows.key(index)?.to_owned(), index);
         }
     }
-    let get = |key: &str| -> Result<Option<StoredRecord>, GatewayError> {
+    // One persistent directed reader for coupled-key lookups, never one open per row.
+    let mut references = rows.reader()?;
+    let mut get = |key: &str| -> Result<Option<StoredRecord>, GatewayError> {
         snapshot
             .get(key)
-            .map(|i| rows.get(*i).map(|row| row.record))
+            .map(|i| references.read(*i).map(|row| row.record))
             .transpose()
     };
+    let mut paid_limits = BTreeMap::new();
+    let mut source_paid_windows = BTreeSet::new();
+    for key in snapshot.keys() {
+        let p = parts(&RecordKey(key.clone()))?;
+        if starts(&p, &["ubq_ai", "api_keys", "id"]) {
+            let record: gateway_admin::keys::ApiKeyRecord = decode(
+                get(key)?
+                    .ok_or_else(|| invalid("API key ID row is missing"))?
+                    .json_value()?,
+            )?;
+            paid_limits.insert(
+                record.policy.id,
+                record.policy.paid_fallback_limit_microcredits,
+            );
+        } else if starts(&p, &["uos_ai", "paid_fallback", "v3", "window"]) {
+            source_paid_windows.insert(key.clone());
+        }
+    }
     let mut derived = Vec::new();
     let mut defaults = KernelDefaults::default();
     let mut explicit_defaults = false;
@@ -73,9 +94,13 @@ pub(crate) fn bind_spooled(
             StoredRecord::json(revision, json(&normalized)?, None),
         ));
     }
-    for index in 0..rows.len() {
+    let mut reader = rows.reader()?;
+    let mut index = 0usize;
+    while let Some(raw) = reader.next_raw()? {
         let p = parts(&RecordKey(rows.key(index)?.to_owned()))?;
-        if !rows.live(index, now)
+        let live = rows.live(index, now);
+        index += 1;
+        if !live
             || !(starts(&p, &["ubq_ai", "api_keys"])
                 || starts(&p, &["uos_ai", "auth"])
                 || starts(&p, &["uos_ai", "api_key_usage"])
@@ -84,7 +109,8 @@ pub(crate) fn bind_spooled(
         {
             continue;
         }
-        let row = rows.get(index)?;
+        let row: Row = serde_json::from_slice(&raw)
+            .map_err(|_| invalid("Private bound row cannot be decoded"))?;
         (|| -> Result<(), GatewayError> {
             if starts(&row.parts, &["ubq_ai", "api_keys", "id"]) {
                 let id: gateway_admin::keys::ApiKeyRecord = decode(row.record.json_value()?)?;
@@ -153,13 +179,19 @@ pub(crate) fn bind_spooled(
             Ok(())
         })()?;
     }
+    reader.verify_end()?;
     let mut api: BTreeMap<String, BTreeMap<String, i64>> = BTreeMap::new();
     let mut kernel: BTreeMap<String, BTreeMap<String, i64>> = BTreeMap::new();
     let mut paid: BTreeMap<String, (i64, i64)> = BTreeMap::new();
+    let mut paid_accounting = BTreeMap::new();
     let mut pending = BTreeMap::new();
-    for index in 0..rows.len() {
+    let mut reader = rows.reader()?;
+    let mut index = 0usize;
+    while let Some(raw) = reader.next_raw()? {
         let p = parts(&RecordKey(rows.key(index)?.to_owned()))?;
-        if !rows.live(index, now)
+        let live = rows.live(index, now);
+        index += 1;
+        if !live
             || !(starts(&p, &["ubq_ai", "api_keys"])
                 || starts(&p, &["uos_ai", "auth"])
                 || starts(&p, &["uos_ai", "api_key_usage"])
@@ -168,7 +200,8 @@ pub(crate) fn bind_spooled(
         {
             continue;
         }
-        let row = rows.get(index)?;
+        let row: Row = serde_json::from_slice(&raw)
+            .map_err(|_| invalid("Private bound row cannot be decoded"))?;
         (|| -> Result<(), GatewayError> {
             match row.mapping.transform {
                 Transform::ApiRequest => {
@@ -224,20 +257,10 @@ pub(crate) fn bind_spooled(
                 Transform::PaidRequest => {
                     let attempt =
                         gateway_authority::paid::decode_paid_attempt_record(&row.key, &row.record)?;
+                    if attempt.reservation.window_reset_at_ms > now {
+                        account_paid(&mut paid_accounting, &attempt)?;
+                    }
                     if crate::projection::outstanding(&attempt) {
-                        let window = keys::paid_window(
-                            &attempt.reservation.key_id.0,
-                            attempt.reservation.window_reset_at_ms,
-                        );
-                        let count = paid.entry(window.0).or_default();
-                        count.0 = count
-                            .0
-                            .checked_add(1)
-                            .ok_or_else(|| invalid("Paid pending count overflows"))?;
-                        count.1 = count
-                            .1
-                            .checked_add(attempt.reservation.reserved_microcredits)
-                            .ok_or_else(|| invalid("Paid exposure overflows"))?;
                         if !snapshot.contains_key(
                             &keys::paid_pending(
                                 &attempt.reservation.key_id.0,
@@ -248,6 +271,21 @@ pub(crate) fn bind_spooled(
                             return Err(invalid(
                                 "Outstanding paid request lacks its persistent pending marker",
                             ));
+                        }
+                        if paid_limits.get(&attempt.reservation.key_id.0).copied() != Some(-1) {
+                            let window = keys::paid_window(
+                                &attempt.reservation.key_id.0,
+                                attempt.reservation.window_reset_at_ms,
+                            );
+                            let count = paid.entry(window.0).or_default();
+                            count.0 = count
+                                .0
+                                .checked_add(1)
+                                .ok_or_else(|| invalid("Paid pending count overflows"))?;
+                            count.1 = count
+                                .1
+                                .checked_add(attempt.reservation.reserved_microcredits)
+                                .ok_or_else(|| invalid("Paid exposure overflows"))?;
                         }
                     }
                 }
@@ -279,20 +317,28 @@ pub(crate) fn bind_spooled(
             Ok(())
         })()?;
     }
+    reader.verify_end()?;
     let mut has_gate = false;
-    for index in 0..rows.len() {
-        let p = parts(&RecordKey(rows.key(index)?.to_owned()))?;
+    let mut reader = rows.reader()?;
+    let mut index = 0usize;
+    while let Some(raw) = reader.next_raw()? {
+        let key = rows.key(index)?.to_owned();
+        let p = parts(&RecordKey(key.clone()))?;
         let transform = rows.transform(index);
-        if !rows.live(index, now)
+        let expiry = rows.expiry(index);
+        let live = rows.live(index, now);
+        index += 1;
+        if !live
             || !(matches!(
                 transform,
                 Some(Transform::ApiWindow | Transform::KernelWindow | Transform::PaidGate)
             ) || starts(&p, &["uos_ai", "paid_fallback", "v3", "window"]))
         {
-            rows.copy_to(index, &mut output)?;
+            output.push_frame(&raw, Some(key), expiry, transform)?;
             continue;
         }
-        let mut row = rows.get(index)?;
+        let mut row: Row = serde_json::from_slice(&raw)
+            .map_err(|_| invalid("Private bound row cannot be decoded"))?;
         (|| -> Result<(), GatewayError> {
             match row.mapping.transform {
                 Transform::ApiWindow => {
@@ -346,6 +392,31 @@ pub(crate) fn bind_spooled(
             output.push(&row)?;
             Ok(())
         })()?;
+    }
+    reader.verify_end()?;
+    for ((key_id, reset_at_ms), accounting) in paid_accounting {
+        if accounting.settled_microcredits == 0
+            && accounting.reserved_microcredits == 0
+            && accounting.pending_count == 0
+        {
+            continue;
+        }
+        let window_key = keys::paid_window(&key_id, reset_at_ms).0;
+        if source_paid_windows.contains(&window_key) {
+            continue;
+        }
+        let limit_microcredits = paid_limits
+            .get(&key_id)
+            .copied()
+            .ok_or_else(|| invalid("Paid accounting key is missing"))?;
+        derived.push(derive_paid_window(
+            &key_id,
+            reset_at_ms,
+            limit_microcredits,
+            &accounting,
+            revision,
+        )?);
+        paid.remove(&window_key);
     }
     if !api.is_empty() || !kernel.is_empty() || !paid.is_empty() {
         return Err(invalid("Reservation index has an orphan window"));
