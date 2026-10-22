@@ -185,18 +185,7 @@ pub async fn route(
         )
         .map(Into::into);
     }
-    let public_model_catalog = path == "/v1/models"
-        && request.method() == Method::Get
-        && request
-            .url()
-            .ok()
-            .and_then(|url| url.host_str().map(str::to_owned))
-            .is_some_and(|host| {
-                matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1" | "[::1]")
-            });
-    let principal = if public_model_catalog {
-        None
-    } else if path.starts_with("/v1/")
+    let principal = if path.starts_with("/v1/")
         || path == "/uos/models/capabilities"
         || path == "/uos/agent-messages"
         || path.starts_with("/uos/embedding")
