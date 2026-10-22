@@ -247,8 +247,11 @@ pub async fn route(
             .filter(|(key, _)| key == "client_version")
             .map(|(_, value)| value.into_owned())
             .collect::<Vec<_>>();
-        if versions.len() == 1 {
-            let version = versions[0].as_str();
+        let version_refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
+        let requested = gateway_schema::catalog_cache::requested_client_version(&version_refs);
+        if let Some(raw_version) = requested {
+            let version = gateway_schema::catalog_cache::validate_client_version(raw_version)?;
+            let version = version.as_str();
             let now = now_ms()?;
             let conditional = request.headers().get("if-none-match").map_err(|_| {
                 GatewayError::new(
