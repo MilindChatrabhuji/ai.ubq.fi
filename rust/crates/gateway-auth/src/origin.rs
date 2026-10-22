@@ -161,10 +161,10 @@ pub fn same_origin_mutation(request: &AuthRequest) -> bool {
         return false;
     };
     let own = url.origin().ascii_serialization();
-    if let Some(site) = request.header("sec-fetch-site").map(str::trim) {
-        if !matches!(site, "same-origin" | "none") {
-            return false;
-        }
+    if let Some(site) = request.header("sec-fetch-site").map(str::trim)
+        && !matches!(site, "same-origin" | "none")
+    {
+        return false;
     }
     if let Some(origin) = request.header("origin").map(str::trim) {
         return exact_origin(origin).as_deref() == Some(own.as_str());

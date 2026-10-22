@@ -328,10 +328,10 @@ async fn cached_jwks<H: AuthHost>(
             .filter(|(fetched_at, _)| now_ms.saturating_sub(*fetched_at) < PASSPORT_JWKS_CACHE_MS)
             .map(|(_, keys)| keys.clone())
     });
-    if let Some(keys) = cached {
-        if unknown_kid.is_none_or(|kid| keys.contains_key(kid)) {
-            return Ok(keys);
-        }
+    if let Some(keys) = cached
+        && unknown_kid.is_none_or(|kid| keys.contains_key(kid))
+    {
+        return Ok(keys);
     }
     let response = host
         .fetch_auth(AuthUpstreamRequest::PassportJwks)
