@@ -1,5 +1,5 @@
 //! Public routing. Private authority protocol paths are never forwarded here.
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use gateway_admin::AdminService;
 use gateway_auth::{AuthPrincipal, AuthRequest, AuthResponse, AuthService};
@@ -11,7 +11,7 @@ use gateway_core::{
 };
 use gateway_schema::{
     catalog,
-    catalog_cache::{CacheState, CatalogResponse, LoadedCatalog, client_etag, conditional_matches},
+    catalog_cache::{CacheState, CatalogResponse, LoadedCatalog},
     catalog_store,
 };
 use worker::{Context, Env, Method, Request, Response};
@@ -24,28 +24,6 @@ use crate::{
     storage::now_ms,
     transport::{HeaderLimits, body, bounded_headers, outbound::Cancellation},
 };
-
-thread_local! {
-    static MODEL_CATALOG_CACHE: RefCell<Option<(String, i64, String)>> = const { RefCell::new(None) };
-}
-const MODEL_CATALOG_CACHE_MS: i64 = 60 * 60 * 1000;
-fn cached_model_catalog(version: &str, now_ms: i64) -> Option<String> {
-    MODEL_CATALOG_CACHE.with(|cache| {
-        cache
-            .borrow()
-            .as_ref()
-            .and_then(|(cached_version, cached_at, body)| {
-                (cached_version == version
-                    && now_ms.saturating_sub(*cached_at) < MODEL_CATALOG_CACHE_MS)
-                    .then(|| body.clone())
-            })
-    })
-}
-fn cache_model_catalog(version: &str, now_ms: i64, body: &str) {
-    MODEL_CATALOG_CACHE.with(|cache| {
-        *cache.borrow_mut() = Some((version.to_owned(), now_ms, body.to_owned()));
-    });
-}
 
 pub async fn route(
     mut request: Request,
@@ -286,16 +264,6 @@ pub async fn route(
         if versions.len() == 1 {
             let version = versions[0].as_str();
             let now = now_ms()?;
-            if let Some(body) = cached_model_catalog(version, now) {
-                return Response::ok(body)
-                    .map_err(|_| invalid_url())
-                    .map(|mut response| {
-                        let _ = response
-                            .headers_mut()
-                            .set("Content-Type", "application/json");
-                        response.into()
-                    });
-            }
             let conditional = request.headers().get("if-none-match").map_err(|_| {
                 GatewayError::new(
                     400,
@@ -303,10 +271,11 @@ pub async fn route(
                     Some("invalid_request_error"),
                 )
             })?;
-            // A retained catalog is a complete prior answer. Serving it cannot
-            // block cold-process discovery on an upstream refresh; a stale one
-            // schedules the existing refresh after this response.
-            if let Some(cached) = retained_catalog(&store, version, now).await? {
+            // Read the durable exact catalog before any provider discovery.
+            // A retained answer is always assembled by the normal catalog
+            // stack from hydrated durable observations, never a cached body.
+            if let Some(cached) = durable_catalog(&store, version, now).await? {
+                let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
                 if !cached.metadata.fresh(now) {
                     crate::catalog::schedule_warm(
                         &store,
@@ -316,21 +285,21 @@ pub async fn route(
                         version,
                     );
                 }
-                let response = retained_catalog_response(&cached, conditional.as_deref(), now);
-                if response.status == 200
-                    && let Some(body) = response.body.as_deref()
-                {
-                    cache_model_catalog(version, now, body);
-                }
+                let cache_state = if cached.metadata.fresh(now) {
+                    CacheState::Hit
+                } else {
+                    CacheState::Stale
+                };
+                let response = gateway_schema::catalog_cache::catalog_response(
+                    &cached,
+                    conditional.as_deref(),
+                    cache_state,
+                    &state.input,
+                );
                 return catalog_response(response).map(Into::into);
             }
             let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
             let response = state.native_models(&store, &request, version, now).await?;
-            if response.status == 200
-                && let Some(body) = response.body.as_deref()
-            {
-                cache_model_catalog(version, now, body);
-            }
             return catalog_response(response).map(Into::into);
         }
         let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
@@ -470,7 +439,7 @@ async fn auth_response_with_native(
     }
 }
 
-async fn retained_catalog(
+async fn durable_catalog(
     store: &RemoteAuthorityStore,
     version: &str,
     now: i64,
@@ -487,34 +456,6 @@ async fn retained_catalog(
         return Ok(None);
     };
     catalog_store::load_catalog(store, version, generation, now).await
-}
-
-fn retained_catalog_response(
-    cached: &LoadedCatalog,
-    conditional: Option<&str>,
-    now: i64,
-) -> CatalogResponse {
-    let etag = client_etag(&cached.body);
-    let not_modified = conditional_matches(conditional, &etag);
-    let cache_state = if cached.metadata.fresh(now) {
-        CacheState::Hit
-    } else {
-        CacheState::Stale
-    };
-    let headers = [
-        ("Content-Type".into(), cached.metadata.content_type.clone()),
-        ("Cache-Control".into(), "private, max-age=300".into()),
-        ("x-uos-upstream".into(), "chatgpt_codex".into()),
-        ("x-uos-cache".into(), cache_state.as_str().into()),
-        ("ETag".into(), etag),
-    ]
-    .into_iter()
-    .collect();
-    CatalogResponse {
-        status: if not_modified { 304 } else { 200 },
-        body: (!not_modified).then(|| cached.body.clone()),
-        headers,
-    }
 }
 
 fn json_response(value: SourceJson) -> Result<Response, GatewayError> {

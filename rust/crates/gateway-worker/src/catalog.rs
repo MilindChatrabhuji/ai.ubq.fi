@@ -60,8 +60,6 @@ pub(crate) fn into_auth_response(
     }
 }
 
-#[derive(Clone)]
-
 /// The existing versioned refresh path, scheduled after a stale response on a
 /// background cancellation. It creates no cron, alarm, or detached timer.
 pub fn schedule_warm(
@@ -104,6 +102,7 @@ pub fn schedule_warm(
     });
 }
 
+#[derive(Clone)]
 pub struct CatalogState {
     pub input: CatalogInput,
     pub runtime: Option<SourceJson>,

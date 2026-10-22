@@ -395,6 +395,7 @@ fn subscription_block(body: AuthResponseBody) -> Result<SourceJson, GatewayError
         AuthResponseBody::Json(value) => {
             SourceJson::from_serializable(value.get("claude_code").unwrap_or(&Value::Null))
         }
+        AuthResponseBody::Empty => SourceJson::parse("null"),
         AuthResponseBody::SourceJson(value) => Ok(value
             .object_entries()?
             .into_iter()

@@ -72,6 +72,14 @@ impl SelectedAccount {
     /// Copy proven capabilities only. Actual auth must be derived by the host
     /// from this same immutable binding at its preparation/header boundary.
     /// This method grants no credential validity or transport authorization.
+    /// Original request inputs and canonical model are needed by the external
+    /// replay seam; they grant no credential or transport authority.
+    pub fn raw_request(&self) -> &SourceJson {
+        &self.raw
+    }
+    pub fn requested_model(&self) -> &ModelId {
+        &self.model
+    }
     pub fn prepare_options(&self, mut base: PrepareOptions) -> PrepareOptions {
         base.supports_native_effort = self.options.supports_native_effort;
         base.supports_disabled_thinking = self.options.supports_disabled_thinking;

@@ -637,6 +637,9 @@ pub fn principal_id(principal: &AuthPrincipal) -> String {
     match &principal.method {
         AuthMethod::KvApiKey { key_id, .. } => format!("api-key:{key_id}"),
         AuthMethod::PasskeySession { user_id, .. } => format!("passkey-user:{user_id}"),
+        AuthMethod::PassportSession { claims } | AuthMethod::PassportBearer { claims } => {
+            format!("passport-user:{}", claims.sub)
+        }
         AuthMethod::GithubToken { owner, repo, .. } => format!(
             "github-repo:{}/{}",
             owner.to_lowercase(),

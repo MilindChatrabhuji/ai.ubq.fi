@@ -13,14 +13,19 @@ use gateway_claude_runtime::{
 use gateway_core::{
     GatewayError, claude::ClaudeErrorEvidence, model::ModelId, source_json::SourceJson,
 };
+use gateway_providers::replay::{ReplayContext, ReplayStore, ReplayTransport};
 use gateway_routing_runtime::{
-    ClaudeOutcome, ClaudeSelection, CredentialFence, PublishedCredential, ResponseHead,
+    ClaudeOutcome, ClaudeSelection, CredentialFence, PreparedAttempt, PreparedWireRequest,
+    PublishedCredential, ResponseHead,
 };
 use gateway_schema::selection::ProviderSelection;
+use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
 
 thread_local! {
     static GENERATION: StateGeneration = StateGeneration::default();
+    /// One process-local authenticated replay store shared by Claude request lifetimes.
+    static CLAUDE_REPLAY: RefCell<ReplayStore> = RefCell::new(ReplayStore::default());
 }
 
 /// Share this data-only counter with successful credential/workspace admin writes.
@@ -321,17 +326,83 @@ fn credential_fence(selected: &SelectedAccount) -> CredentialFence {
         checks: selected.checks().iter().map(Into::into).collect(),
     }
 }
+fn replay_context(selected: &SelectedAccount) -> Option<ReplayContext> {
+    Some(ReplayContext {
+        scope: selected.replay_scope().into(),
+        provider: "claude_code".into(),
+        model: selected.requested_model().as_js_string().try_utf8().ok()?,
+    })
+}
+
 fn credential(selected: &SelectedAccount) -> PublishedCredential {
     let kind = platform::credential_kind(&selected.binding().credential);
-    let options = selected.prepare_options(Default::default());
+    let mut options = selected.prepare_options(Default::default());
+    if let Some(context) = replay_context(selected) {
+        let now = crate::storage::now_ms().unwrap_or(i64::MAX);
+        CLAUDE_REPLAY.with(|store| {
+            store.borrow_mut().restore_prepare_options(
+                &context,
+                selected.raw_request(),
+                &mut options,
+                ReplayTransport::Messages,
+                now,
+            );
+        });
+    }
     PublishedCredential::Claude {
         fence: credential_fence(selected),
         body_options: gateway_providers::ClaudeBodyOptions {
             native_reasoning_efforts: options.native_reasoning_efforts,
             supports_disabled_thinking: options.supports_disabled_thinking,
+            restored_native_messages: options.restored_native_messages,
             ..gateway_providers::ClaudeBodyOptions::new(kind)
         },
     }
+}
+
+/// Publish a completed Claude native response for the next turn in the same
+/// authenticated principal/account/cohort scope. Failure remains closed.
+pub(crate) fn remember_native(
+    principal: &AuthPrincipal,
+    attempt: &PreparedAttempt,
+    output: &[Value],
+    native: &Value,
+    now_ms: i64,
+) -> bool {
+    let PreparedWireRequest::Claude(body) = &attempt.request else {
+        return false;
+    };
+    let CredentialFence::Claude {
+        account_id,
+        cohort_id,
+        ..
+    } = &attempt.credential
+    else {
+        return false;
+    };
+    let Ok(model) = body.decode().model.as_js_string().try_utf8() else {
+        return false;
+    };
+    let context = ReplayContext {
+        scope: format!(
+            "{}:{}:{}",
+            crate::lifecycle::principal_id(principal),
+            account_id,
+            cohort_id
+        ),
+        provider: "claude_code".into(),
+        model,
+    };
+    CLAUDE_REPLAY.with(|store| {
+        store.borrow_mut().remember_decoded_native(
+            context,
+            output,
+            native.clone(),
+            ReplayTransport::Messages,
+            &body.decode().tool_names,
+            now_ms,
+        )
+    })
 }
 fn invalid(message: &str) -> GatewayError {
     GatewayError::new(400, message, Some("claude_code_request_invalid"))

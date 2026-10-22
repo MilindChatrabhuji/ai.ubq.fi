@@ -529,3 +529,134 @@ pub(crate) async fn publish_snapshot<S: AuthorityStore>(
 }
 /// Renew only request-owned leases; no independent periodic maintenance exists.
 pub(crate) const HEARTBEAT_MS: u32 = (REFRESH_LEASE_MS / 3) as u32;
+
+/// Provider observations are durable inputs, not the assembled final body.
+/// Keys include the auth generation and credential binding so rotation and
+/// key changes cannot reuse stale rows.
+pub(crate) fn provider_observation_key(
+    generation: &str,
+    provider: CatalogProvider,
+    binding: Option<&ProviderBinding>,
+) -> RecordKey {
+    let identity = binding
+        .map(|binding| gateway_schema::util::sha256(binding.identity.as_bytes()))
+        .unwrap_or_else(|| "anonymous".into());
+    source_key(&[
+        "ubq_ai",
+        "provider_catalog_v1",
+        generation,
+        provider.id(),
+        &identity,
+    ])
+}
+
+pub(crate) async fn auth_generation<S: AuthorityStore>(
+    store: &S,
+) -> Result<Option<String>, GatewayError> {
+    Ok(read_json(store, &catalog_store::auth_generation_key())
+        .await?
+        .and_then(|record| record.value.as_str().map(str::to_owned))
+        .filter(|value| !value.is_empty()))
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct ProviderObservationWire {
+    models: Vec<String>,
+    updated_at_ms: Option<i64>,
+    configured: bool,
+    available: bool,
+    stale: bool,
+}
+
+fn observation_wire(
+    snapshot: &ProviderCatalog,
+) -> Result<ProviderObservationWire, GatewayError> {
+    Ok(ProviderObservationWire {
+        models: snapshot
+            .models
+            .iter()
+            .map(|model| {
+                gateway_core::source_serialization::canonical(model)
+                    .map(|value| value.as_str().to_owned())
+                    .map_err(|_| unavailable("Provider catalog observation could not be encoded"))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        updated_at_ms: snapshot.updated_at_ms,
+        configured: snapshot.configured,
+        available: snapshot.available,
+        stale: snapshot.stale,
+    })
+}
+
+pub(crate) async fn load_provider_observation<S: AuthorityStore>(
+    store: &S,
+    generation: &str,
+    provider: CatalogProvider,
+    binding: Option<&ProviderBinding>,
+    now: i64,
+) -> Result<Option<ProviderCatalog>, GatewayError> {
+    let key = provider_observation_key(generation, provider, binding);
+    let Some(record) = store.read(&key).await? else {
+        return Ok(None);
+    };
+    record.validate_version()?;
+    let Ok(wire) = serde_json::from_value::<ProviderObservationWire>(record.json_value()?.clone())
+    else {
+        return Ok(None);
+    };
+    let mut snapshot = ProviderCatalog {
+        models: wire
+            .models
+            .iter()
+            .map(|model| gateway_core::source_json::SourceJson::parse(model))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_default(),
+        updated_at_ms: wire.updated_at_ms,
+        configured: wire.configured,
+        available: wire.available,
+        stale: wire.stale,
+    };
+    if snapshot
+        .updated_at_ms
+        .is_none_or(|updated| updated <= 0 || updated > now.saturating_add(60_000))
+    {
+        return Ok(None);
+    }
+    snapshot.stale = snapshot
+        .updated_at_ms
+        .is_some_and(|updated| now.saturating_sub(updated) >= 300_000);
+    Ok(Some(snapshot))
+}
+
+pub(crate) async fn persist_provider_observation<S: AuthorityStore>(
+    store: &S,
+    generation: &str,
+    provider: CatalogProvider,
+    binding: Option<&ProviderBinding>,
+    snapshot: &ProviderCatalog,
+    revision: &str,
+    now: i64,
+) -> Result<(), GatewayError> {
+    let key = provider_observation_key(generation, provider, binding);
+    let value = serde_json::to_value(observation_wire(snapshot)?)
+        .map_err(|_| unavailable("Provider catalog observation could not be encoded"))?;
+    for _ in 0..3 {
+        let row = store.read(&key).await?;
+        if store
+            .commit(AtomicTransition {
+                checks: vec![check(key.clone(), row.as_ref())],
+                mutations: vec![mutation(
+                    key.clone(),
+                    value.clone(),
+                    revision,
+                    Some(now.saturating_add(gateway_schema::catalog_cache::RETENTION_MS)),
+                )],
+            })
+            .await?
+            == CommitOutcome::Committed
+        {
+            return Ok(());
+        }
+    }
+    Ok(())
+}

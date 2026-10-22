@@ -485,6 +485,7 @@ pub async fn run(
             session,
             currentness,
             attempt,
+            principal: principal.clone(),
             provider_request_id: correlation(provider, &headers).map(str::to_owned),
             status,
             store: store.clone(),
@@ -496,6 +497,110 @@ pub async fn run(
         let finish = finish_hook(lifecycle.clone(), usage.clone(), permit, capture.clone());
         if status >= 400 {
             capture.configure(status, event_stream, responses, provider);
+            if gateway_providers::sse::is_lithos_stream_refusal(&decode_plan, status) {
+                let probe = body::refusal_probe(
+                    &mut upstream,
+                    &host.cancellation,
+                    body::REFUSAL_PROBE_TIMEOUT_MS,
+                )
+                .await;
+                body::discard_response(&mut upstream);
+                let decoded = decode_response(&decode_plan, status, &headers, &probe.bytes)?;
+                if decoded.status != 200 || decoded.events.is_empty() {
+                    return Err(invalid("Lithos stream refusal could not be translated."));
+                }
+                observation.semantic_terminal(
+                    decoded
+                        .terminal
+                        .unwrap_or(SemanticTerminal::Failed),
+                );
+                capture.configure(200, true, responses, provider);
+                let payload = decoded
+                    .events
+                    .iter()
+                    .map(ProviderEvent::encode_sse)
+                    .collect::<String>()
+                    .into_bytes();
+                let source = futures_util::stream::iter(vec![Ok(payload)]);
+                let stream = ObservedStream::new(
+                    source,
+                    observation.clone(),
+                    context,
+                    host.cancellation.clone(),
+                    Some(deadline),
+                    finish,
+                );
+                let (_, raw_body) = stream
+                    .into_response()
+                    .map_err(|_| invalid("The downstream refusal body is unavailable."))?
+                    .into_parts();
+                let mut response = Response::builder().with_status(200).body(raw_body);
+                for (name, value) in decoded.headers {
+                    response
+                        .headers_mut()
+                        .set(&name, &value)
+                        .map_err(|_| invalid("Invalid response header."))?;
+                }
+                return Ok(response);
+            }
+            if provider == UpstreamProvider::Cerebras {
+                let probe = body::refusal_probe(
+                    &mut upstream,
+                    &host.cancellation,
+                    body::REFUSAL_PROBE_TIMEOUT_MS,
+                )
+                .await;
+                body::discard_response(&mut upstream);
+                let bytes = cerebras_error_body(status, &probe.bytes);
+                let observation = ObservationHandle::default();
+                let source = futures_util::stream::iter(vec![Ok(bytes)]);
+                let stream = ObservedStream::new(
+                    source,
+                    observation,
+                    context,
+                    host.cancellation.clone(),
+                    Some(deadline),
+                    finish,
+                );
+                let (_, raw_body) = stream
+                    .into_response()
+                    .map_err(|_| invalid("The downstream refusal body is unavailable."))?
+                    .into_parts();
+                let mut response = Response::builder().with_status(status).body(raw_body);
+                response
+                    .headers_mut()
+                    .set("Content-Type", "application/json")
+                    .map_err(|_| invalid("Invalid response header."))?;
+                response
+                    .headers_mut()
+                    .set("x-uos-upstream", "cerebras")
+                    .map_err(|_| invalid("Invalid response header."))?;
+                if let Some(retry) = headers
+                    .iter()
+                    .find(|(name, _)| name.eq_ignore_ascii_case("retry-after"))
+                    .map(|(_, value)| value)
+                {
+                    response
+                        .headers_mut()
+                        .set("Retry-After", retry)
+                        .map_err(|_| invalid("Invalid response header."))?;
+                }
+                if status == 429 {
+                    for name in CEREBRAS_RATE_LIMIT_HEADERS {
+                        if let Some((_, value)) = headers
+                            .iter()
+                            .find(|(header, _)| header.eq_ignore_ascii_case(name))
+                        {
+                            response
+                                .headers_mut()
+                                .set(name, value)
+                                .map_err(|_| invalid("Invalid response header."))?;
+                        }
+                    }
+                }
+                provider_correlation(&mut response, provider, &headers)?;
+                return Ok(response);
+            }
             let observation = ObservationHandle::default();
             let (builder, raw_body) = upstream.into_parts();
             let source: std::pin::Pin<
@@ -589,7 +694,31 @@ pub async fn run(
                         };
                         match result {
                             Ok(events) => {
-                                *state.usage.borrow_mut() = state.decoder.observed_usage().cloned();
+                                if let Some(usage) = state.decoder.observed_usage() {
+                                    *state.usage.borrow_mut() = Some(usage.clone());
+                                }
+                                for event in &events {
+                                    if let Some(usage) = event.observed_usage() {
+                                        *state.usage.borrow_mut() = Some(usage);
+                                    }
+                                }
+                                let terminal_output = events.iter().rev().find_map(|event| {
+                                    event
+                                        .field("response")
+                                        .and_then(|response| {
+                                            serde_json::from_str::<serde_json::Value>(
+                                                response.as_str(),
+                                            )
+                                            .ok()
+                                        })
+                                        .and_then(|response| {
+                                            response
+                                                .get("output")
+                                                .and_then(serde_json::Value::as_array)
+                                                .cloned()
+                                        })
+                                });
+                                let native_replay = state.decoder.native_replay().cloned();
                                 if !events.is_empty() {
                                     match state.cancellation.set_timeout_ms(ATTEMPT_DEADLINE_MS) {
                                         Ok(deadline) => state.deadline = Some(deadline),
@@ -614,7 +743,8 @@ pub async fn run(
                                     state.queue.push_back(event.encode_sse().into_bytes());
                                 }
                                 let terminal_usage = state.usage.borrow().clone();
-                                if state.observation.snapshot().semantic_terminal.is_some()
+                                let terminal = state.observation.snapshot().semantic_terminal;
+                                if terminal.is_some()
                                     && let Err(error) = state
                                         .lifecycle
                                         .observe_terminal(
@@ -629,6 +759,22 @@ pub async fn run(
                                         Err(worker::Error::RustError(error.envelope.error.message)),
                                         state,
                                     ));
+                                }
+                                if terminal == Some(SemanticTerminal::Completed)
+                                    && state.plan.provider == UpstreamProvider::ClaudeCode
+                                    && let (Some(output), Some(native)) =
+                                        (terminal_output, native_replay)
+                                {
+                                    let _ = crate::claude_host::remember_native(
+                                        &state.lifecycle.principal,
+                                        &state.lifecycle.attempt,
+                                        &output,
+                                        &native,
+                                        crate::storage::now_ms().unwrap_or(i64::MAX),
+                                    );
+                                }
+                                if terminal.is_some() {
+                                    state.done = true;
                                 }
                             }
                             Err(_) => {
@@ -715,6 +861,21 @@ pub async fn run(
         if let Some(terminal) = decoded.terminal {
             observation.semantic_terminal(terminal);
         }
+        if decoded.terminal == Some(SemanticTerminal::Completed)
+            && provider == UpstreamProvider::ClaudeCode
+            && let Some(native) = decoded.native_replay.as_ref()
+            && let Some(output) = serde_json::from_str::<serde_json::Value>(decoded.body.as_str())
+                .ok()
+                .and_then(|body| body.get("output").and_then(serde_json::Value::as_array).cloned())
+        {
+            let _ = crate::claude_host::remember_native(
+                principal,
+                &lifecycle.attempt,
+                &output,
+                native,
+                now_ms().unwrap_or(i64::MAX),
+            );
+        }
         if observation.snapshot().semantic_terminal.is_some() {
             lifecycle
                 .observe_terminal(observation.snapshot(), decoded.usage.clone())
@@ -769,6 +930,67 @@ pub async fn run(
             .await;
     }
     result
+}
+
+const CEREBRAS_RATE_LIMIT_HEADERS: &[&str] = &[
+    "x-ratelimit-limit-requests-minute",
+    "x-ratelimit-remaining-requests-minute",
+    "x-ratelimit-reset-requests-minute",
+    "x-ratelimit-limit-tokens-minute",
+    "x-ratelimit-remaining-tokens-minute",
+    "x-ratelimit-reset-tokens-minute",
+    "x-ratelimit-limit-requests-day",
+    "x-ratelimit-remaining-requests-day",
+    "x-ratelimit-reset-requests-day",
+    "x-ratelimit-limit-tokens-day",
+    "x-ratelimit-remaining-tokens-day",
+    "x-ratelimit-reset-tokens-day",
+];
+
+/// Source Cerebras errors forward only message/code from a bounded body.
+fn cerebras_error_detail(bytes: &[u8]) -> (String, String) {
+    let fallback_message = "Cerebras upstream returned an error.".to_owned();
+    let fallback_code = "cerebras_upstream_error".to_owned();
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return (fallback_message, fallback_code);
+    };
+    let error = value.get("error").filter(|value| value.is_object());
+    let text = |name: &str, limit: usize| {
+        error
+            .and_then(|error| error.get(name))
+            .or_else(|| value.get(name))
+            .and_then(serde_json::Value::as_str)
+            .map(|value| value.chars().take(limit).collect::<String>().trim().to_owned())
+            .filter(|value| !value.is_empty())
+    };
+    (
+        text("message", 1_000).unwrap_or(fallback_message),
+        text("code", 200).unwrap_or(fallback_code),
+    )
+}
+
+fn cerebras_error_type(status: u16) -> &'static str {
+    if status >= 500 {
+        "server_error"
+    } else if status == 429 {
+        "rate_limit_error"
+    } else {
+        "invalid_request_error"
+    }
+}
+
+fn cerebras_error_body(status: u16, bytes: &[u8]) -> Vec<u8> {
+    let (message, code) = cerebras_error_detail(bytes);
+    serde_json::to_vec(&json!({
+        "error": {
+            "message": message,
+            "type": cerebras_error_type(status),
+            "code": code,
+        }
+    }))
+    .unwrap_or_else(|_| {
+        br#"{"error":{"message":"Cerebras upstream returned an error.","type":"invalid_request_error","code":"cerebras_upstream_error"}}"#.to_vec()
+    })
 }
 
 fn apply_warnings(response: &mut Response, warnings: &[String]) -> Result<(), GatewayError> {
@@ -918,4 +1140,53 @@ fn provider_correlation(
 
 fn invalid(message: &str) -> GatewayError {
     GatewayError::new(502, message, Some("upstream_transport_error"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cerebras_payment_required_body_forwards_only_source_detail_fields() {
+        let input = br#"{"error":{"message":"Payment required","code":"payment_required","param":"secret","type":"vendor"},"secret":"never"}"#;
+        let body = cerebras_error_body(402, input);
+        let text = String::from_utf8(body.clone()).unwrap();
+        assert_eq!(
+            text,
+            r#"{"error":{"message":"Payment required","type":"invalid_request_error","code":"payment_required"}}"#
+        );
+        assert!(!text.contains("vendor"));
+        assert!(!text.contains("secret"));
+        assert!(!text.contains("param"));
+    }
+
+    #[test]
+    fn cerebras_payment_required_146_byte_source_shape() {
+        let message = "x".repeat(65);
+        let input = serde_json::to_vec(&json!({
+            "error": {"message": message, "code": "payment_required"}
+        }))
+        .unwrap();
+        let body = cerebras_error_body(402, &input);
+        assert_eq!(body.len(), 146);
+        assert_eq!(
+            body,
+            br#"{"error":{"message":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","type":"invalid_request_error","code":"payment_required"}}"#
+        );
+    }
+
+    #[test]
+    fn cerebras_status_types_and_bounds_follow_the_source() {
+        let body = cerebras_error_body(429, br#"{"error":{"message":"slow down","code":"rate"}}"#);
+        assert!(String::from_utf8(body).unwrap().contains("rate_limit_error"));
+        let body = cerebras_error_body(503, br#"{"message":"down","code":"unavailable"}"#);
+        assert!(String::from_utf8(body).unwrap().contains("server_error"));
+        let oversized = serde_json::to_vec(&json!({
+            "error": {"message": "m".repeat(2_000), "code": "c".repeat(400)}
+        }))
+        .unwrap();
+        let body = String::from_utf8(cerebras_error_body(402, &oversized)).unwrap();
+        assert!(!body.contains(&"m".repeat(1_001)));
+        assert!(!body.contains(&"c".repeat(201)));
+    }
 }

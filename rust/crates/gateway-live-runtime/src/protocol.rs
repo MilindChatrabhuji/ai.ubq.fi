@@ -81,6 +81,9 @@ pub fn principal_id(principal: &AuthPrincipal) -> String {
             repo.to_lowercase()
         ),
         AuthMethod::PasskeySession { user_id, .. } => format!("passkey-user:{user_id}"),
+        AuthMethod::PassportSession { claims } | AuthMethod::PassportBearer { claims } => {
+            format!("passport-user:{}", claims.sub)
+        }
         AuthMethod::AuthTokensAllowlist => "auth-method:auth_tokens_allowlist".into(),
         AuthMethod::AdminAllowlist => "auth-method:admin_allowlist".into(),
         AuthMethod::DenoDeployToken => "auth-method:deno_deploy_token".into(),
