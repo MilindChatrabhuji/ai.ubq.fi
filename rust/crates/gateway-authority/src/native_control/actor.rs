@@ -329,6 +329,23 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
                 keys_revision: before.keys_revision,
             }
         }
+        AuthMethod::PassportSession { claims }
+            if claims.is_admin && claims.agent_token_id.is_none() =>
+        {
+            SourceActor::Configuration {
+                method: ConfigMethod::AdminAllowlist,
+                token_hash: None,
+                valid_until_ms: Some(
+                    claims
+                        .exp
+                        .checked_mul(1000)
+                        .ok_or_else(fail)?,
+                ),
+            }
+        }
+        AuthMethod::PassportSession { .. } | AuthMethod::PassportBearer { .. } => {
+            return Err(fail());
+        }
         method => {
             let method = match method {
                 AuthMethod::AuthTokensAllowlist => ConfigMethod::AuthAllowlist,
