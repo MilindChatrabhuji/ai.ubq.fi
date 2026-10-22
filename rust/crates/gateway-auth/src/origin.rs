@@ -169,12 +169,7 @@ pub fn same_origin_mutation(request: &AuthRequest) -> bool {
     if let Some(origin) = request.header("origin").map(str::trim) {
         return exact_origin(origin).as_deref() == Some(own.as_str());
     }
-    if let Some(referer) = request.header("referer").map(str::trim) {
-        return Url::parse(referer)
-            .ok()
-            .map(|value| value.origin().ascii_serialization())
-            .as_deref()
-            == Some(own.as_str());
-    }
+    // Source cookie mutations validate Origin when present and do not infer it
+    // from a Referer fallback.
     true
 }

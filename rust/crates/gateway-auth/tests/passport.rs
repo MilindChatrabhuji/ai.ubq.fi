@@ -637,8 +637,13 @@ fn same_origin_mutation_rejects_foreign_browser_markers() {
     request.headers.remove("sec-fetch-site");
     request
         .headers
-        .insert("referer".into(), "https://evil.example/page".into());
+        .insert("origin".into(), "https://evil.example".into());
     assert!(!same_origin_mutation(&request));
+    request.headers.remove("origin");
+    request
+        .headers
+        .insert("referer".into(), "https://evil.example/page".into());
+    assert!(same_origin_mutation(&request));
 }
 
 #[test]
