@@ -57,7 +57,8 @@ fn normalize_chat_completion_fragment(
                 return Err(malformed(format!("Upstream choice has invalid {key}.")));
             }
         }
-        let calls = if let Some(calls) = message.get("tool_calls").filter(|value| !value.is_null()) {
+        let calls = if let Some(calls) = message.get("tool_calls").filter(|value| !value.is_null())
+        {
             let mut validated = vec![];
             for call in calls
                 .as_array()

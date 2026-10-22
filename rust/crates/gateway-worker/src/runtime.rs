@@ -16,17 +16,20 @@ use crate::{
     transport::{HeaderLimits, body, bounded_headers, outbound::Cancellation},
 };
 
-
 thread_local! {
     static MODEL_CATALOG_CACHE: RefCell<Option<(String, i64, String)>> = const { RefCell::new(None) };
 }
 const MODEL_CATALOG_CACHE_MS: i64 = 60 * 60 * 1000;
 fn cached_model_catalog(version: &str, now_ms: i64) -> Option<String> {
     MODEL_CATALOG_CACHE.with(|cache| {
-        cache.borrow().as_ref().and_then(|(cached_version, cached_at, body)| {
-            (cached_version == version && now_ms.saturating_sub(*cached_at) < MODEL_CATALOG_CACHE_MS)
-                .then(|| body.clone())
-        })
+        cache
+            .borrow()
+            .as_ref()
+            .and_then(|(cached_version, cached_at, body)| {
+                (cached_version == version
+                    && now_ms.saturating_sub(*cached_at) < MODEL_CATALOG_CACHE_MS)
+                    .then(|| body.clone())
+            })
     })
 }
 fn cache_model_catalog(version: &str, now_ms: i64, body: &str) {
@@ -204,7 +207,9 @@ pub async fn route(
             .url()
             .ok()
             .and_then(|url| url.host_str().map(str::to_owned))
-            .is_some_and(|host| matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1" | "[::1]"));
+            .is_some_and(|host| {
+                matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1" | "[::1]")
+            });
     let principal = if public_model_catalog {
         None
     } else if path.starts_with("/v1/")
@@ -276,13 +281,17 @@ pub async fn route(
                 return Response::ok(body)
                     .map_err(|_| invalid_url())
                     .map(|mut response| {
-                        let _ = response.headers_mut().set("Content-Type", "application/json");
+                        let _ = response
+                            .headers_mut()
+                            .set("Content-Type", "application/json");
                         response.into()
                     });
             }
             let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
             let response = state.native_models(&store, &request, version, now).await?;
-            if response.status == 200 && let Some(body) = response.body.as_deref() {
+            if response.status == 200
+                && let Some(body) = response.body.as_deref()
+            {
                 cache_model_catalog(version, now, body);
             }
             return catalog_response(response).map(Into::into);
