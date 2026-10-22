@@ -1,0 +1,6 @@
+# Preserve exact upstream license/source and the tested patch artifact bytes.
+LICENSE.md -whitespace
+README.md -whitespace
+src/proto.rs -whitespace
+uos-host-time.patch -whitespace
+uos-source-compat.patch -whitespace

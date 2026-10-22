@@ -162,21 +162,64 @@ jobs:
   rust-native:
     needs: [scope, portable]
     if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)) && (needs.scope.outputs.needs_rust_native == 'true') && (needs.portable.result == 'success') }}
-    runs-on: ubuntu-26.04-arm
+    runs-on: macos-26
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
           fetch-depth: 0
+      - name: Require the source-pinned Darwin inspector dependency
+        run: |
+          set -eu
+          /usr/bin/python3 -I - <<'PYTHON'
+          import hashlib
+          import json
+          import os
+          import platform
+          import re
+          from pathlib import Path
+          source = Path("rust/crates/gateway-native/src/existing_account_import/acl_inspector.rs").read_text()
+          blocks = re.findall(r'^const LS_SHA256S: \[&str; 2\] = \[(.*?)^\];$', source, re.MULTILINE | re.DOTALL)
+          if len(blocks) != 1:
+              raise SystemExit("Cannot resolve the one current source-pinned Darwin ls identity set")
+          required = re.findall(r'"([0-9a-f]{64})"', blocks[0])
+          literal_set = ",".join(f'"{value}"' for value in required) + ","
+          if len(required) != 2 or len(set(required)) != 2 or re.sub(r'\s+', '', blocks[0]) != literal_set:
+              raise SystemExit("Darwin ls identities must be exactly two distinct source-literal SHA256 values")
+          actual = hashlib.sha256(Path("/bin/ls").read_bytes()).hexdigest()
+          print(f"Darwin inspector preflight: os={platform.system()}-{platform.mac_ver()[0]} kernel={os.uname().release} arch={os.uname().machine}", flush=True)
+          print(f"fixed_path=/bin/ls required_sha256s={','.join(required)} actual_sha256={actual}", flush=True)
+          sandbox_source = Path("rust/crates/gateway-native/src/existing_account_import/owner_runtime.rs").read_text()
+          sandbox_blocks = re.findall(r'^const SANDBOX_SHA256S: \[&str; 2\] = \[(.*?)^\];$', sandbox_source, re.MULTILINE | re.DOTALL)
+          if len(sandbox_blocks) != 1:
+              raise SystemExit("Cannot resolve the one current source-pinned Darwin fixture sandbox identity set")
+          sandbox_required = re.findall(r'"([0-9a-f]{64})"', sandbox_blocks[0])
+          sandbox_literals = ",".join(f'"{value}"' for value in sandbox_required) + ","
+          if len(sandbox_required) != 2 or len(set(sandbox_required)) != 2 or re.sub(r'\s+', '', sandbox_blocks[0]) != sandbox_literals:
+              raise SystemExit("Darwin fixture sandbox identities must be exactly two distinct source-literal SHA256 values")
+          sandbox_path = Path("/usr/bin/sandbox-exec")
+          sandbox_metadata = sandbox_path.lstat()
+          sandbox_actual = hashlib.sha256(sandbox_path.read_bytes()).hexdigest()
+          print(f"fixed_path=/usr/bin/sandbox-exec required_sha256s={','.join(sandbox_required)} actual_sha256={sandbox_actual}", flush=True)
+          print("Darwin fixture sandbox metadata: " + json.dumps({
+              "uid": sandbox_metadata.st_uid, "gid": sandbox_metadata.st_gid,
+              "mode": oct(sandbox_metadata.st_mode), "nlink": sandbox_metadata.st_nlink,
+              "size": sandbox_metadata.st_size, "device": sandbox_metadata.st_dev,
+              "inode": sandbox_metadata.st_ino,
+          }, sort_keys=True), flush=True)
+          if actual not in required:
+              raise SystemExit("Runner /bin/ls is incompatible with the current source-pinned Darwin inspector dependency; no bootstrap or compilation was attempted")
+          if sandbox_actual not in sandbox_required:
+              raise SystemExit("Runner /usr/bin/sandbox-exec is incompatible with the current source-pinned Darwin fixture sandbox dependency; no bootstrap or compilation was attempted")
+          PYTHON
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.0
-      - name: Prepare Linux Rust isolation
+      - name: Require the matching Mac host and actual Seatbelt boundary
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends bubblewrap
-          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
           bun --no-env-file --no-install scripts/test-network.ts -- /usr/bin/true
       - name: Prepare pinned Rust native tools and frozen dependencies
         run: bun --no-env-file --no-install scripts/rust-verify.ts --prepare-ci native

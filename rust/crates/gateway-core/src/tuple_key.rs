@@ -16,6 +16,25 @@ pub enum KeyPart {
     Number(f64),
     Boolean(bool),
 }
+impl KeyPart {
+    /// Only source key inputs use the pinned TextEncoder USVString conversion.
+    /// Logical values retain their original units through JsString16/ProfileV2.
+    pub fn source_string_utf16(units: &[u16]) -> Self {
+        Self::String(String::from_utf16_lossy(units))
+    }
+}
+
+/// Validated decoded source parts. String bytes are intentionally not coerced
+/// to UTF-8: the source raw validator also accepts arbitrary string payloads.
+/// Decoding is observational; retain the original TupleKey for exact wire identity.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DecodedKeyPart {
+    Bytes(Vec<u8>),
+    String(Vec<u8>),
+    BigInt { negative: bool, magnitude: Vec<u8> },
+    Number(f64),
+    Boolean(bool),
+}
 
 /// Infallible application-key inputs; number values retain the source JS-number kind.
 /// Application-specific safe-integer policies must be checked before constructing a key.
@@ -146,6 +165,15 @@ impl TupleKey {
         &self.bytes
     }
 
+    /// Decode through the same source walker used by raw key validation.
+    /// Number bits and bigint magnitude widths are retained, without rewriting
+    /// source-accepted noncanonical payloads in this key.
+    pub fn decoded_parts(&self) -> Result<Vec<DecodedKeyPart>, GatewayError> {
+        let mut parts = Vec::new();
+        walk_source_bytes(&self.bytes, Some(&mut parts))?;
+        Ok(parts)
+    }
+
     pub fn validate_stored_key(&self) -> Result<(), GatewayError> {
         if self.bytes.is_empty() {
             Err(invalid_key("A stored tuple key cannot be empty."))
@@ -209,25 +237,47 @@ fn append_bigint(output: &mut Vec<u8>, value: &BigIntKey) {
 /// The source validator accepts bytes/string payloads without Unicode normalization.
 /// Do not strengthen it into a second, incompatible migration/key-identity codec.
 fn validate_source_bytes(bytes: &[u8]) -> Result<(), GatewayError> {
+    walk_source_bytes(bytes, None)
+}
+
+fn walk_source_bytes(
+    bytes: &[u8],
+    mut output: Option<&mut Vec<DecodedKeyPart>>,
+) -> Result<(), GatewayError> {
     let mut offset = 0;
     while offset < bytes.len() {
         let tag = bytes[offset];
         offset += 1;
         match tag {
-            0x01 | 0x02 => loop {
-                let byte = *bytes
-                    .get(offset)
-                    .ok_or_else(|| invalid_key("A tuple string/bytes part is truncated."))?;
-                offset += 1;
-                if byte == 0 {
-                    if bytes.get(offset) == Some(&0xff) {
-                        offset += 1;
-                    } else {
-                        break;
+            0x01 | 0x02 => {
+                let mut value = output.as_ref().map(|_| Vec::new());
+                loop {
+                    let byte = *bytes
+                        .get(offset)
+                        .ok_or_else(|| invalid_key("A tuple string/bytes part is truncated."))?;
+                    offset += 1;
+                    if byte == 0 {
+                        if bytes.get(offset) == Some(&0xff) {
+                            offset += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Some(value) = &mut value {
+                        value.push(byte);
                     }
                 }
-            },
+                if let Some(parts) = &mut output {
+                    let value = value.unwrap_or_default();
+                    parts.push(if tag == 0x01 {
+                        DecodedKeyPart::Bytes(value)
+                    } else {
+                        DecodedKeyPart::String(value)
+                    });
+                }
+            }
             0x0b..=0x1d => {
+                let negative = tag < 0x14;
                 let length = if tag == 0x0b || tag == 0x1d {
                     let length = *bytes
                         .get(offset)
@@ -241,6 +291,18 @@ fn validate_source_bytes(bytes: &[u8]) -> Result<(), GatewayError> {
                 } else {
                     tag.abs_diff(0x14) as usize
                 };
+                let magnitude = bytes
+                    .get(offset..offset + length)
+                    .ok_or_else(|| invalid_key("A tuple key part is truncated."))?;
+                if let Some(parts) = &mut output {
+                    parts.push(DecodedKeyPart::BigInt {
+                        negative,
+                        magnitude: magnitude
+                            .iter()
+                            .map(|byte| if negative { !*byte } else { *byte })
+                            .collect(),
+                    });
+                }
                 offset += length;
             }
             0x21 => {
@@ -259,9 +321,16 @@ fn validate_source_bytes(bytes: &[u8]) -> Result<(), GatewayError> {
                 if value.is_nan() && value.is_sign_negative() {
                     return Err(invalid_key("Negative NaN tuple keys are not portable."));
                 }
+                if let Some(parts) = &mut output {
+                    parts.push(DecodedKeyPart::Number(value));
+                }
                 offset += 8;
             }
-            0x26 | 0x27 => {}
+            0x26 | 0x27 => {
+                if let Some(parts) = &mut output {
+                    parts.push(DecodedKeyPart::Boolean(tag == 0x27));
+                }
+            }
             _ => return Err(invalid_key("A tuple key contains an unsupported part tag.")),
         }
         if offset > bytes.len() {

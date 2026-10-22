@@ -6,10 +6,33 @@ rust-version.workspace = true
 publish.workspace = true
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["entrypoint"]
+entrypoint = []
 
 [dependencies]
+gateway-compaction.workspace = true
 gateway-core.workspace = true
+gateway-auth.workspace = true
+gateway-authority.workspace = true
+gateway-schema.workspace = true
+gateway-providers.workspace = true
+gateway-admin.workspace = true
+gateway-admission.workspace = true
+gateway-catalog-runtime.workspace = true
+gateway-claude-runtime.workspace = true
+gateway-admin-runtime.workspace = true
+gateway-routing-runtime.workspace = true
+gateway-extras-runtime.workspace = true
+gateway-publication.workspace = true
+gateway-observability.workspace = true
+gateway-live-runtime.workspace = true
+gateway-migration.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
 worker.workspace = true
 wasm-bindgen.workspace = true
 

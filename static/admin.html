@@ -112,7 +112,14 @@
             </header>
             <div data-card-body>
               <div id="admin-auth-gate" data-auth-gate>
-                <button id="admin-auth-gate-open" type="button" data-variant="primary">
+                <button id="admin-passport-login" type="button" data-variant="primary">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <circle cx="12" cy="8" r="4" />
+                    <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+                  </svg>
+                  <span>Sign in with Passport</span>
+                </button>
+                <button id="admin-auth-gate-open" type="button">
                   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <circle cx="15.5" cy="8.5" r="4.5" />
                     <path d="M12.4 11.8 5 19.2" />
@@ -120,7 +127,10 @@
                   </svg>
                   <span>Sign in</span>
                 </button>
-                <p>Use a passkey or admin token.</p>
+                <p
+                  >Passport sign-in requires an administrator account. Passkey and admin-token fallbacks remain
+                  available.</p
+                >
               </div>
               <div id="admin-loading-grid" data-loading-grid hidden>
                 <div data-loading-item>
@@ -1065,28 +1075,16 @@
             <span id="base-preview" hidden></span>
             <div data-layout="row">
               <button
-                id="admin-passkey-login"
+                id="admin-passport-login-widget"
                 type="button"
-                data-tooltip="Use iCloud Keychain or another passkey provider to sign in"
+                data-variant="primary"
+                data-tooltip="Sign in with your Ubiquity Passport administrator account"
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <circle cx="15.5" cy="8.5" r="4.5" />
-                  <path d="M12.4 11.8 5 19.2" />
-                  <path d="m7.2 17 1.6 1.6M9.8 14.4l1.6 1.6" />
+                  <circle cx="12" cy="8" r="4" />
+                  <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
                 </svg>
-                <span>Sign in with passkey</span>
-              </button>
-              <button
-                id="admin-passkey-register"
-                type="button"
-                data-tooltip="Create a passkey for this account on the current domain"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <circle cx="9.5" cy="8" r="3.5" />
-                  <path d="M3.5 19.5a6 6 0 0 1 12 0" />
-                  <path d="M18.5 7.5v6M15.5 10.5h6" />
-                </svg>
-                <span>Add passkey</span>
+                <span>Sign in with Passport</span>
               </button>
               <button id="admin-sign-out" type="button" data-tooltip="Clear this browser session" hidden>
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -1097,10 +1095,26 @@
                 <span>Sign out</span>
               </button>
             </div>
-            <span id="admin-passkey-status" data-badge data-state="unknown">Passkey idle</span>
+            <span id="admin-passkey-status" data-badge data-state="unknown">Signed out</span>
             <details data-passkey-advanced>
-              <summary>Account name</summary>
+              <summary>Advanced: passkey or account name</summary>
               <div data-passkey-advanced-body>
+                <div data-layout="row">
+                  <button
+                    id="admin-passkey-login"
+                    type="button"
+                    data-tooltip="Use iCloud Keychain or another passkey provider to sign in"
+                  >
+                    <span>Sign in with passkey</span>
+                  </button>
+                  <button
+                    id="admin-passkey-register"
+                    type="button"
+                    data-tooltip="Create a passkey for this account on the current domain"
+                  >
+                    <span>Add passkey</span>
+                  </button>
+                </div>
                 <label data-field>
                   <span data-label>Username</span>
                   <input

@@ -1,0 +1,24 @@
+{
+  "upstream": "0x4007/fast-jev-compaction",
+  "upstream_commit": "c1eab5fdbd6bde7d67f2da070116496558836884",
+  "license": "MIT",
+  "source_base": "8170fbb9990d391e7c338e4795ee2e05e19d2c2a",
+  "registered_source_base": "13c053f54b592ea4801afcc406a6fcb9821f628b",
+  "source_files": {
+    "lib/jev_compaction/types.ts": "6fb1b201163ade5f50d4d7e0acea487541aff781a2151b2356c4da2ccbb771fd",
+    "lib/jev_compaction/request.ts": "a4c68881e244469d647a3f078839e5f1b1b8dca2dff1d513b0b281b55df3a7e3",
+    "lib/jev_compaction/state.ts": "a36b5521525bd195e58a1edba4fef2198accc525cc34050a41d07c3b839c9a10",
+    "lib/jev_compaction/compact.ts": "89222d4f8930065b3dacbf77c8a26dd3f5c31eaf84286c796efcd9c7e718cca5",
+    "lib/jev_compaction/codex_items.ts": "6f1ef7ae23b2627d3ff87da9277297b9d65684abbc4fcdc20330d2c22c522a46",
+    "src/jev_compaction/compaction.ts": "5cd274fc8234f869273729b6547b393295b0439d6b98c1b41b7c2b220aae9379",
+    "src/jev_compaction/hybrid.ts": "57582a2221e7f066b6d4e1601132d9912dda6313c42f69db6d2a7275d0589b88",
+    "tests/jev-compaction.test.ts": "c2d89b4346793d3a159dca544621b88af3a35fc8e7b2d63434ed06e705d7710a",
+    "tests/jev-hybrid.test.ts": "e7d82670d3c90d262376369577ce3db6400ca51b61370efd5d70ce6bc229b70b"
+  },
+  "source_golden_ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/1786175f-efff-4f60-b8e2-38eb338fb87a",
+  "first_native_golden_ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/9db08922-e2c6-4578-aea0-e744f87fc8e2",
+  "status": "source implementation; native/WASM acceptance requires matching immutable receipt, runtime acceptance separate",
+  "fitting_source_golden_ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/686589d4-731b-4228-a29d-f0ec98dbc8b9",
+  "fitting_fixture_encoding": "lossless string and [pattern,count] segments; compare complete UTF16 summary, not a digest",
+  "extra_state_source_golden_ref": "591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/6001f00d-8158-4330-bf5d-96c7f53b6c95"
+}

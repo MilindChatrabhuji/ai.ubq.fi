@@ -22,6 +22,8 @@ node_modules
 .npm/
 .bun-cache/
 .tmp/
+.cloudflare/
+tools/cloudflare/runtime.generated.d.ts
 
 # test-run evidence fixtures (scripts/file-size-ratchet.ts excludes these too)
 .cleanup-evidence/

@@ -8,6 +8,12 @@
     "scripts/**/*.ts",
     "benchmarks/**/*.ts",
     "ops/**/*.ts",
+    "tools/cloudflare/generate-types.ts",
+    "tools/cloudflare/storage-conformance.ts",
+    "tools/cloudflare/runtime-conformance.ts",
+    "tools/cloudflare/verify-build-identity.ts",
+    "tools/cloudflare/state-migration-stage-driver.ts",
+    "rust/crates/gateway-migration/examples/native-operator-capture.ts",
     "lib/jev_compaction/**/*.ts"
   ]
 }

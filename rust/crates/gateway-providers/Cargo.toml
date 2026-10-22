@@ -1,0 +1,16 @@
+[package]
+name = "gateway-providers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core = { path = "../gateway-core" }
+gateway-schema = { path = "../gateway-schema" }
+serde.workspace = true
+serde_json.workspace = true
+url = "=2.5.8"
+
+[lints]
+workspace = true

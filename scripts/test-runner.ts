@@ -9,6 +9,13 @@ import { detectTestSelection, formatScopeMessage, testRequiresNativeKv } from ".
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 let interrupted = false;
 const MAX_FILE_WALL_TIME_MS = 600_000;
+// CI 39168411070 reached 33 of 45 passing deployment/recovery cases before
+// the file cap. Keep every case and per-test deadline, with a bounded file budget.
+const DEFAULT_FILE_WALL_TIME_MS: Readonly<Record<string, number | undefined>> = {
+  "tests/vps-deploy-guards.test.ts": 1_200_000,
+};
+export const testFileWallTimeMs = (path: string, explicit: number | undefined): number =>
+  explicit ?? DEFAULT_FILE_WALL_TIME_MS[relative(ROOT, path).split(sep).join("/")] ?? MAX_FILE_WALL_TIME_MS;
 const KILL_GRACE_MS = 3000;
 const PROVIDER_ENV = [
   "CEREBRAS_API_KEY",
@@ -77,7 +84,13 @@ const measurement = (): Group => group("measurement", ["tests/usage-optimization
 const quality = (): Group =>
   group(
     "quality",
-    ["scripts/quality-contract.test.ts", "scripts/test-native-kv.test.ts", "scripts/test-scope.test.ts", "scripts/prepare-worker-test-runtime.test.ts"],
+    [
+      "scripts/quality-contract.test.ts",
+      "scripts/test-native-kv.test.ts",
+      "scripts/test-scope.test.ts",
+      "scripts/rust-verify.test.ts",
+      "scripts/prepare-worker-test-runtime.test.ts",
+    ],
     ["PATH"]
   );
 const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[] => {
@@ -309,11 +322,13 @@ export const runGroups = async (
   }
   return { files, failures };
 };
-const invocation = (args: readonly string[]): Readonly<{ files: string[]; list: boolean; portable: boolean; wallTimeMs: number; nativeBinding?: string }> => {
+const invocation = (
+  args: readonly string[]
+): Readonly<{ files: string[]; list: boolean; portable: boolean; wallTimeMs: number | undefined; nativeBinding?: string }> => {
   const files: string[] = [];
   let list = false;
   let portable = false;
-  let wallTimeMs = MAX_FILE_WALL_TIME_MS;
+  let wallTimeMs: number | undefined;
   let nativeBinding: string | undefined;
   for (const arg of args) {
     if (arg === "--list") list = true;
@@ -362,7 +377,7 @@ const main = async (): Promise<void> => {
     options.nativeBinding !== undefined ||
     (!options.portable && (TEST_SELECTION.runAll || resolved.some((item) => item.files.some((file) => testRequiresNativeKv(file.label)))));
   const { binding, preload } = await resolveNativeTestArtifacts(needsNativeKv, options.nativeBinding);
-  const { files, failures } = await runGroups(resolved, (path, item) => runFile(path, item, options.wallTimeMs, binding, preload));
+  const { files, failures } = await runGroups(resolved, (path, item) => runFile(path, item, testFileWallTimeMs(path, options.wallTimeMs), binding, preload));
   console.log(`test:${segment}: ${files} files, ${failures} failures`);
   process.exitCode = failures === 0 && !interrupted ? 0 : 1;
 };

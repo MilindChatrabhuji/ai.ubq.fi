@@ -282,6 +282,15 @@ export default tsEslint.config(
     },
   },
   {
+    // Cloudflare config uses generated Worker globals, isolated from Bun/Node.
+    // Measured 2026-10-18: the application project excludes these two files;
+    // retain every typed rule while selecting their strict runtime project.
+    files: ["cloudflare.config.ts", "wrangler.config.ts"],
+    languageOptions: {
+      parserOptions: { project: ["./tsconfig.cloudflare.json"] },
+    },
+  },
+  {
     // ---------------------------------------------------------------------
     // Test doubles legitimately need no-op stubs: fake clocks, `save` callbacks
     // for paths that intentionally do not persist, stream sinks that only record
@@ -408,5 +417,15 @@ export default tsEslint.config(
     // accepted socket; extracting them would widen mutable socket ownership.
     files: ["src/runtime/http-upgrade.ts"],
     rules: { "sonarjs/no-nested-functions": "off" },
+  },
+  {
+    // DIVERGENCE: 17 measured findings on required task-root guards and inert
+    // state-controller unit fixture paths. Actual runs require absent private
+    // task directories and a single OS profile denying writes outside the run;
+    // explicit allowed/denied write probes precede real state acceptance.
+    // The private stage driver joins that same task-root contract: it creates a
+    // NEW 0700 run directory, verifies every input hash, and never reuses state.
+    files: ["tools/cloudflare/state-migration-conformance.ts", "tools/cloudflare/state-migration-stage-driver.ts", "tests/state-migration-controller.test.ts"],
+    rules: { "sonarjs/publicly-writable-directories": "off" },
   }
 );

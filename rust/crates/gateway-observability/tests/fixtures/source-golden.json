@@ -1,0 +1,1628 @@
+{
+  "source": {
+    "source_sha": "6d4d4790a7c06514b92938ff677dbfd52764461d",
+    "files": {
+      "src/utils.ts": "600174311bb74dda4729a26ee2fb34811d118db4ce882ed3d99ab10868317b7f",
+      "src/provider/capacity-contract.ts": "93788d1f2308b832c8362e6e903a7e62b4730f2b2f569953855da54345003f4c",
+      "src/provider/capacity-parse.ts": "a994f28ab0537e3cdb1ee67e589cc96d54b83c55c088d0cc63a848f7cf7cc335",
+      "src/provider/health.ts": "3d93dca56f49d37fbec4d7a8e41fb99bc7e53e8176decb439a93b4a00ee97911",
+      "src/paid-fallback/health.ts": "647ff2168ac9d883e8d15715e3fe26632ad623980bab102635e582358ba9661a",
+      "src/bounded-response-body.ts": "aedec706689e658a3088518c700de67e4678f61849ba347498b4ccf3da489a04",
+      "src/metered-quota.ts": "8c36a8275424af613712eee3611bccc383b0dfa8642c1b1a550b5aa391d6771f"
+    }
+  },
+  "runtime": "1.4.0",
+  "cases": [
+    {
+      "op": "capacity_usage",
+      "input": null,
+      "expected": null
+    },
+    {
+      "op": "capacity_usage",
+      "input": [],
+      "expected": null
+    },
+    {
+      "op": "capacity_usage",
+      "input": {},
+      "expected": null
+    },
+    {
+      "op": "capacity_usage",
+      "input": true,
+      "expected": null
+    },
+    {
+      "op": "capacity_usage",
+      "input": {
+        "rate_limit": []
+      },
+      "expected": {
+        "primary": null,
+        "secondary": null,
+        "additional_rate_limits": []
+      }
+    },
+    {
+      "op": "capacity_usage",
+      "input": {
+        "rate_limit": {}
+      },
+      "expected": {
+        "primary": null,
+        "secondary": null,
+        "additional_rate_limits": []
+      }
+    },
+    {
+      "op": "capacity_usage",
+      "input": {
+        "rate_limit": {
+          "primary_window": []
+        }
+      },
+      "expected": {
+        "primary": null,
+        "secondary": null,
+        "additional_rate_limits": []
+      }
+    },
+    {
+      "op": "capacity_usage",
+      "input": {
+        "rate_limit": {
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 0,
+            "reset_at": 0
+          }
+        }
+      },
+      "expected": {
+        "primary": {
+          "limit_window_seconds": 0,
+          "used_percent": 0,
+          "reset_at_ms": 0
+        },
+        "secondary": null,
+        "additional_rate_limits": []
+      }
+    },
+    {
+      "op": "capacity_usage",
+      "input": {
+        "rate_limit": {
+          "primary_window": {
+            "used_percent": 100,
+            "limit_window_seconds": 300,
+            "reset_at": 9007199254740991
+          }
+        }
+      },
+      "expected": {
+        "primary": {
+          "limit_window_seconds": 300,
+          "used_percent": 100,
+          "reset_at_ms": null
+        },
+        "secondary": null,
+        "additional_rate_limits": []
+      }
+    },
+    {
+      "op": "capacity_usage",
+      "input": {
+        "rate_limit": {
+          "primary_window": {
+            "used_percent": 100.5,
+            "limit_window_seconds": -1,
+            "reset_at": 1.5
+          }
+        }
+      },
+      "expected": {
+        "primary": null,
+        "secondary": null,
+        "additional_rate_limits": []
+      }
+    },
+    {
+      "op": "capacity_usage",
+      "input": {
+        "rate_limit": {
+          "primary_window": {
+            "used_percent": 33.5,
+            "limit_window_seconds": 300,
+            "reset_at": 60
+          }
+        },
+        "additional_rate_limits": [
+          null,
+          [],
+          {
+            "limit_name": " x ",
+            "metered_feature": "  ",
+            "rate_limit": {
+              "primary_window": {
+                "used_percent": 0,
+                "limit_window_seconds": 300,
+                "reset_at": 300
+              }
+            }
+          },
+          {
+            "limit_name": "x",
+            "rate_limit": {
+              "secondary_window": {
+                "used_percent": 50,
+                "reset_at": 600
+              }
+            }
+          }
+        ]
+      },
+      "expected": {
+        "primary": {
+          "limit_window_seconds": 300,
+          "used_percent": 33.5,
+          "reset_at_ms": 60000
+        },
+        "secondary": null,
+        "additional_rate_limits": [
+          {
+            "limit_name": "x",
+            "metered_feature": null,
+            "windows": {
+              "primary": {
+                "limit_window_seconds": 300,
+                "used_percent": 0,
+                "reset_at_ms": 300000
+              },
+              "secondary": null
+            }
+          },
+          {
+            "limit_name": "x",
+            "metered_feature": null,
+            "windows": {
+              "primary": null,
+              "secondary": {
+                "limit_window_seconds": null,
+                "used_percent": 50,
+                "reset_at_ms": 600000
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "op": "capacity_overage",
+      "input": null,
+      "expected": null
+    },
+    {
+      "op": "capacity_overage",
+      "input": [],
+      "expected": null
+    },
+    {
+      "op": "capacity_overage",
+      "input": {},
+      "expected": null
+    },
+    {
+      "op": "capacity_overage",
+      "input": {
+        "credits": {
+          "balance": "0",
+          "overage_limit_reached": false
+        }
+      },
+      "expected": {
+        "balance": "0",
+        "overage_limit_reached": false
+      }
+    },
+    {
+      "op": "capacity_overage",
+      "input": {
+        "credits": {
+          "balance": "12.34",
+          "overage_limit_reached": false
+        }
+      },
+      "expected": {
+        "balance": "12.34",
+        "overage_limit_reached": false
+      }
+    },
+    {
+      "op": "capacity_overage",
+      "input": {
+        "credits": {
+          "balance": "",
+          "overage_limit_reached": false
+        }
+      },
+      "expected": {
+        "balance": "",
+        "overage_limit_reached": false
+      }
+    },
+    {
+      "op": "capacity_overage",
+      "input": {
+        "credits": {
+          "balance": null,
+          "overage_limit_reached": false
+        }
+      },
+      "expected": {
+        "balance": null,
+        "overage_limit_reached": false
+      }
+    },
+    {
+      "op": "capacity_overage",
+      "input": {
+        "credits": {
+          "balance": 1,
+          "overage_limit_reached": false
+        }
+      },
+      "expected": {
+        "balance": null,
+        "overage_limit_reached": false
+      }
+    },
+    {
+      "op": "capacity_overage",
+      "input": {
+        "credits": []
+      },
+      "expected": null
+    },
+    {
+      "op": "capacity_overage",
+      "input": {
+        "credits": {
+          "balance": null,
+          "overage_limit_reached": null
+        }
+      },
+      "expected": null
+    },
+    {
+      "op": "health_parse",
+      "input": null,
+      "expected": null
+    },
+    {
+      "op": "health_parse",
+      "input": [],
+      "expected": null
+    },
+    {
+      "op": "health_parse",
+      "input": {},
+      "expected": null
+    },
+    {
+      "op": "health_parse",
+      "input": {
+        "event": "success",
+        "status": 200,
+        "observed_at_ms": 100,
+        "provider_request_id": null
+      },
+      "expected": {
+        "event": "success",
+        "status": 200,
+        "observed_at_ms": 100,
+        "provider_request_id": null
+      }
+    },
+    {
+      "op": "health_parse",
+      "input": {
+        "event": "reachable",
+        "status": 200,
+        "observed_at_ms": 101,
+        "provider_request_id": "opaque-1"
+      },
+      "expected": {
+        "event": "reachable",
+        "status": 200,
+        "observed_at_ms": 101,
+        "provider_request_id": "opaque-1"
+      }
+    },
+    {
+      "op": "health_parse",
+      "input": {
+        "event": "auth_invalid",
+        "status": 200,
+        "observed_at_ms": 102,
+        "provider_request_id": null
+      },
+      "expected": {
+        "event": "auth_invalid",
+        "status": 200,
+        "observed_at_ms": 102,
+        "provider_request_id": null
+      }
+    },
+    {
+      "op": "health_parse",
+      "input": {
+        "event": "quota_exhausted",
+        "status": 200,
+        "observed_at_ms": 103,
+        "provider_request_id": "opaque-3"
+      },
+      "expected": {
+        "event": "quota_exhausted",
+        "status": 200,
+        "observed_at_ms": 103,
+        "provider_request_id": "opaque-3"
+      }
+    },
+    {
+      "op": "health_parse",
+      "input": {
+        "event": "upstream_error",
+        "status": 200,
+        "observed_at_ms": 104,
+        "provider_request_id": null
+      },
+      "expected": {
+        "event": "upstream_error",
+        "status": 200,
+        "observed_at_ms": 104,
+        "provider_request_id": null
+      }
+    },
+    {
+      "op": "health_parse",
+      "input": {
+        "event": "refresh_success",
+        "status": 200,
+        "observed_at_ms": 105,
+        "provider_request_id": "opaque-5"
+      },
+      "expected": {
+        "event": "refresh_success",
+        "status": 200,
+        "observed_at_ms": 105,
+        "provider_request_id": "opaque-5"
+      }
+    },
+    {
+      "op": "health_parse",
+      "input": {
+        "event": "refresh_failed",
+        "status": 401,
+        "observed_at_ms": 106,
+        "provider_request_id": null
+      },
+      "expected": {
+        "event": "refresh_failed",
+        "status": 401,
+        "observed_at_ms": 106,
+        "provider_request_id": null
+      }
+    },
+    {
+      "op": "health_parse",
+      "input": {
+        "event": "success",
+        "status": null,
+        "observed_at_ms": 0
+      },
+      "expected": {
+        "event": "success",
+        "status": null,
+        "observed_at_ms": 0
+      }
+    },
+    {
+      "op": "health_parse",
+      "input": {
+        "event": "unknown",
+        "status": 200,
+        "observed_at_ms": 1
+      },
+      "expected": null
+    },
+    {
+      "op": "health_parse",
+      "input": {
+        "event": "success",
+        "status": 200,
+        "observed_at_ms": 1,
+        "provider_request_id": "bad\nid"
+      },
+      "expected": null
+    },
+    {
+      "op": "health_projection",
+      "input": {
+        "observations": [],
+        "at": 100
+      },
+      "expected": {
+        "state": "unknown",
+        "stale": null,
+        "last_event": null,
+        "last_status": null,
+        "last_observed_at_ms": null,
+        "last_provider_request_id": null,
+        "last_provider_request_id_at_ms": null,
+        "last_success_at_ms": null,
+        "last_401_at_ms": null,
+        "last_429_at_ms": null,
+        "last_error_at_ms": null,
+        "last_refresh_at_ms": null,
+        "last_refresh_succeeded": null
+      }
+    },
+    {
+      "op": "health_projection",
+      "input": {
+        "observations": [
+          {
+            "event": "success",
+            "status": 200,
+            "observed_at_ms": 100,
+            "provider_request_id": null
+          },
+          {
+            "event": "reachable",
+            "status": 200,
+            "observed_at_ms": 101,
+            "provider_request_id": "opaque-1"
+          },
+          {
+            "event": "auth_invalid",
+            "status": 200,
+            "observed_at_ms": 102,
+            "provider_request_id": null
+          },
+          {
+            "event": "quota_exhausted",
+            "status": 200,
+            "observed_at_ms": 103,
+            "provider_request_id": "opaque-3"
+          },
+          {
+            "event": "upstream_error",
+            "status": 200,
+            "observed_at_ms": 104,
+            "provider_request_id": null
+          },
+          {
+            "event": "refresh_success",
+            "status": 200,
+            "observed_at_ms": 105,
+            "provider_request_id": "opaque-5"
+          },
+          {
+            "event": "refresh_failed",
+            "status": 401,
+            "observed_at_ms": 106,
+            "provider_request_id": null
+          }
+        ],
+        "at": 1800106
+      },
+      "expected": {
+        "state": "invalid",
+        "stale": false,
+        "last_event": "refresh_failed",
+        "last_status": 401,
+        "last_observed_at_ms": 106,
+        "last_provider_request_id": "opaque-5",
+        "last_provider_request_id_at_ms": 105,
+        "last_success_at_ms": 100,
+        "last_401_at_ms": 102,
+        "last_429_at_ms": 103,
+        "last_error_at_ms": 106,
+        "last_refresh_at_ms": 106,
+        "last_refresh_succeeded": false
+      }
+    },
+    {
+      "op": "health_projection",
+      "input": {
+        "observations": [
+          {
+            "event": "success",
+            "status": 200,
+            "observed_at_ms": 100,
+            "provider_request_id": null
+          },
+          {
+            "event": "reachable",
+            "status": 200,
+            "observed_at_ms": 101,
+            "provider_request_id": "opaque-1"
+          },
+          {
+            "event": "auth_invalid",
+            "status": 200,
+            "observed_at_ms": 102,
+            "provider_request_id": null
+          },
+          {
+            "event": "quota_exhausted",
+            "status": 200,
+            "observed_at_ms": 103,
+            "provider_request_id": "opaque-3"
+          },
+          {
+            "event": "upstream_error",
+            "status": 200,
+            "observed_at_ms": 104,
+            "provider_request_id": null
+          },
+          {
+            "event": "refresh_success",
+            "status": 200,
+            "observed_at_ms": 105,
+            "provider_request_id": "opaque-5"
+          },
+          {
+            "event": "refresh_failed",
+            "status": 401,
+            "observed_at_ms": 106,
+            "provider_request_id": null
+          }
+        ],
+        "at": 1800107
+      },
+      "expected": {
+        "state": "invalid",
+        "stale": true,
+        "last_event": "refresh_failed",
+        "last_status": 401,
+        "last_observed_at_ms": 106,
+        "last_provider_request_id": "opaque-5",
+        "last_provider_request_id_at_ms": 105,
+        "last_success_at_ms": 100,
+        "last_401_at_ms": 102,
+        "last_429_at_ms": 103,
+        "last_error_at_ms": 106,
+        "last_refresh_at_ms": 106,
+        "last_refresh_succeeded": false
+      }
+    },
+    {
+      "op": "health_projection",
+      "input": {
+        "observations": [
+          {
+            "event": "success",
+            "status": 200,
+            "observed_at_ms": 1
+          },
+          {
+            "event": "quota_exhausted",
+            "status": 429,
+            "observed_at_ms": 1
+          }
+        ],
+        "at": 1
+      },
+      "expected": {
+        "state": "healthy",
+        "stale": false,
+        "last_event": "success",
+        "last_status": 200,
+        "last_observed_at_ms": 1,
+        "last_provider_request_id": null,
+        "last_provider_request_id_at_ms": null,
+        "last_success_at_ms": 1,
+        "last_401_at_ms": null,
+        "last_429_at_ms": 1,
+        "last_error_at_ms": null,
+        "last_refresh_at_ms": null,
+        "last_refresh_succeeded": null
+      }
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": null,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": null,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": null,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": null,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 0,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 0,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 0,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 0,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 99,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 99,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 99,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 99,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 100,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 100,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 100,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 100,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 200,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 200,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 200,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 200,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 401,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 401,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 401,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 401,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 402,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 402,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "quota_exhausted"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 402,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 402,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 403,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 403,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 403,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 403,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 429,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "quota_exhausted"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 429,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "quota_exhausted"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 429,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "quota_exhausted"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 429,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "quota_exhausted"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 500,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 500,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 500,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "surplus",
+        "status": 500,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": null,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": null,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": null,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": null,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 0,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 0,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 0,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 0,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 99,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 99,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 99,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 99,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": null
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 100,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 100,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 100,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 100,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 200,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 200,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 200,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 200,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "reachable"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 401,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 401,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 401,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 401,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 402,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "quota_exhausted"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 402,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "quota_exhausted"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 402,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "quota_exhausted"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 402,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "quota_exhausted"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 403,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 403,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 403,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "auth_invalid"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 403,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "quota_exhausted"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 429,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "quota_exhausted"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 429,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "quota_exhausted"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 429,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "quota_exhausted"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 429,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "quota_exhausted"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 500,
+        "body": "{}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 500,
+        "body": "{\"error\":{\"code\":\"insufficient_credit\"}}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 500,
+        "body": "{\"error\":[],\"code\":\"insufficient_credit\"}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "paid_health",
+      "input": {
+        "provider": "metered",
+        "status": 500,
+        "body": "{\"error\":{\"code\":\"local:insufficient_quota\"}}",
+        "complete": true
+      },
+      "expected": "upstream_error"
+    },
+    {
+      "op": "balance_valid",
+      "input": null,
+      "expected": false
+    },
+    {
+      "op": "balance_valid",
+      "input": [],
+      "expected": false
+    },
+    {
+      "op": "balance_valid",
+      "input": {},
+      "expected": false
+    },
+    {
+      "op": "balance_valid",
+      "input": {
+        "v": 1,
+        "bucket_start_at_ms": 0,
+        "observed_at_ms": 1,
+        "balance_quota": 100,
+        "baseline_quota": 200,
+        "quota_per_credit": 1,
+        "remaining_percent": 50
+      },
+      "expected": true
+    },
+    {
+      "op": "balance_valid",
+      "input": {
+        "v": 1,
+        "bucket_start_at_ms": 0,
+        "observed_at_ms": 1,
+        "balance_quota": -1,
+        "baseline_quota": 200,
+        "quota_per_credit": 1,
+        "remaining_percent": 50
+      },
+      "expected": true
+    },
+    {
+      "op": "balance_valid",
+      "input": {
+        "v": 1,
+        "bucket_start_at_ms": 0,
+        "observed_at_ms": 1,
+        "balance_quota": 100,
+        "baseline_quota": 200,
+        "quota_per_credit": 0,
+        "remaining_percent": 50
+      },
+      "expected": false
+    },
+    {
+      "op": "balance_valid",
+      "input": {
+        "v": 1,
+        "bucket_start_at_ms": 0,
+        "observed_at_ms": 1.5,
+        "balance_quota": 100,
+        "baseline_quota": 200,
+        "quota_per_credit": 1,
+        "remaining_percent": 50
+      },
+      "expected": false
+    },
+    {
+      "op": "balance_valid",
+      "input": {
+        "v": 1,
+        "bucket_start_at_ms": 0,
+        "observed_at_ms": 1,
+        "balance_quota": 100,
+        "baseline_quota": 200,
+        "quota_per_credit": 1,
+        "remaining_percent": null
+      },
+      "expected": true
+    },
+    {
+      "op": "balance_valid",
+      "input": {
+        "v": 1,
+        "bucket_start_at_ms": 0,
+        "observed_at_ms": 1,
+        "balance_quota": 100,
+        "baseline_quota": 200,
+        "quota_per_credit": 1,
+        "remaining_percent": 50,
+        "total_used": -1
+      },
+      "expected": true
+    },
+    {
+      "op": "balance_valid",
+      "input": {
+        "v": 1,
+        "bucket_start_at_ms": 0,
+        "observed_at_ms": 1,
+        "balance_quota": 100,
+        "baseline_quota": 200,
+        "quota_per_credit": 1,
+        "remaining_percent": 50,
+        "unlimited_quota": null
+      },
+      "expected": false
+    },
+    {
+      "op": "balance_resample",
+      "input": {
+        "samples": [],
+        "bucket": 100,
+        "limit": 365
+      },
+      "expected": []
+    },
+    {
+      "op": "balance_resample",
+      "input": {
+        "samples": [
+          {
+            "v": 1,
+            "bucket_start_at_ms": 0,
+            "observed_at_ms": 1,
+            "balance_quota": 100,
+            "baseline_quota": 200,
+            "quota_per_credit": 1,
+            "remaining_percent": 50
+          },
+          {
+            "v": 1,
+            "bucket_start_at_ms": 0,
+            "observed_at_ms": 2,
+            "balance_quota": 90,
+            "baseline_quota": 200,
+            "quota_per_credit": 1,
+            "remaining_percent": 50
+          }
+        ],
+        "bucket": 100,
+        "limit": 365
+      },
+      "expected": [
+        {
+          "v": 1,
+          "bucket_start_at_ms": 0,
+          "observed_at_ms": 2,
+          "balance_quota": 90,
+          "baseline_quota": 200,
+          "quota_per_credit": 1,
+          "remaining_percent": 50
+        }
+      ]
+    },
+    {
+      "op": "balance_resample",
+      "input": {
+        "samples": [
+          {
+            "v": 1,
+            "bucket_start_at_ms": 1,
+            "observed_at_ms": 20,
+            "balance_quota": 100,
+            "baseline_quota": 200,
+            "quota_per_credit": 1,
+            "remaining_percent": 50
+          },
+          {
+            "v": 1,
+            "bucket_start_at_ms": 2,
+            "observed_at_ms": 20,
+            "balance_quota": 100,
+            "baseline_quota": 200,
+            "quota_per_credit": 1,
+            "remaining_percent": 50
+          }
+        ],
+        "bucket": 100,
+        "limit": 365
+      },
+      "expected": [
+        {
+          "v": 1,
+          "bucket_start_at_ms": 0,
+          "observed_at_ms": 20,
+          "balance_quota": 100,
+          "baseline_quota": 200,
+          "quota_per_credit": 1,
+          "remaining_percent": 50
+        }
+      ]
+    }
+  ]
+}

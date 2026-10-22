@@ -1,0 +1,61 @@
+{
+  "v": 1,
+  "kernelRelease": "7.2.6-070206-generic",
+  "configSha256": "13b8b282ea5e499df4c43b84934f6dc690afe58c2d7920d4f03fba39138c6cfa",
+  "kernel": {
+    "name": "kernel.deb",
+    "url": "https://kernel.ubuntu.com/mainline/v7.2.6/arm64/linux-image-unsigned-7.2.6-070206-generic_7.2.6-070206.202609141300_arm64.deb",
+    "sha256": "02aae8e32fe4d44d47d26b41b9800b9129f0e986840f5a72bdd04b7c78ef5ce8",
+    "maxBytes": 134217728
+  },
+  "modules": {
+    "name": "modules.deb",
+    "url": "https://kernel.ubuntu.com/mainline/v7.2.6/arm64/linux-modules-7.2.6-070206-generic_7.2.6-070206.202609141300_arm64.deb",
+    "sha256": "15598e55ef06a03dd24b4550f5375e2ec021675f6cbb50af414cd3af41866486",
+    "maxBytes": 494927872
+  },
+  "disk": {
+    "name": "disk.img",
+    "url": "https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-arm64.img",
+    "sha256": "8eb876c2ccc4b6ff89e4a65d511815923b285e04503ba465809bf587f763da24",
+    "maxBytes": 2147483648
+  },
+  "signatures": [
+    {
+      "keyring": "mainline.gpg",
+      "keyringSha256": "19c6b1c081acefac2cbe2bbb400930249122c8fe0a0fa47e44e3fb4fb24e242c",
+      "fingerprint": "60AA7B6F30434AE68E569963E50C6A0917C622B0",
+      "checksums": {
+        "name": "mainline-checksums.txt",
+        "url": "https://kernel.ubuntu.com/mainline/v7.2.6/arm64/CHECKSUMS",
+        "sha256": "1becab044b1960106015777bff93525b518dd935a55b41452ecaaaf69df6ebb7",
+        "maxBytes": 4194304
+      },
+      "signature": {
+        "name": "mainline-signature.bin",
+        "url": "https://kernel.ubuntu.com/mainline/v7.2.6/arm64/CHECKSUMS.gpg",
+        "sha256": "48959053cc9745f5f695112a0033ec8049dd6d8d97a933b0edca578178a19584",
+        "maxBytes": 1048576
+      },
+      "members": ["kernel", "modules"]
+    },
+    {
+      "keyring": "cloud.gpg",
+      "keyringSha256": "48ed28fc5fc61bfda3a8e160a7a3fdb556c4d41a6ea30da5f23dd4a1cd42bfbb",
+      "fingerprint": "D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81",
+      "checksums": {
+        "name": "cloud-checksums.txt",
+        "url": "https://cloud-images.ubuntu.com/resolute/current/SHA256SUMS",
+        "sha256": "385b87c11ee012d8d4d860b07776cd37d1bee0b3c36adbce04dc784e4e4faa6d",
+        "maxBytes": 4194304
+      },
+      "signature": {
+        "name": "cloud-signature.bin",
+        "url": "https://cloud-images.ubuntu.com/resolute/current/SHA256SUMS.gpg",
+        "sha256": "0670b94403000de78ff7dc4279e5fe85fb5bb1515ab0fbecc02b6e2acb05e2f9",
+        "maxBytes": 1048576
+      },
+      "members": ["disk"]
+    }
+  ]
+}

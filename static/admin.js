@@ -149,6 +149,8 @@ const rememberTokenInput = mustGet("remember-admin-token");
 const showTokenInput = mustGet("show-admin-token");
 const authBadge = mustGet("admin-auth-badge");
 const passkeyHandleInput = mustGet("admin-passkey-handle");
+const passportLoginBtn = mustGet("admin-passport-login");
+const passportWidgetLoginBtn = mustGet("admin-passport-login-widget");
 const passkeyLoginBtn = mustGet("admin-passkey-login");
 const passkeyRegisterBtn = mustGet("admin-passkey-register");
 const signOutBtn = mustGet("admin-sign-out");
@@ -507,12 +509,14 @@ const setAuthWidgetOpen = (open, options = {}) => {
 const setSignedInState = (signedIn, options = {}) => {
   const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
   const canRegisterPasskey = options.canRegisterPasskey ?? false;
+  passportLoginBtn.hidden = signedIn;
+  passportWidgetLoginBtn.hidden = signedIn;
   passkeyLoginBtn.hidden = signedIn;
   passkeyRegisterBtn.hidden =
     isAuthRelayMode || isRemoteRelayOrigin() || deviceRegistered || (signedIn && !canRegisterPasskey);
   signOutBtn.hidden = !signedIn;
-  if (signedIn) setPasskeyStatus("ok", options.statusText ?? "Token active");
-  else setPasskeyStatus("unknown", "Passkey idle");
+  if (signedIn) setPasskeyStatus("ok", options.statusText ?? "Signed in");
+  else setPasskeyStatus("unknown", "Signed out");
 };
 const setCreateBadge = (state, text) => setBadge(createBadge, state, text);
 const setKeysBadge = (state, text) => setBadge(keysBadge, state, text);
@@ -581,7 +585,9 @@ const setAdminSnapshotScopeFromAuth = (auth) => {
   const tokenFingerprint = typeof auth?.token?.sha256_12 === "string" ? auth.token.sha256_12 : "";
   const passkeyUserId = typeof auth?.method?.user?.id === "string" ? auth.method.user.id : "";
   const localDevelopmentPrincipal = method === "disabled" && canUseLocalDevelopmentAuth() ? "local-development" : "";
-  const principal = tokenFingerprint || (passkeyUserId ? `${method}:${passkeyUserId}` : localDevelopmentPrincipal);
+  const passportPrincipal = typeof auth?.principal === "string" ? auth.principal : "";
+  const principal =
+    tokenFingerprint || passportPrincipal || (passkeyUserId ? `${method}:${passkeyUserId}` : localDevelopmentPrincipal);
   if (!method || !principal) {
     clearAdminSnapshotScope();
     return false;
@@ -3868,6 +3874,8 @@ const formatAuthMethodLabel = (method) => {
     auth_tokens_allowlist: "Allowlist token",
     kv_api_key: "API key",
     github_token: "GitHub token",
+    passport_session: "Passport",
+    passport_bearer: "Passport token",
     passkey_session: "Passkey",
     disabled: "Auth disabled",
   };
@@ -11043,6 +11051,12 @@ rememberTokenInput.addEventListener("change", () => {
 passkeyHandleInput.addEventListener("input", () => {
   schedulePasskeyHandlePersist();
 });
+
+const openPassportLogin = () => {
+  globalThis.location.assign(buildBackendUrl("/auth/login", resolveBaseUrl()));
+};
+passportLoginBtn.addEventListener("click", openPassportLogin);
+passportWidgetLoginBtn.addEventListener("click", openPassportLogin);
 
 passkeyLoginBtn.addEventListener("click", () => {
   void runPasskeyLogin();

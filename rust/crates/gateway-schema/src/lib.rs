@@ -1,0 +1,22 @@
+//! Source-derived OpenAI/Codex request and catalog domain. No credentials or provider I/O.
+pub mod aliases;
+pub mod allowlists;
+pub mod catalog;
+pub mod catalog_cache;
+pub mod catalog_store;
+pub mod catalog_views;
+pub mod content;
+pub mod metadata;
+pub(crate) mod model_control;
+pub mod native_catalog;
+pub mod prompt_cache;
+pub mod provider_catalog;
+pub mod reasoning;
+pub mod request;
+pub mod runtime_config;
+pub mod selection;
+pub mod snapshot;
+pub mod source_request;
+pub mod util;
+pub use gateway_core::GatewayError;
+pub use serde_json::{Map, Value};

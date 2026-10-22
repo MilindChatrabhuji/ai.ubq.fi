@@ -1,0 +1,1664 @@
+{
+  "source_sha": "6d4d4790a7c06514b92938ff677dbfd52764461d",
+  "now": 1800000000000,
+  "classes": [
+    {
+      "status": 200,
+      "headers": {},
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "ok",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 200,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "1",
+        "anthropic-ratelimit-unified-5h-reset": "1800000060"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "ok",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 200,
+      "headers": {
+        "anthropic-ratelimit-unified-7d-status": "limited"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "ok",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 200,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-status": ""
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "ok",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 200,
+      "headers": {
+        "retry-after": "0x10"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "ok",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 200,
+      "headers": {
+        "retry-after": "Wed, 18 Nov 2026 00:00:00 GMT"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "ok",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 200,
+      "headers": {
+        "anthropic-ratelimit-requests-limit": "0x10",
+        "anthropic-ratelimit-input-tokens-remaining": "2.5",
+        "anthropic-ratelimit-output-tokens-reset": "NaN"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "ok",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 200,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "-0",
+        "anthropic-ratelimit-unified-7d-utilization": "Infinity",
+        "anthropic-ratelimit-unified-representative-claim": " sample "
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "ok",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 400,
+      "headers": {},
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "request_rejected",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 400,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "1",
+        "anthropic-ratelimit-unified-5h-reset": "1800000060"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "request_rejected",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 400,
+      "headers": {
+        "anthropic-ratelimit-unified-7d-status": "limited"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "request_rejected",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 400,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-status": ""
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "request_rejected",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 400,
+      "headers": {
+        "retry-after": "0x10"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "request_rejected",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 400,
+      "headers": {
+        "retry-after": "Wed, 18 Nov 2026 00:00:00 GMT"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "request_rejected",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 400,
+      "headers": {
+        "anthropic-ratelimit-requests-limit": "0x10",
+        "anthropic-ratelimit-input-tokens-remaining": "2.5",
+        "anthropic-ratelimit-output-tokens-reset": "NaN"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "request_rejected",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 400,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "-0",
+        "anthropic-ratelimit-unified-7d-utilization": "Infinity",
+        "anthropic-ratelimit-unified-representative-claim": " sample "
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "request_rejected",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 401,
+      "headers": {},
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "auth_invalid",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 401,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "1",
+        "anthropic-ratelimit-unified-5h-reset": "1800000060"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "auth_invalid",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 401,
+      "headers": {
+        "anthropic-ratelimit-unified-7d-status": "limited"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "auth_invalid",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 401,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-status": ""
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "auth_invalid",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 401,
+      "headers": {
+        "retry-after": "0x10"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "auth_invalid",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 401,
+      "headers": {
+        "retry-after": "Wed, 18 Nov 2026 00:00:00 GMT"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "auth_invalid",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 401,
+      "headers": {
+        "anthropic-ratelimit-requests-limit": "0x10",
+        "anthropic-ratelimit-input-tokens-remaining": "2.5",
+        "anthropic-ratelimit-output-tokens-reset": "NaN"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "auth_invalid",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 401,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "-0",
+        "anthropic-ratelimit-unified-7d-utilization": "Infinity",
+        "anthropic-ratelimit-unified-representative-claim": " sample "
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "auth_invalid",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 403,
+      "headers": {},
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "forbidden",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 403,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "1",
+        "anthropic-ratelimit-unified-5h-reset": "1800000060"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "forbidden",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 403,
+      "headers": {
+        "anthropic-ratelimit-unified-7d-status": "limited"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "forbidden",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 403,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-status": ""
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "forbidden",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 403,
+      "headers": {
+        "retry-after": "0x10"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "forbidden",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 403,
+      "headers": {
+        "retry-after": "Wed, 18 Nov 2026 00:00:00 GMT"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "forbidden",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 403,
+      "headers": {
+        "anthropic-ratelimit-requests-limit": "0x10",
+        "anthropic-ratelimit-input-tokens-remaining": "2.5",
+        "anthropic-ratelimit-output-tokens-reset": "NaN"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "forbidden",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 403,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "-0",
+        "anthropic-ratelimit-unified-7d-utilization": "Infinity",
+        "anthropic-ratelimit-unified-representative-claim": " sample "
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "forbidden",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 429,
+      "headers": {},
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "transient_rate_limited",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 429,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "1",
+        "anthropic-ratelimit-unified-5h-reset": "1800000060"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "durable_exhaustion",
+        "exhaustion": {
+          "window": "5h",
+          "reset_at_ms": 1800000060000
+        },
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 429,
+      "headers": {
+        "anthropic-ratelimit-unified-7d-status": "limited"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "durable_exhaustion",
+        "exhaustion": {
+          "window": "7d",
+          "reset_at_ms": null
+        },
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 429,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-status": ""
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "transient_rate_limited",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 429,
+      "headers": {
+        "retry-after": "0x10"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "transient_rate_limited",
+        "exhaustion": null,
+        "retry_after_ms": 16000,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 429,
+      "headers": {
+        "retry-after": "Wed, 18 Nov 2026 00:00:00 GMT"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "transient_rate_limited",
+        "exhaustion": null,
+        "retry_after_ms": 0,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 429,
+      "headers": {
+        "anthropic-ratelimit-requests-limit": "0x10",
+        "anthropic-ratelimit-input-tokens-remaining": "2.5",
+        "anthropic-ratelimit-output-tokens-reset": "NaN"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "transient_rate_limited",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 429,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "-0",
+        "anthropic-ratelimit-unified-7d-utilization": "Infinity",
+        "anthropic-ratelimit-unified-representative-claim": " sample "
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "transient_rate_limited",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 503,
+      "headers": {},
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 503,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "1",
+        "anthropic-ratelimit-unified-5h-reset": "1800000060"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 503,
+      "headers": {
+        "anthropic-ratelimit-unified-7d-status": "limited"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 503,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-status": ""
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 503,
+      "headers": {
+        "retry-after": "0x10"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 503,
+      "headers": {
+        "retry-after": "Wed, 18 Nov 2026 00:00:00 GMT"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 503,
+      "headers": {
+        "anthropic-ratelimit-requests-limit": "0x10",
+        "anthropic-ratelimit-input-tokens-remaining": "2.5",
+        "anthropic-ratelimit-output-tokens-reset": "NaN"
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 503,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "-0",
+        "anthropic-ratelimit-unified-7d-utilization": "Infinity",
+        "anthropic-ratelimit-unified-representative-claim": " sample "
+      },
+      "body_units": null,
+      "complete": false,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 400,
+      "headers": {},
+      "body_units": null,
+      "complete": true,
+      "expected": {
+        "kind": "request_rejected",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 400,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 78, 111, 116,
+        32, 115, 99, 111, 112, 101, 100, 32, 116, 111, 32, 97, 32, 119, 111, 114, 107, 115, 112, 97, 99, 101, 34, 125,
+        125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "workspace_required",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [
+          78, 111, 116, 32, 115, 99, 111, 112, 101, 100, 32, 116, 111, 32, 97, 32, 119, 111, 114, 107, 115, 112, 97, 99,
+          101
+        ]
+      }
+    },
+    {
+      "status": 400,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 87, 111, 114,
+        107, 115, 112, 97, 99, 101, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "workspace_not_found",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [87, 111, 114, 107, 115, 112, 97, 99, 101, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100]
+      }
+    },
+    {
+      "status": 400,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 112, 117, 114,
+        99, 104, 97, 115, 101, 32, 99, 114, 101, 100, 105, 116, 115, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "billing_blocked",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [112, 117, 114, 99, 104, 97, 115, 101, 32, 99, 114, 101, 100, 105, 116, 115]
+      }
+    },
+    {
+      "status": 400,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 114, 101, 113,
+        117, 101, 115, 116, 32, 105, 110, 118, 97, 108, 105, 100, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "request_rejected",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [114, 101, 113, 117, 101, 115, 116, 32, 105, 110, 118, 97, 108, 105, 100]
+      }
+    },
+    {
+      "status": 400,
+      "headers": {},
+      "body_units": [32, 112, 108, 97, 105, 110, 32, 101, 114, 114, 111, 114, 32],
+      "complete": true,
+      "expected": {
+        "kind": "request_rejected",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [112, 108, 97, 105, 110, 32, 101, 114, 114, 111, 114]
+      }
+    },
+    {
+      "status": 400,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 99, 114, 101,
+        100, 105, 116, 32, 98, 97, 108, 97, 110, 99, 101, 32, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 55357, 56832, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "billing_blocked",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [
+          99, 114, 101, 100, 105, 116, 32, 98, 97, 108, 97, 110, 99, 101, 32, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 55357
+        ]
+      }
+    },
+    {
+      "status": 401,
+      "headers": {},
+      "body_units": null,
+      "complete": true,
+      "expected": {
+        "kind": "auth_invalid",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 401,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 78, 111, 116,
+        32, 115, 99, 111, 112, 101, 100, 32, 116, 111, 32, 97, 32, 119, 111, 114, 107, 115, 112, 97, 99, 101, 34, 125,
+        125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "auth_invalid",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [
+          78, 111, 116, 32, 115, 99, 111, 112, 101, 100, 32, 116, 111, 32, 97, 32, 119, 111, 114, 107, 115, 112, 97, 99,
+          101
+        ]
+      }
+    },
+    {
+      "status": 401,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 87, 111, 114,
+        107, 115, 112, 97, 99, 101, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "workspace_not_found",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [87, 111, 114, 107, 115, 112, 97, 99, 101, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100]
+      }
+    },
+    {
+      "status": 401,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 112, 117, 114,
+        99, 104, 97, 115, 101, 32, 99, 114, 101, 100, 105, 116, 115, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "billing_blocked",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [112, 117, 114, 99, 104, 97, 115, 101, 32, 99, 114, 101, 100, 105, 116, 115]
+      }
+    },
+    {
+      "status": 401,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 114, 101, 113,
+        117, 101, 115, 116, 32, 105, 110, 118, 97, 108, 105, 100, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "auth_invalid",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [114, 101, 113, 117, 101, 115, 116, 32, 105, 110, 118, 97, 108, 105, 100]
+      }
+    },
+    {
+      "status": 401,
+      "headers": {},
+      "body_units": [32, 112, 108, 97, 105, 110, 32, 101, 114, 114, 111, 114, 32],
+      "complete": true,
+      "expected": {
+        "kind": "auth_invalid",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [112, 108, 97, 105, 110, 32, 101, 114, 114, 111, 114]
+      }
+    },
+    {
+      "status": 401,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 99, 114, 101,
+        100, 105, 116, 32, 98, 97, 108, 97, 110, 99, 101, 32, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 55357, 56832, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "billing_blocked",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [
+          99, 114, 101, 100, 105, 116, 32, 98, 97, 108, 97, 110, 99, 101, 32, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 55357
+        ]
+      }
+    },
+    {
+      "status": 403,
+      "headers": {},
+      "body_units": null,
+      "complete": true,
+      "expected": {
+        "kind": "forbidden",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 403,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 78, 111, 116,
+        32, 115, 99, 111, 112, 101, 100, 32, 116, 111, 32, 97, 32, 119, 111, 114, 107, 115, 112, 97, 99, 101, 34, 125,
+        125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "forbidden",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [
+          78, 111, 116, 32, 115, 99, 111, 112, 101, 100, 32, 116, 111, 32, 97, 32, 119, 111, 114, 107, 115, 112, 97, 99,
+          101
+        ]
+      }
+    },
+    {
+      "status": 403,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 87, 111, 114,
+        107, 115, 112, 97, 99, 101, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "workspace_not_found",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [87, 111, 114, 107, 115, 112, 97, 99, 101, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100]
+      }
+    },
+    {
+      "status": 403,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 112, 117, 114,
+        99, 104, 97, 115, 101, 32, 99, 114, 101, 100, 105, 116, 115, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "billing_blocked",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [112, 117, 114, 99, 104, 97, 115, 101, 32, 99, 114, 101, 100, 105, 116, 115]
+      }
+    },
+    {
+      "status": 403,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 114, 101, 113,
+        117, 101, 115, 116, 32, 105, 110, 118, 97, 108, 105, 100, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "forbidden",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [114, 101, 113, 117, 101, 115, 116, 32, 105, 110, 118, 97, 108, 105, 100]
+      }
+    },
+    {
+      "status": 403,
+      "headers": {},
+      "body_units": [32, 112, 108, 97, 105, 110, 32, 101, 114, 114, 111, 114, 32],
+      "complete": true,
+      "expected": {
+        "kind": "forbidden",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [112, 108, 97, 105, 110, 32, 101, 114, 114, 111, 114]
+      }
+    },
+    {
+      "status": 403,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 99, 114, 101,
+        100, 105, 116, 32, 98, 97, 108, 97, 110, 99, 101, 32, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 55357, 56832, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "billing_blocked",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [
+          99, 114, 101, 100, 105, 116, 32, 98, 97, 108, 97, 110, 99, 101, 32, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 55357
+        ]
+      }
+    },
+    {
+      "status": 429,
+      "headers": {},
+      "body_units": null,
+      "complete": true,
+      "expected": {
+        "kind": "transient_rate_limited",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 429,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 78, 111, 116,
+        32, 115, 99, 111, 112, 101, 100, 32, 116, 111, 32, 97, 32, 119, 111, 114, 107, 115, 112, 97, 99, 101, 34, 125,
+        125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "transient_rate_limited",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [
+          78, 111, 116, 32, 115, 99, 111, 112, 101, 100, 32, 116, 111, 32, 97, 32, 119, 111, 114, 107, 115, 112, 97, 99,
+          101
+        ]
+      }
+    },
+    {
+      "status": 429,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 87, 111, 114,
+        107, 115, 112, 97, 99, 101, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "workspace_not_found",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [87, 111, 114, 107, 115, 112, 97, 99, 101, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100]
+      }
+    },
+    {
+      "status": 429,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 112, 117, 114,
+        99, 104, 97, 115, 101, 32, 99, 114, 101, 100, 105, 116, 115, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "billing_blocked",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [112, 117, 114, 99, 104, 97, 115, 101, 32, 99, 114, 101, 100, 105, 116, 115]
+      }
+    },
+    {
+      "status": 429,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 114, 101, 113,
+        117, 101, 115, 116, 32, 105, 110, 118, 97, 108, 105, 100, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "transient_rate_limited",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [114, 101, 113, 117, 101, 115, 116, 32, 105, 110, 118, 97, 108, 105, 100]
+      }
+    },
+    {
+      "status": 429,
+      "headers": {},
+      "body_units": [32, 112, 108, 97, 105, 110, 32, 101, 114, 114, 111, 114, 32],
+      "complete": true,
+      "expected": {
+        "kind": "transient_rate_limited",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [112, 108, 97, 105, 110, 32, 101, 114, 114, 111, 114]
+      }
+    },
+    {
+      "status": 429,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 99, 114, 101,
+        100, 105, 116, 32, 98, 97, 108, 97, 110, 99, 101, 32, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 55357, 56832, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "billing_blocked",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": [
+          99, 114, 101, 100, 105, 116, 32, 98, 97, 108, 97, 110, 99, 101, 32, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+          120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 55357
+        ]
+      }
+    },
+    {
+      "status": 503,
+      "headers": {},
+      "body_units": null,
+      "complete": true,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 503,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 78, 111, 116,
+        32, 115, 99, 111, 112, 101, 100, 32, 116, 111, 32, 97, 32, 119, 111, 114, 107, 115, 112, 97, 99, 101, 34, 125,
+        125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 503,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 87, 111, 114,
+        107, 115, 112, 97, 99, 101, 32, 110, 111, 116, 32, 102, 111, 117, 110, 100, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 503,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 112, 117, 114,
+        99, 104, 97, 115, 101, 32, 99, 114, 101, 100, 105, 116, 115, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 503,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 114, 101, 113,
+        117, 101, 115, 116, 32, 105, 110, 118, 97, 108, 105, 100, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 503,
+      "headers": {},
+      "body_units": [32, 112, 108, 97, 105, 110, 32, 101, 114, 114, 111, 114, 32],
+      "complete": true,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    },
+    {
+      "status": 503,
+      "headers": {},
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 99, 114, 101,
+        100, 105, 116, 32, 98, 97, 108, 97, 110, 99, 101, 32, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+        120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 55357, 56832, 34, 125, 125
+      ],
+      "complete": true,
+      "expected": {
+        "kind": "upstream_error",
+        "exhaustion": null,
+        "retry_after_ms": null,
+        "detail_units": null
+      }
+    }
+  ],
+  "observations": [
+    {
+      "headers": {},
+      "expected": null
+    },
+    {
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "1",
+        "anthropic-ratelimit-unified-5h-reset": "1800000060"
+      },
+      "expected": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 1,
+            "reset_at_ms": 1800000060000,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000
+      }
+    },
+    {
+      "headers": {
+        "anthropic-ratelimit-unified-7d-status": "limited"
+      },
+      "expected": {
+        "windows": {
+          "7d": {
+            "status": "limited",
+            "utilization": null,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000
+      }
+    },
+    {
+      "headers": {
+        "anthropic-ratelimit-unified-5h-status": ""
+      },
+      "expected": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": null,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000
+      }
+    },
+    {
+      "headers": {
+        "retry-after": "0x10"
+      },
+      "expected": null
+    },
+    {
+      "headers": {
+        "retry-after": "Wed, 18 Nov 2026 00:00:00 GMT"
+      },
+      "expected": null
+    },
+    {
+      "headers": {
+        "anthropic-ratelimit-requests-limit": "0x10",
+        "anthropic-ratelimit-input-tokens-remaining": "2.5",
+        "anthropic-ratelimit-output-tokens-reset": "NaN"
+      },
+      "expected": {
+        "windows": {},
+        "standard": {
+          "requests": {
+            "limit": 16,
+            "remaining": null,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          },
+          "input-tokens": {
+            "limit": null,
+            "remaining": 2.5,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000
+      }
+    },
+    {
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "-0",
+        "anthropic-ratelimit-unified-7d-utilization": "Infinity",
+        "anthropic-ratelimit-unified-representative-claim": " sample "
+      },
+      "expected": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 0,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": "sample",
+        "observed_at_ms": 1800000000000
+      }
+    }
+  ],
+  "states": [
+    {
+      "raw": null,
+      "expected": null
+    },
+    {
+      "raw": {},
+      "expected": null
+    },
+    {
+      "raw": {
+        "updated_at_ms": 1800000000000
+      },
+      "expected": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "blocked_until_ms": null,
+        "block_window": null,
+        "cooldown_until_ms": null,
+        "last_error": null,
+        "updated_at_ms": 1800000000000
+      }
+    },
+    {
+      "raw": {
+        "updated_at_ms": 1800000000000,
+        "windows": {
+          "5h": {
+            "status": "allowed",
+            "utilization": 0.2,
+            "reset_at_ms": 1800000001000,
+            "observed_at_ms": 1800000000000
+          }
+        }
+      },
+      "expected": {
+        "windows": {
+          "5h": {
+            "status": "allowed",
+            "utilization": 0.2,
+            "reset_at_ms": 1800000001000,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "blocked_until_ms": null,
+        "block_window": null,
+        "cooldown_until_ms": null,
+        "last_error": null,
+        "updated_at_ms": 1800000000000
+      }
+    },
+    {
+      "raw": {
+        "updated_at_ms": 1800000000000,
+        "windows": {
+          "5h": {
+            "status": 3,
+            "utilization": -1,
+            "observed_at_ms": 1800000000000
+          },
+          "7d": {
+            "status": "limited",
+            "utilization": 1,
+            "reset_at_ms": 1.5,
+            "observed_at_ms": 1800000000000
+          }
+        }
+      },
+      "expected": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "blocked_until_ms": null,
+        "block_window": null,
+        "cooldown_until_ms": null,
+        "last_error": null,
+        "updated_at_ms": 1800000000000
+      }
+    },
+    {
+      "raw": {
+        "updated_at_ms": 1800000000000,
+        "pool_proofs": {
+          "credential": {
+            "kind": "auth_invalid",
+            "model_id": null,
+            "observed_at_ms": 1800000000000,
+            "expires_at_ms": 1800000300000,
+            "evidence_generation": "00000000-0000-4000-a000-000000000001"
+          }
+        }
+      },
+      "expected": {
+        "pool_proofs": {
+          "credential": {
+            "kind": "auth_invalid",
+            "model_id": null,
+            "observed_at_ms": 1800000000000,
+            "expires_at_ms": 1800000300000,
+            "evidence_generation": "00000000-0000-4000-a000-000000000001"
+          }
+        },
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "blocked_until_ms": null,
+        "block_window": null,
+        "cooldown_until_ms": null,
+        "last_error": null,
+        "updated_at_ms": 1800000000000
+      }
+    },
+    {
+      "raw": {
+        "updated_at_ms": 1800000000000,
+        "pool_proofs": {
+          "bad": {
+            "kind": "quota_exhausted",
+            "model_id": "claude-fixture",
+            "observed_at_ms": 1800000000001,
+            "expires_at_ms": 1800000000000,
+            "evidence_generation": "00000000-0000-4000-a000-000000000001"
+          }
+        }
+      },
+      "expected": {
+        "pool_proofs": {},
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "blocked_until_ms": null,
+        "block_window": null,
+        "cooldown_until_ms": null,
+        "last_error": null,
+        "updated_at_ms": 1800000000000
+      }
+    }
+  ],
+  "outcomes": [
+    {
+      "status": 200,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "-0",
+        "anthropic-ratelimit-unified-7d-utilization": "Infinity",
+        "anthropic-ratelimit-unified-representative-claim": " sample "
+      },
+      "body_units": null,
+      "previous": {
+        "updated_at_ms": 1800000000000,
+        "pool_proofs": {
+          "credential": {
+            "kind": "auth_invalid",
+            "model_id": null,
+            "observed_at_ms": 1800000000000,
+            "expires_at_ms": 1800000300000,
+            "evidence_generation": "00000000-0000-4000-a000-000000000001"
+          }
+        }
+      },
+      "expected_raw": "{\"windows\":{\"5h\":{\"status\":null,\"utilization\":0,\"reset_at_ms\":null,\"observed_at_ms\":1800000000000}},\"standard\":{},\"representative_claim\":\"sample\",\"blocked_until_ms\":null,\"block_window\":null,\"cooldown_until_ms\":null,\"last_error\":null,\"updated_at_ms\":1800000000000,\"pool_proofs\":{}}"
+    },
+    {
+      "status": 401,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "-0",
+        "anthropic-ratelimit-unified-7d-utilization": "Infinity",
+        "anthropic-ratelimit-unified-representative-claim": " sample "
+      },
+      "body_units": null,
+      "previous": {
+        "updated_at_ms": 1800000000000,
+        "pool_proofs": {
+          "credential": {
+            "kind": "auth_invalid",
+            "model_id": null,
+            "observed_at_ms": 1800000000000,
+            "expires_at_ms": 1800000300000,
+            "evidence_generation": "00000000-0000-4000-a000-000000000001"
+          }
+        }
+      },
+      "expected_raw": "{\"windows\":{\"5h\":{\"status\":null,\"utilization\":0,\"reset_at_ms\":null,\"observed_at_ms\":1800000000000}},\"standard\":{},\"representative_claim\":\"sample\",\"blocked_until_ms\":null,\"block_window\":null,\"cooldown_until_ms\":null,\"last_error\":null,\"updated_at_ms\":1800000000000,\"pool_proofs\":{\"credential\":{\"kind\":\"auth_invalid\",\"model_id\":null,\"observed_at_ms\":1800000000000,\"expires_at_ms\":1800000300000,\"evidence_generation\":\"00000000-0000-4000-a000-000000000001\"}}}"
+    },
+    {
+      "status": 429,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "1",
+        "anthropic-ratelimit-unified-5h-reset": "1800000060"
+      },
+      "body_units": null,
+      "previous": {
+        "updated_at_ms": 1800000000000,
+        "pool_proofs": {
+          "credential": {
+            "kind": "auth_invalid",
+            "model_id": null,
+            "observed_at_ms": 1800000000000,
+            "expires_at_ms": 1800000300000,
+            "evidence_generation": "00000000-0000-4000-a000-000000000001"
+          }
+        }
+      },
+      "expected_raw": "{\"windows\":{\"5h\":{\"status\":null,\"utilization\":1,\"reset_at_ms\":1800000060000,\"observed_at_ms\":1800000000000}},\"standard\":{},\"representative_claim\":null,\"blocked_until_ms\":1800000360000,\"block_window\":\"5h\",\"cooldown_until_ms\":null,\"last_error\":null,\"updated_at_ms\":1800000000000,\"pool_proofs\":{\"credential\":{\"kind\":\"auth_invalid\",\"model_id\":null,\"observed_at_ms\":1800000000000,\"expires_at_ms\":1800000300000,\"evidence_generation\":\"00000000-0000-4000-a000-000000000001\"},\"model:claude-fixture\":{\"kind\":\"quota_exhausted\",\"model_id\":\"claude-fixture\",\"observed_at_ms\":1800000000000,\"expires_at_ms\":1800000360000,\"evidence_generation\":\"00000000-0000-4000-a000-000000000001\"}}}"
+    },
+    {
+      "status": 403,
+      "headers": {
+        "anthropic-ratelimit-unified-5h-utilization": "-0",
+        "anthropic-ratelimit-unified-7d-utilization": "Infinity",
+        "anthropic-ratelimit-unified-representative-claim": " sample "
+      },
+      "body_units": [
+        123, 34, 101, 114, 114, 111, 114, 34, 58, 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 112, 117, 114,
+        99, 104, 97, 115, 101, 32, 99, 114, 101, 100, 105, 116, 115, 34, 125, 125
+      ],
+      "previous": {
+        "updated_at_ms": 1800000000000,
+        "pool_proofs": {
+          "credential": {
+            "kind": "auth_invalid",
+            "model_id": null,
+            "observed_at_ms": 1800000000000,
+            "expires_at_ms": 1800000300000,
+            "evidence_generation": "00000000-0000-4000-a000-000000000001"
+          }
+        }
+      },
+      "expected_raw": "{\"windows\":{\"5h\":{\"status\":null,\"utilization\":0,\"reset_at_ms\":null,\"observed_at_ms\":1800000000000}},\"standard\":{},\"representative_claim\":\"sample\",\"blocked_until_ms\":null,\"block_window\":null,\"cooldown_until_ms\":1800000600000,\"last_error\":{\"kind\":\"billing_blocked\",\"status\":403,\"message\":\"purchase credits\",\"at_ms\":1800000000000},\"updated_at_ms\":1800000000000,\"pool_proofs\":{\"credential\":{\"kind\":\"auth_invalid\",\"model_id\":null,\"observed_at_ms\":1800000000000,\"expires_at_ms\":1800000300000,\"evidence_generation\":\"00000000-0000-4000-a000-000000000001\"}}}"
+    }
+  ]
+}

@@ -1,0 +1,198 @@
+{
+  "source_revision": "e706343d4a5f11890e39ab3599bdc04e154b1fba",
+  "cerebras_source_delta": "dc6be2c3b59188b0e4135b80cb4f0f6b492e232c",
+  "current_test_functions": [
+    "explicit_null_reasoning_length_cerebras_is502_not_an_incompletion",
+    "claude_oauth_has_native_attribution_and_console_key_does_not",
+    "buffered_cerebras_chat_client_stream_replays_real_finish_and_usage",
+    "lithos_header_precedence_and_streamed_final_refusal_stay_in_band",
+    "codex_error_bytes_are_available_unchanged_before_authority_classification",
+    "buffered_chat_retains_usage_without_requesting_a_stream_usage_chunk",
+    "image_fanout_measures_every_replayed_input_byte",
+    "frozen_waterfalls_distinguish_quota_from_serving_failure",
+    "codex_replay_repair_is_exact_and_does_not_damage_provider_history",
+    "namespace_and_freeform_round_trip_keeps_identity",
+    "thinking_conflict_and_reasoning_profiles_are_provider_specific",
+    "declared_payload_bound_keeps_unicode_and_disabled_rejects",
+    "reasoning_closes_before_text_and_fragmented_tools_keep_announced_indexes",
+    "truthful_terminals_distinguish_explicit_truncation_and_empty_stop",
+    "sse_incremental_utf8_mixed_line_endings_and_eof_fail_closed",
+    "usage_preserves_missingness_and_native_cache_gross_input",
+    "transport_profiles_cerebras_and_openrouter_preserve_actual_wires",
+    "cerebras_schema_preserves_property_names_and_collapses_root_union",
+    "native_disabled_thinking_requires_exact_independent_proof",
+    "native_replay_is_scoped_complete_expiring_and_never_publicly_signed",
+    "lithos_rung_windows_recover_independently",
+    "additional_inference_routes_have_provider_payloads_and_image_billing_boundary",
+    "direct_chat_empty_stop_is_preserved_while_responses_rejects_it",
+    "signed_claude_chat_details_are_private_and_do_not_duplicate_reasoning",
+    "direct_paid_and_synthetic_pins_preserve_catalog_admission",
+    "responses_chat_reconciles_terminal_only_output_without_duplicate_deltas",
+    "codex_transport_strips_accepted_ignored_controls_and_keeps_session_scope",
+    "native_messages_unclosed_blocks_fail_before_terminal"
+  ],
+  "coverage_claim": "Focused source-derived protocol vectors only; not full provider parity, exact runtime acceptance, credential validity, or live provider verification.",
+  "groups": [
+    {
+      "surface": "routing",
+      "source_test_files": [
+        "tests/deepseek-waterfall.test.ts",
+        "tests/codex-metered-routing-matrix.test.ts",
+        "tests/provider-selection.test.ts"
+      ],
+      "rust_tests": [
+        "frozen_waterfalls_distinguish_quota_from_serving_failure",
+        "direct_paid_and_synthetic_pins_preserve_catalog_admission"
+      ],
+      "coverage": "partial",
+      "unported_vectors_or_runtime_gaps": "HTTP pool-proof/dispatch races and all matrix permutations belong to m03+m05 integration; no transient-to-quota inference is authorized."
+    },
+    {
+      "surface": "codex_request_replay",
+      "source_test_files": [
+        "tests/codex-model-switch-replay.test.ts",
+        "tests/provider-request-cache-controls.test.ts",
+        "tests/openai-compat-part1.test.ts"
+      ],
+      "rust_tests": [
+        "codex_replay_repair_is_exact_and_does_not_damage_provider_history",
+        "codex_transport_strips_accepted_ignored_controls_and_keeps_session_scope",
+        "codex_error_bytes_are_available_unchanged_before_authority_classification"
+      ],
+      "coverage": "partial",
+      "unported_vectors_or_runtime_gaps": "Full real Codex 0.163.0 replay fixture and model-switch threaded transport remain runtime vectors."
+    },
+    {
+      "surface": "chat_only_requests",
+      "source_test_files": [
+        "tests/deepseek-responses.test.ts",
+        "tests/lithos-responses.test.ts",
+        "tests/cerebras-responses.test.ts",
+        "tests/agent-messages.test.ts"
+      ],
+      "rust_tests": [
+        "namespace_and_freeform_round_trip_keeps_identity",
+        "thinking_conflict_and_reasoning_profiles_are_provider_specific",
+        "declared_payload_bound_keeps_unicode_and_disabled_rejects"
+      ],
+      "coverage": "partial",
+      "unported_vectors_or_runtime_gaps": "All malformed input/role/error-param permutations, sealed/unsealed multi-agent payload vectors and every Unicode/image elision vector are not individually ported."
+    },
+    {
+      "surface": "ordered_responses",
+      "source_test_files": [
+        "tests/oss-terminal-parity.test.ts",
+        "tests/deepseek-responses.test.ts",
+        "tests/responses-failover-stream.test.ts"
+      ],
+      "rust_tests": [
+        "reasoning_closes_before_text_and_fragmented_tools_keep_announced_indexes",
+        "truthful_terminals_distinguish_explicit_truncation_and_empty_stop",
+        "direct_chat_empty_stop_is_preserved_while_responses_rejects_it"
+      ],
+      "coverage": "partial",
+      "unported_vectors_or_runtime_gaps": "Full official SDK accumulation trace, deferred late reasoning before tool calls, multiple choice/hosted tool and every interruption finish reason need differential runtime vectors."
+    },
+    {
+      "surface": "sse_parser",
+      "source_test_files": [
+        "tests/responses-stream.test.ts",
+        "tests/responses-failover-stream.test.ts",
+        "tests/oss-stream-lifecycle.test.ts"
+      ],
+      "rust_tests": [
+        "sse_incremental_utf8_mixed_line_endings_and_eof_fail_closed",
+        "responses_chat_reconciles_terminal_only_output_without_duplicate_deltas"
+      ],
+      "coverage": "partial",
+      "unported_vectors_or_runtime_gaps": "Frame/precommit byte/event boundaries, all malformed terminal shapes, upstream error frames and real timeout/cancel/reader-release behavior remain runtime checks."
+    },
+    {
+      "surface": "provider_wires",
+      "source_test_files": [
+        "tests/lithos-wiring.test.ts",
+        "tests/lithos-tier-windows.test.ts",
+        "tests/openrouter-serving.test.ts",
+        "tests/openrouter-web-tools.test.ts",
+        "tests/cerebras-reasoning-strip.test.ts"
+      ],
+      "rust_tests": [
+        "transport_profiles_cerebras_and_openrouter_preserve_actual_wires",
+        "cerebras_schema_preserves_property_names_and_collapses_root_union",
+        "lithos_rung_windows_recover_independently",
+        "explicit_null_reasoning_length_cerebras_is502_not_an_incompletion",
+        "buffered_cerebras_chat_client_stream_replays_real_finish_and_usage",
+        "lithos_header_precedence_and_streamed_final_refusal_stay_in_band"
+      ],
+      "coverage": "partial",
+      "unported_vectors_or_runtime_gaps": "Full HTTP retry ladder/wait budgets, dates/reset header precedence, final streamed refusal, OpenRouter catalog refresh/cache policy and all direct provider normalization errors are not individually ported."
+    },
+    {
+      "surface": "claude_native",
+      "source_test_files": [
+        "tests/anthropic-responses.test.ts",
+        "tests/anthropic-chat-responses.test.ts",
+        "tests/surplus-claude-request.test.ts",
+        "tests/surplus-claude-chat-request.test.ts",
+        "tests/claude-code-request-policy.test.ts"
+      ],
+      "rust_tests": [
+        "native_disabled_thinking_requires_exact_independent_proof",
+        "signed_claude_chat_details_are_private_and_do_not_duplicate_reasoning",
+        "native_messages_unclosed_blocks_fail_before_terminal",
+        "claude_oauth_has_native_attribution_and_console_key_does_not"
+      ],
+      "coverage": "partial",
+      "unported_vectors_or_runtime_gaps": "Every Messages block/index/error transition, native attribution/auth lanes, malformed or repeated signed details, cache policy fallback and full lossless controls matrix need remaining vectors."
+    },
+    {
+      "surface": "claude_replay",
+      "source_test_files": ["tests/anthropic-replay.test.ts"],
+      "rust_tests": ["native_replay_is_scoped_complete_expiring_and_never_publicly_signed"],
+      "coverage": "partial",
+      "unported_vectors_or_runtime_gaps": "Full namespaced/freeform signed continuation loop, canonical argument order, hidden/redacted groups, byte/count eviction and every malformed receipt case are not individually ported."
+    },
+    {
+      "surface": "usage",
+      "source_test_files": [
+        "tests/deepseek-responses.test.ts",
+        "tests/lithos-usage.test.ts",
+        "tests/cerebras-usage.test.ts",
+        "tests/anthropic-responses.test.ts",
+        "tests/anthropic-chat-responses.test.ts",
+        "tests/provider-stream-usage-failure.test.ts"
+      ],
+      "rust_tests": [
+        "usage_preserves_missingness_and_native_cache_gross_input",
+        "buffered_chat_retains_usage_without_requesting_a_stream_usage_chunk"
+      ],
+      "coverage": "partial",
+      "unported_vectors_or_runtime_gaps": "Cost provenance/invalid authoritative billing, streamed partial usage and postfailure/cancel accounting require m03+m05 integration; no transport-delivered inference from EOF."
+    },
+    {
+      "surface": "extra_inference",
+      "source_test_files": [
+        "tests/images.test.ts",
+        "tests/embeddings-part1.test.ts",
+        "tests/embeddings-part2.test.ts",
+        "tests/embeddings-coverage.test.ts",
+        "tests/systemone.test.ts"
+      ],
+      "rust_tests": [
+        "additional_inference_routes_have_provider_payloads_and_image_billing_boundary",
+        "image_fanout_measures_every_replayed_input_byte"
+      ],
+      "coverage": "partial",
+      "unported_vectors_or_runtime_gaps": "Image multipart/fanout atomic dispatch and every scalar/byte validation vector, Voyage cache/job encryption/idempotency/budgets, and all SystemOne malformed/output/error cases require additional vectors and runtime/state integration."
+    }
+  ],
+  "external_owners": {
+    "normalization_catalog_aliases": "m02 gateway-schema",
+    "account_generation_pool_proof_quota_billing_jobs": "m03 authority and m06 admin/native",
+    "http_fetch_sse_delivery_cancel_images_fanout_embeddings_job_lifecycle": "m05 actual Worker runtime",
+    "complete_differential_runtime_matrix_and_delivery": "m07 verification"
+  },
+  "provider_source_base_commit": "72f3d349e8ed6e86f9a51269ae7ed3a5d314e652",
+  "final_source_binding": "This tracked manifest is bound by its containing final Git commit and tree; final VPS receipt records that exact commit/tree.",
+  "canonical_foundation_ancestor": "74ece9749e4cce81b577030c0a4b08ad68ae9f91"
+}
