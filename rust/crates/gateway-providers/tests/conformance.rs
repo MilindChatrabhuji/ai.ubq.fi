@@ -457,6 +457,24 @@ fn additional_inference_routes_have_provider_payloads_and_image_billing_boundary
     );
 }
 #[test]
+fn chat_tool_calls_null_is_absent_in_buffered_responses() {
+    let mut plan = plan(ChatProfile::Lithos);
+    plan.stream = false;
+    plan.surface = ClientSurface::Responses;
+    let completion = json!({"id":"chat_1","created":1,"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"pong","tool_calls":null},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}});
+    let decoded = decode_response(
+        &plan,
+        200,
+        &Headers::new(),
+        &serde_json::to_vec(&completion).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(decoded.status, 200);
+    assert_eq!(scalar(&decoded.body)["status"], "completed");
+    assert_eq!(scalar(&decoded.body)["output"][0]["content"][0]["text"], "pong");
+}
+
+#[test]
 fn direct_chat_empty_stop_is_preserved_while_responses_rejects_it() {
     let mut plan = plan(ChatProfile::Deepseek);
     plan.surface = ClientSurface::Chat;
