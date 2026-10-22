@@ -106,7 +106,7 @@ impl Fixture {
                 native_source_generation: "8".repeat(64),
                 access_generation: generation,
             }],
-            custody_observed_at_ms: 2000,
+            custody_observed_at_ms: 2200,
             valid_through_ms: 3000,
             owner_revision: "initial-owner-r1".into(),
         };
@@ -309,6 +309,32 @@ fn wrong_capture_pool_generation_projection_and_expiry_have_no_effect() {
         .is_err()
     );
     assert_eq!(store.commits.get(), 0);
+}
+
+#[test]
+fn capture_after_custody_observation_is_refused_before_effects() {
+    let fixture = Fixture::new("synthetic-access", false);
+    let owner = fixture.ready(
+        |binding| binding.custody_observed_at_ms = 2199,
+        "future-capture",
+    );
+    let directory = Directory::new();
+    let store = Store::new(&directory, 0);
+    assert!(
+        run(adopt_empty_with_initial_control_owner(
+            &store,
+            &fixture.prepared,
+            &owner,
+            2300
+        ))
+        .is_err()
+    );
+    assert_eq!(store.commits.get(), 0);
+    assert!(
+        run(store.read(&gateway_authority::keys::paid_control_owner()))
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
