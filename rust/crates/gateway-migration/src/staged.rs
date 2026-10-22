@@ -1,11 +1,13 @@
 //! Private offline operator data, never an HTTP/admin capability. The host must
 //! hold a NEW empty target unpublished and quiescent until seal and reconciliation.
 use crate::*;
+use gateway_authority::initial_control_owner::{InitialAdoptionAccountFacts, InitialAdoptionFacts};
+use gateway_authority::paid_control::PaidControlOwner;
 use gateway_core::{
     query::{QueryRequest, QuerySelector, QueryStore},
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck},
 };
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 
 pub const STAGED_BATCH_MAX_BYTES: usize = crate::operational::PRIVATE_WIRE_MAX_BYTES;
 const PREFERRED_BATCH_BYTES: usize = 4 * 1024 * 1024;
@@ -60,7 +62,47 @@ pub struct StageBatch {
 pub enum StageRequest {
     Begin(StageHeader),
     Append(StageBatch),
-    Seal { capture_id: String },
+    Seal {
+        capture_id: String,
+    },
+    /// Private post-seal control-owner binding. It proves the sealed target's
+    /// exact manifest/source/projection facts and the absent-owner fence before
+    /// one CAS. It never marks the target active or rewrites sealed data.
+    BindOwner(StageOwnerBinding),
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StageOwnerAccount {
+    pub account_id_hash: String,
+    pub access_generation: String,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StageOwnerBinding {
+    pub capture_id: String,
+    pub source_git_sha: String,
+    pub source_native_version: String,
+    pub source_native_sequence: String,
+    pub source_pool_revision: String,
+    pub normalized_pool_revision: String,
+    pub accounts: Vec<StageOwnerAccount>,
+    pub custody_observed_at_ms: i64,
+    pub valid_through_ms: i64,
+    pub bound_at_ms: i64,
+    pub owner_id: String,
+    pub owner_epoch: String,
+    pub key_fingerprint: String,
+    pub owner_revision: String,
+}
+#[derive(Debug, Serialize)]
+pub struct StagePlanSummary {
+    pub capture_id: String,
+    pub source_git_sha: String,
+    pub captured_at_ms: i64,
+    pub source_rows: usize,
+    pub derived_rows: usize,
+    pub records: usize,
+    pub digest: String,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -71,6 +113,7 @@ pub struct StageReceipt {
     pub accepted_records: usize,
     pub atomic_batches: u64,
     pub sealed: bool,
+    pub owner_bound: bool,
     /// Data readiness is not a grant to activate a service or restore an owner.
     pub activation_authorized: bool,
 }
@@ -118,7 +161,7 @@ enum StageRows {
     Memory(VecDeque<(CanonicalRecord, usize)>),
     #[cfg(all(unix, not(target_arch = "wasm32")))]
     Disk {
-        spool: crate::native_spool::Spool<CanonicalRecord>,
+        reader: crate::native_spool::Reader<CanonicalRecord>,
         order: VecDeque<(usize, usize)>,
     },
 }
@@ -134,9 +177,9 @@ impl StageRows {
         match self {
             Self::Memory(rows) => Ok(rows.pop_front().expect("front checked")),
             #[cfg(all(unix, not(target_arch = "wasm32")))]
-            Self::Disk { spool, order } => {
+            Self::Disk { reader, order } => {
                 let (index, size) = order.pop_front().expect("front checked");
-                Ok((spool.get(index)?, size))
+                Ok((reader.read(index)?, size))
             }
         }
     }
@@ -200,17 +243,24 @@ impl StagePlan {
         manifest: crate::engine::Manifest,
         spool: crate::native_spool::Spool<CanonicalRecord>,
     ) -> Result<Self, GatewayError> {
+        let mut reader = spool.reader()?;
         let mut keys = std::collections::BTreeMap::new();
-        for (index, position) in (0..spool.len()).enumerate() {
+        let mut ordinal = 0usize;
+        while reader.next_raw()?.is_some() {
             if keys
                 .insert(
-                    spool.key(position)?.to_owned(),
-                    (index, spool.encoded_size(position)),
+                    spool.key(ordinal)?.to_owned(),
+                    (ordinal, spool.encoded_size(ordinal)),
                 )
                 .is_some()
             {
                 return Err(invalid("Staged canonical inventory has duplicate keys"));
             }
+            ordinal += 1;
+        }
+        reader.verify_end()?;
+        if ordinal != spool.len() {
+            return Err(invalid("Staged canonical count changed"));
         }
         let order: VecDeque<_> = keys.into_values().collect();
         let mut digest = initial(&manifest.capture_id);
@@ -218,9 +268,9 @@ impl StagePlan {
             if size + 1024 > STAGED_BATCH_MAX_BYTES {
                 return Err(invalid("Staged row does not fit one bounded append"));
             }
-            digest = extend_raw(&digest, &spool.raw(*index)?)?;
+            digest = extend_raw(&digest, &reader.read_raw(*index)?)?;
         }
-        spool.verify_end()?;
+        reader.verify_file_end()?;
         let header = StageHeader {
             manifest,
             records: order.len(),
@@ -230,11 +280,22 @@ impl StagePlan {
         Ok(Self {
             digest: initial(&header.manifest.capture_id),
             header,
-            rows: StageRows::Disk { spool, order },
+            rows: StageRows::Disk { reader, order },
             sequence: 0,
             emission_failed: false,
             last_emitted_key: None,
         })
+    }
+    pub fn summary(&self) -> StagePlanSummary {
+        StagePlanSummary {
+            capture_id: self.header.manifest.capture_id.clone(),
+            source_git_sha: self.header.manifest.source_git_sha.clone(),
+            captured_at_ms: self.header.manifest.captured_at_ms,
+            source_rows: self.header.manifest.source_rows,
+            derived_rows: self.header.manifest.derived.len(),
+            records: self.header.records,
+            digest: self.header.digest.clone(),
+        }
     }
     pub fn begin(&self) -> StageRequest {
         StageRequest::Begin(self.header.clone())
@@ -319,11 +380,11 @@ impl StagePlan {
                 })
                 .transpose();
         }
-        let StageRows::Disk { spool, order } = &self.rows else {
+        let StageRows::Disk { reader, order } = &mut self.rows else {
             unreachable!("memory adapter returned above");
         };
-        spool.verify_end()?;
-        if spool.len() != self.header.records || order.len() > self.header.records {
+        reader.verify_file_end()?;
+        if reader.spool().len() != self.header.records || order.len() > self.header.records {
             return Err(invalid("Staged canonical count changed"));
         }
         if order.is_empty() {
@@ -341,31 +402,34 @@ impl StagePlan {
         let mut records = vec![b'['];
         let mut count = 0;
         let mut size = 1024usize;
-        for (index, encoded_size) in order {
+        for (index, encoded_size) in order.iter() {
             if count != 0 && size + encoded_size + 1 > PREFERRED_BATCH_BYTES {
                 break;
             }
-            if *encoded_size != spool.encoded_size(*index)
-                || encoded_size + 1024 > STAGED_BATCH_MAX_BYTES
+            if *encoded_size != reader.spool().encoded_size(*index)
+                || *encoded_size + 1024 > STAGED_BATCH_MAX_BYTES
             {
                 return Err(invalid("Staged canonical frame length changed"));
             }
-            let key = spool.key(*index)?;
-            if last_key.as_deref().is_some_and(|previous| previous >= key) {
+            let key = reader.spool().key(*index)?.to_owned();
+            if last_key
+                .as_deref()
+                .is_some_and(|previous| previous >= key.as_str())
+            {
                 return Err(invalid("Staged canonical order changed"));
             }
-            let raw = spool.raw(*index)?;
+            let raw = reader.read_raw(*index)?;
             digest = extend_raw(&digest, &raw)?;
             if count != 0 {
                 records.push(b',');
             }
             records.extend_from_slice(&raw);
-            last_key = Some(key.to_owned());
+            last_key = Some(key);
             size += encoded_size + 1;
             count += 1;
         }
         records.push(b']');
-        spool.verify_end()?;
+        reader.verify_file_end()?;
         if count == order.len() && digest != self.header.digest {
             return Err(invalid("Staged canonical digest changed"));
         }
@@ -403,9 +467,6 @@ impl StagePlan {
         if frame.len() > STAGED_BATCH_MAX_BYTES {
             return Err(invalid("Private staged frame exceeds its bound"));
         }
-        let StageRows::Disk { order, .. } = &mut self.rows else {
-            unreachable!("disk frame was verified above");
-        };
         order.drain(..count);
         self.sequence = next_sequence;
         self.digest = digest;
@@ -464,6 +525,7 @@ fn receipt(p: &Progress, sealed: bool) -> StageReceipt {
         accepted_records: p.received,
         atomic_batches: p.sequence,
         sealed,
+        owner_bound: false,
         activation_authorized: false,
     }
 }
@@ -474,6 +536,9 @@ pub async fn execute_staged<S: QueryStore>(
     request: StageRequest,
 ) -> Result<StageReceipt, GatewayError> {
     bounded(&request)?;
+    if let StageRequest::BindOwner(binding) = &request {
+        return bind_owner(store, binding).await;
+    }
     let manifest_key = crate::engine::manifest_key();
     if store.read(&manifest_key).await?.is_some() {
         return Err(invalid("Target already adopted"));
@@ -605,6 +670,249 @@ pub async fn execute_staged<S: QueryStore>(
             transition(store, checks, mutations).await?;
             Ok(receipt(&progress, true))
         }
-        StageRequest::Begin(_) => unreachable!("begin handled above"),
+        StageRequest::Begin(_) | StageRequest::BindOwner(_) => {
+            unreachable!("begin/owner handled above")
+        }
     }
+}
+
+fn hex(value: &str, length: usize) -> bool {
+    value.len() == length
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+fn identifier(value: &str, max: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+}
+fn decimal(value: &str) -> bool {
+    value
+        .parse::<i64>()
+        .ok()
+        .is_some_and(|number| number >= 0 && number.to_string() == value)
+}
+fn opaque(value: &str) -> bool {
+    !value.trim().is_empty() && value.len() <= 4096
+}
+fn owner_refused() -> GatewayError {
+    invalid("Private staged control-owner binding is inconsistent or stale")
+}
+fn validate_owner_binding(binding: &StageOwnerBinding) -> Result<(), GatewayError> {
+    let mut accounts = BTreeSet::new();
+    if !hex(&binding.capture_id, 64)
+        || !hex(&binding.source_git_sha, 40)
+        || !decimal(&binding.source_native_version)
+        || !decimal(&binding.source_native_sequence)
+        || !opaque(&binding.source_pool_revision)
+        || !opaque(&binding.normalized_pool_revision)
+        || !(1..=2).contains(&binding.accounts.len())
+        || binding.accounts.iter().any(|account| {
+            !hex(&account.account_id_hash, 64)
+                || !hex(&account.access_generation, 64)
+                || !accounts.insert(account.account_id_hash.clone())
+        })
+        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.custody_observed_at_ms)
+        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.valid_through_ms)
+        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.bound_at_ms)
+        || binding.valid_through_ms < binding.custody_observed_at_ms
+        || binding.bound_at_ms < binding.custody_observed_at_ms
+        || binding.bound_at_ms > binding.valid_through_ms
+        || !identifier(&binding.owner_id, 128)
+        || !identifier(&binding.owner_epoch, 128)
+        || !hex(&binding.key_fingerprint, 64)
+        || !opaque(&binding.owner_revision)
+    {
+        return Err(owner_refused());
+    }
+    Ok(())
+}
+fn owner_from_binding(binding: &StageOwnerBinding) -> PaidControlOwner {
+    PaidControlOwner {
+        v: 1,
+        owner_id: binding.owner_id.clone(),
+        owner_epoch: binding.owner_epoch.clone(),
+        key_fingerprint: binding.key_fingerprint.clone(),
+    }
+}
+async fn sealed_owner_facts<S: QueryStore>(
+    store: &S,
+    binding: &StageOwnerBinding,
+) -> Result<
+    (
+        crate::engine::Manifest,
+        StoredRecord,
+        StoredRecord,
+        StoredRecord,
+    ),
+    GatewayError,
+> {
+    let manifest_record = store
+        .read(&crate::engine::manifest_key())
+        .await?
+        .ok_or_else(owner_refused)?;
+    if manifest_record.revision != format!("capture:{}", binding.capture_id) {
+        return Err(owner_refused());
+    }
+    let manifest: crate::engine::Manifest = decode(manifest_record.json_value()?)?;
+    let native = manifest
+        .native_revision
+        .as_ref()
+        .ok_or_else(owner_refused)?;
+    if manifest.v != 4
+        || manifest.capture_id != binding.capture_id
+        || manifest.source_git_sha != binding.source_git_sha
+        || native.version != binding.source_native_version
+        || native.sequence != binding.source_native_sequence
+        || binding.bound_at_ms < manifest.captured_at_ms
+    {
+        return Err(owner_refused());
+    }
+    let source = store
+        .read(&gateway_auth::provider_credentials::codex_source_pool_key())
+        .await?
+        .ok_or_else(owner_refused)?;
+    let normalized = store
+        .read(&gateway_authority::keys::pool())
+        .await?
+        .ok_or_else(owner_refused)?;
+    if source.revision != binding.source_pool_revision
+        || normalized.revision != binding.normalized_pool_revision
+    {
+        return Err(owner_refused());
+    }
+    let pool = gateway_auth::provider_credentials::parse_codex_source_pool(source.json_value()?)?
+        .ok_or_else(owner_refused)?;
+    let routing: gateway_authority::routing::SubscriptionPool = decode(normalized.json_value()?)?;
+    if routing.v != 1
+        || routing.pool_versionstamp.0 != source.revision
+        || routing.accounts.len() != pool.accounts.len()
+    {
+        return Err(owner_refused());
+    }
+    let mut accounts = Vec::new();
+    for (account, projection) in pool.accounts.iter().zip(&routing.accounts) {
+        if !account.refresh_token.expose().is_empty() {
+            return Err(owner_refused());
+        }
+        let owner = account.native_owner.as_ref().ok_or_else(owner_refused)?;
+        let identity = account.identity();
+        if projection.account_id_hash != identity.routing_account_hash
+            || projection.admin_account_hash != identity.administrative_account_hash
+            || projection.credential_version != identity.credential_version
+            || !projection.enabled
+        {
+            return Err(owner_refused());
+        }
+        accounts.push(InitialAdoptionAccountFacts {
+            account_id_hash: identity.routing_account_hash.0,
+            projection_generation: owner.generation_hash.clone(),
+            access_generation: identity.native_generation_hash,
+        });
+    }
+    let actual = InitialAdoptionFacts {
+        capture_id: manifest.capture_id.clone(),
+        source_git_sha: manifest.source_git_sha.clone(),
+        source_native_version: native.version.clone(),
+        source_native_sequence: native.sequence.clone(),
+        source_pool_revision: source.revision.clone(),
+        normalized_pool_revision: normalized.revision.clone(),
+        accounts,
+    };
+    let expected = InitialAdoptionFacts {
+        capture_id: binding.capture_id.clone(),
+        source_git_sha: binding.source_git_sha.clone(),
+        source_native_version: binding.source_native_version.clone(),
+        source_native_sequence: binding.source_native_sequence.clone(),
+        source_pool_revision: binding.source_pool_revision.clone(),
+        normalized_pool_revision: binding.normalized_pool_revision.clone(),
+        accounts: binding
+            .accounts
+            .iter()
+            .map(|account| InitialAdoptionAccountFacts {
+                account_id_hash: account.account_id_hash.clone(),
+                projection_generation: account.access_generation.clone(),
+                access_generation: account.access_generation.clone(),
+            })
+            .collect(),
+    };
+    if actual != expected {
+        return Err(owner_refused());
+    }
+    Ok((manifest, manifest_record, source, normalized))
+}
+fn owner_receipt(
+    binding: &StageOwnerBinding,
+    manifest: &crate::engine::Manifest,
+) -> Result<StageReceipt, GatewayError> {
+    Ok(StageReceipt {
+        capture_id: binding.capture_id.clone(),
+        source_rows: manifest.source_rows,
+        derived_rows: manifest.derived.len(),
+        accepted_records: manifest
+            .source_rows
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(manifest.derived.len()))
+            .ok_or_else(owner_refused)?,
+        atomic_batches: 1,
+        sealed: true,
+        owner_bound: true,
+        activation_authorized: false,
+    })
+}
+async fn bind_owner<S: QueryStore>(
+    store: &S,
+    binding: &StageOwnerBinding,
+) -> Result<StageReceipt, GatewayError> {
+    validate_owner_binding(binding)?;
+    let (manifest, manifest_record, source, normalized) =
+        sealed_owner_facts(store, binding).await?;
+    let owner_key = gateway_authority::keys::paid_control_owner();
+    let expected =
+        serde_json::to_value(owner_from_binding(binding)).map_err(|_| owner_refused())?;
+    let exact = |record: &StoredRecord| {
+        record.revision == binding.owner_revision
+            && record.expires_at_ms.is_none()
+            && record.json_value().is_ok_and(|value| value == &expected)
+    };
+    if let Some(current) = store.read(&owner_key).await? {
+        if exact(&current) {
+            // Exact retry after a lost response reconciles the already-bound row.
+            return owner_receipt(binding, &manifest);
+        }
+        return Err(invalid("Target already has a different control owner"));
+    }
+    let record = StoredRecord::json(&binding.owner_revision, expected.clone(), None);
+    let transition = AtomicTransition {
+        checks: vec![
+            check(
+                crate::engine::manifest_key(),
+                Some(manifest_record.revision),
+            ),
+            check(
+                gateway_auth::provider_credentials::codex_source_pool_key(),
+                Some(source.revision),
+            ),
+            check(gateway_authority::keys::pool(), Some(normalized.revision)),
+            check(owner_key.clone(), None),
+        ],
+        mutations: vec![RecordMutation::Put {
+            key: owner_key.clone(),
+            record,
+        }],
+    };
+    if store.commit(transition).await? != CommitOutcome::Committed {
+        return Err(invalid("Private staged owner binding conflicted"));
+    }
+    let bound = store
+        .read(&owner_key)
+        .await?
+        .ok_or_else(|| invalid("Private staged owner binding did not settle"))?;
+    if !exact(&bound) {
+        return Err(invalid("Private staged owner binding differs after commit"));
+    }
+    owner_receipt(binding, &manifest)
 }

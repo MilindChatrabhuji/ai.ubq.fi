@@ -132,9 +132,10 @@ impl Merged<'_> {
         &self,
         emit: &mut dyn FnMut(&NativeEntry) -> Result<(), GatewayError>,
     ) -> Result<(), GatewayError> {
-        self.original.visit_entries(&mut |entry| {
+        let mut latest_reader = self.latest.reader()?;
+        let result = self.original.visit_entries(&mut |entry| {
             if let Some(ordinal) = self.latest_keys.get(&entry.raw_key) {
-                let current = self.latest.entry(*ordinal)?;
+                let current = latest_reader.read(*ordinal)?;
                 if current.raw_key != entry.raw_key {
                     return Err(invalid(
                         "History reconciliation latest row identity changed",
@@ -149,7 +150,9 @@ impl Merged<'_> {
                 }
             }
             Ok(())
-        })?;
+        });
+        latest_reader.verify_file_end()?;
+        result?;
         // Both passes use the existing independently opened sealed-spool visitor,
         // including complete EOF verification even when every latest row replaces.
         self.latest.visit_entries(&mut |entry| {

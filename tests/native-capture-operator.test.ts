@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serialize } from "node:v8";
-import { capturePrivateNativeState } from "../rust/crates/gateway-migration/examples/native-operator-capture.ts";
+import { capturePrivateNativeState, writePrivateNativeCapture } from "../rust/crates/gateway-migration/examples/native-operator-capture.ts";
 import { NATIVE_DDL } from "../src/kv-conversion/native-schema.ts";
 import { packStringKey } from "../src/kv-conversion/cursors.ts";
 import { decodeNativeCaptureValue, decodeTypedValue, encodeNativeCaptureValue, encodeTypedValue } from "../src/kv-conversion/typed-value.ts";
@@ -94,6 +95,72 @@ test("finite native producer reads actual marked SQLite bytes and preserves raw 
     assert.equal(capture.value.entries.find((entry) => entry.value.encoding === "counter-le64")?.expiration_ms, -1);
     assert.ok(JSON.stringify(capture.value).includes('"expiration_ms":9223372036854775807'));
     assert.deepEqual(readFileSync(source), original);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("streaming private producer writes one owner-only file with exact count, hash and raw i64 expiry", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "uos-native-stream-"));
+  try {
+    const source = join(directory, "source.sqlite3");
+    const database = new Database(source, { create: true, strict: true, safeIntegers: true });
+    database.run("PRAGMA journal_mode=DELETE");
+    for (const ddl of NATIVE_DDL) database.run(ddl);
+    database.run("CREATE TABLE uos_kv_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID");
+    database.run("INSERT INTO uos_kv_metadata(key,value) VALUES('codec','bun-jsc-v1')");
+    database.run("INSERT INTO migration_state(k,version) VALUES(0,3)");
+    database.run("INSERT INTO data_version(k,version,seq) VALUES(0,10,0)");
+    database.run("INSERT INTO kv(k,v,v_encoding,version,seq,expiration_ms) VALUES(?,?,?,?,?,?)", [
+      packStringKey(["default", "stream-graph"]),
+      serialize(sourceGraph()),
+      1n,
+      9n,
+      0n,
+      9500n,
+    ]);
+    database.run("INSERT INTO kv(k,v,v_encoding,version,seq,expiration_ms) VALUES(?,?,?,?,?,?)", [
+      packStringKey(["default", "stream-counter"]),
+      new Uint8Array(8).fill(255),
+      2n,
+      8n,
+      0n,
+      -1n,
+    ]);
+    database.run("INSERT INTO kv(k,v,v_encoding,version,seq,expiration_ms) VALUES(?,?,?,?,?,?)", [
+      packStringKey(["default", "stream-bytes"]),
+      new Uint8Array([0, 255]),
+      3n,
+      8n,
+      1n,
+      9223372036854775807n,
+    ]);
+    database.close(true);
+    const destination = join(directory, "native-capture.json");
+    const receipt = await writePrivateNativeCapture(source, directory, "b".repeat(40), 2400, destination);
+    const bytes = readFileSync(destination);
+    assert.equal(receipt.bytes, bytes.length);
+    assert.equal(receipt.sha256, createHash("sha256").update(bytes).digest("hex"));
+    assert.equal(receipt.entries, 3);
+    assert.equal(receipt.maximum_entry_bytes > 0, true);
+    const file = lstatSync(destination);
+    assert.equal(file.mode & 0o777, 0o600);
+    assert.equal(file.nlink, 1);
+    const parsed = JSON.parse(bytes.toString()) as {
+      v: number;
+      entries: { raw_key: number[]; revision: { version: string; sequence: string }; expiration_ms: number | { rawJSON: string } }[];
+      data_revision: { version: string; sequence: string };
+    };
+    assert.equal(parsed.v, 2);
+    assert.equal(parsed.entries.length, receipt.entries);
+    assert.deepEqual(parsed.data_revision, { version: "10", sequence: "0" });
+    assert.equal(parsed.entries[0].raw_key.length > 0, true);
+    assert.ok(bytes.toString().includes('"expiration_ms":9223372036854775807'));
+    await assert.rejects(writePrivateNativeCapture(source, directory, "b".repeat(40), 2400, destination), /EEXIST|file already exists/);
+    const shared = join(directory, "shared");
+    mkdirSync(shared, { mode: 0o755 });
+    await assert.rejects(writePrivateNativeCapture(source, directory, "b".repeat(40), 2400, join(shared, "capture.json")), /owner-only/);
+    assert.deepEqual(readFileSync(destination), bytes);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

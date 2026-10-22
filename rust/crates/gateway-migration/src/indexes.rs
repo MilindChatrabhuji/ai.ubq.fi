@@ -1,9 +1,81 @@
 use crate::*;
 use gateway_auth::passkeys::{PasskeyCredential, PasskeyUser};
 use gateway_authority::{keys, paid::*, quota::*};
-use gateway_core::lifecycle::BillingState;
+use gateway_core::{identity::ApiKeyId, lifecycle::BillingState};
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Default)]
+pub(super) struct PaidAccounting {
+    settled_microcredits: i64,
+    reserved_microcredits: i64,
+    pending_count: i64,
+    updated_at_ms: i64,
+    policy_version: String,
+}
+
+pub(super) fn account_paid(
+    accounting: &mut BTreeMap<(String, i64), PaidAccounting>,
+    attempt: &gateway_authority::paid::PaidAttempt,
+) -> Result<(), GatewayError> {
+    let entry = accounting
+        .entry((
+            attempt.reservation.key_id.0.clone(),
+            attempt.reservation.window_reset_at_ms,
+        ))
+        .or_default();
+    if attempt.updated_at_ms >= entry.updated_at_ms {
+        entry.updated_at_ms = attempt.updated_at_ms;
+        entry.policy_version = attempt.policy_version.clone();
+    }
+    match attempt.billing_state {
+        BillingState::Settled => {
+            entry.settled_microcredits = entry
+                .settled_microcredits
+                .checked_add(attempt.spend_microcredits.unwrap_or(0))
+                .ok_or_else(|| invalid("Paid settled total overflows"))?;
+        }
+        BillingState::Pending | BillingState::Unresolved => {
+            entry.reserved_microcredits = entry
+                .reserved_microcredits
+                .checked_add(attempt.reservation.reserved_microcredits)
+                .ok_or_else(|| invalid("Paid reserved total overflows"))?;
+            entry.pending_count = entry
+                .pending_count
+                .checked_add(1)
+                .ok_or_else(|| invalid("Paid pending count overflows"))?;
+        }
+        BillingState::NotBilled => {}
+    }
+    Ok(())
+}
+
+pub(super) fn derive_paid_window(
+    key_id: &str,
+    window_reset_at_ms: i64,
+    limit_microcredits: i64,
+    accounting: &PaidAccounting,
+    revision: &str,
+) -> Result<(RecordKey, StoredRecord), GatewayError> {
+    if accounting.policy_version.is_empty() || accounting.updated_at_ms <= 0 {
+        return Err(invalid("Paid accounting lacks current policy evidence"));
+    }
+    let window = PaidWindow {
+        v: 3,
+        key_id: ApiKeyId(key_id.into()),
+        policy_version: accounting.policy_version.clone(),
+        window_reset_at_ms,
+        limit_microcredits,
+        settled_microcredits: accounting.settled_microcredits,
+        reserved_microcredits: accounting.reserved_microcredits,
+        pending_count: accounting.pending_count,
+        updated_at_ms: accounting.updated_at_ms,
+    };
+    Ok((
+        keys::paid_window(key_id, window_reset_at_ms),
+        StoredRecord::json(revision, json(&window)?, None),
+    ))
+}
 
 pub(crate) fn bind(
     rows: &mut [Row],
@@ -19,6 +91,23 @@ pub(crate) fn bind(
     let mut derived = Vec::new();
     let mut defaults = KernelDefaults::default();
     let mut explicit_defaults = false;
+    let mut paid_limits = BTreeMap::new();
+    for row in rows.iter().filter(|row| live(row)) {
+        if starts(&row.parts, &["ubq_ai", "api_keys", "id"]) {
+            let record: gateway_admin::keys::ApiKeyRecord = decode(row.record.json_value()?)?;
+            paid_limits.insert(
+                record.policy.id,
+                record.policy.paid_fallback_limit_microcredits,
+            );
+        }
+    }
+    let mut source_paid_windows = BTreeSet::new();
+    for name in snapshot.keys() {
+        let p = parts(&RecordKey(name.clone()))?;
+        if starts(&p, &["uos_ai", "paid_fallback", "v3", "window"]) {
+            source_paid_windows.insert(name.clone());
+        }
+    }
     if let Some(row) = snapshot.get(&key(json!(["default", "kernel_policy_limit_requests"])).0) {
         defaults.usage_limit_requests =
             gateway_admin_runtime::parse::limit(row.json_value()?).unwrap_or(-1);
@@ -139,6 +228,7 @@ pub(crate) fn bind(
     let mut api: BTreeMap<String, BTreeMap<String, i64>> = BTreeMap::new();
     let mut kernel: BTreeMap<String, BTreeMap<String, i64>> = BTreeMap::new();
     let mut paid: BTreeMap<String, (i64, i64)> = BTreeMap::new();
+    let mut paid_accounting = BTreeMap::new();
     let mut pending = BTreeMap::new();
     for row in rows.iter().filter(|r| live(r)) {
         match row.mapping.transform {
@@ -196,20 +286,10 @@ pub(crate) fn bind(
             Transform::PaidRequest => {
                 let attempt =
                     gateway_authority::paid::decode_paid_attempt_record(&row.key, &row.record)?;
+                if attempt.reservation.window_reset_at_ms > now {
+                    account_paid(&mut paid_accounting, &attempt)?;
+                }
                 if crate::projection::outstanding(&attempt) {
-                    let window = keys::paid_window(
-                        &attempt.reservation.key_id.0,
-                        attempt.reservation.window_reset_at_ms,
-                    );
-                    let count = paid.entry(window.0).or_default();
-                    count.0 = count
-                        .0
-                        .checked_add(1)
-                        .ok_or_else(|| invalid("Paid pending count overflows"))?;
-                    count.1 = count
-                        .1
-                        .checked_add(attempt.reservation.reserved_microcredits)
-                        .ok_or_else(|| invalid("Paid exposure overflows"))?;
                     if !snapshot.contains_key(
                         &keys::paid_pending(
                             &attempt.reservation.key_id.0,
@@ -220,6 +300,23 @@ pub(crate) fn bind(
                         return Err(invalid(
                             "Outstanding paid request lacks its persistent pending marker",
                         ));
+                    }
+                    // Unlimited keys do not require a paid window aggregate;
+                    // their current request rows are the accounting authority.
+                    if paid_limits.get(&attempt.reservation.key_id.0).copied() != Some(-1) {
+                        let window = keys::paid_window(
+                            &attempt.reservation.key_id.0,
+                            attempt.reservation.window_reset_at_ms,
+                        );
+                        let count = paid.entry(window.0).or_default();
+                        count.0 = count
+                            .0
+                            .checked_add(1)
+                            .ok_or_else(|| invalid("Paid pending count overflows"))?;
+                        count.1 = count
+                            .1
+                            .checked_add(attempt.reservation.reserved_microcredits)
+                            .ok_or_else(|| invalid("Paid exposure overflows"))?;
                     }
                 }
             }
@@ -297,6 +394,30 @@ pub(crate) fn bind(
                 }
             }
         }
+    }
+    for ((key_id, reset_at_ms), accounting) in paid_accounting {
+        if accounting.settled_microcredits == 0
+            && accounting.reserved_microcredits == 0
+            && accounting.pending_count == 0
+        {
+            continue;
+        }
+        let window_key = keys::paid_window(&key_id, reset_at_ms).0;
+        if source_paid_windows.contains(&window_key) {
+            continue;
+        }
+        let limit_microcredits = paid_limits
+            .get(&key_id)
+            .copied()
+            .ok_or_else(|| invalid("Paid accounting key is missing"))?;
+        derived.push(derive_paid_window(
+            &key_id,
+            reset_at_ms,
+            limit_microcredits,
+            &accounting,
+            revision,
+        )?);
+        paid.remove(&window_key);
     }
     if !api.is_empty() || !kernel.is_empty() || !paid.is_empty() {
         return Err(invalid("Reservation index has an orphan window"));

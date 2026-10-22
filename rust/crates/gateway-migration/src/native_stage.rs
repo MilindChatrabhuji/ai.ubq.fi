@@ -1,6 +1,6 @@
 //! Private stopped-file preparation. No full-capture payload collection, VM,
 //! database, public import route, or capability is created by these spool files.
-use crate::native_spool::{LiveInventory, Spool, Writer};
+use crate::native_spool::{RowInventory, Spool, Writer};
 use crate::*;
 use serde::de::{DeserializeSeed, Error, MapAccess, SeqAccess, Visitor};
 use std::{
@@ -80,18 +80,35 @@ impl Captured {
     pub fn entry(&self, index: usize) -> Result<NativeEntry, GatewayError> {
         self.entries.get(index)
     }
-    pub(crate) async fn verify_configured(
+    /// Select the bounded operational core without touching a target or opening
+    /// a credential. The returned capture still needs the existing preparation
+    /// and custody gates before any adoption.
+    pub fn core_capture(&self) -> Result<crate::CoreStateCapture, MigrationError> {
+        crate::core_state::select_spool(&self.header, &self.entries)
+    }
+    /// Select and prepare the bounded core in one private offline operation.
+    /// The returned plan still needs the existing staged adoption and activation gates.
+    pub async fn prepare_core<H: crate::NativeCustody>(
+        self,
+        host: &H,
+    ) -> Result<(crate::CoreStateManifest, crate::staged::StagePlan), MigrationError> {
+        let crate::CoreStateCapture { capture, manifest } = self.core_capture()?;
+        let directory = crate::native_stage::directory(&self.directory)?;
+        let plan = Captured::owned(capture, &directory)?.prepare(host).await?;
+        Ok((manifest, plan))
+    }
+    pub(crate) fn reader(&self) -> Result<crate::native_spool::Reader<NativeEntry>, GatewayError> {
+        self.entries.reader()
+    }
+    pub async fn verify_configured(
         &self,
         custody: &crate::native_operator::ConfiguredNativeCustody,
     ) -> Result<(), MigrationError> {
-        for i in 0..self.entries.len() {
-            let entry = self.entries.get(i)?;
-            if crate::native_custody::codex_key(&entry.raw_key)? {
-                let mut tiny = self.header.clone();
-                tiny.entries.push(entry);
-                custody.verify_existing_access_only(&tiny).await?;
-            }
+        let mut reader = self.entries.reader()?;
+        while let Some(entry) = reader.next()? {
+            custody.verify_access_only_entry(&entry).await?;
         }
+        reader.verify_end()?;
         Ok(())
     }
     pub async fn prepare<H: NativeCustody>(
@@ -99,12 +116,13 @@ impl Captured {
         host: &H,
     ) -> Result<crate::staged::StagePlan, MigrationError> {
         let version = self.header.validate_header()?;
-        let mut writer = Writer::create(&self.directory.join("normalized-entries.spool"))?;
+        let mut writer = Writer::<Row>::create(&self.directory.join("normalized-rows.spool"))?;
         let mut seen = std::collections::BTreeSet::new();
         // Every complete source row, including expired data, passes the original
         // tuple/version/expiry/typed graph/counter and current-custody validators.
-        for index in 0..self.entries.len() {
-            let mut entry = self.entries.get(index)?;
+        // One sequential pass validates and seals the normalized row inventory.
+        let mut reader = self.entries.reader()?;
+        while let Some(mut entry) = reader.next()? {
             crate::native_custody::normalize_entry(&mut entry, host).await?;
             let key = TupleKey::from_sort_bytes(entry.raw_key.clone())?.to_record_key();
             if !seen.insert(key.0) {
@@ -113,14 +131,14 @@ impl Captured {
                 )
                 .into());
             }
-            crate::native_capture::validate_entry(&entry, version)?;
-            writer.push(&entry)?;
+            let row = crate::native_capture::validate_entry(&entry, version)?;
+            writer.push(&row)?;
         }
-        let source = writer.seal()?;
+        reader.verify_end()?;
+        let normalized = writer.seal()?;
         let audited = gateway_admin_data::migration::audit::inspect_inventory(
-            &LiveInventory {
-                entries: &source,
-                version,
+            &RowInventory {
+                rows: &normalized,
                 now: self.header.captured_at_ms,
             },
             self.header.captured_at_ms,
@@ -135,10 +153,9 @@ impl Captured {
                 .map_err(|_| invalid("Private source identity cannot be encoded"))?,
         );
         let revision = format!("capture:{capture_id}");
-        let mut projected = Writer::create(&self.directory.join("projected-rows.spool"))?;
-        for index in 0..source.len() {
-            let entry = source.get(index)?;
-            let mut row = crate::native_capture::validate_entry(&entry, version)?;
+        let mut projected = Writer::<Row>::create(&self.directory.join("projected-rows.spool"))?;
+        let mut reader = normalized.reader()?;
+        while let Some(mut row) = reader.next()? {
             let p = &row.parts;
             // The original generic retained graph branch is an identity return.
             // Its full typed validators and complete audit already ran above.
@@ -158,6 +175,7 @@ impl Captured {
             }
             projected.push(&row)?;
         }
+        reader.verify_end()?;
         let projected = projected.seal()?;
         let (bound, derived) = crate::indexes::bind_spooled(
             &projected,
@@ -168,8 +186,9 @@ impl Captured {
         let mut canonical = Writer::create(&self.directory.join("canonical-rows.spool"))?;
         let mut mapping_digests = BTreeMap::new();
         let mut keys = std::collections::BTreeSet::new();
-        for index in 0..bound.len() {
-            let bytes = bound.raw(index)?;
+        let mut reader = bound.reader()?;
+        let mut index = 0usize;
+        while let Some(bytes) = reader.next_raw()? {
             #[derive(Deserialize)]
             struct RawRow<'a> {
                 key: String,
@@ -195,11 +214,13 @@ impl Captured {
                 key: mapping,
                 record,
             })?;
-            if row.key != bound.key(index)? {
+            if row.key != reader.spool().key(index)? {
                 return Err(invalid("Private canonical key changed").into());
             }
-            canonical.push_canonical(row.key, row.record, bound.expiry(index))?;
+            canonical.push_canonical(row.key, row.record, reader.spool().expiry(index))?;
+            index += 1;
         }
+        reader.verify_end()?;
         let mut derived_digests = BTreeMap::new();
         for (key, record) in derived {
             if !keys.insert(key.0.clone())
@@ -217,7 +238,7 @@ impl Captured {
             capture_id,
             source_git_sha: self.header.source_git_sha,
             captured_at_ms: self.header.captured_at_ms,
-            source_rows: source.len(),
+            source_rows: normalized.len(),
             mapping_checksum: gateway_auth::crypto::sha256_hex(
                 &serde_json::to_vec(&entries)
                     .map_err(|_| invalid("Mapping checksum cannot be encoded"))?,

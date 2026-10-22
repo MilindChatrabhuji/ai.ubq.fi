@@ -21,11 +21,11 @@ serde_json.workspace = true
 
 [target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
 gateway-native = { path = "../gateway-native" }
+sha2 = "=0.10.9"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 gateway-native = { path = "../gateway-native" }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
-sha2 = "=0.10.9"
 
 [lints]
 workspace = true

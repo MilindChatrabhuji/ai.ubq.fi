@@ -1,6 +1,8 @@
 //! Offline reversible source-state adoption through the one existing authority.
 //! This library neither opens a source VM database nor grants runtime/publication ownership.
 mod capture;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+mod core_state;
 mod engine;
 mod error;
 pub mod graph_transport;
@@ -34,6 +36,10 @@ mod source_metadata;
 pub mod staged;
 
 pub use capture::{PrivateCapture, SourceEntry};
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+pub use core_state::{
+    CORE_STATE_DO_ROW_WRITE_LIMIT, CoreStateCapture, CoreStateManifest, CoreStateRuleCount,
+};
 pub use engine::{
     AdoptionReceipt, PreparedAdoption, adopt_empty, adopt_empty_with_initial_control_owner, prepare,
 };
