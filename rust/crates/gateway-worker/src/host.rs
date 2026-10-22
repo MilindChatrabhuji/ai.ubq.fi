@@ -24,6 +24,10 @@ pub const AUTH_SETTINGS: &[&str] = &[
     "UOS_AI_KERNEL_PUBLIC_KEY",
     "DENO_DEPLOY_APP_SLUG",
     "DENO_DEPLOY_ORG_SLUG",
+    "UOS_AI_PASSPORT_CLIENT_ID",
+    "UOS_AI_PASSPORT_AUDIENCE",
+    "UOS_AI_PASSPORT_ORIGIN",
+    "UOS_AI_PASSPORT_REDIRECT_URI",
 ];
 
 pub fn setting(env: &Env, name: &str) -> Option<String> {
@@ -142,11 +146,16 @@ impl AuthHost for PlatformHost {
     ) -> Result<AuthUpstreamResponse, GatewayError> {
         let headers = request.headers().into_iter().collect::<BTreeMap<_, _>>();
         let destination = PinnedDestination::new(&request.url())?;
+        let method = match request.method() {
+            "POST" => Method::Post,
+            _ => Method::Get,
+        };
+        let body = request.body()?;
         let mut response = send_http(
             &destination,
-            Method::Get,
+            method,
             &headers,
-            &[],
+            &body,
             &self.cancellation,
             || async { Ok(()) },
         )

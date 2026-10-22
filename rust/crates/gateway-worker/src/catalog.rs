@@ -60,6 +60,50 @@ pub(crate) fn into_auth_response(
     }
 }
 
+#[derive(Clone)]
+
+/// The existing versioned refresh path, scheduled after a stale response on a
+/// background cancellation. It creates no cron, alarm, or detached timer.
+pub fn schedule_warm(
+    store: &RemoteAuthorityStore,
+    env: &Env,
+    platform: &PlatformHost,
+    context: Rc<Context>,
+    version: &str,
+) {
+    let mut host = Host {
+        store: store.clone(),
+        env: env.clone(),
+        platform: platform.clone(),
+        context: context.clone(),
+    };
+    let service = service();
+    let store = store.clone();
+    let version = version.to_owned();
+    context.wait_until(async move {
+        let cancellation = match crate::transport::outbound::Cancellation::background() {
+            Ok(cancellation) => cancellation,
+            Err(error) => {
+                worker::console_error!(
+                    "Catalog background refresh remains unavailable: {}",
+                    error.envelope.error.message
+                );
+                return;
+            }
+        };
+        host.platform.cancellation = Rc::new(cancellation);
+        if let Err(error) = service
+            .versioned_models(&store, &host, &version, None)
+            .await
+        {
+            worker::console_error!(
+                "Catalog background refresh remains pending: {}",
+                error.envelope.error.message
+            );
+        }
+    });
+}
+
 pub struct CatalogState {
     pub input: CatalogInput,
     pub runtime: Option<SourceJson>,

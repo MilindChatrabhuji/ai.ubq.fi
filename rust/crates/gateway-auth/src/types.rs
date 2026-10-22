@@ -69,6 +69,7 @@ pub struct NativePeer {
 
 #[derive(Clone, Debug)]
 pub enum AuthResponseBody {
+    Empty,
     Json(Value),
     SourceJson(gateway_core::source_json::SourceJson),
 }
@@ -82,6 +83,7 @@ impl AuthResponseBody {
     }
     pub fn to_bytes(&self) -> Result<Vec<u8>, GatewayError> {
         match self {
+            Self::Empty => Ok(Vec::new()),
             Self::Json(value) => serde_json::to_vec(value).map_err(|_| {
                 GatewayError::unavailable(
                     "JSON response serialization failed",
@@ -95,6 +97,7 @@ impl AuthResponseBody {
 impl serde::Serialize for AuthResponseBody {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
+            Self::Empty => serializer.serialize_none(),
             Self::Json(value) => value.serialize(serializer),
             Self::SourceJson(value) => value.serialize(serializer),
         }
@@ -115,6 +118,9 @@ impl PartialEq<AuthResponseBody> for Value {
 pub struct AuthResponse {
     pub status: u16,
     pub headers: BTreeMap<String, String>,
+    /// Repeated `Set-Cookie` values are kept separate so one header never
+    /// overwrites another or weakens their exact attributes.
+    pub set_cookies: Vec<String>,
     pub body: AuthResponseBody,
     pub stream: Option<crate::native::AuthStream>,
 }
@@ -127,6 +133,7 @@ impl AuthResponse {
                 ("cache-control".into(), "no-store".into()),
                 ("content-type".into(), "application/json".into()),
             ]),
+            set_cookies: Vec::new(),
             body: AuthResponseBody::Json(body),
             stream: None,
         }
@@ -138,6 +145,7 @@ impl AuthResponse {
                 ("cache-control".into(), "no-store".into()),
                 ("content-type".into(), "application/json".into()),
             ]),
+            set_cookies: Vec::new(),
             body: AuthResponseBody::SourceJson(body),
             stream: None,
         }
@@ -168,6 +176,9 @@ pub struct AuthConfig {
     pub deno_app_slug: Option<String>,
     pub deno_org_slug: Option<String>,
     pub deno_deployment_id: Option<String>,
+    /// Explicit Passport client registration; absent means browser login is
+    /// unavailable unless the request itself is the canonical production host.
+    pub passport: Option<crate::passport::PassportConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -193,6 +204,42 @@ pub enum AuthMethod {
         is_admin: bool,
         credential_count: usize,
     },
+    PassportSession {
+        claims: crate::passport::PassportClaims,
+    },
+    PassportBearer {
+        claims: crate::passport::PassportClaims,
+    },
+}
+
+impl AuthMethod {
+    /// Stable principal identity shared by admission, history and routing.
+    /// Passport identity is the Passport subject, never a token or handle.
+    pub fn principal_id(&self, bearer: Option<&str>) -> String {
+        match self {
+            Self::KvApiKey { key_id, .. } => format!("api-key:{key_id}"),
+            Self::GithubToken { owner, repo, .. } => format!(
+                "github-repo:{}/{}",
+                owner.to_lowercase(),
+                repo.to_lowercase()
+            ),
+            Self::PasskeySession { user_id, .. } => format!("passkey-user:{user_id}"),
+            Self::PassportSession { claims } | Self::PassportBearer { claims } => {
+                format!("passport-user:{}", claims.sub)
+            }
+            Self::AuthTokensAllowlist => "auth-method:auth_tokens_allowlist".into(),
+            Self::AdminAllowlist => "auth-method:admin_allowlist".into(),
+            Self::DenoDeployToken => "auth-method:deno_deploy_token".into(),
+            Self::Disabled => bearer
+                .map(|token| {
+                    format!(
+                        "bearer-sha256:{}",
+                        crate::crypto::sha256_hex(token.as_bytes())
+                    )
+                })
+                .unwrap_or_else(|| "local-auth-disabled".into()),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

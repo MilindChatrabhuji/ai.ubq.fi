@@ -72,6 +72,7 @@ impl AuthConfig {
             deno_app_slug: nonempty(get("DENO_DEPLOY_APP_SLUG")),
             deno_org_slug: nonempty(get("DENO_DEPLOY_ORG_SLUG")),
             deno_deployment_id: nonempty(get("DENO_DEPLOYMENT_ID")),
+            passport: crate::passport::PassportConfig::from_values(values),
             ..Default::default()
         }
     }
