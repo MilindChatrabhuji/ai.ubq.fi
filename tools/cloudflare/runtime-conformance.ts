@@ -757,13 +757,14 @@ async function inner(): Promise<void> {
     await staticRouteCases(url, cases);
     await passportCases(url, cases);
     await cerebrasPaymentCases(url, cases);
+    const dispatchBaseline = (await events()).length;
     assert.equal((await post("/uos/agent-messages", { agent_id: "fixture", body: "fixture" })).status, 403);
     assert.equal((await fetch(url("/uos/agent-messages"))).status, 401);
     assert.equal((await fetch(url("/uos/agent-messages"), { method: "PATCH" })).status, 405);
     cases.push("agent_messages_require_github_scope_and_source_methods");
     assert.equal((await fetch(url("/v1/models"))).status, 401);
     assert.equal((await post("/v1/responses", { model: "deepseek-flash", input: "fixture:unauthorized" }, "bad-token")).status, 401);
-    assert.equal((await events()).length, 0);
+    assert.equal((await events()).length, dispatchBaseline);
     cases.push("unauthorized_requests_never_dispatch");
     const ordinary = await objectBody(await fetch(url("/v1/models"), { headers: { authorization: "Bearer fixture-access" } }));
     assert.equal(ordinary.object, "list");
