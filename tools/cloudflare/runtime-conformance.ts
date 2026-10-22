@@ -358,7 +358,7 @@ async function passportCases(url: (path: string) => string, cases: string[]): Pr
   cases.push("passport_cookie_authenticates_models_and_inference");
 
   const adminResponse = await fetch(url("/admin/api-keys"), { headers: { cookie: admin.cookie } });
-  assert.equal(adminResponse.status, 200);
+  assert.equal(adminResponse.status, 200, await adminResponse.clone().text());
   cases.push("passport_admin_cookie_requires_isadmin");
 
   const user = await exchange("user");
