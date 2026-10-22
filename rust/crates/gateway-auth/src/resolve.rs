@@ -612,12 +612,8 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             } => {
                 json!({"kind":"github_token","repo":{"owner":owner,"repo":repo},"state_id":state_id,"limit_scope":limit_scope})
             }
-            AuthMethod::PassportSession { claims } => {
-                crate::passport::method_json(claims, false)
-            }
-            AuthMethod::PassportBearer { claims } => {
-                crate::passport::method_json(claims, true)
-            }
+            AuthMethod::PassportSession { claims } => crate::passport::method_json(claims, false),
+            AuthMethod::PassportBearer { claims } => crate::passport::method_json(claims, true),
             AuthMethod::KvApiKey { key_id, policy } => {
                 let mut key = json!({"id":key_id});
                 if let Some(row) = self.store.read(&api_keys::id_key(key_id)).await? {

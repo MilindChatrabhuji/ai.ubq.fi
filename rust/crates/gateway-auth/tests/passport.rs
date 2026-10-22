@@ -18,7 +18,7 @@ use gateway_auth::{
 };
 use gateway_core::{
     GatewayError,
-    state::{AuthorityStore, AtomicTransition, CommitOutcome, RecordKey, StoredRecord},
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, StoredRecord},
 };
 use rsa::{
     RsaPrivateKey,
@@ -262,7 +262,9 @@ fn request(method: &str, url: &str) -> AuthRequest {
 }
 
 fn with_cookie(mut request: AuthRequest, name: &str, value: &str) -> AuthRequest {
-    request.headers.insert("cookie".into(), format!("{name}={value}"));
+    request
+        .headers
+        .insert("cookie".into(), format!("{name}={value}"));
     request
 }
 
@@ -277,7 +279,10 @@ fn login_redirect_contains_the_exact_fixed_authorize_contract() {
     let response = run(passport.login(&request("GET", "https://ai.ubq.fi/auth/login"))).unwrap();
     assert_eq!(response.status, 302);
     let location = url::Url::parse(&response.headers["location"]).unwrap();
-    assert_eq!(location.origin().ascii_serialization(), "https://passport.ubq.fi");
+    assert_eq!(
+        location.origin().ascii_serialization(),
+        "https://passport.ubq.fi"
+    );
     assert_eq!(location.path(), "/authorize");
     let query = location.query_pairs().collect::<BTreeMap<_, _>>();
     assert_eq!(query["client_id"], "ai");
@@ -315,9 +320,10 @@ fn callback_verifies_state_exchange_and_sets_two_cookie_headers() {
     assert!(response.set_cookies[0].starts_with(&format!(
         "{PASSPORT_COOKIE}={token}; Path=/; Max-Age=500; HttpOnly; Secure; SameSite=Lax"
     )));
-    assert!(response.set_cookies[1].starts_with(&format!(
-        "{PASSPORT_STATE_COOKIE}=; Path=/; Max-Age=0"
-    )));
+    assert!(
+        response.set_cookies[1]
+            .starts_with(&format!("{PASSPORT_STATE_COOKIE}=; Path=/; Max-Age=0"))
+    );
     let exchange = host.exchange_requests.borrow();
     assert_eq!(exchange.len(), 1);
     let AuthUpstreamRequest::PassportExchange {
@@ -353,7 +359,10 @@ fn callback_rejects_missing_mismatched_and_replayed_state_without_exchange() {
             "other",
         ),
         with_cookie(
-            request("GET", "https://ai.ubq.fi/auth/callback?state=a&state=b&code=c"),
+            request(
+                "GET",
+                "https://ai.ubq.fi/auth/callback?state=a&state=b&code=c",
+            ),
             PASSPORT_STATE_COOKIE,
             "a",
         ),
@@ -385,10 +394,7 @@ fn callback_rejects_exchange_status_and_malformed_token() {
         config: &PassportConfig::production(),
     };
     let request = with_cookie(
-        request(
-            "GET",
-            "https://ai.ubq.fi/auth/callback?state=s&code=c",
-        ),
+        request("GET", "https://ai.ubq.fi/auth/callback?state=s&code=c"),
         PASSPORT_STATE_COOKIE,
         "s",
     );
@@ -440,11 +446,12 @@ fn claim_signature_and_algorithm_failures_fail_closed() {
         json!({"alg":"RS256","typ":"JWT"}),
         json!({"alg":"RS256","kid":"key-a"}),
     ] {
-        assert!(
-            verify_jwt(&jwt(header, &claims()), &config, 1_500, &keys).is_err()
-        );
+        assert!(verify_jwt(&jwt(header, &claims()), &config, 1_500, &keys).is_err());
     }
-    let tampered = valid.rsplit_once('.').map(|(prefix, _)| format!("{prefix}.AAAA")).unwrap();
+    let tampered = valid
+        .rsplit_once('.')
+        .map(|(prefix, _)| format!("{prefix}.AAAA"))
+        .unwrap();
     assert!(verify_jwt(&tampered, &config, 1_500, &keys).is_err());
 }
 
@@ -464,10 +471,7 @@ fn jwks_cache_refreshes_exactly_once_for_an_unknown_kid() {
         host: &host,
         config: &PassportConfig::production(),
     };
-    assert_eq!(
-        run(passport.bearer(&token_a)).unwrap().sub,
-        "user-123"
-    );
+    assert_eq!(run(passport.bearer(&token_a)).unwrap().sub, "user-123");
     assert_eq!(host.jwks_fetches.get(), 1);
     assert!(run(passport.bearer(&token_a)).is_ok());
     assert_eq!(host.jwks_fetches.get(), 1);
@@ -476,10 +480,7 @@ fn jwks_cache_refreshes_exactly_once_for_an_unknown_kid() {
         serde_json::to_vec(&json!({"keys":[public_jwk("key-a"),public_jwk("key-b")]})).unwrap();
     assert!(run(passport.bearer(&token_b)).is_ok());
     assert_eq!(host.jwks_fetches.get(), 2);
-    let unknown = jwt(
-        json!({"alg":"RS256","typ":"JWT","kid":"key-c"}),
-        &claims(),
-    );
+    let unknown = jwt(json!({"alg":"RS256","typ":"JWT","kid":"key-c"}), &claims());
     assert!(run(passport.bearer(&unknown)).is_err());
     assert_eq!(host.jwks_fetches.get(), 3);
 }
@@ -489,21 +490,25 @@ fn jwks_transport_failure_and_non_success_status_are_unavailable() {
     reset_jwks_cache();
     let host = Host::new(vec![public_jwk("key-a")], token(&claims()));
     *host.jwks.borrow_mut() = b"not json".to_vec();
-    assert!(run(PassportService {
-        host: &host,
-        config: &PassportConfig::production()
-    }
-    .bearer(&token(&claims())))
-    .is_err());
+    assert!(
+        run(PassportService {
+            host: &host,
+            config: &PassportConfig::production()
+        }
+        .bearer(&token(&claims())))
+        .is_err()
+    );
     reset_jwks_cache();
     host.jwks_status.set(302);
     *host.jwks.borrow_mut() = serde_json::to_vec(&json!({"keys":[public_jwk("key-a")]})).unwrap();
-    assert!(run(PassportService {
-        host: &host,
-        config: &PassportConfig::production()
-    }
-    .bearer(&token(&claims())))
-    .is_err());
+    assert!(
+        run(PassportService {
+            host: &host,
+            config: &PassportConfig::production()
+        }
+        .bearer(&token(&claims())))
+        .is_err()
+    );
 }
 
 fn assert_unauthorized(result: Result<gateway_auth::AuthPrincipal, GatewayError>) {
@@ -541,7 +546,10 @@ fn cookie_and_bearer_principals_map_to_the_passport_subject() {
         .headers
         .insert("authorization".into(), format!("Bearer {token}"));
     let principal = run(auth.authenticate_client(&bearer)).unwrap();
-    assert!(matches!(principal.method, AuthMethod::PassportBearer { .. }));
+    assert!(matches!(
+        principal.method,
+        AuthMethod::PassportBearer { .. }
+    ));
     assert_eq!(
         principal.method.principal_id(None),
         "passport-user:user-123"
@@ -564,12 +572,11 @@ fn invalid_jwt_shaped_bearer_never_falls_through_to_admin() {
         ..Default::default()
     };
     let auth = AuthService::new(&store, &host, &config);
-    let bad = jwt(
-        json!({"alg":"HS256","typ":"JWT","kid":"key-a"}),
-        &claims(),
-    );
+    let bad = jwt(json!({"alg":"HS256","typ":"JWT","kid":"key-a"}), &claims());
     let mut request = request("GET", "https://ai.ubq.fi/uos/auth");
-    request.headers.insert("authorization".into(), format!("Bearer {bad}"));
+    request
+        .headers
+        .insert("authorization".into(), format!("Bearer {bad}"));
     assert_unauthorized(run(auth.authenticate_client(&request)));
     assert_unauthorized(run(auth.authenticate_admin(&request)));
     let mut valid_bearer = request.clone();
@@ -604,7 +611,10 @@ fn admin_cookie_requires_isadmin_and_same_origin_mutations() {
     foreign
         .headers
         .insert("origin".into(), "https://evil.example".into());
-    assert_eq!(run(auth.authenticate_admin(&foreign)).unwrap_err().status, 403);
+    assert_eq!(
+        run(auth.authenticate_admin(&foreign)).unwrap_err().status,
+        403
+    );
     let mut same = with_cookie(
         request("POST", "https://ai.ubq.fi/admin/api"),
         PASSPORT_COOKIE,
@@ -618,21 +628,25 @@ fn admin_cookie_requires_isadmin_and_same_origin_mutations() {
     non_admin["isAdmin"] = json!(false);
     let non_admin = token(&non_admin);
     host.exchange.borrow_mut();
-    *host.jwks.borrow_mut() =
-        serde_json::to_vec(&json!({"keys":[public_jwk("key-a")]})).unwrap();
+    *host.jwks.borrow_mut() = serde_json::to_vec(&json!({"keys":[public_jwk("key-a")]})).unwrap();
     let request = with_cookie(
         request("GET", "https://ai.ubq.fi/admin"),
         PASSPORT_COOKIE,
         &non_admin,
     );
-    assert_eq!(run(auth.authenticate_admin(&request)).unwrap_err().status, 403);
+    assert_eq!(
+        run(auth.authenticate_admin(&request)).unwrap_err().status,
+        403
+    );
 }
 
 #[test]
 fn same_origin_mutation_rejects_foreign_browser_markers() {
     let mut request = request("POST", "https://ai.ubq.fi/admin/api");
     assert!(same_origin_mutation(&request));
-    request.headers.insert("sec-fetch-site".into(), "cross-site".into());
+    request
+        .headers
+        .insert("sec-fetch-site".into(), "cross-site".into());
     assert!(!same_origin_mutation(&request));
     request.headers.remove("sec-fetch-site");
     request

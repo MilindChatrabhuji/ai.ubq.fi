@@ -509,11 +509,7 @@ pub async fn run(
                 if decoded.status != 200 || decoded.events.is_empty() {
                     return Err(invalid("Lithos stream refusal could not be translated."));
                 }
-                observation.semantic_terminal(
-                    decoded
-                        .terminal
-                        .unwrap_or(SemanticTerminal::Failed),
-                );
+                observation.semantic_terminal(decoded.terminal.unwrap_or(SemanticTerminal::Failed));
                 capture.configure(200, true, responses, provider);
                 let payload = decoded
                     .events
@@ -866,7 +862,11 @@ pub async fn run(
             && let Some(native) = decoded.native_replay.as_ref()
             && let Some(output) = serde_json::from_str::<serde_json::Value>(decoded.body.as_str())
                 .ok()
-                .and_then(|body| body.get("output").and_then(serde_json::Value::as_array).cloned())
+                .and_then(|body| {
+                    body.get("output")
+                        .and_then(serde_json::Value::as_array)
+                        .cloned()
+                })
         {
             let _ = crate::claude_host::remember_native(
                 principal,
@@ -960,7 +960,14 @@ fn cerebras_error_detail(bytes: &[u8]) -> (String, String) {
             .and_then(|error| error.get(name))
             .or_else(|| value.get(name))
             .and_then(serde_json::Value::as_str)
-            .map(|value| value.chars().take(limit).collect::<String>().trim().to_owned())
+            .map(|value| {
+                value
+                    .chars()
+                    .take(limit)
+                    .collect::<String>()
+                    .trim()
+                    .to_owned()
+            })
             .filter(|value| !value.is_empty())
     };
     (
@@ -1178,7 +1185,11 @@ mod tests {
     #[test]
     fn cerebras_status_types_and_bounds_follow_the_source() {
         let body = cerebras_error_body(429, br#"{"error":{"message":"slow down","code":"rate"}}"#);
-        assert!(String::from_utf8(body).unwrap().contains("rate_limit_error"));
+        assert!(
+            String::from_utf8(body)
+                .unwrap()
+                .contains("rate_limit_error")
+        );
         let body = cerebras_error_body(503, br#"{"message":"down","code":"unavailable"}"#);
         assert!(String::from_utf8(body).unwrap().contains("server_error"));
         let oversized = serde_json::to_vec(&json!({

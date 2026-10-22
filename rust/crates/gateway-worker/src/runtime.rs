@@ -4,10 +4,7 @@ use std::rc::Rc;
 use gateway_admin::AdminService;
 use gateway_auth::{AuthPrincipal, AuthRequest, AuthResponse, AuthService};
 use gateway_core::{
-    GatewayError,
-    identity::RequestId,
-    source_json::SourceJson,
-    state::AuthorityStore,
+    GatewayError, identity::RequestId, source_json::SourceJson, state::AuthorityStore,
 };
 use gateway_schema::{
     catalog,
@@ -277,13 +274,7 @@ pub async fn route(
             if let Some(cached) = durable_catalog(&store, version, now).await? {
                 let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
                 if !cached.metadata.fresh(now) {
-                    crate::catalog::schedule_warm(
-                        &store,
-                        &env,
-                        &host,
-                        context.clone(),
-                        version,
-                    );
+                    crate::catalog::schedule_warm(&store, &env, &host, context.clone(), version);
                 }
                 let cache_state = if cached.metadata.fresh(now) {
                     CacheState::Hit

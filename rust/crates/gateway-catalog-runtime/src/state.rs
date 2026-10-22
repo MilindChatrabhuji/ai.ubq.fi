@@ -568,9 +568,7 @@ struct ProviderObservationWire {
     stale: bool,
 }
 
-fn observation_wire(
-    snapshot: &ProviderCatalog,
-) -> Result<ProviderObservationWire, GatewayError> {
+fn observation_wire(snapshot: &ProviderCatalog) -> Result<ProviderObservationWire, GatewayError> {
     Ok(ProviderObservationWire {
         models: snapshot
             .models

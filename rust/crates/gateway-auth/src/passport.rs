@@ -111,8 +111,7 @@ pub fn config_for_request(config: &AuthConfig, request: &AuthRequest) -> Option<
         let request_origin = request_url.origin().ascii_serialization();
         return (loopback || request_origin == passport.origin).then_some(passport);
     }
-    (request_url.scheme() == "https" && host == "ai.ubq.fi")
-        .then(PassportConfig::production)
+    (request_url.scheme() == "https" && host == "ai.ubq.fi").then(PassportConfig::production)
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -204,10 +203,9 @@ fn parse_jwt(token: &str) -> Result<(Value, PassportClaims, String, Signature), 
     if parts.len() != 3 || parts.iter().any(|part| part.is_empty()) {
         return Err(invalid_token());
     }
-    let header: Value = serde_json::from_slice(
-        &decode_base64url(parts[0]).map_err(|_| invalid_token())?,
-    )
-    .map_err(|_| invalid_token())?;
+    let header: Value =
+        serde_json::from_slice(&decode_base64url(parts[0]).map_err(|_| invalid_token())?)
+            .map_err(|_| invalid_token())?;
     if !header.is_object()
         || header.get("alg").and_then(Value::as_str) != Some("RS256")
         || header.get("typ").and_then(Value::as_str) != Some("JWT")
@@ -226,10 +224,9 @@ fn parse_jwt(token: &str) -> Result<(Value, PassportClaims, String, Signature), 
         .filter(|kid| !kid.is_empty() && kid.len() <= 200)
         .ok_or_else(invalid_token)?
         .to_owned();
-    let claims: PassportClaims = serde_json::from_slice(
-        &decode_base64url(parts[1]).map_err(|_| invalid_token())?,
-    )
-    .map_err(|_| invalid_token())?;
+    let claims: PassportClaims =
+        serde_json::from_slice(&decode_base64url(parts[1]).map_err(|_| invalid_token())?)
+            .map_err(|_| invalid_token())?;
     let signature = Signature::try_from(
         decode_base64url(parts[2])
             .map_err(|_| invalid_token())?
@@ -399,7 +396,10 @@ pub struct PassportService<'a, H> {
 }
 
 impl<'a, H: AuthHost> PassportService<'a, H> {
-    pub async fn session(&self, request: &AuthRequest) -> Result<Option<PassportClaims>, GatewayError> {
+    pub async fn session(
+        &self,
+        request: &AuthRequest,
+    ) -> Result<Option<PassportClaims>, GatewayError> {
         let Some(token) = cookie(request, PASSPORT_COOKIE) else {
             return Ok(None);
         };
@@ -443,7 +443,9 @@ impl<'a, H: AuthHost> PassportService<'a, H> {
             set_cookies: vec![state_cookie(&state)],
             stream: None,
         };
-        response.headers.insert("cache-control".into(), "no-store".into());
+        response
+            .headers
+            .insert("cache-control".into(), "no-store".into());
         Ok(response)
     }
 
@@ -514,7 +516,9 @@ impl<'a, H: AuthHost> PassportService<'a, H> {
             Ok(claims) => claims,
             Err(error) => return fail(error),
         };
-        let max_age = claims.exp.saturating_sub(self.host.now_ms().div_euclid(1000));
+        let max_age = claims
+            .exp
+            .saturating_sub(self.host.now_ms().div_euclid(1000));
         Ok(AuthResponse {
             status: 302,
             headers: BTreeMap::from([

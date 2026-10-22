@@ -830,8 +830,7 @@ fn durable_provider_observations_hydrate_a_fresh_runtime_and_binding() {
     store.put(catalog_store::auth_generation_key(), "g2", "g2".into());
     let rotated_generation = CatalogRuntime::new();
     let publication = host.published.borrow().clone();
-    let state =
-        run(rotated_generation.load_state(&store, &publication, store.now.get())).unwrap();
+    let state = run(rotated_generation.load_state(&store, &publication, store.now.get())).unwrap();
     assert!(state.input.rows("openrouter").is_empty());
 }
 
