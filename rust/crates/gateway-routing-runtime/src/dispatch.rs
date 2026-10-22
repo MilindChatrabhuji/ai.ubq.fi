@@ -431,33 +431,46 @@ impl<
         } else if record.provider == UpstreamProvider::Lithos
             && failure.origin == FailureOrigin::Provider
             && failure.status == Some(429)
-            && let Some(wait) = classify::retry_after_millis(&failure.headers, self.now()?)
         {
-            let allowed = self
-                .waits
-                .borrow_mut()
-                .claim(wait, self.input.retry_prohibited);
-            if allowed {
-                self.renew().await?;
-                let outcome = self.host.wait(wait).await;
-                if !(0..=9_007_199_254_740_991).contains(&outcome.elapsed_ms) {
-                    return Err(journal::unavailable("The host wait duration is invalid.").into());
+            let response_prohibited = gateway_providers::lithos::retry_prohibited(&failure.headers);
+            let wait = lithos_wait_ms(&failure.headers, self.now()?);
+            if !self.input.retry_prohibited {
+                if response_prohibited {
+                    self.lithos.borrow_mut().prohibit(&record.model);
+                } else if let Some(wait) = wait {
+                    self.lithos
+                        .borrow_mut()
+                        .refuse(&record.model, self.now()?, wait);
+                } else {
+                    self.lithos.borrow_mut().skip(&record.model);
                 }
-                self.elapsed_wait_ms.set(
-                    self.elapsed_wait_ms
-                        .get()
-                        .saturating_add(outcome.elapsed_ms),
-                );
-                outcome.result?;
-                if self.host.cancelled() {
-                    return Ok(RefusalDecision::Abort);
-                }
-                decision = RefusalDecision::Continue;
-            } else if !self.input.retry_prohibited {
-                self.lithos
-                    .borrow_mut()
-                    .refuse(&record.model, self.now()?, wait);
                 if self.lithos.borrow().select(&record.model, self.now()?) != record.model {
+                    decision = RefusalDecision::Continue;
+                }
+            }
+            if decision != RefusalDecision::Continue
+                && !response_prohibited
+                && !self.input.retry_prohibited
+                && let Some(wait) = wait
+            {
+                let allowed = self.waits.borrow_mut().claim(wait, false);
+                if allowed {
+                    self.renew().await?;
+                    let outcome = self.host.wait(wait).await;
+                    if !(0..=9_007_199_254_740_991).contains(&outcome.elapsed_ms) {
+                        return Err(
+                            journal::unavailable("The host wait duration is invalid.").into()
+                        );
+                    }
+                    self.elapsed_wait_ms.set(
+                        self.elapsed_wait_ms
+                            .get()
+                            .saturating_add(outcome.elapsed_ms),
+                    );
+                    outcome.result?;
+                    if self.host.cancelled() {
+                        return Ok(RefusalDecision::Abort);
+                    }
                     decision = RefusalDecision::Continue;
                 }
             }
@@ -522,4 +535,13 @@ fn paid_terminal(terminal: SemanticTerminal) -> PaidTerminalState {
         SemanticTerminal::Incomplete => PaidTerminalState::Incomplete,
         SemanticTerminal::Failed | SemanticTerminal::Error => PaidTerminalState::Failed,
     }
+}
+fn lithos_wait_ms(headers: &gateway_providers::Headers, now: i64) -> Option<i64> {
+    let wait = gateway_providers::lithos::rate_limit_wait(headers, now as f64, |raw| {
+        chrono::DateTime::parse_from_rfc2822(raw)
+            .ok()
+            .map(|date| date.timestamp_millis() as f64)
+    })?;
+    (wait.wait_ms.is_finite() && wait.wait_ms > 0.0 && wait.wait_ms <= 9_007_199_254_740_991.0)
+        .then_some(wait.wait_ms.round() as i64)
 }

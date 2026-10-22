@@ -119,6 +119,7 @@ pub fn chat_has_answer(value: &Value) -> bool {
 #[derive(Clone, Debug, Default)]
 pub struct LithosWindows {
     deadlines: std::collections::BTreeMap<ModelId, i64>,
+    prohibited: std::collections::BTreeSet<ModelId>,
 }
 pub fn lithos_ladder(model: &ModelId) -> Vec<ModelId> {
     let model = lithos_canonical(model);
@@ -175,14 +176,22 @@ impl LithosWindows {
             *row = (*row).max(deadline);
         }
     }
+    pub fn prohibit(&mut self, rung: &ModelId) {
+        self.prohibited.insert(lithos_canonical(rung));
+    }
+    pub fn skip(&mut self, rung: &ModelId) {
+        self.prohibited.insert(lithos_canonical(rung));
+    }
     pub fn select(&self, model: &ModelId, now: i64) -> ModelId {
         let canonical = lithos_canonical(model);
         std::iter::once(canonical.clone())
             .chain(lithos_ladder(&canonical))
             .find(|rung| {
-                self.deadlines
-                    .get(rung)
-                    .is_none_or(|deadline| *deadline <= now)
+                !self.prohibited.contains(rung)
+                    && self
+                        .deadlines
+                        .get(rung)
+                        .is_none_or(|deadline| *deadline <= now)
             })
             .unwrap_or(canonical)
     }
