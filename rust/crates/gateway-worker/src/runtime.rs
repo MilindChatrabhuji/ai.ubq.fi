@@ -1,5 +1,5 @@
 //! Public routing. Private authority protocol paths are never forwarded here.
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use gateway_admin::AdminService;
 use gateway_auth::{AuthPrincipal, AuthRequest, AuthResponse, AuthService};
@@ -15,6 +15,25 @@ use crate::{
     storage::now_ms,
     transport::{HeaderLimits, body, bounded_headers, outbound::Cancellation},
 };
+
+
+thread_local! {
+    static MODEL_CATALOG_CACHE: RefCell<Option<(String, i64, String)>> = const { RefCell::new(None) };
+}
+const MODEL_CATALOG_CACHE_MS: i64 = 60 * 60 * 1000;
+fn cached_model_catalog(version: &str, now_ms: i64) -> Option<String> {
+    MODEL_CATALOG_CACHE.with(|cache| {
+        cache.borrow().as_ref().and_then(|(cached_version, cached_at, body)| {
+            (cached_version == version && now_ms.saturating_sub(*cached_at) < MODEL_CATALOG_CACHE_MS)
+                .then(|| body.clone())
+        })
+    })
+}
+fn cache_model_catalog(version: &str, now_ms: i64, body: &str) {
+    MODEL_CATALOG_CACHE.with(|cache| {
+        *cache.borrow_mut() = Some((version.to_owned(), now_ms, body.to_owned()));
+    });
+}
 
 pub async fn route(
     mut request: Request,
@@ -244,28 +263,32 @@ pub async fn route(
         };
     }
     if path == "/v1/models" && request.method() == Method::Get {
-        let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
         let url = request.url().map_err(|_| invalid_url())?;
         let versions = url
             .query_pairs()
             .filter(|(key, _)| key == "client_version")
             .map(|(_, value)| value.into_owned())
             .collect::<Vec<_>>();
-        return (if versions.is_empty() {
-            json_response(catalog::ordinary_models(&state.input))
-        } else {
-            let version = if versions.len() == 1 {
-                versions[0].as_str()
-            } else {
-                ""
-            };
-            catalog_response(
-                state
-                    .native_models(&store, &request, version, now_ms()?)
-                    .await?,
-            )
-        })
-        .map(Into::into);
+        if versions.len() == 1 {
+            let version = versions[0].as_str();
+            let now = now_ms()?;
+            if let Some(body) = cached_model_catalog(version, now) {
+                return Response::ok(body)
+                    .map_err(|_| invalid_url())
+                    .map(|mut response| {
+                        let _ = response.headers_mut().set("Content-Type", "application/json");
+                        response.into()
+                    });
+            }
+            let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
+            let response = state.native_models(&store, &request, version, now).await?;
+            if response.status == 200 && let Some(body) = response.body.as_deref() {
+                cache_model_catalog(version, now, body);
+            }
+            return catalog_response(response).map(Into::into);
+        }
+        let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
+        return json_response(catalog::ordinary_models(&state.input)).map(Into::into);
     }
     if path == "/uos/models/capabilities" && request.method() == Method::Get {
         let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
