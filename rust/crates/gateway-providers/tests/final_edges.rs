@@ -137,6 +137,56 @@ fn lithos_header_precedence_and_streamed_final_refusal_stay_in_band() {
     );
 }
 #[test]
+fn lithos_streamed_refusal_parity_is_exposed_for_both_client_surfaces() {
+    let headers = Headers::from([
+        ("content-type".into(), "application/json".into()),
+        ("x-should-retry".into(), "false".into()),
+        ("retry-after-ms".into(), "5000".into()),
+    ]);
+    for (surface, body) in [
+        (
+            ClientSurface::Responses,
+            json!({"model":"deepseek-ai/DeepSeek-V4.1-Flash","input":"x","stream":true}),
+        ),
+        (
+            ClientSurface::Chat,
+            json!({"model":"deepseek-ai/DeepSeek-V4.1-Flash","messages":[{"role":"user","content":"x"}],"stream":true}),
+        ),
+    ] {
+        let prepared = prepare_request(UpstreamProvider::Lithos, surface, &body, &opts()).unwrap();
+        assert!(gateway_providers::sse::is_lithos_stream_refusal(
+            &prepared.decode,
+            429
+        ));
+        assert!(!gateway_providers::sse::is_lithos_stream_refusal(
+            &prepared.decode,
+            200
+        ));
+        let decoded = decode_response(
+            &prepared.decode,
+            429,
+            &headers,
+            br#"{"error":{"code":"tokens_exhausted","message":"wait"}}"#,
+        )
+        .unwrap();
+        assert_eq!(decoded.status, 200, "{surface:?}");
+        assert_eq!(
+            decoded.terminal,
+            Some(gateway_core::lifecycle::SemanticTerminal::Failed)
+        );
+        assert_eq!(decoded.headers["Content-Type"], "text/event-stream");
+        assert_eq!(decoded.headers["x-should-retry"], "false");
+        assert_eq!(decoded.events.len(), 1);
+        let event = scalar(&decoded.events[0].data);
+        let code = match surface {
+            ClientSurface::Responses => &event["response"]["error"]["code"],
+            ClientSurface::Chat => &event["error"]["code"],
+            _ => unreachable!(),
+        };
+        assert_eq!(code, "tokens_exhausted", "{surface:?}: {event}");
+    }
+}
+#[test]
 fn codex_error_bytes_are_available_unchanged_before_authority_classification() {
     let mut options = opts();
     options.conversation_id = Some("conversation-uuid".into());

@@ -1221,7 +1221,7 @@ fn measured_cancelled_wait_is_recorded_before_original_cancellation_error() {
         let session = RoutingSession::begin(
             input(
                 "wait-cancel",
-                "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+                "deepseek-ai/DeepSeek-V4.1-Flash",
                 &["lithos"],
             ),
             store.clone(),
@@ -1244,6 +1244,147 @@ fn measured_cancelled_wait_is_recorded_before_original_cancellation_error() {
             .await
             .unwrap();
         assert_eq!(window(&store)["committed_requests"], 1);
+    });
+}
+
+#[test]
+fn lithos_refusal_headers_use_vendor_windows_and_response_prohibition() {
+    run(async {
+        for (id, headers, expected_prohibited) in [
+            ("lithos-no-window", BTreeMap::new(), false),
+            (
+                "lithos-short-window",
+                BTreeMap::from([("retry-after-ms".into(), "5".into())]),
+                false,
+            ),
+            (
+                "lithos-retry-after-ms",
+                BTreeMap::from([("retry-after-ms".into(), "90000".into())]),
+                false,
+            ),
+            (
+                "lithos-reset-duration",
+                BTreeMap::from([("x-ratelimit-reset-requests".into(), "90s".into())]),
+                false,
+            ),
+            (
+                "lithos-response-prohibited",
+                BTreeMap::from([
+                    ("retry-after-ms".into(), "5".into()),
+                    ("x-should-retry".into(), "false".into()),
+                ]),
+                true,
+            ),
+        ] {
+            let store = Store::new();
+            seed_key(&store);
+            let session = RoutingSession::begin(
+                input(id, "deepseek-ai/DeepSeek-V4.1-Flash-ultra", &["lithos"]),
+                store.clone(),
+                Host::new(&store),
+                store.clone(),
+                store.clone(),
+            )
+            .await
+            .unwrap();
+            let attempt = session.next_attempt().await.unwrap().unwrap();
+            session.before_dispatch(&attempt).await.unwrap();
+            session.transport_started(&attempt).await.unwrap();
+            let mut failure = refusal(429, TransportState::Started);
+            failure.headers = headers;
+            assert_eq!(
+                session.refusal(&attempt, failure).await.unwrap(),
+                RefusalDecision::Continue,
+                "{id}"
+            );
+            assert_eq!(session.elapsed_wait_ms(), 0, "{id}");
+            let next = session.next_attempt().await.unwrap().unwrap();
+            assert!(
+                next.request
+                    .decode()
+                    .model
+                    .matches_scalar("deepseek-ai/DeepSeek-V4.1-Flash-fast"),
+                "{id}: {:?}",
+                next.request.decode().model
+            );
+            if expected_prohibited {
+                assert_eq!(session.elapsed_wait_ms(), 0, "{id}");
+            }
+            session
+                .finish(TransportObservation::default())
+                .await
+                .unwrap();
+        }
+    });
+}
+
+#[test]
+fn lithos_response_prohibition_is_request_local_and_does_not_retry_the_rung() {
+    run(async {
+        let store = Store::new();
+        seed_key(&store);
+        let first = RoutingSession::begin(
+            input(
+                "lithos-local-prohibited",
+                "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+                &["lithos"],
+            ),
+            store.clone(),
+            Host::new(&store),
+            store.clone(),
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let attempt = first.next_attempt().await.unwrap().unwrap();
+        first.before_dispatch(&attempt).await.unwrap();
+        first.transport_started(&attempt).await.unwrap();
+        let mut refusal = refusal(429, TransportState::Started);
+        refusal
+            .headers
+            .insert("x-should-retry".into(), "false".into());
+        assert_eq!(
+            first.refusal(&attempt, refusal).await.unwrap(),
+            RefusalDecision::Continue
+        );
+        let next = first.next_attempt().await.unwrap().unwrap();
+        assert!(
+            next.request
+                .decode()
+                .model
+                .matches_scalar("deepseek-ai/DeepSeek-V4.1-Flash-fast"),
+            "the prohibited rung must not be retried: {:?}",
+            next.request.decode().model
+        );
+        first.finish(TransportObservation::default()).await.unwrap();
+
+        let second = RoutingSession::begin(
+            input(
+                "lithos-local-prohibited-next-request",
+                "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+                &["lithos"],
+            ),
+            store.clone(),
+            Host::new(&store),
+            store.clone(),
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let attempt = second.next_attempt().await.unwrap().unwrap();
+        assert!(
+            attempt
+                .request
+                .decode()
+                .model
+                .matches_scalar("deepseek-ai/DeepSeek-V4.1-Flash-ultra"),
+            "another request must still try the prohibited model: {:?}",
+            attempt.request.decode().model
+        );
+        second
+            .finish(TransportObservation::default())
+            .await
+            .unwrap();
     });
 }
 

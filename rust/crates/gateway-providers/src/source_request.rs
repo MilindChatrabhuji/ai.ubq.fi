@@ -239,10 +239,19 @@ pub fn prepare_source_request(
         UpstreamProvider::Surplus | UpstreamProvider::Metered => {
             let normalized =
                 controls::ordinary(raw, surface, &model, options.ordinary_preparation.as_ref())?;
+            let mut provider_projection = normalized.clone();
+            let previous_response_id_ignored = surface == ClientSurface::Responses
+                && s::present(raw, "previous_response_id").is_some();
+            if previous_response_id_ignored {
+                // Claude's native projection cannot represent response-store state.
+                // Ignore it on the provider clone, not the original source echo.
+                s::remove(&mut provider_projection, "previous_response_id");
+                warnings.push("previous_response_id_ignored".into());
+            }
             if surface == ClientSurface::Chat {
                 client_stream = s::boolean(&s::get(&normalized, "stream")).unwrap_or(false);
             }
-            body = normalized.clone();
+            body = provider_projection.clone();
             decode = if surface == ClientSurface::Chat {
                 ResponseDecode::ResponsesToChat
             } else {
@@ -251,7 +260,7 @@ pub fn prepare_source_request(
             headers = bearer_headers(&options.auth.secret, "text/event-stream");
             if provider == UpstreamProvider::Surplus {
                 headers.insert("X-SI-Mask-Secrets".into(), "on".into());
-                if let Some(projection) = source_anthropic::chat(&normalized, options) {
+                if let Some(projection) = source_anthropic::chat(&provider_projection, options) {
                     body = projection.body;
                     names = projection.names;
                     url = "https://api.surplusintelligence.ai/v1/chat/completions".into();
@@ -271,7 +280,9 @@ pub fn prepare_source_request(
                 let mut native_options = options.clone();
                 native_options.supports_native_effort = false;
                 native_options.supports_disabled_thinking = false;
-                if let Some(native) = source_anthropic::native(&normalized, &native_options) {
+                if let Some(native) =
+                    source_anthropic::native(&provider_projection, &native_options)
+                {
                     body = native;
                     url = "https://api.openlux.ai/v1/messages".into();
                     decode = ResponseDecode::AnthropicToResponses;
@@ -308,12 +319,9 @@ pub fn prepare_source_request(
             ));
         }
     }
-    // Codex's whitelist already excludes this, so detect the source field after provider projections.
+    // Codex's whitelist already excludes this, so detect the source field after its projection.
     if surface == ClientSurface::Responses
-        && matches!(
-            provider,
-            UpstreamProvider::ChatgptCodex | UpstreamProvider::Surplus | UpstreamProvider::Metered
-        )
+        && provider == UpstreamProvider::ChatgptCodex
         && s::present(raw, "previous_response_id").is_some()
     {
         s::remove(&mut body, "previous_response_id");

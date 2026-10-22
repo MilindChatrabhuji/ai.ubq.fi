@@ -102,7 +102,7 @@ pub struct PrepareOptions {
     pub conversation_id: Option<String>,
     pub reasoning_summary: Option<JsString16>,
     /// Restored by ReplayStore in the same authenticated context, never by client input.
-    pub restored_native_messages: Option<Vec<Value>>,
+    pub restored_native_messages: Option<Vec<SourceJson>>,
     /// Runtime callers supply Some even for unknown metadata. None is the legacy pure adapter contract.
     pub ordinary_preparation: Option<OrdinaryPreparationContext>,
 }
@@ -171,7 +171,7 @@ pub struct ClaudeBodyOptions {
     pub native_reasoning_efforts: Option<Vec<JsString16>>,
     pub supports_disabled_thinking: bool,
     pub reasoning_summary: Option<JsString16>,
-    pub restored_native_messages: Option<Vec<Value>>,
+    pub restored_native_messages: Option<Vec<SourceJson>>,
     pub ordinary_preparation: Option<OrdinaryPreparationContext>,
 }
 impl ClaudeBodyOptions {

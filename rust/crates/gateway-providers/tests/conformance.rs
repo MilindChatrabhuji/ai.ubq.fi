@@ -1,6 +1,7 @@
 //! Frozen source-derived cases from e706343d: deepseek-responses, oss-terminal-parity,
 //! anthropic-responses/replay, lithos-tier-windows, images and embeddings fixtures.
 use gateway_core::provider::{PaidProvider, UpstreamProvider};
+use gateway_core::source_json::SourceJson;
 use gateway_providers::{chat, extras, policy, replay, request, usage, *};
 use serde_json::{Value, json};
 fn options() -> PrepareOptions {
@@ -24,6 +25,7 @@ fn previous_response_options() -> PrepareOptions {
 fn previous_response_fixture(model: &str, previous: Option<Value>) -> Value {
     let mut raw = json!({
         "model": model,
+        "max_output_tokens": 64,
         "input": [
             {"role":"user","content":[{"type":"input_text","text":"first turn"}]},
             {"role":"assistant","content":[{"type":"output_text","text":"prior answer"}]},
@@ -367,16 +369,20 @@ fn native_replay_is_scoped_complete_expiring_and_never_publicly_signed() {
         provider: "claude_code".into(),
         model: "claude-fixture".into(),
     };
-    let native = json!([{"type":"thinking","thinking":"thought","signature":"private"},{"type":"text","text":"answer"}]);
-    let output = vec![
+    let source = |value: &Value| SourceJson::from_serializable(value).unwrap();
+    let native = source(
+        &json!([{"type":"thinking","thinking":"thought","signature":"private"},{"type":"text","text":"answer"}]),
+    );
+    let output = [
         json!({"id":"rs_resp_native_0","type":"reasoning","summary":[{"type":"summary_text","text":"thought"}]}),
         json!({"id":"msg_resp_native_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[]}]}),
-    ];
+    ]
+    .map(|value| source(&value));
     let mut store = replay::ReplayStore::default();
     assert!(store.remember(
         context.clone(),
         &output,
-        native.clone(),
+        native,
         replay::ReplayTransport::Messages,
         0
     ));
@@ -392,8 +398,13 @@ fn native_replay_is_scoped_complete_expiring_and_never_publicly_signed() {
             .restore(&other, &output, replay::ReplayTransport::Messages, 1)
             .is_none()
     );
-    let mut tampered = output.clone();
-    tampered[1]["content"][0]["text"] = json!("tampered");
+    let tampered_value = json!({"id":"rs_resp_native_0","type":"reasoning","summary":[{"type":"summary_text","text":"thought"}]});
+    let tampered = [
+        source(&tampered_value),
+        source(
+            &json!({"id":"msg_resp_native_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"tampered"}]}),
+        ),
+    ];
     assert!(
         store
             .restore(&context, &tampered, replay::ReplayTransport::Messages, 1)
@@ -676,6 +687,16 @@ fn previous_response_id_provider_matrix_matches_typescript_parity() {
             Expected::StripAndWarn,
         ),
         (
+            UpstreamProvider::Surplus,
+            "claude-fixture",
+            Expected::StripAndWarn,
+        ),
+        (
+            UpstreamProvider::Metered,
+            "claude-fixture",
+            Expected::StripAndWarn,
+        ),
+        (
             UpstreamProvider::Deepseek,
             "deepseek-flash",
             Expected::SilentStrip,
@@ -717,12 +738,34 @@ fn previous_response_id_provider_matrix_matches_typescript_parity() {
                     assert!(body.get("previous_response_id").is_none(), "{provider:?}");
                     assert_eq!(warnings, 1, "{provider:?} warning");
                     assert_eq!(prepared.body, baseline.body, "{provider:?} body changed");
-                    assert_eq!(
-                        body["input"].as_array().map(Vec::len),
-                        raw["input"].as_array().map(Vec::len),
-                        "{provider:?} input item count changed"
-                    );
-                    let history = body["input"].to_string();
+                    if model.starts_with("claude-") {
+                        assert_eq!(
+                            prepared.decode.decode,
+                            match provider {
+                                UpstreamProvider::Surplus =>
+                                    ResponseDecode::AnthropicChatToResponses,
+                                UpstreamProvider::Metered => ResponseDecode::AnthropicToResponses,
+                                _ => unreachable!(),
+                            },
+                            "{provider:?} did not select native Claude"
+                        );
+                        assert_eq!(
+                            prepared.url,
+                            if provider == UpstreamProvider::Surplus {
+                                "https://api.surplusintelligence.ai/v1/chat/completions"
+                            } else {
+                                "https://api.openlux.ai/v1/messages"
+                            },
+                            "{provider:?} URL"
+                        );
+                    } else {
+                        assert_eq!(
+                            body["input"].as_array().map(Vec::len),
+                            raw["input"].as_array().map(Vec::len),
+                            "{provider:?} input item count changed"
+                        );
+                    }
+                    let history = prepared.body.as_str();
                     for marker in ["first turn", "prior answer", "current turn"] {
                         assert!(history.contains(marker), "{provider:?} lost {marker}");
                     }

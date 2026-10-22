@@ -140,7 +140,7 @@ pub fn lithos_ladder(model: &ModelId) -> Vec<ModelId> {
         vec![]
     }
 }
-fn lithos_canonical(model: &ModelId) -> ModelId {
+pub fn lithos_canonical(model: &ModelId) -> ModelId {
     let value = s::trim(model.as_js_string());
     crate::request::LITHOS_MODELS
         .iter()
@@ -176,15 +176,37 @@ impl LithosWindows {
         }
     }
     pub fn select(&self, model: &ModelId, now: i64) -> ModelId {
+        self.eligible(model, now, &Default::default(), &Default::default())
+            .unwrap_or_else(|| lithos_canonical(model))
+    }
+    pub fn eligible(
+        &self,
+        model: &ModelId,
+        now: i64,
+        no_retry: &std::collections::BTreeSet<ModelId>,
+        attempted: &std::collections::BTreeSet<ModelId>,
+    ) -> Option<ModelId> {
         let canonical = lithos_canonical(model);
         std::iter::once(canonical.clone())
             .chain(lithos_ladder(&canonical))
             .find(|rung| {
-                self.deadlines
-                    .get(rung)
-                    .is_none_or(|deadline| *deadline <= now)
+                !no_retry.contains(rung)
+                    && !attempted.contains(rung)
+                    && self
+                        .deadlines
+                        .get(rung)
+                        .is_none_or(|deadline| *deadline <= now)
             })
-            .unwrap_or(canonical)
+    }
+    pub fn retry_eligible(
+        &self,
+        model: &ModelId,
+        no_retry: &std::collections::BTreeSet<ModelId>,
+    ) -> Option<ModelId> {
+        let canonical = lithos_canonical(model);
+        std::iter::once(canonical.clone())
+            .chain(lithos_ladder(&canonical))
+            .find(|rung| !no_retry.contains(rung))
     }
 }
 #[derive(Clone, Copy, Debug)]
