@@ -8,6 +8,7 @@ use gateway_core::source_json::SourceJson;
 use gateway_core::{
     GatewayError,
     query::{QueryRequest, QuerySelector, QueryStore},
+    source_serialization as source,
     state::{RecordKey, StoredRecord},
 };
 use serde_json::json;
@@ -79,10 +80,58 @@ pub async fn passkey_users<S: QueryStore>(
     ))
 }
 
+/// Source `shouldIncludeUsage`: the first query value, ECMAScript-trimmed and
+/// lower-cased, is true only for `1`, `true`, or `yes`. Unlike the kernel flag
+/// parser, `on` is not a truthy value.
+pub fn include_usage(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        let trimmed = value.trim_matches(source_whitespace);
+        matches!(trimmed.to_lowercase().as_str(), "1" | "true" | "yes")
+    })
+}
+
+fn source_whitespace(unit: char) -> bool {
+    matches!(
+        unit,
+        '\u{0009}'..='\u{000d}'
+            | '\u{0020}'
+            | '\u{00a0}'
+            | '\u{1680}'
+            | '\u{2000}'..='\u{200a}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202f}'
+            | '\u{205f}'
+            | '\u{3000}'
+            | '\u{feff}'
+    )
+}
+
+fn omit_field(value: SourceJson, name: &str) -> SourceJson {
+    let units = name.encode_utf16().collect::<Vec<_>>();
+    let fields = source::entries(&value).expect("constructed admin source object");
+    source::object_keys(
+        fields
+            .into_iter()
+            .filter(|(key, _)| key.as_units() != units.as_slice())
+            .collect(),
+    )
+    .expect("admin source object fields")
+}
+
 pub async fn effective_key_record<S: QueryStore>(
     store: &S,
     record: &ApiKeyRecord,
     now: i64,
+) -> Result<SourceJson, GatewayError> {
+    effective_key_record_with_usage(store, record, now, false).await
+}
+
+pub async fn effective_key_record_with_usage<S: QueryStore>(
+    store: &S,
+    record: &ApiKeyRecord,
+    now: i64,
+    include_usage: bool,
 ) -> Result<SourceJson, GatewayError> {
     let mut value = public_record(record);
     let (start, reset) = api_keys::current_window(
@@ -121,8 +170,23 @@ pub async fn effective_key_record<S: QueryStore>(
             usage.committed_requests
         }
     };
-    input::set(&mut value, "usage_requests", input::json(&committed));
-    input::set(&mut value, "usage_reset_at_ms", input::json(&reset));
+    if include_usage {
+        input::set(&mut value, "usage_reset_at_ms", input::json(&reset));
+        input::set(&mut value, "usage_requests", input::json(&committed));
+        input::set(
+            &mut value,
+            "usage",
+            input::object(vec![
+                ("request_count", input::json(&committed)),
+                ("limit", input::json(&record.policy.usage_limit_requests)),
+                ("reset_at_ms", input::json(&reset)),
+            ]),
+        );
+    } else {
+        // Source omits the live usage projection unless requested. The stored
+        // policy reset remains the default value from `public_record`.
+        value = omit_field(value, "usage_requests");
+    }
     let paid = store
         .read(&gateway_authority::keys::paid_window(
             &record.policy.id,
@@ -192,6 +256,14 @@ pub async fn effective_key_record<S: QueryStore>(
 }
 
 pub async fn api_keys<S: QueryStore>(store: &S, now: i64) -> Result<AuthResponse, GatewayError> {
+    api_keys_with_usage(store, now, false).await
+}
+
+pub async fn api_keys_with_usage<S: QueryStore>(
+    store: &S,
+    now: i64,
+    include_usage: bool,
+) -> Result<AuthResponse, GatewayError> {
     let rows = prefix_rows(store, store::key(json!(["ubq_ai", "api_keys", "id"])), now).await?;
     let mut records = Vec::new();
     for (key, row) in rows {
@@ -201,15 +273,19 @@ pub async fn api_keys<S: QueryStore>(store: &S, now: i64) -> Result<AuthResponse
     records.sort_by_key(|record| std::cmp::Reverse(record.created_at_ms));
     let mut data = Vec::new();
     for record in records {
-        data.push(effective_key_record(store, &record, now).await?);
+        data.push(effective_key_record_with_usage(store, &record, now, include_usage).await?);
     }
-    Ok(AuthResponse::source_json(
+    let mut response = AuthResponse::source_json(
         200,
         input::object(vec![
             ("object", input::json("list")),
             ("data", input::json(&data)),
         ]),
-    ))
+    );
+    response
+        .headers
+        .insert("x-uos-upstream".into(), "chatgpt_codex".into());
+    Ok(response)
 }
 
 pub async fn key_changes<S: QueryStore>(
