@@ -37,7 +37,7 @@ async function upstream(request, env, context) {
     const headers = new Headers({
       "content-type": "application/json",
       "retry-after": "7",
-      "server": "cerebras-origin",
+      server: "cerebras-origin",
       "cf-ray": "fixture-ray",
       "x-arbitrary": "must-not-relay",
     });
@@ -246,7 +246,11 @@ let passportIdentityPromise = null;
 const passportIdentity = async () => {
   if (!passportIdentityPromise) {
     passportIdentityPromise = (async () => {
-      const pair = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", hash: "SHA-256", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) }, true, ["sign", "verify"]);
+      const pair = await crypto.subtle.generateKey(
+        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) },
+        true,
+        ["sign", "verify"]
+      );
       const key = await crypto.subtle.exportKey("jwk", pair.publicKey);
       const kid = "fixture-passport-key";
       return { pair, kid, jwk: { ...key, kid, alg: "RS256", use: "sig" } };

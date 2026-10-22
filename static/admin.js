@@ -587,9 +587,7 @@ const setAdminSnapshotScopeFromAuth = (auth) => {
   const localDevelopmentPrincipal = method === "disabled" && canUseLocalDevelopmentAuth() ? "local-development" : "";
   const passportPrincipal = typeof auth?.principal === "string" ? auth.principal : "";
   const principal =
-    tokenFingerprint ||
-    passportPrincipal ||
-    (passkeyUserId ? `${method}:${passkeyUserId}` : localDevelopmentPrincipal);
+    tokenFingerprint || passportPrincipal || (passkeyUserId ? `${method}:${passkeyUserId}` : localDevelopmentPrincipal);
   if (!method || !principal) {
     clearAdminSnapshotScope();
     return false;
