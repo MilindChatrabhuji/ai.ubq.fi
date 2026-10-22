@@ -19,6 +19,7 @@ export default defineConfig({
       AUTHORITY: bindings.durableObject({ worker: workerName, exportName: "GatewayAuthority" }),
       ASSETS: bindings.assets(),
       UOS_CANDIDATE_NATIVE_V1: bindings.secret(),
+      UOS_CANDIDATE_INITIAL_SEAL_V1: bindings.secret(),
     },
     assets: { runWorkerFirst: true, notFoundHandling: "none" },
     observability: { enabled: true, traces: { enabled: true } },

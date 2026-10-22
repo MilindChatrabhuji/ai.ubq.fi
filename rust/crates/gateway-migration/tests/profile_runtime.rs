@@ -52,6 +52,7 @@ fn body(response: AuthResponse) -> Value {
     match response.body {
         AuthResponseBody::Json(value) => value,
         AuthResponseBody::SourceJson(value) => value.deserialize().expect("Scalar profile fixture"),
+        AuthResponseBody::Empty => panic!("Profile response unexpectedly had no body"),
     }
 }
 

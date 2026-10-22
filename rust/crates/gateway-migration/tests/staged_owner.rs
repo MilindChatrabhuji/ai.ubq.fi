@@ -118,6 +118,7 @@ fn sealed(directory: &Directory, name: &str) -> Target {
     let binding = StageOwnerBinding {
         capture_id,
         source_git_sha,
+        source_captured_at_ms: captured_at_ms,
         source_native_version: native["version"].as_str().unwrap().into(),
         source_native_sequence: native["sequence"].as_str().unwrap().into(),
         source_pool_revision: source.revision,
@@ -191,6 +192,7 @@ fn owner_binding_refuses_unsealed_wrong_facts_stale_revision_and_duplicate_owner
     for mutate in [
         |b: &mut StageOwnerBinding| b.capture_id = "0".repeat(64),
         |b: &mut StageOwnerBinding| b.source_git_sha = "0".repeat(40),
+        |b: &mut StageOwnerBinding| b.source_captured_at_ms += 1,
         |b: &mut StageOwnerBinding| b.source_native_sequence = "9".into(),
         |b: &mut StageOwnerBinding| b.source_pool_revision = "stale".into(),
         |b: &mut StageOwnerBinding| b.normalized_pool_revision = "stale".into(),

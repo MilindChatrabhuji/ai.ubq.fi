@@ -81,6 +81,7 @@ pub struct StageOwnerAccount {
 pub struct StageOwnerBinding {
     pub capture_id: String,
     pub source_git_sha: String,
+    pub source_captured_at_ms: i64,
     pub source_native_version: String,
     pub source_native_sequence: String,
     pub source_pool_revision: String,
@@ -715,9 +716,11 @@ fn validate_owner_binding(binding: &StageOwnerBinding) -> Result<(), GatewayErro
                 || !hex(&account.access_generation, 64)
                 || !accounts.insert(account.account_id_hash.clone())
         })
+        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.source_captured_at_ms)
         || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.custody_observed_at_ms)
         || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.valid_through_ms)
         || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.bound_at_ms)
+        || binding.source_captured_at_ms > binding.custody_observed_at_ms
         || binding.valid_through_ms < binding.custody_observed_at_ms
         || binding.bound_at_ms < binding.custody_observed_at_ms
         || binding.bound_at_ms > binding.valid_through_ms
@@ -765,6 +768,7 @@ async fn sealed_owner_facts<S: QueryStore>(
     if manifest.v != 4
         || manifest.capture_id != binding.capture_id
         || manifest.source_git_sha != binding.source_git_sha
+        || manifest.captured_at_ms != binding.source_captured_at_ms
         || native.version != binding.source_native_version
         || native.sequence != binding.source_native_sequence
         || binding.bound_at_ms < manifest.captured_at_ms
@@ -816,6 +820,7 @@ async fn sealed_owner_facts<S: QueryStore>(
     let actual = InitialAdoptionFacts {
         capture_id: manifest.capture_id.clone(),
         source_git_sha: manifest.source_git_sha.clone(),
+        source_captured_at_ms: manifest.captured_at_ms,
         source_native_version: native.version.clone(),
         source_native_sequence: native.sequence.clone(),
         source_pool_revision: source.revision.clone(),
@@ -825,6 +830,7 @@ async fn sealed_owner_facts<S: QueryStore>(
     let expected = InitialAdoptionFacts {
         capture_id: binding.capture_id.clone(),
         source_git_sha: binding.source_git_sha.clone(),
+        source_captured_at_ms: binding.source_captured_at_ms,
         source_native_version: binding.source_native_version.clone(),
         source_native_sequence: binding.source_native_sequence.clone(),
         source_pool_revision: binding.source_pool_revision.clone(),
