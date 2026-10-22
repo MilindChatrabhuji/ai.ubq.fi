@@ -43,19 +43,6 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
         std::env::temp_dir().join(format!("uos-reverse-fd-policy-{}", std::process::id()));
     std::fs::create_dir(&directory).unwrap();
     let binary = std::env::current_exe().unwrap().canonicalize().unwrap();
-    #[cfg(target_os = "macos")]
-    let profile = crate::connector_policy::request(
-        &binary,
-        &crate::confinement::NativeConfinement {
-            readonly_paths: Vec::new(),
-            list_directories: Vec::new(),
-            replay_directory: directory.clone(),
-            unix_sockets: Vec::new(),
-        },
-        "127.0.0.1:31001".parse().unwrap(),
-        "127.0.0.1:31002".parse().unwrap(),
-    )
-    .unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let fixture_port = listener.local_addr().unwrap().port();
     for scenario in [
@@ -75,6 +62,39 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
         "closed-valid",
     ] {
         let (mut sender, receiver) = UnixStream::pair().unwrap();
+        let expected_port = if scenario == "production-port" {
+            443
+        } else {
+            fixture_port
+        };
+        sender.write_all(&expected_port.to_be_bytes()).unwrap();
+        sender
+            .write_all(&u32::try_from(CONFIG.len()).unwrap().to_be_bytes())
+            .unwrap();
+        sender.write_all(CONFIG).unwrap();
+        let connected = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        assert_eq!(
+            send(&sender, CONFIG, connected.try_clone().unwrap()).unwrap_err(),
+            ControlError::InvalidDescriptor,
+            "production sender must still require port443"
+        );
+        let (mut witness, _) = listener.accept().unwrap();
+        witness
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        #[cfg(target_os = "macos")]
+        let profile = crate::connector_policy::request(
+            &binary,
+            &crate::confinement::NativeConfinement {
+                readonly_paths: Vec::new(),
+                list_directories: Vec::new(),
+                replay_directory: directory.clone(),
+                unix_sockets: Vec::new(),
+            },
+            witness.local_addr().unwrap(),
+            witness.peer_addr().unwrap(),
+        )
+        .unwrap();
         #[cfg(target_os = "macos")]
         let mut command = {
             let mut command = Command::new("/usr/bin/sandbox-exec");
@@ -100,26 +120,6 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
         } else {
             None
         };
-        let expected_port = if scenario == "production-port" {
-            443
-        } else {
-            fixture_port
-        };
-        sender.write_all(&expected_port.to_be_bytes()).unwrap();
-        sender
-            .write_all(&u32::try_from(CONFIG.len()).unwrap().to_be_bytes())
-            .unwrap();
-        sender.write_all(CONFIG).unwrap();
-        let connected = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        assert_eq!(
-            send(&sender, CONFIG, connected.try_clone().unwrap()).unwrap_err(),
-            ControlError::InvalidDescriptor,
-            "production sender must still require port443"
-        );
-        let (mut witness, _) = listener.accept().unwrap();
-        witness
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
         if matches!(scenario, "valid" | "completion-rights" | "closed-valid") {
             send_bound(&sender, CONFIG, connected, fixture_port).unwrap();
             if scenario != "closed-valid" {

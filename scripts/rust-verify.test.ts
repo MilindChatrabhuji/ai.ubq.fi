@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   executeRustPlan,
+  DARWIN_NESTED_SANDBOX_CASES,
   executeDarwinNativeTests,
   executeDarwinNativeImportTests,
   NATIVE_IMPORT_CASES,
@@ -436,9 +437,12 @@ const nativeArtifacts = () => {
   const json = (artifacts: unknown[]) => [...artifacts, { reason: "build-finished", success: true }].map((value) => JSON.stringify(value)).join("\n");
   const runtimeOutput = (command: RustCommand): string => {
     if (command.argv.includes("--lib") || command.argv[0] === library.executable) {
-      const exact = command.argv[0] === library.executable ? ownedChildCases.find((name) => command.argv.includes(name)) : undefined;
+      const exact = command.argv[0] === library.executable ? libraryNames.find((name) => command.argv.includes(name)) : undefined;
       let names = exact ? [exact] : libraryNames;
-      if (command.argv.includes("--skip")) names = names.filter((name) => !ownedChildCases.includes(name));
+      if (command.argv.includes("--skip")) {
+        const skipped = command.argv.flatMap((value, index) => (command.argv[index - 1] === "--skip" ? [value] : []));
+        names = names.filter((name) => !skipped.includes(name));
+      }
       return command.argv.includes("--list")
         ? names.map((name) => name + ": test\n").join("")
         : `test result: ok. ${names.length} passed; 0 failed; 0 ignored;\n`;
@@ -498,6 +502,23 @@ test("Darwin exact emitted inventory runs each lib/bin/test plus doctests once w
   }
   assert.equal(fixture.calls.filter((command) => command.argv.includes("--doc")).length, 2);
   assert.ok(fixture.calls.findIndex((command) => command.argv[1] === "build") < fixture.calls.findIndex((command) => command.argv.includes("--no-run")));
+});
+
+test("nested-sandbox tests are excluded from the outer profile and run once directly", async () => {
+  const fixture = nativeArtifacts();
+  fixture.libraryNames.push(...DARWIN_NESTED_SANDBOX_CASES);
+  assert.equal(await executeDarwinNativeTests(fixture.cwd, fixture.environment, "package", fixture.run), 9);
+  const wrapped = fixture.calls.filter(
+    (command) => command.isolated && command.argv.includes("--skip") && !command.argv.includes("--list")
+  );
+  const skipped = (command: RustCommand) =>
+    command.argv.flatMap((value, index) => (command.argv[index - 1] === "--skip" ? [value] : []));
+  assert.equal(wrapped.length, 1);
+  for (const name of DARWIN_NESTED_SANDBOX_CASES) assert.ok(skipped(wrapped[0]!).includes(name));
+  const direct = fixture.calls.filter(
+    (command) => !command.isolated && command.argv[0] === fixture.library.executable && !command.argv.includes("--list")
+  );
+  for (const name of DARWIN_NESTED_SANDBOX_CASES) assert.equal(direct.filter((command) => command.argv.includes(name)).length, 1);
 });
 
 test("Darwin runtime TMPDIR is private outside compiler/cache ancestry and is cleaned on success or failure", async () => {

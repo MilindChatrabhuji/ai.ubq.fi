@@ -39,6 +39,9 @@ pub(crate) fn read_config(
     }
     let mut bytes = vec![0; length];
     read_exact(channel, &mut bytes, &mut descriptors, process)?;
+    if !descriptors.is_empty() {
+        return Err(ControlError::UnexpectedDescriptor);
+    }
     Ok(bytes)
 }
 
