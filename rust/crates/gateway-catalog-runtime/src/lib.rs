@@ -578,31 +578,33 @@ impl CatalogRuntime {
         if fetched_at_ms <= 0 || fetched_at_ms > host.now_ms() {
             return Err(unavailable("Validated Claude catalog time is invalid"));
         }
-        let mut memo = self.memo.borrow_mut();
-        memo.next_request = memo
-            .next_request
-            .checked_add(1)
-            .ok_or_else(|| unavailable("Provider catalog request generation overflowed"))?;
-        let request = memo.next_request;
-        let snapshot = ProviderCatalog {
-            models,
-            updated_at_ms: Some(fetched_at_ms),
-            configured: true,
-            available: true,
-            stale: false,
+        let snapshot = {
+            let mut memo = self.memo.borrow_mut();
+            memo.next_request = memo
+                .next_request
+                .checked_add(1)
+                .ok_or_else(|| unavailable("Provider catalog request generation overflowed"))?;
+            let request = memo.next_request;
+            let snapshot = ProviderCatalog {
+                models,
+                updated_at_ms: Some(fetched_at_ms),
+                configured: true,
+                available: true,
+                stale: false,
+            };
+            memo.entries.insert(
+                CatalogProvider::ClaudeCode,
+                MemoEntry {
+                    identity: MemoIdentity::Credential(binding.clone()),
+                    snapshot: Some(snapshot.clone()),
+                    expires_ms: fetched_at_ms.saturating_add(PROVIDER_FRESH_MS),
+                    retry_ms: 0,
+                    published_generation: request,
+                    shared_request: None,
+                },
+            );
+            snapshot
         };
-        memo.entries.insert(
-            CatalogProvider::ClaudeCode,
-            MemoEntry {
-                identity: MemoIdentity::Credential(binding.clone()),
-                snapshot: Some(snapshot.clone()),
-                expires_ms: fetched_at_ms.saturating_add(PROVIDER_FRESH_MS),
-                retry_ms: 0,
-                published_generation: request,
-                shared_request: None,
-            },
-        );
-        drop(memo);
         if let Some(generation) = state::auth_generation(store).await? {
             state::persist_provider_observation(
                 store,
