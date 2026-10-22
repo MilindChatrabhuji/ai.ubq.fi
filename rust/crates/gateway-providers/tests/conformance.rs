@@ -15,6 +15,26 @@ fn options() -> PrepareOptions {
         ..Default::default()
     }
 }
+fn previous_response_options() -> PrepareOptions {
+    let mut options = options();
+    options.conversation_id = Some("previous-response-conversation".into());
+    options.allowed_models = vec!["~openai/gpt-fixture".into()];
+    options
+}
+fn previous_response_fixture(model: &str, previous: Option<Value>) -> Value {
+    let mut raw = json!({
+        "model": model,
+        "input": [
+            {"role":"user","content":[{"type":"input_text","text":"first turn"}]},
+            {"role":"assistant","content":[{"type":"output_text","text":"prior answer"}]},
+            {"role":"user","content":[{"type":"input_text","text":"current turn"}]}
+        ]
+    });
+    if let Some(previous) = previous {
+        raw["previous_response_id"] = previous;
+    }
+    raw
+}
 fn plan(profile: ChatProfile) -> DecodePlan {
     DecodePlan {
         provider: match profile {
@@ -471,7 +491,10 @@ fn chat_tool_calls_null_is_absent_in_buffered_responses() {
     .unwrap();
     assert_eq!(decoded.status, 200);
     assert_eq!(scalar(&decoded.body)["status"], "completed");
-    assert_eq!(scalar(&decoded.body)["output"][0]["content"][0]["text"], "pong");
+    assert_eq!(
+        scalar(&decoded.body)["output"][0]["content"][0]["text"],
+        "pong"
+    );
 }
 
 #[test]
@@ -592,9 +615,10 @@ fn codex_transport_strips_accepted_ignored_controls_and_keeps_session_scope() {
     let mut opts = options();
     opts.conversation_id = Some("generated-conversation-uuid".into());
     opts.client_version = "0.1.0".into();
-    let prepared=prepare_request(UpstreamProvider::ChatgptCodex,ClientSurface::Responses,&json!({"model":"gpt-fixture","input":[{"role":"user","content":[{"type":"input_text","text":"x","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"max_output_tokens":10,"prompt_cache_key":"raw-affinity","prompt_cache_options":{"mode":"explicit"}}),&opts).unwrap();
+    let prepared=prepare_request(UpstreamProvider::ChatgptCodex,ClientSurface::Responses,&json!({"model":"gpt-fixture","input":[{"role":"user","content":[{"type":"input_text","text":"x","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"max_output_tokens":10,"prompt_cache_key":"raw-affinity","prompt_cache_options":{"mode":"explicit"},"previous_response_id":"resp_prev"}),&opts).unwrap();
     assert!(scalar(&prepared.body).get("max_output_tokens").is_none());
     assert!(scalar(&prepared.body).get("prompt_cache_options").is_none());
+    assert!(scalar(&prepared.body).get("previous_response_id").is_none());
     assert!(
         scalar(&prepared.body)["input"][0]["content"][0]
             .get("prompt_cache_breakpoint")
@@ -617,6 +641,149 @@ fn codex_transport_strips_accepted_ignored_controls_and_keeps_session_scope() {
         prepared
             .warnings
             .contains(&"prompt_cache_breakpoint_ignored".into())
+    );
+    assert_eq!(
+        prepared
+            .warnings
+            .iter()
+            .filter(|warning| warning.as_str() == "previous_response_id_ignored")
+            .count(),
+        1
+    );
+}
+#[test]
+fn previous_response_id_provider_matrix_matches_typescript_parity() {
+    #[derive(Clone, Copy, Debug)]
+    enum Expected {
+        StripAndWarn,
+        SilentStrip,
+        Forward,
+    }
+    let cases = [
+        (
+            UpstreamProvider::ChatgptCodex,
+            "gpt-fixture",
+            Expected::StripAndWarn,
+        ),
+        (
+            UpstreamProvider::Surplus,
+            "deepseek-v4.1-flash",
+            Expected::StripAndWarn,
+        ),
+        (
+            UpstreamProvider::Metered,
+            "deepseek-v4.1-flash",
+            Expected::StripAndWarn,
+        ),
+        (
+            UpstreamProvider::Deepseek,
+            "deepseek-flash",
+            Expected::SilentStrip,
+        ),
+        (
+            UpstreamProvider::Lithos,
+            "deepseek-ai/DeepSeek-V4.1-Flash",
+            Expected::SilentStrip,
+        ),
+        (
+            UpstreamProvider::Cerebras,
+            "qwen-3.8-27b",
+            Expected::SilentStrip,
+        ),
+        (
+            UpstreamProvider::Openrouter,
+            "~openai/gpt-fixture",
+            Expected::Forward,
+        ),
+    ];
+    let options = previous_response_options();
+    for (provider, model, expected) in cases {
+        for previous in [json!("resp_prev"), Value::Null] {
+            let raw = previous_response_fixture(model, Some(previous.clone()));
+            let without = previous_response_fixture(model, None);
+            let prepared = prepare_request(provider, ClientSurface::Responses, &raw, &options)
+                .unwrap_or_else(|error| panic!("{provider:?} failed: {error}"));
+            let baseline =
+                prepare_request(provider, ClientSurface::Responses, &without, &options).unwrap();
+            let body = scalar(&prepared.body);
+            let baseline_body = scalar(&baseline.body);
+            let warnings = prepared
+                .warnings
+                .iter()
+                .filter(|warning| warning.as_str() == "previous_response_id_ignored")
+                .count();
+            match expected {
+                Expected::StripAndWarn => {
+                    assert!(body.get("previous_response_id").is_none(), "{provider:?}");
+                    assert_eq!(warnings, 1, "{provider:?} warning");
+                    assert_eq!(prepared.body, baseline.body, "{provider:?} body changed");
+                    assert_eq!(
+                        body["input"].as_array().map(Vec::len),
+                        raw["input"].as_array().map(Vec::len),
+                        "{provider:?} input item count changed"
+                    );
+                    let history = body["input"].to_string();
+                    for marker in ["first turn", "prior answer", "current turn"] {
+                        assert!(history.contains(marker), "{provider:?} lost {marker}");
+                    }
+                }
+                Expected::SilentStrip => {
+                    assert!(body.get("previous_response_id").is_none(), "{provider:?}");
+                    assert_eq!(warnings, 0, "{provider:?} warning");
+                    assert_eq!(prepared.body, baseline.body, "{provider:?} body changed");
+                    let forwarded = prepared.body.as_str();
+                    for marker in ["first turn", "prior answer", "current turn"] {
+                        assert!(forwarded.contains(marker), "{provider:?} lost {marker}");
+                    }
+                }
+                Expected::Forward => {
+                    assert_eq!(
+                        body.get("previous_response_id"),
+                        Some(&previous),
+                        "{provider:?}"
+                    );
+                    assert_eq!(warnings, 0, "{provider:?} warning");
+                    assert_eq!(body["input"], raw["input"], "{provider:?} input changed");
+                    let mut stripped = body.clone();
+                    stripped
+                        .as_object_mut()
+                        .expect("OpenRouter body is an object")
+                        .remove("previous_response_id");
+                    assert_eq!(stripped, baseline_body, "{provider:?} body changed");
+                }
+            }
+            assert_eq!(
+                scalar(&prepared.decode.request),
+                raw,
+                "{provider:?} source request changed"
+            );
+        }
+    }
+    let raw = previous_response_fixture("claude-fixture", Some(json!("resp_prev")));
+    let error = prepare_request(
+        UpstreamProvider::ClaudeCode,
+        ClientSurface::Responses,
+        &raw,
+        &options,
+    )
+    .expect_err("Claude Code must keep refusing non-null response IDs");
+    assert_eq!(error.status, 400);
+    assert_eq!(
+        error
+            .envelope
+            .error
+            .param
+            .as_ref()
+            .and_then(|param| param.as_deref()),
+        Some("reasoning"),
+        "Claude refusal parameter changed"
+    );
+    assert!(
+        error
+            .envelope
+            .error
+            .message
+            .contains("cannot be represented losslessly")
     );
 }
 #[test]

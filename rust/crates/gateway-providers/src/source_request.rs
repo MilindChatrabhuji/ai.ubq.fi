@@ -308,6 +308,17 @@ pub fn prepare_source_request(
             ));
         }
     }
+    // Codex's whitelist already excludes this, so detect the source field after provider projections.
+    if surface == ClientSurface::Responses
+        && matches!(
+            provider,
+            UpstreamProvider::ChatgptCodex | UpstreamProvider::Surplus | UpstreamProvider::Metered
+        )
+        && s::present(raw, "previous_response_id").is_some()
+    {
+        s::remove(&mut body, "previous_response_id");
+        warnings.push("previous_response_id_ignored".into());
+    }
     let plan = DecodePlan {
         provider,
         surface,
