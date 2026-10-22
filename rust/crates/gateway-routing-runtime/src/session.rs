@@ -17,6 +17,7 @@ use gateway_core::{
 };
 use gateway_providers::policy::{LithosWindows, WaitBudget};
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 
 pub struct RoutingSession<S, I, C, H> {
     pub(crate) admission: crate::currentness::OriginalRoutingAdmission,
@@ -27,6 +28,8 @@ pub struct RoutingSession<S, I, C, H> {
     pub(crate) input: RoutingInput,
     pub(crate) plan: RoutePlan,
     pub(crate) lithos: RefCell<LithosWindows>,
+    pub(crate) lithos_no_retry: RefCell<BTreeSet<ModelId>>,
+    pub(crate) lithos_attempted: RefCell<BTreeSet<ModelId>>,
     pub(crate) claude_ordinary:
         RefCell<Option<(ModelId, gateway_providers::PreparedClaudeOrdinary)>>,
     pub(crate) waits: RefCell<WaitBudget>,
@@ -202,6 +205,8 @@ impl<
             input,
             plan,
             lithos: RefCell::new(LithosWindows::default()),
+            lithos_no_retry: RefCell::new(BTreeSet::new()),
+            lithos_attempted: RefCell::new(BTreeSet::new()),
             claude_ordinary: RefCell::new(None),
             waits: RefCell::new(WaitBudget {
                 waits: 0,
@@ -276,6 +281,8 @@ impl<
             input,
             plan: parts.plan,
             lithos: RefCell::new(LithosWindows::default()),
+            lithos_no_retry: RefCell::new(BTreeSet::new()),
+            lithos_attempted: RefCell::new(BTreeSet::new()),
             claude_ordinary: RefCell::new(None),
             waits: RefCell::new(WaitBudget {
                 waits: 0,

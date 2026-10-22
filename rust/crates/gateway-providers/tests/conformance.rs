@@ -1,6 +1,7 @@
 //! Frozen source-derived cases from e706343d: deepseek-responses, oss-terminal-parity,
 //! anthropic-responses/replay, lithos-tier-windows, images and embeddings fixtures.
 use gateway_core::provider::{PaidProvider, UpstreamProvider};
+use gateway_core::source_json::SourceJson;
 use gateway_providers::{chat, extras, policy, replay, request, usage, *};
 use serde_json::{Value, json};
 fn options() -> PrepareOptions {
@@ -368,16 +369,20 @@ fn native_replay_is_scoped_complete_expiring_and_never_publicly_signed() {
         provider: "claude_code".into(),
         model: "claude-fixture".into(),
     };
-    let native = json!([{"type":"thinking","thinking":"thought","signature":"private"},{"type":"text","text":"answer"}]);
-    let output = vec![
+    let source = |value: &Value| SourceJson::from_serializable(value).unwrap();
+    let native = source(
+        &json!([{"type":"thinking","thinking":"thought","signature":"private"},{"type":"text","text":"answer"}]),
+    );
+    let output = [
         json!({"id":"rs_resp_native_0","type":"reasoning","summary":[{"type":"summary_text","text":"thought"}]}),
         json!({"id":"msg_resp_native_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[]}]}),
-    ];
+    ]
+    .map(|value| source(&value));
     let mut store = replay::ReplayStore::default();
     assert!(store.remember(
         context.clone(),
         &output,
-        native.clone(),
+        native,
         replay::ReplayTransport::Messages,
         0
     ));
@@ -393,8 +398,13 @@ fn native_replay_is_scoped_complete_expiring_and_never_publicly_signed() {
             .restore(&other, &output, replay::ReplayTransport::Messages, 1)
             .is_none()
     );
-    let mut tampered = output.clone();
-    tampered[1]["content"][0]["text"] = json!("tampered");
+    let tampered_value = json!({"id":"rs_resp_native_0","type":"reasoning","summary":[{"type":"summary_text","text":"thought"}]});
+    let tampered = [
+        source(&tampered_value),
+        source(
+            &json!({"id":"msg_resp_native_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"tampered"}]}),
+        ),
+    ];
     assert!(
         store
             .restore(&context, &tampered, replay::ReplayTransport::Messages, 1)

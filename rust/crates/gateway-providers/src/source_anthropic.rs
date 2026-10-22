@@ -177,7 +177,7 @@ fn valid_name(value: &SourceJson) -> bool {
 }
 /// The native body algorithm cannot inspect auth material.
 struct NativeBodyOptions<'a> {
-    restored_native_messages: Option<&'a Vec<serde_json::Value>>,
+    restored_native_messages: Option<&'a Vec<SourceJson>>,
     supports_native_effort: bool,
     supports_disabled_thinking: bool,
     native_reasoning_efforts: Option<&'a Vec<gateway_core::js_string::JsString16>>,
@@ -216,14 +216,13 @@ fn native_messages(
     (!messages.is_empty()).then_some(messages)
 }
 fn restored_native_messages(
-    restored: &[serde_json::Value],
+    restored: &[SourceJson],
     system: &mut Vec<SourceJson>,
 ) -> Option<Vec<SourceJson>> {
     let mut messages = vec![];
     for item in restored {
-        let item = s::generated(item);
-        let role = s::control(&s::get(&item, "role"))?;
-        let blocks = json::array(&s::get(&item, "content"))?;
+        let role = s::control(&s::get(item, "role"))?;
+        let blocks = json::array(&s::get(item, "content"))?;
         match role.as_str() {
             "system" | "developer" => system.extend(blocks),
             "user" | "assistant" => merge(&mut messages, &role, blocks),
@@ -568,7 +567,7 @@ pub(crate) fn chat(
     }
     let input = s::get(raw, "input");
     if let Some(restored) = &options.restored_native_messages {
-        messages.extend(restored.iter().map(s::generated));
+        messages.extend(restored.iter().cloned());
     } else if s::string(&input).is_some() {
         messages.push(s::object(vec![
             ("role", s::text("user")),
@@ -752,7 +751,7 @@ pub(crate) fn replay_messages(
     raw: &SourceJson,
     transport: ReplayTransport,
     entries: &[ReplayEntry],
-) -> Option<Vec<serde_json::Value>> {
+) -> Option<Vec<SourceJson>> {
     let (_, names) = source_tools::flatten(s::present(raw, "tools").as_ref(), 64).ok()?;
     let mut messages = vec![];
     match transport {
@@ -761,7 +760,7 @@ pub(crate) fn replay_messages(
             for entry in entries {
                 match entry {
                     ReplayEntry::Original(item) => {
-                        let item = s::generated(item);
+                        let item = item.clone();
                         let role = s::control(&s::get(&item, "role")).unwrap_or_default();
                         if ["system", "developer"].contains(&role.as_str()) && !messages.is_empty()
                         {
@@ -773,16 +772,14 @@ pub(crate) fn replay_messages(
                         transport: ReplayTransport::Messages,
                         payload,
                     } => {
-                        let blocks = match payload {
-                            serde_json::Value::Array(_) => payload.as_array()?,
-                            serde_json::Value::Object(_) => payload.get("content")?.as_array()?,
-                            _ => return None,
+                        let blocks = if let Some(blocks) = json::array(payload) {
+                            blocks
+                        } else if json::entries(payload).is_some() {
+                            json::array(&s::get(payload, "content"))?
+                        } else {
+                            return None;
                         };
-                        merge(
-                            &mut messages,
-                            "assistant",
-                            blocks.iter().map(s::generated).collect(),
-                        );
+                        merge(&mut messages, "assistant", blocks);
                     }
                     ReplayEntry::NativeAssistant { .. } => return None,
                 }
@@ -801,13 +798,13 @@ pub(crate) fn replay_messages(
             for entry in entries {
                 match entry {
                     ReplayEntry::Original(item) => {
-                        append_chat_item(&s::generated(item), &mut messages, &names)?;
+                        append_chat_item(item, &mut messages, &names)?;
                     }
                     ReplayEntry::NativeAssistant {
                         transport: ReplayTransport::Chat,
                         payload,
-                    } if payload["role"] == "assistant" => {
-                        messages.push(s::generated(payload));
+                    } if s::is(&s::get(payload, "role"), "assistant") => {
+                        messages.push(payload.clone());
                     }
                     ReplayEntry::NativeAssistant { .. } => return None,
                 }
@@ -817,9 +814,5 @@ pub(crate) fn replay_messages(
     if messages.is_empty() {
         return None;
     }
-    messages
-        .iter()
-        .map(SourceJson::deserialize::<serde_json::Value>)
-        .collect::<Result<Vec<_>, _>>()
-        .ok()
+    Some(messages)
 }

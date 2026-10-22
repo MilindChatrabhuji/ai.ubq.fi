@@ -53,7 +53,12 @@ impl<
             let (provider, model, publication, paid) = match hop {
                 RouteHop::Direct { provider, model } => {
                     let model = if provider == UpstreamProvider::Lithos {
-                        self.lithos.borrow().select(&model, self.now()?)
+                        let no_retry = self.lithos_no_retry.borrow();
+                        let attempted = self.lithos_attempted.borrow();
+                        self.lithos
+                            .borrow()
+                            .eligible(&model, self.now()?, &no_retry, &attempted)
+                            .unwrap_or(model)
                     } else {
                         model
                     };

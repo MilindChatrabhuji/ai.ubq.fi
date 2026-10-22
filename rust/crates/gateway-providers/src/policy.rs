@@ -119,7 +119,6 @@ pub fn chat_has_answer(value: &Value) -> bool {
 #[derive(Clone, Debug, Default)]
 pub struct LithosWindows {
     deadlines: std::collections::BTreeMap<ModelId, i64>,
-    prohibited: std::collections::BTreeSet<ModelId>,
 }
 pub fn lithos_ladder(model: &ModelId) -> Vec<ModelId> {
     let model = lithos_canonical(model);
@@ -141,7 +140,7 @@ pub fn lithos_ladder(model: &ModelId) -> Vec<ModelId> {
         vec![]
     }
 }
-fn lithos_canonical(model: &ModelId) -> ModelId {
+pub fn lithos_canonical(model: &ModelId) -> ModelId {
     let value = s::trim(model.as_js_string());
     crate::request::LITHOS_MODELS
         .iter()
@@ -176,24 +175,38 @@ impl LithosWindows {
             *row = (*row).max(deadline);
         }
     }
-    pub fn prohibit(&mut self, rung: &ModelId) {
-        self.prohibited.insert(lithos_canonical(rung));
-    }
-    pub fn skip(&mut self, rung: &ModelId) {
-        self.prohibited.insert(lithos_canonical(rung));
-    }
     pub fn select(&self, model: &ModelId, now: i64) -> ModelId {
+        self.eligible(model, now, &Default::default(), &Default::default())
+            .unwrap_or_else(|| lithos_canonical(model))
+    }
+    pub fn eligible(
+        &self,
+        model: &ModelId,
+        now: i64,
+        no_retry: &std::collections::BTreeSet<ModelId>,
+        attempted: &std::collections::BTreeSet<ModelId>,
+    ) -> Option<ModelId> {
         let canonical = lithos_canonical(model);
         std::iter::once(canonical.clone())
             .chain(lithos_ladder(&canonical))
             .find(|rung| {
-                !self.prohibited.contains(rung)
+                !no_retry.contains(rung)
+                    && !attempted.contains(rung)
                     && self
                         .deadlines
                         .get(rung)
                         .is_none_or(|deadline| *deadline <= now)
             })
-            .unwrap_or(canonical)
+    }
+    pub fn retry_eligible(
+        &self,
+        model: &ModelId,
+        no_retry: &std::collections::BTreeSet<ModelId>,
+    ) -> Option<ModelId> {
+        let canonical = lithos_canonical(model);
+        std::iter::once(canonical.clone())
+            .chain(lithos_ladder(&canonical))
+            .find(|rung| !no_retry.contains(rung))
     }
 }
 #[derive(Clone, Copy, Debug)]

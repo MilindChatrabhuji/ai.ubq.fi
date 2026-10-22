@@ -432,46 +432,56 @@ impl<
             && failure.origin == FailureOrigin::Provider
             && failure.status == Some(429)
         {
+            let now = self.now()?;
             let response_prohibited = gateway_providers::lithos::retry_prohibited(&failure.headers);
-            let wait = lithos_wait_ms(&failure.headers, self.now()?);
-            if !self.input.retry_prohibited {
-                if response_prohibited {
-                    self.lithos.borrow_mut().prohibit(&record.model);
-                } else if let Some(wait) = wait {
-                    self.lithos
-                        .borrow_mut()
-                        .refuse(&record.model, self.now()?, wait);
-                } else {
-                    self.lithos.borrow_mut().skip(&record.model);
-                }
-                if self.lithos.borrow().select(&record.model, self.now()?) != record.model {
-                    decision = RefusalDecision::Continue;
-                }
+            let wait = lithos_wait_ms(&failure.headers, now);
+            let rung = gateway_providers::policy::lithos_canonical(&record.model);
+            self.lithos_attempted.borrow_mut().insert(rung.clone());
+            if response_prohibited {
+                self.lithos_no_retry.borrow_mut().insert(rung);
             }
-            if decision != RefusalDecision::Continue
-                && !response_prohibited
-                && !self.input.retry_prohibited
-                && let Some(wait) = wait
-            {
-                let allowed = self.waits.borrow_mut().claim(wait, false);
-                if allowed {
-                    self.renew().await?;
-                    let outcome = self.host.wait(wait).await;
-                    if !(0..=9_007_199_254_740_991).contains(&outcome.elapsed_ms) {
-                        return Err(
-                            journal::unavailable("The host wait duration is invalid.").into()
-                        );
-                    }
-                    self.elapsed_wait_ms.set(
-                        self.elapsed_wait_ms
-                            .get()
-                            .saturating_add(outcome.elapsed_ms),
-                    );
-                    outcome.result?;
-                    if self.host.cancelled() {
-                        return Ok(RefusalDecision::Abort);
+            if !self.input.retry_prohibited {
+                let next = {
+                    let no_retry = self.lithos_no_retry.borrow();
+                    let attempted = self.lithos_attempted.borrow();
+                    self.lithos
+                        .borrow()
+                        .eligible(&record.model, now, &no_retry, &attempted)
+                };
+                if let Some(next) = next
+                    && next != record.model
+                {
+                    if !response_prohibited && let Some(wait) = wait {
+                        self.lithos.borrow_mut().refuse(&record.model, now, wait);
                     }
                     decision = RefusalDecision::Continue;
+                } else if !response_prohibited && let Some(wait) = wait {
+                    let retry_target = {
+                        let no_retry = self.lithos_no_retry.borrow();
+                        self.lithos
+                            .borrow()
+                            .retry_eligible(&record.model, &no_retry)
+                    };
+                    if retry_target.is_some() && self.waits.borrow_mut().claim(wait, false) {
+                        self.lithos_attempted.borrow_mut().clear();
+                        self.renew().await?;
+                        let outcome = self.host.wait(wait).await;
+                        if !(0..=9_007_199_254_740_991).contains(&outcome.elapsed_ms) {
+                            return Err(
+                                journal::unavailable("The host wait duration is invalid.").into()
+                            );
+                        }
+                        self.elapsed_wait_ms.set(
+                            self.elapsed_wait_ms
+                                .get()
+                                .saturating_add(outcome.elapsed_ms),
+                        );
+                        outcome.result?;
+                        if self.host.cancelled() {
+                            return Ok(RefusalDecision::Abort);
+                        }
+                        decision = RefusalDecision::Continue;
+                    }
                 }
             }
         }

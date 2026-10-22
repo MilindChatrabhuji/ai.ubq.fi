@@ -1319,6 +1319,76 @@ fn lithos_refusal_headers_use_vendor_windows_and_response_prohibition() {
 }
 
 #[test]
+fn lithos_response_prohibition_is_request_local_and_does_not_retry_the_rung() {
+    run(async {
+        let store = Store::new();
+        seed_key(&store);
+        let first = RoutingSession::begin(
+            input(
+                "lithos-local-prohibited",
+                "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+                &["lithos"],
+            ),
+            store.clone(),
+            Host::new(&store),
+            store.clone(),
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let attempt = first.next_attempt().await.unwrap().unwrap();
+        first.before_dispatch(&attempt).await.unwrap();
+        first.transport_started(&attempt).await.unwrap();
+        let mut refusal = refusal(429, TransportState::Started);
+        refusal
+            .headers
+            .insert("x-should-retry".into(), "false".into());
+        assert_eq!(
+            first.refusal(&attempt, refusal).await.unwrap(),
+            RefusalDecision::Continue
+        );
+        let next = first.next_attempt().await.unwrap().unwrap();
+        assert!(
+            next.request
+                .decode()
+                .model
+                .matches_scalar("deepseek-ai/DeepSeek-V4.1-Flash-fast"),
+            "the prohibited rung must not be retried: {:?}",
+            next.request.decode().model
+        );
+        first.finish(TransportObservation::default()).await.unwrap();
+
+        let second = RoutingSession::begin(
+            input(
+                "lithos-local-prohibited-next-request",
+                "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+                &["lithos"],
+            ),
+            store.clone(),
+            Host::new(&store),
+            store.clone(),
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let attempt = second.next_attempt().await.unwrap().unwrap();
+        assert!(
+            attempt
+                .request
+                .decode()
+                .model
+                .matches_scalar("deepseek-ai/DeepSeek-V4.1-Flash-ultra"),
+            "another request must still try the prohibited model: {:?}",
+            attempt.request.decode().model
+        );
+        second
+            .finish(TransportObservation::default())
+            .await
+            .unwrap();
+    });
+}
+
+#[test]
 fn explicit_provider_504_survives_late_abort_and_local_deadline_never_advances() {
     run(async {
         let store = Store::new();

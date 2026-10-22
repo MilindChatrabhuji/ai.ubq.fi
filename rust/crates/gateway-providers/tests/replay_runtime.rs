@@ -1,10 +1,22 @@
 //! Runtime-facing Claude native replay publication and PrepareOptions restoration.
+use gateway_core::model::ModelId;
+use gateway_core::provider::UpstreamProvider;
 use gateway_core::source_json::SourceJson;
-use gateway_providers::{PrepareOptions, ToolMap, anthropic, replay};
+use gateway_providers::{
+    AuthMaterial, ClientSurface, PrepareOptions, ToolMap, anthropic, prepare_source_request, replay,
+};
 use serde_json::{Value, json};
 
 fn scalar(value: &SourceJson) -> Value {
     value.deserialize().unwrap()
+}
+
+fn source(value: &Value) -> SourceJson {
+    SourceJson::from_serializable(value).unwrap()
+}
+
+fn sources(values: &[Value]) -> Vec<SourceJson> {
+    values.iter().map(source).collect()
 }
 
 fn context() -> replay::ReplayContext {
@@ -52,8 +64,8 @@ fn decoded_messages_replay_publishes_and_restores_through_prepare_options() {
     let mut store = replay::ReplayStore::default();
     assert!(store.remember_decoded_native(
         context.clone(),
-        &output,
-        native.clone(),
+        &sources(&output),
+        source(&native),
         replay::ReplayTransport::Messages,
         &ToolMap::new(),
         1,
@@ -95,8 +107,8 @@ fn decoded_chat_replay_keeps_reasoning_details_and_tool_calls_through_prepare_op
     let mut store = replay::ReplayStore::default();
     assert!(store.remember_decoded_native(
         context.clone(),
-        &output,
-        native.clone(),
+        &sources(&output),
+        source(&native),
         replay::ReplayTransport::Chat,
         &ToolMap::new(),
         1,
@@ -123,10 +135,65 @@ fn decoded_chat_replay_keeps_reasoning_details_and_tool_calls_through_prepare_op
     invalid["reasoning_details"][0]["signature"] = json!("");
     assert!(!replay::ReplayStore::default().remember_decoded_native(
         context,
-        &output,
-        invalid,
+        &sources(&output),
+        source(&invalid),
         replay::ReplayTransport::Chat,
         &ToolMap::new(),
         1,
     ));
+}
+
+#[test]
+fn lone_surrogate_native_replay_survives_prepare_source_request() {
+    let context = context();
+    let native =
+        SourceJson::parse(r#"{"role":"assistant","content":[{"type":"text","text":"\ud800"}]}"#)
+            .unwrap();
+    let output = vec![
+        SourceJson::parse(
+            r#"{"id":"msg_resp_lone_0","type":"message","role":"assistant","content":[{"type":"output_text","text":"\ud800"}]}"#,
+        )
+        .unwrap(),
+    ];
+    let raw = SourceJson::parse(
+        r#"{"model":"claude-fixture","max_output_tokens":16,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"\ud800"}]},{"id":"msg_resp_lone_0","type":"message","role":"assistant","content":[{"type":"output_text","text":"\ud800"}]}]}"#,
+    )
+    .unwrap();
+    let mut store = replay::ReplayStore::default();
+    assert!(store.remember_decoded_native(
+        context.clone(),
+        &output,
+        native,
+        replay::ReplayTransport::Messages,
+        &ToolMap::new(),
+        1,
+    ));
+    let mut options = PrepareOptions {
+        auth: AuthMaterial {
+            secret: "fixture-secret".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(store.restore_prepare_options(
+        &context,
+        &raw,
+        &mut options,
+        replay::ReplayTransport::Messages,
+        2,
+    ));
+    let prepared = prepare_source_request(
+        UpstreamProvider::Surplus,
+        ClientSurface::Responses,
+        &raw,
+        &ModelId::from_scalar("claude-fixture"),
+        &options,
+    )
+    .unwrap();
+    let body = prepared.body.as_str();
+    assert!(
+        body.contains("\\ud800") || body.contains("\\uD800"),
+        "{body}"
+    );
+    assert!(!body.contains("fffd"), "{body}");
 }
