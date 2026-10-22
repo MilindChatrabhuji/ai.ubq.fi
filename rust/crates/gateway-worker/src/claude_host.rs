@@ -393,11 +393,21 @@ pub(crate) fn remember_native(
         provider: "claude_code".into(),
         model,
     };
+    let Ok(output) = output
+        .iter()
+        .map(SourceJson::from_serializable)
+        .collect::<Result<Vec<_>, _>>()
+    else {
+        return false;
+    };
+    let Ok(native) = SourceJson::from_serializable(native) else {
+        return false;
+    };
     CLAUDE_REPLAY.with(|store| {
         store.borrow_mut().remember_decoded_native(
             context,
-            output,
-            native.clone(),
+            &output,
+            native,
             ReplayTransport::Messages,
             &body.decode().tool_names,
             now_ms,
