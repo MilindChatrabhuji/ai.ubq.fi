@@ -13,6 +13,7 @@ pub mod native_live;
 pub mod native_replay;
 pub mod origin;
 pub mod passkeys;
+pub mod passport;
 pub mod provider_credentials;
 pub mod resolve;
 pub mod session_index;

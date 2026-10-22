@@ -34,6 +34,14 @@ pub enum AuthUpstreamRequest {
         token: Secret,
         deployment: String,
     },
+    PassportJwks,
+    PassportExchange {
+        code: Secret,
+        client_id: String,
+        audience: String,
+        origin: String,
+        redirect_uri: String,
+    },
 }
 
 impl AuthUpstreamRequest {
@@ -61,6 +69,41 @@ impl AuthUpstreamRequest {
                 "https://api.deno.com/v1/deployments/{}",
                 component(deployment)
             ),
+            Self::PassportJwks => crate::passport::PASSPORT_JWKS_URL.into(),
+            Self::PassportExchange { .. } => crate::passport::PASSPORT_EXCHANGE_URL.into(),
+        }
+    }
+
+    pub fn method(&self) -> &'static str {
+        match self {
+            Self::PassportExchange { .. } => "POST",
+            _ => "GET",
+        }
+    }
+
+    /// Fixed typed bodies only. A request-selected URL or body never exists.
+    pub fn body(&self) -> Result<Vec<u8>, GatewayError> {
+        match self {
+            Self::PassportExchange {
+                code,
+                client_id,
+                audience,
+                origin,
+                redirect_uri,
+            } => serde_json::to_vec(&serde_json::json!({
+                "code": code.expose(),
+                "clientId": client_id,
+                "audience": audience,
+                "origin": origin,
+                "redirectUri": redirect_uri,
+            }))
+            .map_err(|_| {
+                GatewayError::unavailable(
+                    "Passport exchange body could not be encoded.",
+                    "passport_unavailable",
+                )
+            }),
+            _ => Ok(Vec::new()),
         }
     }
     pub fn headers(&self) -> Vec<(String, String)> {
@@ -81,6 +124,11 @@ impl AuthUpstreamRequest {
             Self::DenoApplication { token, .. } | Self::DenoDeployment { token, .. } => vec![
                 ("authorization".into(), format!("Bearer {}", token.expose())),
                 ("accept".into(), "application/json".into()),
+            ],
+            Self::PassportJwks => vec![("accept".into(), "application/json".into())],
+            Self::PassportExchange { .. } => vec![
+                ("accept".into(), "application/json".into()),
+                ("content-type".into(), "application/json".into()),
             ],
         }
     }

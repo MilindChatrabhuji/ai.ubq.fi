@@ -511,14 +511,11 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
         }
         let mut result = AuthResponse::json(200, body);
         if relay {
-            result.headers.insert(
-                "set-cookie".into(),
-                format!(
-                    "{RELAY_COOKIE}={}; Path=/; Max-Age={}; HttpOnly; Secure; SameSite=None",
-                    session.token,
-                    (session.expires_at_ms - self.host.now_ms() + 999).max(0) / 1000
-                ),
-            );
+            result.set_cookies.push(format!(
+                "{RELAY_COOKIE}={}; Path=/; Max-Age={}; HttpOnly; Secure; SameSite=None",
+                session.token,
+                (session.expires_at_ms - self.host.now_ms() + 999).max(0) / 1000
+            ));
         }
         Ok(result)
     }
@@ -729,10 +726,9 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
             }
         }
         let mut response = AuthResponse::json(204, Value::Null);
-        response.headers.insert(
-            "set-cookie".into(),
-            format!("{RELAY_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None"),
-        );
+        response.set_cookies.push(format!(
+            "{RELAY_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None"
+        ));
         Ok(response)
     }
 }

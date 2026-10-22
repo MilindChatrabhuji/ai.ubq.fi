@@ -73,6 +73,7 @@ const tokenInput = mustGet("token");
 const rememberTokenInput = mustGet("remember-token");
 const showTokenInput = mustGet("show-token");
 const passkeyHandleInput = mustGet("passkey-handle");
+const passportLoginBtn = mustGet("passport-login");
 const passkeyLoginBtn = mustGet("passkey-login");
 const passkeyRegisterBtn = mustGet("passkey-register");
 const signOutBtn = mustGet("sign-out");
@@ -126,6 +127,7 @@ const buildBackendAwareMessage = (baseUrl, fallback) => {
 // records that this page probed the active backend and was told so, which is what
 // lets the composer work with no token at all.
 let localDevelopmentAuth = false;
+let cookieAuthPrincipal = "";
 
 const LOCAL_DEVELOPMENT_PRINCIPAL = "local-development";
 
@@ -136,22 +138,28 @@ const authHeaders = (token = "") => {
 };
 
 /** The identity the model catalog was loaded for: a token, or the local principal. */
-const currentPrincipal = () => tokenInput.value.trim() || (localDevelopmentAuth ? LOCAL_DEVELOPMENT_PRINCIPAL : "");
+const currentPrincipal = () =>
+  tokenInput.value.trim() || cookieAuthPrincipal || (localDevelopmentAuth ? LOCAL_DEVELOPMENT_PRINCIPAL : "");
 
 const clearLocalDevelopmentAuth = () => {
   localDevelopmentAuth = false;
+};
+
+const clearCookieAuth = () => {
+  cookieAuthPrincipal = "";
 };
 
 const setSignedInState = (signedIn, options = {}) => {
   const localDevelopment = localDevelopmentAuth && !signedIn && !tokenInput.value.trim();
   const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
   const canRegisterPasskey = options.canRegisterPasskey ?? false;
+  passportLoginBtn.hidden = signedIn || localDevelopment;
   passkeyLoginBtn.hidden = signedIn || localDevelopment;
   passkeyRegisterBtn.hidden = localDevelopment || deviceRegistered || (signedIn && !canRegisterPasskey);
   signOutBtn.hidden = !signedIn || localDevelopment;
-  if (signedIn) setPasskeyStatus("ok", options.statusText ?? "Token active");
+  if (signedIn) setPasskeyStatus("ok", options.statusText ?? "Signed in");
   else if (localDevelopment) setPasskeyStatus("ok", "Auth disabled on this loopback server");
-  else setPasskeyStatus("unknown", "Passkey idle");
+  else setPasskeyStatus("unknown", "Signed out");
 };
 
 const logPasskeyUsername = (handle) => {
@@ -318,7 +326,7 @@ const resetModelCatalog = (label = "Authenticate to load models") => {
 
 const loadModels = async (token, options = {}) => {
   const trimmed = token.trim();
-  const principal = trimmed || (localDevelopmentAuth ? LOCAL_DEVELOPMENT_PRINCIPAL : "");
+  const principal = trimmed || cookieAuthPrincipal || (localDevelopmentAuth ? LOCAL_DEVELOPMENT_PRINCIPAL : "");
   if (!principal) return;
   if (!options.force && principal === modelsLoadedToken) return;
   const requestId = ++modelsRequestId;
@@ -331,6 +339,7 @@ const loadModels = async (token, options = {}) => {
       }).then(async (res) => ({ res, data: await res.json().catch(() => null) })),
       fetch(buildBackendUrl("/uos/models/capabilities", backendBase), {
         headers: authHeaders(trimmed),
+        credentials: "include",
         cache: "no-store",
       })
         .then(async (res) => ({ res, data: await res.json().catch(() => null) }))
@@ -401,38 +410,35 @@ const loadModels = async (token, options = {}) => {
 let authCheckId = 0;
 const checkAuthToken = async () => {
   const token = tokenInput.value.trim();
-  if (!token) {
-    setAuthBadge("bad", "Missing token");
-    setSignedInState(false);
-    resetModelCatalog();
-    setReasoningPlaceholder("Missing token");
-    return;
-  }
 
   const requestId = ++authCheckId;
   setAuthBadge("unknown", "Checking...");
   const backendBase = getActiveBackendBase();
   try {
     const res = await fetch(buildBackendUrl("/uos/auth", backendBase), {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: authHeaders(token),
+      credentials: "include",
       cache: "no-store",
     });
     const data = await res.json().catch(() => null);
     if (requestId !== authCheckId) return;
     if (!res.ok) {
       if (res.status === 401) {
-        setAuthBadge("bad", buildBackendAwareMessage(backendBase, "Token was rejected by the active backend."));
+        clearCookieAuth();
+        setAuthBadge("bad", buildBackendAwareMessage(backendBase, "Sign in with Passport or a token."));
       } else {
         setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
       }
+      clearCookieAuth();
       setSignedInState(false);
       resetModelCatalog();
-      setReasoningPlaceholder("Invalid token");
+      setReasoningPlaceholder(token ? "Invalid token" : "Sign in to continue");
       return;
     }
     const mode = data?.auth?.mode;
     setAuthBadge("ok", mode ? `OK (${mode})` : "OK");
     clearLocalDevelopmentAuth();
+    cookieAuthPrincipal = data?.auth?.principal || "";
     setSignedInState(true, {
       canRegisterPasskey: data?.auth?.is_admin === true,
       deviceRegistered: hasAuthPasskeyCredential(data?.auth) || hasStoredPasskeyCredentials(),
@@ -637,6 +643,10 @@ const applySignedInToken = (token, options = {}) => {
   setAuthBadge("unknown", "Checking...");
   void checkAuthToken();
 };
+
+passportLoginBtn.addEventListener("click", () => {
+  globalThis.location.assign(buildBackendUrl("/auth/login"));
+});
 
 passkeyLoginBtn.addEventListener("click", async () => {
   setPasskeyStatus("unknown", "Signing in...");
@@ -870,6 +880,7 @@ const sendPrompt = async () => {
         "Content-Type": "application/json",
         ...authHeaders(token),
       },
+      credentials: "include",
       body: JSON.stringify(payload),
       signal: abortController.signal,
     });

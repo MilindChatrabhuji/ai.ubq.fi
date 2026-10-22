@@ -133,7 +133,7 @@ const config :Workerd.Config = (
       modules = [(name = "index.js", esModule = embed ${quoted(join(application, "index.js"))}), (name = "index_bg.wasm", wasm = embed ${quoted(join(application, "index_bg.wasm"))})],
       compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal", "request_signal_passthrough"],
       globalOutbound = "driver",
-      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "ASSETS", service = "assets"), (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"), (name = "LITHOSAI_API_KEY", text = "fixture-provider-secret"), (name = "DEEPSEEK_API_KEY", text = "fixture-provider-secret"), (name = "CEREBRAS_API_KEY", text = "fixture-provider-secret"), (name = "OPENROUTER_API_KEY", text = "fixture-provider-secret"), (name = "VOYAGEAI_API_KEY", text = "fixture-provider-secret"), (name = "SENTINEL_REPLAY_KEY", text = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), (name = "IMAGE_BASE_MODEL", text = "gpt-matrix-test")${scenarioBinding}${paidBindings}],
+      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "ASSETS", service = "assets"), (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"), (name = "LITHOSAI_API_KEY", text = "fixture-provider-secret"), (name = "DEEPSEEK_API_KEY", text = "fixture-provider-secret"), (name = "CEREBRAS_API_KEY", text = "fixture-provider-secret"), (name = "OPENROUTER_API_KEY", text = "fixture-provider-secret"), (name = "VOYAGEAI_API_KEY", text = "fixture-provider-secret"), (name = "SENTINEL_REPLAY_KEY", text = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), (name = "IMAGE_BASE_MODEL", text = "gpt-matrix-test"), (name = "UOS_AI_PASSPORT_CLIENT_ID", text = "ai"), (name = "UOS_AI_PASSPORT_AUDIENCE", text = "ai"), (name = "UOS_AI_PASSPORT_ORIGIN", text = "https://ai.ubq.fi"), (name = "UOS_AI_PASSPORT_REDIRECT_URI", text = "https://ai.ubq.fi/auth/callback")${scenarioBinding}${paidBindings}],
       durableObjectNamespaces = [(className = "GatewayAuthority", uniqueKey = "uos-rust-runtime-conformance-v1", enableSql = true)],
       durableObjectStorage = (localDisk = "state")
     )),
@@ -275,6 +275,220 @@ async function disconnectAfterFirstChunk(url: string, body: unknown, workspace: 
     .trim();
   assert(id);
   return id;
+}
+
+function setCookies(response: Response): string[] {
+  const values = response.headers.getSetCookie?.();
+  if (Array.isArray(values) && values.length) return values;
+  const combined = response.headers.get("set-cookie");
+  return combined ? [combined] : [];
+}
+
+function cookiePair(cookie: string): string {
+  return cookie.split(";", 1)[0] ?? "";
+}
+
+async function passportCases(url: (path: string) => string, cases: string[]): Promise<void> {
+  const login = await fetch(url("/auth/login"), { redirect: "manual" });
+  assert.equal(login.status, 302);
+  const location = login.headers.get("location") ?? "";
+  const authorize = new URL(location);
+  assert.equal(authorize.origin, "https://passport.ubq.fi");
+  assert.equal(authorize.pathname, "/authorize");
+  assert.equal(authorize.searchParams.get("client_id"), "ai");
+  assert.equal(authorize.searchParams.get("audience"), "ai");
+  assert.equal(authorize.searchParams.get("origin"), "https://ai.ubq.fi");
+  assert.equal(authorize.searchParams.get("redirect_uri"), "https://ai.ubq.fi/auth/callback");
+  const state = authorize.searchParams.get("state") ?? "";
+  assert(state.length > 20);
+  const loginCookies = setCookies(login);
+  assert.equal(loginCookies.length, 1);
+  assert(loginCookies[0].startsWith(`__Host-uos_ai_passport_state=${state}; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Lax`));
+  cases.push("passport_login_exact_authorize_redirect_and_state_cookie");
+
+  const mismatch = await fetch(url(`/auth/callback?state=${encodeURIComponent(state)}&code=admin`), {
+    headers: { cookie: "__Host-uos_ai_passport_state=other" },
+    redirect: "manual",
+  });
+  assert.equal(mismatch.status, 401);
+  assert(setCookies(mismatch).some((value) => value.startsWith("__Host-uos_ai_passport_state=;")));
+  cases.push("passport_callback_rejects_state_mismatch");
+
+  const exchange = async (code: string): Promise<{ token: string; cookie: string }> => {
+    const callback = await fetch(url(`/auth/callback?state=${encodeURIComponent(state)}&code=${code}`), {
+      headers: { cookie: cookiePair(loginCookies[0]) },
+      redirect: "manual",
+    });
+    assert.equal(callback.status, 302);
+    const cookies = setCookies(callback);
+    assert.equal(cookies.length, 2, "callback must emit two independent Set-Cookie headers");
+    const session = cookies.find((value) => value.startsWith("__Host-uos_ai_passport_session="));
+    assert(session);
+    assert(session.includes("Path=/; Max-Age=") && session.includes("HttpOnly; Secure; SameSite=Lax"));
+    assert(cookies.some((value) => value.startsWith("__Host-uos_ai_passport_state=; Path=/; Max-Age=0")));
+    const token = cookiePair(session).slice("__Host-uos_ai_passport_session=".length);
+    return { token, cookie: cookiePair(session) };
+  };
+
+  const admin = await exchange("admin");
+  const authPayload = await objectBody(await fetch(url("/uos/auth"), { headers: { cookie: admin.cookie } }));
+  const auth = authPayload.auth;
+  assert(isObject(auth));
+  assert.equal(auth.principal, "passport-user:fixture-admin");
+  const method = auth.method;
+  assert(isObject(method));
+  assert.equal(method.kind, "passport_session");
+  assert.equal(auth.is_admin, true);
+  const tokenInfo = auth.token;
+  assert(isObject(tokenInfo));
+  assert.equal(tokenInfo.present, false);
+  cases.push("passport_cookie_principal_and_uos_auth");
+
+  const models = await fetch(url("/v1/models?client_version=0.163.0"), { headers: { cookie: admin.cookie } });
+  assert.equal(models.status, 200);
+  const catalog = await objectBody(models);
+  assert(Array.isArray(catalog.models) && catalog.models.length > 0);
+  const inference = await fetch(url("/v1/responses"), {
+    method: "POST",
+    headers: { cookie: admin.cookie, "content-type": "application/json" },
+    body: JSON.stringify({ model: "deepseek-flash", input: "fixture:passport", stream: false }),
+  });
+  assert.equal(inference.status, 200);
+  assert(JSON.stringify(await objectBody(inference)).includes("fixture answer"));
+  cases.push("passport_cookie_authenticates_models_and_inference");
+
+  const adminResponse = await fetch(url("/admin/api-keys"), { headers: { cookie: admin.cookie } });
+  assert.equal(adminResponse.status, 200, await adminResponse.clone().text());
+  cases.push("passport_admin_cookie_requires_isadmin");
+
+  const user = await exchange("user");
+  const nonAdmin = await fetch(url("/admin/api-keys"), { headers: { cookie: user.cookie } });
+  assert.equal(nonAdmin.status, 403);
+  cases.push("passport_non_admin_cookie_forbidden");
+
+  const bearer = await fetch(url("/admin/api-keys"), { headers: { authorization: `Bearer ${admin.token}` } });
+  assert.equal(bearer.status, 401);
+  assert.equal((await fetch(url("/uos/auth"), { headers: { authorization: `Bearer ${admin.token}` } })).status, 200);
+  cases.push("passport_bearer_denied_for_admin_and_allowed_for_client");
+
+  const invalidJwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.invalid";
+  assert.equal((await fetch(url("/uos/auth"), { headers: { authorization: `Bearer ${invalidJwt}` } })).status, 401);
+  assert.equal((await fetch(url("/admin/api-keys"), { headers: { authorization: `Bearer ${invalidJwt}` } })).status, 401);
+  cases.push("jwt_shaped_invalid_credential_fails_closed");
+
+  const foreignMutation = await fetch(url("/admin/api-keys"), {
+    method: "POST",
+    headers: { cookie: admin.cookie, origin: "https://evil.example", "content-type": "application/json" },
+    body: JSON.stringify({ name: "must-not-exist" }),
+  });
+  assert.equal(foreignMutation.status, 403);
+  cases.push("passport_admin_cookie_mutation_rejects_foreign_origin");
+}
+
+async function cerebrasPaymentCases(url: (path: string) => string, cases: string[]): Promise<void> {
+  for (const [path, body] of [
+    ["/v1/chat/completions", { model: "gpt-oss-120b", messages: [{ role: "user", content: "fixture:cerebras:402" }], stream: false }],
+    ["/v1/responses", { model: "gpt-oss-120b", input: "fixture:cerebras:402", stream: false }],
+  ] as const) {
+    const response = await fetch(url(path), {
+      method: "POST",
+      headers: { authorization: "Bearer fixture-access", "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    assert.equal(response.status, 402);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    assert.equal(bytes.length, 146);
+    assert.equal(
+      new TextDecoder().decode(bytes),
+      '{"error":{"message":"Payment required: add credits to this account to continue now!!!!","type":"invalid_request_error","code":"payment_required"}}'
+    );
+    assert.equal(response.headers.get("x-uos-upstream"), "cerebras");
+    assert.equal(response.headers.get("retry-after"), "7");
+    assert.equal(response.headers.get("set-cookie"), null);
+    assert.equal(response.headers.get("server"), null);
+    assert.equal(response.headers.get("cf-ray"), null);
+    assert.equal(response.headers.get("x-arbitrary"), null);
+  }
+  cases.push("cerebras_payment_required_normalized_146_byte_both_surfaces");
+}
+
+type ScenarioHarness = { scope: string; restart: () => Promise<void> };
+
+async function catalogRestartCases(context: MatrixContext & ScenarioHarness, cases: string[]): Promise<void> {
+  const headers = { authorization: "Bearer fixture-access" };
+  const warm = await fetch(context.url("/v1/models?client_version=0.163.0"), { headers });
+  assert.equal(warm.status, 200);
+  const warmBody = await objectBody(warm);
+  const warmModels = Array.isArray(warmBody.models) ? warmBody.models : [];
+  const warmEtag = warm.headers.get("etag");
+  assert(warmModels.length > 0 && warmEtag);
+  const generation = (await context.read(tuple("ubq_ai", "codex_catalog_auth_generation")))?.value;
+  assert.equal(typeof generation, "string");
+  const observation = await context.read(
+    tuple(
+      "ubq_ai",
+      "provider_catalog_v1",
+      String(generation),
+      "deepseek",
+      createHash("sha256").update("deepseek\0fixture-provider-secret").digest("hex")
+    )
+  );
+  assert(observation, "provider observations must persist for a fresh process");
+  const metadata = await context.read(tuple("ubq_ai", "codex_catalog", "0.163.0"));
+  assert(metadata && isObject(metadata.value));
+  const metadataValue = metadata.value;
+  const staleAt = Date.now() - 600_000;
+  const staleRevision = `stale-${Date.now()}`;
+  const committed = await context.rpc({
+    operation: "commit",
+    checks: [{ key: tuple("ubq_ai", "codex_catalog", "0.163.0"), expected_revision: metadata.revision }],
+    mutations: [
+      {
+        operation: "put",
+        key: tuple("ubq_ai", "codex_catalog", "0.163.0"),
+        record: { ...metadata, revision: staleRevision, value: { ...metadataValue, fetched_at_ms: staleAt } },
+      },
+    ],
+  });
+  assert.equal(committed.committed, true);
+  cases.push("catalog_durable_provider_observations_and_stale_metadata_seeded");
+
+  const baseline = (await context.events()).filter(
+    (event) => isObject(event) && event.kind === "matrix_catalog" && event.provider === "codex"
+  ).length;
+  await context.restart();
+
+  const started = performance.now();
+  const stale = await fetch(context.url("/v1/models?client_version=0.163.0"), { headers });
+  const elapsed = performance.now() - started;
+  assert.equal(stale.status, 200);
+  assert.equal(stale.headers.get("x-uos-cache"), "stale");
+  assert.equal(stale.headers.get("etag"), warmEtag, "stale rendering must preserve the final-body ETag");
+  const staleBody = await objectBody(stale);
+  const staleModels = Array.isArray(staleBody.models) ? staleBody.models : [];
+  assert.equal(staleModels.length, warmModels.length);
+  assert(elapsed < 2_000, `retained stale catalog must answer without blocking refresh (took ${Math.round(elapsed)}ms)`);
+  cases.push("fresh_workerd_retained_stale_catalog_answers_quickly_with_same_models_and_etag");
+
+  const deadline = Date.now() + 15_000;
+  let refreshed = false;
+  while (Date.now() < deadline) {
+    const rows = (await context.events()).filter(
+      (event) => isObject(event) && event.kind === "matrix_catalog" && event.provider === "codex"
+    ).length;
+    if (rows > baseline) {
+      refreshed = true;
+      break;
+    }
+    await Bun.sleep(50);
+  }
+  assert(refreshed, "the stale response must schedule the normal background refresh");
+  const conditional = await fetch(context.url("/v1/models?client_version=0.163.0"), {
+    headers: { ...headers, "if-none-match": warmEtag },
+  });
+  assert.equal(conditional.status, 304);
+  assert.equal((await conditional.arrayBuffer()).byteLength, 0);
+  cases.push("stale_while_revalidate_refresh_preserves_conditional_304_semantics");
 }
 
 async function staticRouteCases(url: (path: string) => string, cases: string[]): Promise<void> {
@@ -646,17 +860,28 @@ async function inner(): Promise<void> {
   };
   const matrixContext: MatrixContext = { url, post, rpc, read, lifecycle, events, cases };
   let scenarioNumber = 0;
-  const withScenario = async (kind: MatrixScenario, run: (context: MatrixContext) => Promise<void>): Promise<void> => {
+  const withScenario = async (
+    kind: MatrixScenario,
+    run: (context: MatrixContext, harness: ScenarioHarness) => Promise<void>
+  ): Promise<void> => {
     const previousConfig = config;
     await running.stop();
     const scope = join(workspace, `scenario-${kind}-${++scenarioNumber}`);
     await mkdir(scope, { recursive: true });
     config = await fixtureConfig(scope, kind);
     running = await start(config, scope);
+    const harness: ScenarioHarness = {
+      scope,
+      restart: async () => {
+        await running.stop();
+        config = await fixtureConfig(scope, kind);
+        running = await start(config, scope);
+      },
+    };
     try {
       const health = await objectBody(await fetch(url("/health")));
       assert(isObject(health.release) && health.release.git_sha === expectedSha, "Each fixture must execute the exact compiled product source.");
-      await run(matrixContext);
+      await run(matrixContext, harness);
     } finally {
       await running.stop();
       config = previousConfig;
@@ -677,6 +902,8 @@ async function inner(): Promise<void> {
     assert(preflight.headers.get("access-control-expose-headers")?.includes("x-uos-provider-request-id"));
     cases.push("source_credential_cors_preflight_before_authentication");
     await staticRouteCases(url, cases);
+    await passportCases(url, cases);
+    await cerebrasPaymentCases(url, cases);
     assert.equal((await post("/uos/agent-messages", { agent_id: "fixture", body: "fixture" })).status, 403);
     assert.equal((await fetch(url("/uos/agent-messages"))).status, 401);
     assert.equal((await fetch(url("/uos/agent-messages"), { method: "PATCH" })).status, 405);
@@ -822,18 +1049,16 @@ async function inner(): Promise<void> {
     assert.equal(explicitState.terminal_intent.delivery, "interrupted");
     await assertUpstreamCancelled(events, "fixture:abort-explicit");
     cases.push("real_service_binding_abort_signal_propagates");
-    await withScenario("codex", async (fixture) => {
+    await withScenario("codex", async (fixture, harness) => {
       await imageCases(fixture);
       await liveCases({
         url: (path) => fixture.url(path),
         read: (key) => fixture.read(key),
         tuple,
         cases,
-        restart: async () => {
-          await running.stop();
-          running = await start(config, workspace);
-        },
+        restart: harness.restart,
       });
+      await catalogRestartCases({ ...fixture, ...harness }, cases);
     });
     await runProviderMatrixCases({ ...matrixContext, withScenario });
     await withScenario("codex", replayProviderCases);

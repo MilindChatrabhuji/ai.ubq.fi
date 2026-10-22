@@ -145,6 +145,8 @@ impl CatalogRuntime {
         now_ms: i64,
         public: bool,
     ) -> Result<CatalogState, GatewayError> {
+        self.hydrate_observations(store, publication, public, now_ms)
+            .await?;
         let mut state = state::load_state(
             store,
             publication,
@@ -161,6 +163,81 @@ impl CatalogRuntime {
                 .is_none_or(|e| e.retry_ms <= now_ms && e.shared_request.is_none())
         });
         Ok(state)
+    }
+    /// Durable provider inputs keep a fresh process's assembled catalog
+    /// equivalent to the publishing process without persisting the final body.
+    async fn hydrate_observations<S: gateway_core::state::AuthorityStore>(
+        &self,
+        store: &S,
+        publication: &CredentialPublication,
+        public: bool,
+        now: i64,
+    ) -> Result<(), GatewayError> {
+        let Some(generation) = state::auth_generation(store).await? else {
+            return Ok(());
+        };
+        let mut providers = publication.providers.keys().copied().collect::<Vec<_>>();
+        if public && !providers.contains(&CatalogProvider::Surplus) {
+            providers.push(CatalogProvider::Surplus);
+        }
+        for provider in providers {
+            if !provider.discovery() {
+                continue;
+            }
+            let binding = if provider == CatalogProvider::Surplus {
+                None
+            } else {
+                publication.binding(provider)
+            };
+            if binding.is_none() && provider != CatalogProvider::Surplus {
+                continue;
+            }
+            let identity = binding
+                .clone()
+                .map(MemoIdentity::Credential)
+                .unwrap_or(MemoIdentity::Anonymous);
+            if self
+                .memo
+                .borrow()
+                .entries
+                .get(&provider)
+                .is_some_and(|entry| entry.identity == identity && entry.snapshot.is_some())
+            {
+                continue;
+            }
+            let Some(mut snapshot) = state::load_provider_observation(
+                store,
+                &generation,
+                provider,
+                binding.as_ref(),
+                now,
+            )
+            .await?
+            else {
+                continue;
+            };
+            snapshot.configured = publication.providers.contains_key(&provider);
+            let mut memo = self.memo.borrow_mut();
+            if memo
+                .entries
+                .get(&provider)
+                .is_some_and(|entry| entry.identity == identity && entry.snapshot.is_some())
+            {
+                continue;
+            }
+            memo.entries.insert(
+                provider,
+                MemoEntry {
+                    identity,
+                    snapshot: Some(snapshot),
+                    expires_ms: now.saturating_add(PROVIDER_FRESH_MS),
+                    retry_ms: 0,
+                    published_generation: 0,
+                    shared_request: None,
+                },
+            );
+        }
+        Ok(())
     }
     pub fn cached_provider(
         &self,
@@ -336,47 +413,70 @@ impl CatalogRuntime {
         {
             return Err(error.clone());
         }
-        let mut memo = self.memo.borrow_mut();
-        let Some(entry) = memo
-            .entries
-            .get_mut(&provider)
-            .filter(|e| e.identity == identity)
-        else {
-            return Ok(None);
-        };
-        if request < entry.published_generation {
-            return Ok(entry.snapshot.clone());
-        }
-        match result {
-            Ok(models) => {
-                entry.published_generation = request;
-                entry.retry_ms = 0;
-                entry.expires_ms = host.now_ms().saturating_add(PROVIDER_FRESH_MS);
-                entry.snapshot = Some(ProviderCatalog {
-                    models,
-                    updated_at_ms: Some(host.now_ms()),
-                    configured: publication
-                        .as_ref()
-                        .is_some_and(|p| p.providers.contains_key(&provider)),
-                    available: true,
-                    stale: false,
-                });
+        let discovered = result.is_ok();
+        let snapshot = {
+            let mut memo = self.memo.borrow_mut();
+            let Some(entry) = memo
+                .entries
+                .get_mut(&provider)
+                .filter(|e| e.identity == identity)
+            else {
+                return Ok(None);
+            };
+            if request < entry.published_generation {
+                return Ok(entry.snapshot.clone());
             }
-            Err(error) => {
-                if error.status == 499 {
-                    return Err(error);
+            match result {
+                Ok(models) => {
+                    entry.published_generation = request;
+                    entry.retry_ms = 0;
+                    entry.expires_ms = host.now_ms().saturating_add(PROVIDER_FRESH_MS);
+                    entry.snapshot = Some(ProviderCatalog {
+                        models,
+                        updated_at_ms: Some(host.now_ms()),
+                        configured: publication
+                            .as_ref()
+                            .is_some_and(|p| p.providers.contains_key(&provider)),
+                        available: true,
+                        stale: false,
+                    });
                 }
-                entry.retry_ms = host.now_ms().saturating_add(PROVIDER_RETRY_MS);
-                if provider == CatalogProvider::ClaudeCode {
-                    if let Some(snapshot) = &mut entry.snapshot {
-                        providers::withdraw_stale_reasoning(&mut snapshot.models);
-                        snapshot.stale = true;
+                Err(error) => {
+                    if error.status == 499 {
+                        return Err(error);
                     }
-                    entry.expires_ms = entry.retry_ms;
+                    entry.retry_ms = host.now_ms().saturating_add(PROVIDER_RETRY_MS);
+                    if provider == CatalogProvider::ClaudeCode {
+                        if let Some(snapshot) = &mut entry.snapshot {
+                            providers::withdraw_stale_reasoning(&mut snapshot.models);
+                            snapshot.stale = true;
+                        }
+                        entry.expires_ms = entry.retry_ms;
+                    }
                 }
             }
+            entry.snapshot.clone()
+        };
+        if discovered
+            && let Some(snapshot) = &snapshot
+            && let Some(generation) = state::auth_generation(store).await?
+        {
+            let binding = match &identity {
+                MemoIdentity::Credential(binding) => Some(binding),
+                MemoIdentity::Anonymous => None,
+            };
+            state::persist_provider_observation(
+                store,
+                &generation,
+                provider,
+                binding,
+                snapshot,
+                &host.unique_id(),
+                host.now_ms(),
+            )
+            .await?;
         }
-        Ok(entry.snapshot.clone())
+        Ok(snapshot)
     }
     async fn discover<H: CatalogHost>(
         &self,
@@ -484,23 +584,37 @@ impl CatalogRuntime {
             .checked_add(1)
             .ok_or_else(|| unavailable("Provider catalog request generation overflowed"))?;
         let request = memo.next_request;
+        let snapshot = ProviderCatalog {
+            models,
+            updated_at_ms: Some(fetched_at_ms),
+            configured: true,
+            available: true,
+            stale: false,
+        };
         memo.entries.insert(
             CatalogProvider::ClaudeCode,
             MemoEntry {
                 identity: MemoIdentity::Credential(binding.clone()),
-                snapshot: Some(ProviderCatalog {
-                    models,
-                    updated_at_ms: Some(fetched_at_ms),
-                    configured: true,
-                    available: true,
-                    stale: false,
-                }),
+                snapshot: Some(snapshot.clone()),
                 expires_ms: fetched_at_ms.saturating_add(PROVIDER_FRESH_MS),
                 retry_ms: 0,
                 published_generation: request,
                 shared_request: None,
             },
         );
+        drop(memo);
+        if let Some(generation) = state::auth_generation(store).await? {
+            state::persist_provider_observation(
+                store,
+                &generation,
+                CatalogProvider::ClaudeCode,
+                Some(binding),
+                &snapshot,
+                &host.unique_id(),
+                host.now_ms(),
+            )
+            .await?;
+        }
         Ok(true)
     }
     pub async fn versioned_models<S: QueryStore, H: CatalogHost>(

@@ -149,3 +149,27 @@ pub fn passkey_meta(
     }
     (CANONICAL_ORIGIN.into(), "ai.ubq.fi".into())
 }
+
+/// Cookie-authenticated admin mutations require a browser-declared same-origin
+/// request. Non-browser callers without Origin/Referer/Sec-Fetch-Site remain
+/// compatible because they do not carry ambient cookies.
+pub fn same_origin_mutation(request: &AuthRequest) -> bool {
+    if matches!(request.method.as_str(), "GET" | "HEAD" | "OPTIONS") {
+        return true;
+    }
+    let Ok(url) = Url::parse(&request.url) else {
+        return false;
+    };
+    let own = url.origin().ascii_serialization();
+    if let Some(site) = request.header("sec-fetch-site").map(str::trim) {
+        if !matches!(site, "same-origin" | "none") {
+            return false;
+        }
+    }
+    if let Some(origin) = request.header("origin").map(str::trim) {
+        return exact_origin(origin).as_deref() == Some(own.as_str());
+    }
+    // Source cookie mutations validate Origin when present and do not infer it
+    // from a Referer fallback.
+    true
+}
