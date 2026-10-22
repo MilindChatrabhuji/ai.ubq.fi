@@ -110,6 +110,11 @@ enum SourceActor {
         token_hash: Option<String>,
         valid_until_ms: Option<i64>,
     },
+    Passport {
+        sub: String,
+        jti: String,
+        expires_at_ms: i64,
+    },
     Kernel {
         owner: String,
         repo: String,
@@ -332,15 +337,10 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
         AuthMethod::PassportSession { claims }
             if claims.is_admin && claims.agent_token_id.is_none() =>
         {
-            SourceActor::Configuration {
-                method: ConfigMethod::AdminAllowlist,
-                token_hash: None,
-                valid_until_ms: Some(
-                    claims
-                        .exp
-                        .checked_mul(1000)
-                        .ok_or_else(fail)?,
-                ),
+            SourceActor::Passport {
+                sub: claims.sub.clone(),
+                jti: claims.jti.clone(),
+                expires_at_ms: claims.exp.checked_mul(1000).ok_or_else(fail)?,
             }
         }
         AuthMethod::PassportSession { .. } | AuthMethod::PassportBearer { .. } => {
@@ -563,6 +563,20 @@ pub(crate) async fn read_current<S: AuthorityStore, I: TokenSource>(
                 |hash| format!("bearer-sha256:{hash}"),
             ),
         },
+        SourceActor::Passport {
+            sub,
+            jti,
+            expires_at_ms,
+        } => {
+            if stored.scope != NativeActorScope::Admin
+                || sub.is_empty()
+                || jti.is_empty()
+                || *expires_at_ms <= tx.now
+            {
+                return Err(fail());
+            }
+            format!("passport-user:{sub}")
+        }
         SourceActor::Kernel {
             owner,
             repo,
@@ -615,6 +629,7 @@ fn ensure_lifetime(stored: &StoredNativeActor, now: i64) -> Result<(), GatewayEr
             Some(*expires_at_ms)
         }
         SourceActor::Configuration { valid_until_ms, .. } => *valid_until_ms,
+        SourceActor::Passport { expires_at_ms, .. } => Some(*expires_at_ms),
         SourceActor::ApiKey { expires_at_ms, .. } => *expires_at_ms,
     };
     if expiry.is_some_and(|expiry| expiry <= now) {
