@@ -133,7 +133,14 @@ impl<'a, S: QueryStore, H: AuthHost, A: AdminHost> AdminService<'a, S, H, A> {
                 crate::reads::passkey_users(self.store, self.host.now_ms()).await?
             }
             AdminOperation::ApiKeysList => {
-                crate::reads::api_keys(self.store, self.host.now_ms()).await?
+                let include_usage = crate::reads::include_usage(
+                    query
+                        .get("include_usage")
+                        .and_then(|values| values.first())
+                        .map(String::as_str),
+                );
+                crate::reads::api_keys_with_usage(self.store, self.host.now_ms(), include_usage)
+                    .await?
             }
             AdminOperation::ApiKeyChanges => {
                 crate::reads::key_changes(self.store, &query, self.host.now_ms()).await?

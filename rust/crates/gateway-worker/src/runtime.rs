@@ -72,6 +72,11 @@ pub async fn route(
     let auth = AuthService::new(&store, &host, &config);
     if path.starts_with("/api/auth/") || path.starts_with("/auth/") || path == "/uos/auth" {
         if request.method() == Method::Post {
+            // Source authenticates this admin before the registration handler
+            // reads its body. Keep the handler's own check intact below.
+            if path == "/api/auth/register/start" {
+                auth.authenticate_admin(&auth_request).await?;
+            }
             auth_request.body =
                 body::request_bytes(&mut request, body::PASSKEY_BODY_MAX_BYTES).await?;
         }
@@ -80,7 +85,12 @@ pub async fn route(
         }
     }
     if path.starts_with("/admin/") {
-        if !matches!(request.method(), Method::Get | Method::Head) {
+        // Source authenticates an administrative route before its handler can
+        // read a body. Resolve the route first so unmatched or wrong-method
+        // paths, including the source paid-fallbacks 405, stay body-free.
+        let admin_route = gateway_admin::match_route(request.method().as_ref(), &path);
+        if admin_route.is_some() && !matches!(request.method(), Method::Get | Method::Head) {
+            auth.authenticate_admin(&auth_request).await?;
             auth_request.body = body::inference_bytes(&mut request).await?;
         }
         // Custody is minted at the original authenticated boundary, never from
@@ -159,6 +169,9 @@ pub async fn route(
         .map(Into::into);
     }
     if path == "/health/providers" || path == "/health/upstream" {
+        if request.method() != Method::Get {
+            return Err(public_not_found());
+        }
         auth.authenticate_admin(&auth_request).await?;
         let observations = crate::observability_host::bind(
             &request_id,
@@ -185,10 +198,9 @@ pub async fn route(
         )
         .map(Into::into);
     }
-    let principal = if path.starts_with("/v1/")
+    let principal = if is_terminal_inference_path(&path)
         || path == "/uos/models/capabilities"
         || path == "/uos/agent-messages"
-        || path.starts_with("/uos/embedding")
     {
         Some(auth.authenticate_client(&auth_request).await?)
     } else {
@@ -358,17 +370,12 @@ pub async fn route(
         decorate_api_policy(&mut response, &principal)?;
         return Ok(response.into());
     }
-    if path.starts_with("/v1/") || path.starts_with("/uos/embedding") {
-        return Err(GatewayError::unavailable(
-            "This source route operation is not yet integrated.",
-            "rust_port_route_unavailable",
-        ));
+    if is_terminal_inference_path(&path) {
+        // Terminal inference dispatch answers an authenticated unknown route
+        // with the source's plain error envelope, not a migration 503.
+        return Err(inference_not_found());
     }
-    Err(GatewayError::new(
-        404,
-        "Public resource not found. Read /openapi.json for API endpoints or /llms.txt for agent guidance.",
-        Some("not_found"),
-    ))
+    Err(public_not_found())
 }
 
 pub fn auth_response(response: AuthResponse) -> Result<Response, GatewayError> {
@@ -487,4 +494,71 @@ fn invalid_url() -> GatewayError {
         "Invalid request URL or headers",
         Some("invalid_request_error"),
     )
+}
+
+fn inference_not_found() -> GatewayError {
+    GatewayError::new(404, "Not found", Some("not_found"))
+}
+
+fn public_not_found() -> GatewayError {
+    GatewayError::new(
+        404,
+        "Public resource not found. Read /openapi.json for API endpoints or /llms.txt for agent guidance.",
+        Some("not_found"),
+    )
+    .with_type("not_found")
+}
+
+fn is_terminal_inference_path(path: &str) -> bool {
+    path.starts_with("/v1/")
+        || path == "/uos/embeddings"
+        || path == "/uos/embedding-jobs"
+        || path.starts_with("/uos/embedding-jobs/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_and_public_not_found_envelopes_stay_distinct() {
+        let terminal = inference_not_found();
+        assert_eq!(terminal.status, 404);
+        assert_eq!(terminal.envelope.error.message, "Not found");
+        assert_eq!(terminal.envelope.error.error_type, "invalid_request_error");
+        assert_eq!(terminal.envelope.error.code.as_deref(), Some("not_found"));
+        assert!(terminal.envelope.error.param.is_none());
+
+        let public = public_not_found();
+        assert_eq!(public.status, 404);
+        assert_eq!(
+            public.envelope.error.message,
+            "Public resource not found. Read /openapi.json for API endpoints or /llms.txt for agent guidance."
+        );
+        assert_eq!(public.envelope.error.error_type, "not_found");
+        assert_eq!(public.envelope.error.code.as_deref(), Some("not_found"));
+        assert!(public.envelope.error.param.is_none());
+    }
+
+    #[test]
+    fn terminal_paths_match_the_source_dispatch_surface() {
+        for path in [
+            "/v1/models",
+            "/v1/unknown",
+            "/uos/embeddings",
+            "/uos/embedding-jobs",
+            "/uos/embedding-jobs/job-1",
+        ] {
+            assert!(is_terminal_inference_path(path), "{path}");
+        }
+        for path in [
+            "/v1",
+            "/uos/embedding",
+            "/uos/embeddings/extra",
+            "/uos/embedding-jobs-extra",
+            "/health/providers",
+        ] {
+            assert!(!is_terminal_inference_path(path), "{path}");
+        }
+    }
 }
