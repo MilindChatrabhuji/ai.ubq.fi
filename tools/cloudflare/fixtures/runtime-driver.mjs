@@ -33,6 +33,23 @@ async function upstream(request, env, context) {
   if (url.pathname !== (cerebras ? "/v1/chat/completions" : "/chat/completions")) return new Response("Unexpected upstream path", { status: 400 });
   if (request.headers.get("authorization") !== "Bearer fixture-provider-secret") return new Response("Unexpected credential", { status: 401 });
   await log(env, { kind: "dispatch", hostname: url.hostname, path: url.pathname, body });
+  if (prompt.includes("fixture:cerebras:402")) {
+    const headers = new Headers({
+      "content-type": "application/json",
+      "retry-after": "7",
+      "server": "cerebras-origin",
+      "cf-ray": "fixture-ray",
+      "x-arbitrary": "must-not-relay",
+    });
+    headers.append("set-cookie", "provider_secret=never");
+    return new Response(
+      JSON.stringify({
+        error: { message: "Payment required: add credits to this account to continue now!!!!", code: "payment_required" },
+        secret: "must-not-relay",
+      }),
+      { status: 402, headers }
+    );
+  }
   if (prompt.includes("fixture:refusal-empty")) return new Response(null, { status: 416, headers: { "x-fixture-refusal": "empty" } });
   if (prompt.includes("fixture:refusal-progressive")) {
     let timer;
@@ -217,9 +234,76 @@ async function imageUpstream(request, env) {
   );
 }
 
+const encoder = new TextEncoder();
+const base64url = (bytes) => {
+  let binary = "";
+  for (const byte of new Uint8Array(bytes)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+};
+const base64urlJson = (value) => base64url(encoder.encode(JSON.stringify(value)));
+
+let passportIdentityPromise = null;
+const passportIdentity = async () => {
+  if (!passportIdentityPromise) {
+    passportIdentityPromise = (async () => {
+      const pair = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", hash: "SHA-256", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) }, true, ["sign", "verify"]);
+      const key = await crypto.subtle.exportKey("jwk", pair.publicKey);
+      const kid = "fixture-passport-key";
+      return { pair, kid, jwk: { ...key, kid, alg: "RS256", use: "sig" } };
+    })();
+  }
+  return passportIdentityPromise;
+};
+const signPassport = async (code) => {
+  const identity = await passportIdentity();
+  const now = Math.floor(Date.now() / 1000);
+  const admin = code.startsWith("admin");
+  const claims = {
+    iss: "https://passport.ubq.fi",
+    sub: `fixture-${code}`,
+    handle: admin ? "fixture-admin" : "fixture-user",
+    isAdmin: admin,
+    scopes: ["ai"],
+    aud: "ai",
+    clientId: "ai",
+    auth: "sso",
+    iat: now,
+    exp: now + 3600,
+    jti: `fixture-${code}-${now}`,
+  };
+  const header = base64urlJson({ alg: "RS256", typ: "JWT", kid: identity.kid });
+  const payload = base64urlJson(claims);
+  const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", identity.pair.privateKey, encoder.encode(`${header}.${payload}`));
+  return `${header}.${payload}.${base64url(signature)}`;
+};
+async function passportUpstream(request) {
+  const url = new URL(request.url);
+  if (request.method === "GET" && url.pathname === "/api/auth/jwks") {
+    const identity = await passportIdentity();
+    return Response.json({ keys: [identity.jwk] });
+  }
+  if (request.method === "POST" && url.pathname === "/api/auth/sso/exchange") {
+    const body = await request.json();
+    if (
+      body.clientId !== "ai" ||
+      body.audience !== "ai" ||
+      body.origin !== "https://ai.ubq.fi" ||
+      body.redirectUri !== "https://ai.ubq.fi/auth/callback" ||
+      typeof body.code !== "string" ||
+      body.code.length === 0
+    ) {
+      return Response.json({ error: "invalid_code" }, { status: 400 });
+    }
+    const accessToken = await signPassport(body.code);
+    return Response.json({ accessToken, tokenType: "Bearer", expiresAt: new Date((Math.floor(Date.now() / 1000) + 3600) * 1000).toISOString() });
+  }
+  return new Response("Unexpected Passport path", { status: 404 });
+}
+
 export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
+    if (url.hostname === "passport.ubq.fi") return passportUpstream(request);
     const matrix = await handleProviderMatrix(request, env, context, (event) => log(env, event));
     if (matrix) return matrix;
     if (url.hostname === "api.github.com" && url.pathname === "/repos/fixture-owner/fixture-repo") {
