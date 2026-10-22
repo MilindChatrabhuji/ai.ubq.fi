@@ -1,11 +1,16 @@
 //! Bounded incremental SSE parsing. Reader EOF never substitutes for a Responses terminal.
 use crate::{types::*, writer::ResponseWriter};
 use gateway_core::GatewayError;
+use gateway_core::provider::UpstreamProvider;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 pub const MAX_RESPONSES_EVENT_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_CHAT_EVENT_BYTES: usize = 4 * 1024 * 1024;
 pub const KEEPALIVE_INTERVAL_MS: u64 = 15_000;
+/// The source contract that must be translated into an in-band stream terminal.
+pub fn is_lithos_stream_refusal(plan: &DecodePlan, status: u16) -> bool {
+    plan.provider == UpstreamProvider::Lithos && plan.stream && status == 429
+}
 #[derive(Clone, Debug)]
 pub struct SseFrame {
     pub event: Option<String>,
@@ -54,14 +59,21 @@ impl SseParser {
 }
 fn boundary(bytes: &[u8]) -> Option<(usize, usize)> {
     for i in 0..bytes.len() {
-        if bytes[i..].starts_with(b"\r\n\r\n") {
-            return Some((i, 4));
-        }
-        if bytes[i..].starts_with(b"\n\n") || bytes[i..].starts_with(b"\r\r") {
-            return Some((i, 2));
+        let Some(first) = line_ending(bytes, i) else {
+            continue;
+        };
+        if let Some(second) = line_ending(bytes, i + first) {
+            return Some((i, first + second));
         }
     }
     None
+}
+fn line_ending(bytes: &[u8], index: usize) -> Option<usize> {
+    match bytes.get(index) {
+        Some(b'\r') if bytes.get(index + 1) == Some(&b'\n') => Some(2),
+        Some(b'\r' | b'\n') => Some(1),
+        _ => None,
+    }
 }
 fn parse_frame(text: &str) -> Option<SseFrame> {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");

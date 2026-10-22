@@ -1,4 +1,6 @@
 //! Process/isolate-local authenticated native replay receipts. No signatures enter public wire/disk.
+use crate::{source as s, types::PrepareOptions};
+use gateway_core::{source_json::SourceJson, source_serialization as source};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, VecDeque};
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -152,17 +154,61 @@ fn native_valid(native: &Value, transport: ReplayTransport) -> bool {
         ReplayTransport::Chat => {
             native["role"] == "assistant"
                 && native.is_object()
-                && native.get("reasoning_details").is_none_or(|v| {
-                    v.as_array().is_some_and(|a| {
-                        a.iter().all(|d| {
-                            d["type"] == "reasoning.text"
-                                && d["text"].is_string()
-                                && d["signature"].as_str().is_some_and(|s| !s.is_empty())
-                        })
-                    })
-                })
+                && ["content", "refusal", "reasoning_content", "reasoning"]
+                    .iter()
+                    .all(|key| native.get(*key).is_none_or(Value::is_string))
+                && native
+                    .get("tool_calls")
+                    .is_none_or(|value| value.as_array().is_some_and(|calls| calls.len() <= 256))
+                && chat_readable_reasoning(native).is_some()
         }
     }
+}
+fn chat_readable_reasoning(native: &Value) -> Option<String> {
+    let detail_text = chat_detail_text(native)?;
+    for key in ["reasoning_content", "reasoning"] {
+        let Some(value) = native.get(key) else {
+            continue;
+        };
+        let value = value.as_str()?;
+        if !value.is_empty() {
+            return Some(value.to_owned());
+        }
+    }
+    Some(detail_text)
+}
+fn chat_detail_text(native: &Value) -> Option<String> {
+    let Some(details) = native.get("reasoning_details") else {
+        return Some(String::new());
+    };
+    let details = details.as_array()?;
+    if details.len() > 256 {
+        return None;
+    }
+    let mut text = String::new();
+    for detail in details {
+        if detail["type"] != "reasoning.text"
+            || detail["signature"].as_str().is_none_or(str::is_empty)
+            || detail
+                .get("index")
+                .is_some_and(|index| !index.is_null() && !safe_index(index))
+        {
+            return None;
+        }
+        text.push_str(detail["text"].as_str()?);
+    }
+    Some(text)
+}
+fn safe_index(value: &Value) -> bool {
+    if let Some(value) = value.as_u64() {
+        return value <= 9_007_199_254_740_991;
+    }
+    value.as_f64().is_some_and(|value| {
+        value.is_finite()
+            && value >= 0.0
+            && value.fract() == 0.0
+            && value <= 9_007_199_254_740_991.0
+    })
 }
 fn native_matches(
     native: &Value,
@@ -245,12 +291,10 @@ fn native_matches(
             if let Some(s) = native["content"].as_str() {
                 text.push_str(s)
             }
-            if let Some(s) = native["reasoning_content"]
-                .as_str()
-                .or_else(|| native["reasoning"].as_str())
-            {
-                thinking.push_str(s)
-            }
+            let Some(reasoning) = chat_readable_reasoning(native) else {
+                return false;
+            };
+            thinking.push_str(&reasoning);
             for call in native["tool_calls"].as_array().into_iter().flatten() {
                 let wire = call["function"]["name"].as_str().unwrap_or("");
                 let identity = crate::tools::original(wire, names);
@@ -455,6 +499,60 @@ impl ReplayStore {
             }
         }
         Some(result)
+    }
+    /// Retains the assistant envelope emitted by `DecodedResponse::native_replay`.
+    pub fn remember_decoded_native(
+        &mut self,
+        context: ReplayContext,
+        output: &[Value],
+        native: Value,
+        transport: ReplayTransport,
+        names: &crate::types::ToolMap,
+        now_ms: i64,
+    ) -> bool {
+        let payload = match transport {
+            ReplayTransport::Messages => {
+                if native["role"] != "assistant" {
+                    return false;
+                }
+                native["content"].clone()
+            }
+            ReplayTransport::Chat => native,
+        };
+        self.remember_with_tools(context, output, payload, transport, names, now_ms)
+    }
+    /// Restores a complete provider history into the existing PrepareOptions seam.
+    ///
+    /// The helper never mutates the raw request or its decode echo. It fails
+    /// closed when an input item cannot be represented by the selected transport.
+    pub fn restore_prepare_options(
+        &mut self,
+        context: &ReplayContext,
+        raw: &SourceJson,
+        options: &mut PrepareOptions,
+        transport: ReplayTransport,
+        now_ms: i64,
+    ) -> bool {
+        let Some(items) = source::array(&s::get(raw, "input")) else {
+            return false;
+        };
+        let Some(input) = items
+            .iter()
+            .map(SourceJson::deserialize::<Value>)
+            .collect::<Result<Vec<_>, _>>()
+            .ok()
+        else {
+            return false;
+        };
+        let Some(entries) = self.restore(context, &input, transport, now_ms) else {
+            return false;
+        };
+        let Some(messages) = crate::source_anthropic::replay_messages(raw, transport, &entries)
+        else {
+            return false;
+        };
+        options.restored_native_messages = Some(messages);
+        true
     }
 }
 

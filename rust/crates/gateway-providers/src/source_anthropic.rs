@@ -1,5 +1,9 @@
 //! The existing lossless Claude selection, without a scalar transcript mirror.
-use crate::{source as s, source_tools, types::*};
+use crate::{
+    replay::{ReplayEntry, ReplayTransport},
+    source as s, source_tools,
+    types::*,
+};
 use gateway_core::{source_json::SourceJson, source_serialization as json};
 fn eq(value: &SourceJson, literal: &str) -> bool {
     s::canonical(value).is_ok_and(|value| value.as_str() == literal)
@@ -196,7 +200,7 @@ fn native_messages(
     options: &NativeBodyOptions<'_>,
 ) -> Option<Vec<SourceJson>> {
     if let Some(restored) = &options.restored_native_messages {
-        return Some(restored.iter().map(s::generated).collect());
+        return restored_native_messages(restored, system);
     }
     let input = s::get(raw, "input");
     if s::string(&input).is_some() {
@@ -207,68 +211,93 @@ fn native_messages(
     }
     let mut messages = vec![];
     for item in json::array(&input)? {
-        let kind = s::control(&s::get(&item, "type")).unwrap_or_else(|| "message".into());
-        match kind.as_str() {
-            "message" => {
-                let role = s::control(&s::get(&item, "role"))?;
-                let blocks = content(&s::get(&item, "content"), true)?;
-                if role == "system" || role == "developer" {
-                    if blocks
-                        .iter()
-                        .any(|block| !s::is(&s::get(block, "type"), "text"))
-                    {
-                        return None;
-                    }
-                    system.extend(blocks);
-                } else if role == "user" || role == "assistant" {
-                    merge(&mut messages, &role, blocks);
-                } else {
-                    return None;
-                }
-            }
-            "function_call" => {
-                if s::present(&item, "namespace").is_some_and(|v| !s::is_null(&v))
-                    || !valid_name(&s::get(&item, "name"))
-                {
-                    return None;
-                }
-                // This is the existing native protocol's JSON.parse operation, not an opaque Chat argument rewrite.
-                let arguments = s::control(&s::get(&item, "arguments"))?;
-                let input = SourceJson::parse(&arguments).ok()?;
-                json::entries(&input)?;
-                let id = s::get(&item, "call_id");
-                s::string(&id)?;
-                merge(
-                    &mut messages,
-                    "assistant",
-                    vec![s::object(vec![
-                        ("type", s::text("tool_use")),
-                        ("id", id),
-                        ("name", s::get(&item, "name")),
-                        ("input", input),
-                    ])],
-                );
-            }
-            "function_call_output" => {
-                let id = s::get(&item, "call_id");
-                s::string(&id)?;
-                let mut result = s::object(vec![
-                    ("type", s::text("tool_result")),
-                    ("tool_use_id", id),
-                    (
-                        "content",
-                        s::array(&content(&s::get(&item, "output"), true)?),
-                    ),
-                ]);
-                if let Some(value) = s::present(&item, "is_error") {
-                    s::set(&mut result, "is_error", value);
-                }
-                merge(&mut messages, "user", vec![result]);
-            }
+        append_native_item(&item, system, &mut messages)?;
+    }
+    (!messages.is_empty()).then_some(messages)
+}
+fn restored_native_messages(
+    restored: &[serde_json::Value],
+    system: &mut Vec<SourceJson>,
+) -> Option<Vec<SourceJson>> {
+    let mut messages = vec![];
+    for item in restored {
+        let item = s::generated(item);
+        let role = s::control(&s::get(&item, "role"))?;
+        let blocks = json::array(&s::get(&item, "content"))?;
+        match role.as_str() {
+            "system" | "developer" => system.extend(blocks),
+            "user" | "assistant" => merge(&mut messages, &role, blocks),
             _ => return None,
         }
     }
     (!messages.is_empty()).then_some(messages)
+}
+fn append_native_item(
+    item: &SourceJson,
+    system: &mut Vec<SourceJson>,
+    messages: &mut Vec<SourceJson>,
+) -> Option<()> {
+    let kind = s::control(&s::get(item, "type")).unwrap_or_else(|| "message".into());
+    match kind.as_str() {
+        "message" => {
+            let role = s::control(&s::get(item, "role"))?;
+            let blocks = content(&s::get(item, "content"), true)?;
+            if role == "system" || role == "developer" {
+                if blocks
+                    .iter()
+                    .any(|block| !s::is(&s::get(block, "type"), "text"))
+                {
+                    return None;
+                }
+                system.extend(blocks);
+            } else if role == "user" || role == "assistant" {
+                merge(messages, &role, blocks);
+            } else {
+                return None;
+            }
+        }
+        "function_call" => {
+            if s::present(item, "namespace").is_some_and(|v| !s::is_null(&v))
+                || !valid_name(&s::get(item, "name"))
+            {
+                return None;
+            }
+            // This is the existing native protocol's JSON.parse operation, not an opaque Chat argument rewrite.
+            let arguments = s::control(&s::get(item, "arguments"))?;
+            let input = SourceJson::parse(&arguments).ok()?;
+            json::entries(&input)?;
+            let id = s::get(item, "call_id");
+            s::string(&id)?;
+            merge(
+                messages,
+                "assistant",
+                vec![s::object(vec![
+                    ("type", s::text("tool_use")),
+                    ("id", id),
+                    ("name", s::get(item, "name")),
+                    ("input", input),
+                ])],
+            );
+        }
+        "function_call_output" => {
+            let id = s::get(item, "call_id");
+            s::string(&id)?;
+            let mut result = s::object(vec![
+                ("type", s::text("tool_result")),
+                ("tool_use_id", id),
+                (
+                    "content",
+                    s::array(&content(&s::get(item, "output"), true)?),
+                ),
+            ]);
+            if let Some(value) = s::present(item, "is_error") {
+                s::set(&mut result, "is_error", value);
+            }
+            merge(messages, "user", vec![result]);
+        }
+        _ => return None,
+    }
+    Some(())
 }
 fn native_tools(raw: &SourceJson) -> Option<Vec<SourceJson>> {
     let Some(value) = s::present(raw, "tools") else {
@@ -547,86 +576,7 @@ pub(crate) fn chat(
         ]));
     } else {
         for item in json::array(&input)? {
-            let kind = s::control(&s::get(&item, "type")).unwrap_or_else(|| "message".into());
-            match kind.as_str() {
-                "message" => {
-                    let role = s::control(&s::get(&item, "role"))?;
-                    messages.push(s::object(vec![
-                        (
-                            "role",
-                            s::text(if role == "developer" { "system" } else { &role }),
-                        ),
-                        (
-                            "content",
-                            s::array(&content(&s::get(&item, "content"), false)?),
-                        ),
-                    ]));
-                }
-                "function_call" | "custom_tool_call" => {
-                    let name = s::string(&s::get(&item, "name"))?;
-                    let namespace = s::string(&s::get(&item, "namespace"));
-                    let projected = names
-                        .iter()
-                        .find(|(_, identity)| {
-                            identity.name == name && identity.namespace == namespace
-                        })
-                        .map(|(wire, _)| wire.clone())
-                        .unwrap_or(name);
-                    let arguments = if kind == "custom_tool_call" {
-                        let input = s::get(&item, "input");
-                        s::string(&input)?;
-                        s::text(
-                            s::canonical(&s::object(vec![("input", input)]))
-                                .ok()?
-                                .as_str(),
-                        )
-                    } else {
-                        let value = s::get(&item, "arguments");
-                        s::string(&value)?;
-                        value
-                    };
-                    let id = s::get(&item, "call_id");
-                    s::string(&id)?;
-                    let call = s::object(vec![
-                        ("id", id),
-                        ("type", s::text("function")),
-                        (
-                            "function",
-                            s::object(vec![
-                                ("name", s::quoted(&projected)),
-                                ("arguments", arguments),
-                            ]),
-                        ),
-                    ]);
-                    if let Some(previous) = messages.last_mut().filter(|value| {
-                        s::is(&s::get(value, "role"), "assistant")
-                            && json::array(&s::get(value, "tool_calls")).is_some()
-                    }) {
-                        let mut calls = json::array(&s::get(previous, "tool_calls"))?;
-                        calls.push(call);
-                        s::set(previous, "tool_calls", s::array(&calls));
-                    } else {
-                        messages.push(s::object(vec![
-                            ("role", s::text("assistant")),
-                            ("content", s::null()),
-                            ("tool_calls", s::array(&[call])),
-                        ]));
-                    }
-                }
-                "function_call_output" | "custom_tool_call_output" => {
-                    let id = s::get(&item, "call_id");
-                    s::string(&id)?;
-                    messages.push(s::object(vec![
-                        ("role", s::text("tool")),
-                        ("tool_call_id", id),
-                        (
-                            "content",
-                            s::array(&content(&s::get(&item, "output"), false)?),
-                        ),
-                    ]));
-                }
-                _ => return None,
-            }
+            append_chat_item(&item, &mut messages, &names)?;
         }
     }
     let stream = s::boolean(&s::get(raw, "stream")) == Some(true);
@@ -712,4 +662,164 @@ pub(crate) fn chat(
         elisions: vec![],
         warnings: vec![],
     })
+}
+fn append_chat_item(
+    item: &SourceJson,
+    messages: &mut Vec<SourceJson>,
+    names: &crate::types::ToolMap,
+) -> Option<()> {
+    let kind = s::control(&s::get(item, "type")).unwrap_or_else(|| "message".into());
+    match kind.as_str() {
+        "message" => {
+            let role = s::control(&s::get(item, "role"))?;
+            messages.push(s::object(vec![
+                (
+                    "role",
+                    s::text(if role == "developer" { "system" } else { &role }),
+                ),
+                (
+                    "content",
+                    s::array(&content(&s::get(item, "content"), false)?),
+                ),
+            ]));
+        }
+        "function_call" | "custom_tool_call" => {
+            let name = s::string(&s::get(item, "name"))?;
+            let namespace = s::string(&s::get(item, "namespace"));
+            let projected = names
+                .iter()
+                .find(|(_, identity)| identity.name == name && identity.namespace == namespace)
+                .map(|(wire, _)| wire.clone())
+                .unwrap_or(name);
+            let arguments = if kind == "custom_tool_call" {
+                let input = s::get(item, "input");
+                s::string(&input)?;
+                s::text(
+                    s::canonical(&s::object(vec![("input", input)]))
+                        .ok()?
+                        .as_str(),
+                )
+            } else {
+                let value = s::get(item, "arguments");
+                s::string(&value)?;
+                value
+            };
+            let id = s::get(item, "call_id");
+            s::string(&id)?;
+            let call = s::object(vec![
+                ("id", id),
+                ("type", s::text("function")),
+                (
+                    "function",
+                    s::object(vec![
+                        ("name", s::quoted(&projected)),
+                        ("arguments", arguments),
+                    ]),
+                ),
+            ]);
+            if let Some(previous) = messages.last_mut().filter(|value| {
+                s::is(&s::get(value, "role"), "assistant")
+                    && json::array(&s::get(value, "tool_calls")).is_some()
+            }) {
+                let mut calls = json::array(&s::get(previous, "tool_calls"))?;
+                calls.push(call);
+                s::set(previous, "tool_calls", s::array(&calls));
+            } else {
+                messages.push(s::object(vec![
+                    ("role", s::text("assistant")),
+                    ("content", s::null()),
+                    ("tool_calls", s::array(&[call])),
+                ]));
+            }
+        }
+        "function_call_output" | "custom_tool_call_output" => {
+            let id = s::get(item, "call_id");
+            s::string(&id)?;
+            messages.push(s::object(vec![
+                ("role", s::text("tool")),
+                ("tool_call_id", id),
+                (
+                    "content",
+                    s::array(&content(&s::get(item, "output"), false)?),
+                ),
+            ]));
+        }
+        _ => return None,
+    }
+    Some(())
+}
+pub(crate) fn replay_messages(
+    raw: &SourceJson,
+    transport: ReplayTransport,
+    entries: &[ReplayEntry],
+) -> Option<Vec<serde_json::Value>> {
+    let (_, names) = source_tools::flatten(s::present(raw, "tools").as_ref(), 64).ok()?;
+    let mut messages = vec![];
+    match transport {
+        ReplayTransport::Messages => {
+            let mut system = vec![];
+            for entry in entries {
+                match entry {
+                    ReplayEntry::Original(item) => {
+                        let item = s::generated(item);
+                        let role = s::control(&s::get(&item, "role")).unwrap_or_default();
+                        if ["system", "developer"].contains(&role.as_str()) && !messages.is_empty()
+                        {
+                            return None;
+                        }
+                        append_native_item(&item, &mut system, &mut messages)?;
+                    }
+                    ReplayEntry::NativeAssistant {
+                        transport: ReplayTransport::Messages,
+                        payload,
+                    } => {
+                        let blocks = match payload {
+                            serde_json::Value::Array(_) => payload.as_array()?,
+                            serde_json::Value::Object(_) => payload.get("content")?.as_array()?,
+                            _ => return None,
+                        };
+                        merge(
+                            &mut messages,
+                            "assistant",
+                            blocks.iter().map(s::generated).collect(),
+                        );
+                    }
+                    ReplayEntry::NativeAssistant { .. } => return None,
+                }
+            }
+            if !system.is_empty() {
+                messages.insert(
+                    0,
+                    s::object(vec![
+                        ("role", s::text("system")),
+                        ("content", s::array(&system)),
+                    ]),
+                );
+            }
+        }
+        ReplayTransport::Chat => {
+            for entry in entries {
+                match entry {
+                    ReplayEntry::Original(item) => {
+                        append_chat_item(&s::generated(item), &mut messages, &names)?;
+                    }
+                    ReplayEntry::NativeAssistant {
+                        transport: ReplayTransport::Chat,
+                        payload,
+                    } if payload["role"] == "assistant" => {
+                        messages.push(s::generated(payload));
+                    }
+                    ReplayEntry::NativeAssistant { .. } => return None,
+                }
+            }
+        }
+    }
+    if messages.is_empty() {
+        return None;
+    }
+    messages
+        .iter()
+        .map(SourceJson::deserialize::<serde_json::Value>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()
 }
