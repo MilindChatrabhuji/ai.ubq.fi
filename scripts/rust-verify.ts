@@ -408,14 +408,18 @@ const nativeLibrarySelection = async (
   return { argv: filtered, names };
 };
 type NativeTestPair = (argv: readonly string[], isolated: boolean, expected?: readonly string[]) => Promise<void>;
-const runOwnedChildCases = async (library: CargoExecutable, pair: NativeTestPair): Promise<void> => {
-  for (const name of OWNED_CHILD_CASES) await pair([library.executable, name, "--exact", "--test-threads=1", "--nocapture"], false, [name]);
+const runLibraryCases = async (library: CargoExecutable, names: readonly string[], pair: NativeTestPair): Promise<void> => {
+  for (const name of names) await pair([library.executable, name, "--exact", "--test-threads=1", "--nocapture"], false, [name]);
 };
 const requirePrivateRuntimeDirectory = (directory: string): void => {
   const info = lstatSync(directory);
   if (!info.isDirectory() || info.uid !== process.getuid?.() || (info.mode & 0o777) !== 0o700)
     throw new Error("Native runtime TMPDIR is not private and owned");
 };
+const isExactRustTarget = (source: string, tree: string, target: string): boolean =>
+  /^[a-f0-9]{40}$/.test(source) && /^[a-f0-9]{40}$/.test(tree) && basename(target) === `${source}-${tree}` && basename(dirname(target)) === "exact-rust";
+const requiresDarwinHost = (run: CommandRunner): boolean => run === runCommand && (process.platform !== "darwin" || process.arch !== "arm64");
+const bothTestCountsPositive = (listed: number, passed: number): boolean => listed > 0 && passed > 0;
 // An internal acceptance seam, not a CLI escape: only this fixed native target
 // and two exact owned-child lib cases may run without the outer Darwin profile.
 export const executeDarwinNativeTests = async (
@@ -424,7 +428,7 @@ export const executeDarwinNativeTests = async (
   selection: "package" | "prelaunch" = "package",
   run: CommandRunner = runCommand
 ): Promise<number> => {
-  if (run === runCommand && (process.platform !== "darwin" || process.arch !== "arm64")) throw new Error("Prelaunch execution requires Darwin ARM64");
+  if (requiresDarwinHost(run)) throw new Error("Prelaunch execution requires Darwin ARM64");
   if (!["package", "prelaunch"].includes(selection)) throw new Error("Unknown native test selection");
   const environment = rustVerificationEnvironment(inherited, { platform: "darwin", arch: "arm64" });
   const checked = async (command: RustCommand, childEnvironment = environment): Promise<CommandResult> => {
@@ -437,8 +441,7 @@ export const executeDarwinNativeTests = async (
   const source = await git(["rev-parse", "HEAD"]);
   const tree = await git(["rev-parse", "HEAD^{tree}"]);
   const target = environment.CARGO_TARGET_DIR;
-  if (!/^[a-f0-9]{40}$/.test(source) || !/^[a-f0-9]{40}$/.test(tree) || basename(target) !== `${source}-${tree}` || basename(dirname(target)) !== "exact-rust")
-    throw new Error("Native test target is not bound to the exact source/tree identity");
+  if (!isExactRustTarget(source, tree, target)) throw new Error("Native test target is not bound to the exact source/tree identity");
   const unchanged = async (): Promise<void> => {
     if (
       (await git(["rev-parse", "HEAD"])) !== source ||
@@ -506,8 +509,7 @@ export const executeDarwinNativeTests = async (
       const nestedSandbox = normalLibrary.names.filter((name) => DARWIN_NESTED_SANDBOX_CASES.some((caseName) => caseName === name));
       const ordinaryLibrary = normalLibrary.names.filter((name) => !nestedSandbox.includes(name));
       await pair([...normalLibrary.argv, ...nestedSandbox.flatMap((name) => ["--skip", name])], true, ordinaryLibrary);
-      for (const name of nestedSandbox)
-        await pair([library.executable, name, "--exact", "--test-threads=1", "--nocapture"], false, [name]);
+      await runLibraryCases(library, nestedSandbox, pair);
       // Cargo's actual default-selection artifacts, not a guessed test directory,
       // supply every remaining lib/bin/integration/example/bench target exactly once.
       const normal = tests.filter((item) => item !== prelaunch && item !== library);
@@ -518,10 +520,10 @@ export const executeDarwinNativeTests = async (
       if (cargoDoctestsSelected(compile.stdout, cwd)) await pair([cargo, "test", ...flags, "--doc", "--"], true);
     } else if (tests.length !== 2) throw new Error("Focused prelaunch compilation emitted additional selected tests");
     await pair([prelaunch.executable, "--test-threads=1", "--nocapture"], false);
-    await runOwnedChildCases(library, pair);
+    await runLibraryCases(library, OWNED_CHILD_CASES, pair);
     await unchanged();
     checkedArtifacts(allArtifacts, target);
-    if (!listed || !passed) throw new Error("Selected native tests listed or executed zero passing tests");
+    if (!bothTestCountsPositive(listed, passed)) throw new Error("Selected native tests listed or executed zero passing tests");
     return listed;
   } finally {
     rmSync(runtimeTmp, { recursive: true });
@@ -685,13 +687,7 @@ export const executeDarwinNativeImportTests = async (cwd: string, inherited: Rec
   const source = await git("HEAD"),
     tree = await git("HEAD^{tree}");
   const sourceTarget = environment.CARGO_TARGET_DIR;
-  if (
-    !/^[a-f0-9]{40}$/.test(source) ||
-    !/^[a-f0-9]{40}$/.test(tree) ||
-    basename(sourceTarget) !== `${source}-${tree}` ||
-    basename(dirname(sourceTarget)) !== "exact-rust"
-  )
-    throw new Error("Native fixture target is not bound to source/tree identity");
+  if (!isExactRustTarget(source, tree, sourceTarget)) throw new Error("Native fixture target is not bound to source/tree identity");
   const unchanged = async (): Promise<void> => {
     const status = await checked({ argv: ["git", "status", "--porcelain", "--untracked-files=no"], cwd });
     if (status.stdout.trim() || (await git("HEAD")) !== source || (await git("HEAD^{tree}")) !== tree)

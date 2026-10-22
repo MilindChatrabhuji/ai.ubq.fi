@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { liveCases } from "./fixtures/live-conformance.ts";
+import { isObject } from "./runtime-conformance-support.ts";
 import { failureCaptureCase, captureSuppressionCase } from "./fixtures/capture-conformance.ts";
 import { cerebrasPaymentCases, passportCases } from "./runtime-auth-conformance.ts";
 import { runProviderMatrixCases, type MatrixContext, type MatrixScenario } from "./runtime-matrix/index.ts";
@@ -23,10 +24,6 @@ assert(isObject(workerd) && typeof workerd.default === "string", "The prepared n
 const workerdBinary = workerd.default;
 const workerdPackage: unknown = JSON.parse(await readFile(join(root, "node_modules/workerd/package.json"), "utf8"));
 assert(isObject(workerdPackage) && workerdPackage.version === "1.20261012.1", "The locked workerd version is required.");
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 async function outer(): Promise<void> {
   const parent = join(root, ".data/rust-runtime-conformance");
