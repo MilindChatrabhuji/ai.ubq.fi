@@ -595,7 +595,7 @@ test("a disabled subscription does not block another subscription", async () => 
   assert.equal(blocked.reason, "usage_disabled");
 });
 
-test("disabling a subscription during inventory prevents a late shadow or live-arm decision", async () => {
+test("disabling a subscription during inventory prevents a late decision or submission", async () => {
   for (const mode of ["shadow", "live"] as const) {
     const kv = new MemoryKv();
     const provider = new FakeCodexUsageResetProvider();

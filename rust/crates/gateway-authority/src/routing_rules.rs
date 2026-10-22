@@ -200,57 +200,28 @@ impl RoutingSlot {
         }
         self.synchronize_class_facts(order);
     }
-    /// Source buildQuotaBlockedSlot for a stable absolute capacity deadline,
-    /// without a probe claim or recovery result supplied by this event.
+    /// Materialize the requested class from a fresh capacity exhaustion
+    /// observation. The usage read describes the current provider window, so
+    /// it supersedes a retained future deadline whose reset identity became
+    /// ambiguous. The caller has already proved that no live quota signal is
+    /// newer than this sample.
     pub(crate) fn capacity_quota_block(
         &self,
         class: CodexQuotaClass,
         reset: i64,
-        now: i64,
+        observed_at_ms: i64,
     ) -> QuotaBlock {
-        let mut aware = self.clone();
-        aware.quota_blocks = self.effective_quota_blocks();
-        let has_classes = !aware.quota_blocks.is_empty();
-        let prior = aware.quota_block_for(class);
-        let prior_reset = prior
-            .as_ref()
-            .and_then(|b| b.reset_at_ms)
-            .or(if has_classes {
-                None
-            } else {
-                self.retained_reset_at_ms
-            });
-        let prior_stable = prior
-            .as_ref()
-            .map_or(!has_classes && self.reset_identity_stable, |b| {
-                b.reset_is_stable
-            });
-        let stable_observed = prior_reset.is_some() && prior_stable;
-        let superseded = !has_classes && prior_reset.is_none_or(|at| at <= now) && reset > now;
-        let ambiguous = prior.as_ref().is_some_and(|b| b.reset_ambiguous)
-            || (!has_classes && self.reset_identity_ambiguous && !superseded)
-            || (stable_observed && prior_reset != Some(reset));
-        let preserve = stable_observed && ambiguous;
-        let extends = prior.as_ref().is_none_or(|b| reset >= b.blocked_until_ms);
+        let prior = self.quota_block_for(class);
         QuotaBlock {
-            blocked_until_ms: prior
-                .as_ref()
-                .map_or(reset, |b| b.blocked_until_ms.max(reset)),
+            blocked_until_ms: reset,
             source: crate::routing::QuotaBlockSource::HeaderRetryAfter,
             legacy_fallback: false,
-            observed_at_ms: Some(now),
-            reset_at_ms: if !preserve && extends {
-                Some(reset)
-            } else {
-                prior_reset
-            },
-            reset_is_stable: if !preserve && extends {
-                true
-            } else {
-                prior_stable
-            },
-            reset_ambiguous: ambiguous,
-            recovery_pending: prior.as_ref().is_some_and(|b| b.recovery_pending),
+            observed_at_ms: Some(observed_at_ms),
+            reset_at_ms: Some(reset),
+            reset_is_stable: true,
+            reset_ambiguous: false,
+            recovery_pending: self.recovery_pending
+                || prior.as_ref().is_some_and(|block| block.recovery_pending),
         }
     }
     pub(crate) fn clear_quota_blocks(&mut self) {

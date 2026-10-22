@@ -6,12 +6,21 @@ mod error;
 pub mod graph_transport;
 mod graph_tree;
 mod indexes;
+mod initial_owner;
 mod inverse;
 mod native_capture;
 mod native_custody;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+mod native_history_reconcile;
 mod native_inverse;
 #[cfg(all(unix, not(target_arch = "wasm32")))]
+mod native_latest;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
 pub mod native_operator;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+mod native_spool;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+pub mod native_stage;
 pub mod operational;
 mod paid_controls;
 mod profile_bindings;
@@ -22,18 +31,23 @@ mod profile_validate;
 mod projection;
 mod rollup_source;
 mod source_metadata;
+pub mod staged;
 
 pub use capture::{PrivateCapture, SourceEntry};
-pub use engine::{AdoptionReceipt, PreparedAdoption, adopt_empty, prepare};
+pub use engine::{
+    AdoptionReceipt, PreparedAdoption, adopt_empty, adopt_empty_with_initial_control_owner, prepare,
+};
 pub use error::MigrationError;
 pub use gateway_admin_data::profile::{CanonicalDates, SourceDateHost};
+pub use initial_owner::InitialControlOwnerAdoptionReceipt;
 pub use inverse::{
     ArtifactContext, CustodyRecord, PrivateRollbackBundle, export_latest, export_rollback_bundle,
 };
 pub use native_capture::{NativeCapture, NativeEntry, NativeRevision, NativeValue, prepare_native};
 pub use native_custody::{
     LocalNativeCapture, LocalNativeRollbackBundle, NativeCustody, OwnedNativeSnapshot,
-    export_native_rollback_with_custody, export_native_with_custody, sanitize_native_capture,
+    export_native_rollback_with_custody, export_native_with_custody, prepare_native_with_custody,
+    sanitize_native_capture,
 };
 pub use native_inverse::{
     NativeRollbackBundle, export_native_latest, export_native_rollback_bundle,
@@ -72,8 +86,9 @@ pub(crate) struct Mapping {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     native_origin: Option<native_capture::NativeOrigin>,
 }
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct Row {
+    #[serde(with = "crate::staged::record_key_wire")]
     key: RecordKey,
     parts: Vec<Value>,
     record: StoredRecord,

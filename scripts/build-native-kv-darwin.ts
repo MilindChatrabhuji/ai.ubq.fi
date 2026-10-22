@@ -10,6 +10,7 @@ import type { NativeKvArtifact } from "./build-native-kv.ts";
 const inputDirectory = fileURLToPath(new URL("../tools/native-kv/", import.meta.url));
 const hash = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 const pause = (milliseconds: number): Promise<void> => new Promise((resolvePause) => setTimeout(resolvePause, milliseconds));
+const METADATA_TIMEOUT_MS = 30_000;
 
 const verifiedBytes = async (path: string, expected: string): Promise<Buffer> => {
   const bytes = await readFile(path);
@@ -18,7 +19,7 @@ const verifiedBytes = async (path: string, expected: string): Promise<Buffer> =>
 };
 
 const capture = async (command: string[], cwd: string): Promise<string> => {
-  const child = Bun.spawn(command, { cwd, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe", timeout: 5000 });
+  const child = Bun.spawn(command, { cwd, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe", timeout: METADATA_TIMEOUT_MS });
   const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   if (code !== 0) throw new Error(`Darwin native KV metadata command failed: ${stderr}`);
   return stdout.trim();

@@ -74,48 +74,42 @@ fn original() -> RequestContext {
 fn ready(authority: &TestAuthority, at: i64) -> (AutomaticResetPermit, String) {
     let proof = proof(authority, at);
     let original = original();
-    let mut episode = String::new();
-    for _ in 0..2 {
-        let FullPoolPreparation::Observe(plan) =
-            run(authority.prepare_full_pool_reset(&proof, &original)).unwrap()
-        else {
-            panic!("requires actual source observations")
-        };
-        let observations: Vec<_> = plan
-            .bindings()
-            .enumerate()
-            .map(|(slot, binding)| {
-                let credits: Vec<_> = if slot == 0 {
-                    vec![SourceResetCredit {
-                        credit_id: JsString16::from_utf8("source-credit"),
-                        status: JsString16::from_utf8("available"),
-                        reset_type: JsString16::from_utf8("codex_rate_limits"),
-                        expires_at_ms: None,
-                    }]
-                } else {
-                    vec![]
-                };
-                SourceResetInventory {
-                    binding: binding.clone(),
-                    observed_at_ms: at,
-                    available_count: credits.len() as i64,
-                    credits,
-                }
-            })
-            .collect();
-        match run(authority.finish_full_pool_reset(*plan, &observations, &NoCreditTie)).unwrap() {
-            FullPoolEvaluation::Shadow {
-                decision,
-                duplicate: false,
-            } => {
-                episode = decision.episode_hash;
+    let FullPoolPreparation::Observe(plan) =
+        run(authority.prepare_full_pool_reset(&proof, &original)).unwrap()
+    else {
+        panic!("requires actual source observations")
+    };
+    let observations: Vec<_> = plan
+        .bindings()
+        .enumerate()
+        .map(|(slot, binding)| {
+            let credits: Vec<_> = if slot == 0 {
+                vec![SourceResetCredit {
+                    credit_id: JsString16::from_utf8("source-credit"),
+                    status: JsString16::from_utf8("available"),
+                    reset_type: JsString16::from_utf8("codex_rate_limits"),
+                    expires_at_ms: None,
+                }]
+            } else {
+                vec![]
+            };
+            SourceResetInventory {
+                binding: binding.clone(),
+                observed_at_ms: at,
+                available_count: credits.len() as i64,
+                credits,
             }
-            FullPoolEvaluation::Ready(permit) => return (*permit, episode),
-            other => panic!("expected first-arm or current permit, got {other:?}"),
+        })
+        .collect();
+    match run(authority.finish_full_pool_reset(*plan, &observations, &NoCreditTie)).unwrap() {
+        FullPoolEvaluation::Ready(permit) => {
+            let episode = permit.episode_hash().to_string();
+            (*permit, episode)
         }
+        other => panic!("expected one immediate live permit, got {other:?}"),
     }
-    panic!("arming never consumes; the next current evaluation must mint a permit")
 }
+
 fn claim(authority: &TestAuthority, permit: &AutomaticResetPermit) -> ResetRecord {
     let ResetClaim::Submit { record, .. } = run(authority.claim_full_pool_reset(permit)).unwrap()
     else {
@@ -258,16 +252,12 @@ fn full_pool_spend_uses_one_existing_budget_and_unknown_never_resubmits() {
 }
 
 #[test]
-fn full_pool_audit_settings_and_policy_races_cannot_spend_the_day_budget() {
-    for changed in ["audit", "settings", "policy"] {
+fn full_pool_settings_and_policy_races_cannot_spend_the_day_budget() {
+    for changed in ["settings", "policy"] {
         let (store, authority) = setup();
-        let (permit, episode) = ready(&authority, NOW);
+        let (permit, _) = ready(&authority, NOW);
         let claimed = claim(&authority, &permit);
         match changed {
-            "audit" => {
-                let key = keys::reset_shadow(&episode);
-                store.race(key.clone(), &store.row(&key).unwrap().value);
-            }
             "settings" => store.race(
                 keys::reset_usage(&pool().accounts[1].admin_account_hash.0),
                 &json!({"enabled":false}),
@@ -284,6 +274,38 @@ fn full_pool_audit_settings_and_policy_races_cannot_spend_the_day_budget() {
         );
         assert!(store.row(&budget_key(&permit)).is_none(), "{changed}");
     }
+}
+
+#[test]
+fn interleaved_live_prepares_keep_first_permit_submit_capable_with_one_ledger() {
+    let (store, authority) = setup();
+    let (first, first_episode) = ready(&authority, NOW);
+    let (second, _) = ready(&authority, NOW);
+    let claimed = claim(&authority, &first);
+    let ResetClaim::InProgress(interleaved) =
+        run(authority.claim_full_pool_reset(&second)).unwrap()
+    else {
+        panic!("the existing claim must win without minting a second submission")
+    };
+    assert_eq!(interleaved.identity, claimed.identity);
+
+    // A later prepare after the claim must not change any shadow revision or invalidate `first`.
+    let _ = ready(&authority, NOW);
+    let submitted = run(authority.prepare_full_pool_reset_submission(&first, &claimed)).unwrap();
+    assert_eq!(submitted.state, ResetState::Submitted);
+    let (after_submit_permit, _) = ready(&authority, NOW);
+    let renewed = run(authority.renew_full_pool_reset_before_redeem(&first, &submitted)).unwrap();
+    assert_eq!(renewed.state, ResetState::Submitted);
+    assert!(store.row(&keys::reset_shadow(&first_episode)).is_none());
+    let ResetClaim::InProgress(after_submit_record) =
+        run(authority.claim_full_pool_reset(&after_submit_permit)).unwrap()
+    else {
+        panic!("the durable ledger must refuse a second live claim")
+    };
+    assert_eq!(after_submit_record.identity, claimed.identity);
+    let budget: AccountDayBudget =
+        serde_json::from_value(store.row(&budget_key(&first)).unwrap().value).unwrap();
+    assert_eq!(budget.submission_count, 1);
 }
 
 #[test]

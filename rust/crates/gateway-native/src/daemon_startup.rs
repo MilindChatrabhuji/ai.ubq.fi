@@ -9,6 +9,8 @@ use crate::{
 };
 use gateway_auth::GatewayError;
 use std::path::PathBuf;
+#[path = "native_live_startup.rs"]
+pub(crate) mod live_bootstrap;
 pub(crate) fn source_policy(
     config: &PreparedNativeDaemonConfig,
 ) -> Result<(SupervisorData, NativeConfinement), GatewayError> {
@@ -110,14 +112,78 @@ pub(crate) fn source_policy(
 }
 pub(crate) fn request_service(
     config: PreparedNativeDaemonConfig,
+    connector: std::sync::Arc<dyn crate::live_bridge::NativeLiveConnector>,
+    reverse: Option<std::net::TcpStream>,
+) -> Result<NativeHttpService, GatewayError> {
+    request_service_with(
+        config,
+        connector,
+        reverse,
+        |target, socket, identity, connector| {
+            #[cfg(not(test))]
+            let authority = crate::live_bridge::NativeLiveAuthorityHttp::from_connected(
+                target, socket, identity,
+            )?;
+            #[cfg(test)]
+            let authority = crate::live_bridge::NativeLiveAuthorityHttp::with_test_roots(
+                target,
+                socket,
+                identity,
+                live_tests::authority_roots(),
+            )?;
+            let service = crate::live_bridge::NativeLiveService::configured(
+                std::sync::Arc::new(authority),
+                connector,
+            )?;
+            #[cfg(test)]
+            let service = service.with_test_tls(live_tests::provider_tls());
+            Ok(service)
+        },
+    )
+}
+fn request_service_with(
+    config: PreparedNativeDaemonConfig,
+    connector: std::sync::Arc<dyn crate::live_bridge::NativeLiveConnector>,
+    reverse: Option<std::net::TcpStream>,
+    build_live: impl FnOnce(
+        &str,
+        std::net::TcpStream,
+        gateway_auth::native_auth::NativeTransportIdentity,
+        std::sync::Arc<dyn crate::live_bridge::NativeLiveConnector>,
+    ) -> Result<crate::live_bridge::NativeLiveService, GatewayError>,
 ) -> Result<NativeHttpService, GatewayError> {
     if config.owner_renewal.is_some() {
         return Err(unavailable());
     }
     let (data, _) = source_policy(&config)?;
     let nonces = SqliteNonceStore::open(&config.nonce_database)?;
-    Ok(NativeHttpService::configured(config.identity, nonces, data))
+    let live = match (&config.live_sideband, reverse) {
+        (Some(live), Some(socket)) => {
+            let target = format!(
+                "{}{}",
+                live.authority_origin(),
+                gateway_auth::native_live::NATIVE_LIVE_AUTHORITY_PATH
+            );
+            Some(build_live(
+                &target,
+                socket,
+                config.identity.clone(),
+                connector,
+            )?)
+        }
+        (None, None) => None,
+        _ => return Err(unavailable()),
+    };
+    let service = NativeHttpService::configured(config.identity, nonces, data);
+    Ok(match live {
+        Some(live) => service.with_live_sideband(live),
+        None => service,
+    })
 }
+
+#[cfg(test)]
+#[path = "native_live_runtime_tests.rs"]
+mod live_tests;
 fn unavailable() -> GatewayError {
     GatewayError::unavailable(
         "Private native request startup unavailable",

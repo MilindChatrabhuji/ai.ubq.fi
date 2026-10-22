@@ -123,7 +123,7 @@ impl ConfiguredNativeCustody {
     // The existing sanitizer handles refresh-bearing source rows. Existing
     // access-only rows still require actual observation; this returns unit only,
     // never an OwnedNativeSnapshot/managed grant for an external account.
-    async fn verify_existing_access_only(
+    pub(crate) async fn verify_existing_access_only(
         &self,
         capture: &crate::NativeCapture,
     ) -> Result<(), crate::MigrationError> {
@@ -190,4 +190,139 @@ impl ConfiguredNativeCustody {
         }
         Ok(())
     }
+}
+
+/// Native-only full audit/custody preparation. Only bounded canonical stage frames
+/// leave this process. Ordinary profile/capture codecs and atomic adoption stay intact.
+pub async fn prepare_local_stage(
+    source: crate::NativeCapture,
+    registrations: Vec<NativeCustodyRegistration>,
+) -> Result<crate::staged::StagePlan, crate::MigrationError> {
+    let custody = ConfiguredNativeCustody::new(registrations)?;
+    custody.verify_existing_access_only(&source).await?;
+    let directory = crate::native_stage::directory(&std::env::temp_dir())?;
+    crate::native_stage::Captured::owned(source, &directory)?
+        .prepare(&custody)
+        .await
+}
+
+/// Private file/pipe sinks only: current full credentials remain native. The
+/// complete latest inverse is computed by the existing custody/transform engine,
+/// not a source backup. This native memory requirement must be measured before
+/// private production captures; no full bundle crosses the WASM wire.
+pub async fn write_private_latest<
+    S: gateway_core::query::QueryStore,
+    H: crate::NativeCustody,
+    W: std::io::Write,
+    C: std::io::Write,
+>(
+    store: &S,
+    now_ms: i64,
+    host: &H,
+    artifacts: crate::ArtifactContext,
+    source_sink: &mut W,
+    custody_sink: &mut C,
+) -> Result<usize, crate::MigrationError> {
+    crate::native_latest::write_latest(store, now_ms, host, artifacts, source_sink, custody_sink)
+        .await
+}
+
+/// Same configured custody, with a stopped owner-only source file and private
+/// sealed spool. No source payload inventory is collected by the operator.
+pub async fn prepare_local_stage_file(
+    path: &std::path::Path,
+    directory: &std::path::Path,
+    registrations: Vec<NativeCustodyRegistration>,
+) -> Result<crate::staged::StagePlan, crate::MigrationError> {
+    let custody = ConfiguredNativeCustody::new(registrations)?;
+    let source = crate::native_stage::Captured::read(path, directory)?;
+    source.verify_configured(&custody).await?;
+    source.prepare(&custody).await
+}
+
+/// Copy-only reconciliation over the caller's immutable authority snapshot.
+/// The original file must be stopped and owner-only. All output is private data;
+/// current Rust controls and nonces go only to the separate custody sink.
+/// On any error discard the partial custody output and candidate spools.
+pub async fn reconcile_local_history_file<
+    S: gateway_core::query::QueryStore,
+    H: crate::NativeCustody,
+    C: std::io::Write,
+>(
+    store: &S,
+    now_ms: i64,
+    host: &H,
+    artifacts: crate::ArtifactContext,
+    original_path: &std::path::Path,
+    directory: &std::path::Path,
+    custody_sink: &mut C,
+) -> Result<crate::native_stage::Captured, crate::MigrationError> {
+    use std::{fs::OpenOptions, os::unix::fs::OpenOptionsExt};
+    let root = crate::native_stage::directory(directory)?;
+    let latest_path = root.join("latest-native.json");
+    let mut latest_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&latest_path)
+        .map_err(|_| crate::invalid("Private latest source file cannot be created"))?;
+    let (_, manifest, mapping_keys) = crate::native_latest::write_latest_for_reconciliation(
+        store,
+        now_ms,
+        host,
+        artifacts,
+        &mut latest_file,
+        custody_sink,
+    )
+    .await?;
+    latest_file
+        .sync_all()
+        .map_err(|_| crate::invalid("Private latest source file cannot be synced"))?;
+    drop(latest_file);
+    let original_directory = crate::native_stage::directory(&root)?;
+    let latest_directory = crate::native_stage::directory(&root)?;
+    let original = crate::native_stage::Captured::read(original_path, &original_directory)?;
+    let latest = crate::native_stage::Captured::read(&latest_path, &latest_directory)?;
+    let mut writer = crate::native_spool::Writer::create(&root.join("reconciled-native.spool"))?;
+    let header = crate::native_history_reconcile::reconcile(
+        &original,
+        &latest,
+        &manifest,
+        &mapping_keys,
+        &mut |entry| writer.push(entry),
+    )?;
+    Ok(crate::native_stage::Captured::from_parts(
+        header,
+        writer.seal()?,
+        &root,
+    ))
+}
+
+/// Normal complete preparation follows the data-only reconciliation; this emits
+/// no public authority, ownership or activation receipt.
+pub async fn prepare_reconciled_stage_file<
+    S: gateway_core::query::QueryStore,
+    H: crate::NativeCustody,
+    C: std::io::Write,
+>(
+    store: &S,
+    now_ms: i64,
+    host: &H,
+    artifacts: crate::ArtifactContext,
+    original_path: &std::path::Path,
+    directory: &std::path::Path,
+    custody_sink: &mut C,
+) -> Result<crate::staged::StagePlan, crate::MigrationError> {
+    reconcile_local_history_file(
+        store,
+        now_ms,
+        host,
+        artifacts,
+        original_path,
+        directory,
+        custody_sink,
+    )
+    .await?
+    .prepare(host)
+    .await
 }

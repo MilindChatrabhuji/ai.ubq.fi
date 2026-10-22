@@ -300,6 +300,19 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
         serde_json::to_value(&artifacts).unwrap(),
         serde_json::to_value(context()).unwrap()
     );
+    assert!(
+        controls
+            .iter()
+            .any(|control| control.key == gateway_authority::keys::pool().0)
+    );
+    for control in &controls {
+        assert_eq!(
+            run(store.read(&RecordKey(control.key.clone())))
+                .unwrap()
+                .as_ref(),
+            Some(&control.record)
+        );
+    }
     assert!(prepare_native(&inverse).is_err());
     let restored = inverse
         .entries

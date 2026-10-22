@@ -132,6 +132,22 @@ fn graph_record(
 }
 impl NativeCapture {
     pub(crate) fn validate(&self) -> Result<Vec<Row>, GatewayError> {
+        let version = self.validate_header()?;
+        let mut seen = BTreeSet::new();
+        self.entries
+            .iter()
+            .map(|entry| {
+                let key = TupleKey::from_sort_bytes(entry.raw_key.clone())?.to_record_key();
+                if !seen.insert(key.0) {
+                    return Err(invalid(
+                        "Native source key is duplicated or attempts to mint private state",
+                    ));
+                }
+                validate_entry(entry, version)
+            })
+            .collect()
+    }
+    pub(crate) fn validate_header(&self) -> Result<i64, GatewayError> {
         if self.v != 2
             || self.source_codec != "bun-jsc-v1"
             || self.native_schema_version != 3
@@ -149,90 +165,88 @@ impl NativeCapture {
             ));
         }
         let (version, _) = self.data_revision.numbers()?;
-        let mut seen = BTreeSet::new();
-        self.entries
-            .iter()
-            .map(|entry| {
-                let tuple = TupleKey::from_sort_bytes(entry.raw_key.clone())?;
-                tuple.validate_stored_key()?;
-                let key = tuple.to_record_key();
-                let p = parts(&key)?;
-                if !seen.insert(key.0.clone()) || private_source_key(&p) {
-                    return Err(invalid(
-                        "Native source key is duplicated or attempts to mint private state",
-                    ));
-                }
-                if entry.revision.numbers()?.0 > version || entry.expiration_ms < -1 {
-                    return Err(invalid(
-                        "Native row revision or absolute expiration is invalid",
-                    ));
-                }
-                let revision = entry.revision.record_revision()?;
-                let expiry = (entry.expiration_ms != -1).then_some(entry.expiration_ms);
-                let (record, kind) = match &entry.value {
-                    NativeValue::SourceGraphV1(value) => (
-                        graph_record(
-                            crate::graph_transport::from_source_graph(value)?,
-                            &p,
-                            &revision,
-                            expiry,
-                        )?,
-                        NativeKind::Graph,
-                    ),
-                    NativeValue::CounterLe64(bytes) => {
-                        let bytes: [u8; 8] = bytes.as_slice().try_into().map_err(|_| {
-                            invalid("Native counter must contain exactly eight bytes")
-                        })?;
-                        (
-                            StoredRecord::profile(
-                                &revision,
-                                PortableValue::KvU64(u64::from_le_bytes(bytes).to_string()),
-                                expiry,
-                            )?,
-                            NativeKind::Counter,
-                        )
-                    }
-                    NativeValue::Bytes(bytes) => {
-                        let record = StoredRecord::profile(
-                            &revision,
-                            PortableValue::Binary {
-                                kind: "Uint8Array".into(),
-                                bytes: bytes.clone(),
-                                byte_offset: 0,
-                                byte_length: bytes.len() as u64,
-                            },
-                            expiry,
-                        )?;
-                        (record, NativeKind::Bytes)
-                    }
-                };
-                let source_value = if record.value_encoding == ValueEncoding::SourceGraphV1 {
-                    SourceJson::parse("null")?
-                } else {
-                    gateway_admin_data::profile::to_source_profile(&record.portable_value()?)?
-                };
-                Ok(Row {
-                    key,
-                    parts: p,
-                    record,
-                    mapping: Mapping {
-                        source: SourceEntry {
-                            key: vec![],
-                            value: source_value,
-                            versionstamp: revision,
-                            expires_at_ms: expiry,
-                        },
-                        transform: Transform::Identity,
-                        baseline_digest: String::new(),
-                        native_origin: Some(NativeOrigin {
-                            kind,
-                            revision: entry.revision.clone(),
-                        }),
-                    },
-                })
-            })
-            .collect()
+        Ok(version)
     }
+}
+pub(crate) fn validate_entry(entry: &NativeEntry, version: i64) -> Result<Row, GatewayError> {
+    let tuple = TupleKey::from_sort_bytes(entry.raw_key.clone())?;
+    tuple.validate_stored_key()?;
+    let key = tuple.to_record_key();
+    let p = parts(&key)?;
+    if private_source_key(&p) {
+        return Err(invalid(
+            "Native source key is duplicated or attempts to mint private state",
+        ));
+    }
+    if entry.revision.numbers()?.0 > version || entry.expiration_ms < -1 {
+        return Err(invalid(
+            "Native row revision or absolute expiration is invalid",
+        ));
+    }
+    let revision = entry.revision.record_revision()?;
+    let expiry = (entry.expiration_ms != -1).then_some(entry.expiration_ms);
+    let (record, kind) = match &entry.value {
+        NativeValue::SourceGraphV1(value) => (
+            graph_record(
+                crate::graph_transport::from_source_graph(value)?,
+                &p,
+                &revision,
+                expiry,
+            )?,
+            NativeKind::Graph,
+        ),
+        NativeValue::CounterLe64(bytes) => {
+            let bytes: [u8; 8] = bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| invalid("Native counter must contain exactly eight bytes"))?;
+            (
+                StoredRecord::profile(
+                    &revision,
+                    PortableValue::KvU64(u64::from_le_bytes(bytes).to_string()),
+                    expiry,
+                )?,
+                NativeKind::Counter,
+            )
+        }
+        NativeValue::Bytes(bytes) => {
+            let record = StoredRecord::profile(
+                &revision,
+                PortableValue::Binary {
+                    kind: "Uint8Array".into(),
+                    bytes: bytes.clone(),
+                    byte_offset: 0,
+                    byte_length: bytes.len() as u64,
+                },
+                expiry,
+            )?;
+            (record, NativeKind::Bytes)
+        }
+    };
+    let source_value = if record.value_encoding == ValueEncoding::SourceGraphV1 {
+        SourceJson::parse("null")?
+    } else {
+        gateway_admin_data::profile::to_source_profile(&record.portable_value()?)?
+    };
+    Ok(Row {
+        key,
+        parts: p,
+        record,
+        mapping: Mapping {
+            source: SourceEntry {
+                key: vec![],
+                value: source_value,
+                versionstamp: revision,
+                expires_at_ms: expiry,
+            },
+            transform: Transform::Identity,
+            baseline_digest: String::new(),
+            native_origin: Some(NativeOrigin {
+                kind,
+                revision: entry.revision.clone(),
+            }),
+        },
+    })
 }
 pub fn prepare_native(capture: &NativeCapture) -> Result<PreparedAdoption, MigrationError> {
     let id = gateway_auth::crypto::sha256_hex(

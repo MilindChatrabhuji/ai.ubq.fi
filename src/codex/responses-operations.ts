@@ -8,11 +8,9 @@ import {
   capacityObservationIsFresh,
   loadCodexCapacityRoutingObservations,
   probeLeaseMatchesRoutingAccount,
-  quotaBlockForClass,
-  quotaClass,
+  reconcileCapacityQuotaBlock,
   routingAccountIdentity,
   slotMatchesRoutingAccount,
-  withLegacyQuotaClassMap,
 } from "./capacity-routing.ts";
 import {
   claimCodexRoutingProbe,
@@ -136,8 +134,8 @@ const OVERAGE_FALLBACK_REASONS: ReadonlySet<string> = new Set([
  * Plan at most one bounded overage attempt for the current blocked cohort.
  * The best candidate is the credit the evaluator selected (the day-cap
  * refusal), then the current active blocked account, then the first blocked
- * account. Arming (`live_armed`), a completed spend, and fence/config
- * failures are not in the reason set and never fall back.
+ * account. A completed spend and fence/config failures are not in the reason
+ * set and never fall back.
  */
 const planOverageFallback = (
   reason: string,
@@ -517,20 +515,12 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     const materializeCapacityQuotaBlocks = async (): Promise<boolean> => {
       const nowMs = Date.now();
       const observations = await loadCodexCapacityRoutingObservations(currentPoolEntry.pool, true);
-      const kv = ctx.bankedResetDependencies.kv ?? (await getKv());
-      const existing = kv ? parseCodexAccountRoutingState((await kv.get(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" })).value) : null;
       let wrote = false;
       for (const [slot, auth] of currentPoolEntry.pool.accounts.entries()) {
         try {
           const identity = await routingAccountIdentity(auth);
-          const blockedClass = quotaClass(ctx.requestedModel ?? null);
-          const currentSlot = existing?.slots.at(slot);
-          const currentBlock = currentSlot ? quotaBlockForClass(withLegacyQuotaClassMap(currentSlot), blockedClass) : null;
-          const blockedUntilMs = currentBlock?.blocked_until_ms;
-          if (blockedUntilMs !== undefined && blockedUntilMs > nowMs) continue;
           const observation = observations.find((candidate) => candidate.account_id_hash === identity.accountIdHash);
-          const resetAtMs = observedCapacityResetDeadline(observation, ctx.requestedModel, nowMs);
-          if (resetAtMs === null) continue;
+          if (observation === undefined || observedCapacityResetDeadline(observation, ctx.requestedModel, nowMs) === null) continue;
           const account: RoutingAccount = {
             auth,
             slot,
@@ -543,15 +533,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
             probeCircuit: null,
             requestedModel: ctx.requestedModel ?? null,
           };
-          await markCodexQuotaBlocked(
-            account,
-            new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-              status: 429,
-              headers: { "Content-Type": "application/json", "Retry-After": new Date(resetAtMs).toUTCString() },
-            }),
-            nowMs
-          );
-          wrote = true;
+          if (await reconcileCapacityQuotaBlock(account, observation, nowMs)) wrote = true;
         } catch {
           // One account's failed materialization must not stop the others.
         }
@@ -601,7 +583,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     const cohort: CodexResetCohortSnapshot = { poolJson: routedPool.poolSnapshotJson, capacityJson: routedPool.capacitySnapshotJson };
     const originalActive = routedPool.activeSnapshot;
     // Consider every blocked account's credit inventory. The original active
-    // snapshot fences inventory, arming and consume; the selected account is
+    // snapshot fences inventory and consume; the selected account is
     // elected only after its reset is verified.
     const localCandidates = blockedAccounts.map(
       (routing) =>

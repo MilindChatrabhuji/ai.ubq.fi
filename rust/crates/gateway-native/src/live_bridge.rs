@@ -60,6 +60,11 @@ pub struct NativeLiveService {
     server_name: rustls::pki_types::ServerName<'static>,
 }
 impl NativeLiveService {
+    #[cfg(test)]
+    pub(crate) fn with_test_tls(mut self, tls: Arc<rustls::ClientConfig>) -> Self {
+        self.tls = tls;
+        self
+    }
     /// Constructor-only fixed-destination connector. No unrestricted connector
     /// is installed by default. Runtime configuration must prove OS enforcement.
     pub fn configured(

@@ -67,30 +67,15 @@ const parseNonNegativeInteger = (value: string | undefined, defaultValue: number
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
 };
 
-const parseMode = (value: string | undefined): CodexBankedResetMode => {
-  if (value === undefined) return "shadow";
-  switch (value.trim().toLowerCase()) {
-    case "shadow":
-      return "shadow";
-    case "live":
-      return "live";
-    case "disabled":
-      return "disabled";
-    default:
-      return "disabled";
-  }
-};
-
 /**
  * This is intentionally read at use time rather than module load time. A
  * configuration update can kill new claims immediately without deleting an
  * existing submitted/unknown record that still requires reconciliation.
  */
 export const parseCodexBankedResetConfig = (readEnv: (key: string) => string | undefined = getEnv): CodexBankedResetConfig => ({
-  // Shadow telemetry never consumes a credit. A spend still requires
-  // explicit live mode, valid caps, and an approved provider contract.
+  // Automatic redemptions are live-only. The enabled switch remains the immediate kill switch.
   enabled: parseStrictBoolean(readEnv("CODEX_BANKED_RESET_ENABLED"), true),
-  mode: parseMode(readEnv("CODEX_BANKED_RESET_MODE")),
+  mode: "live",
   // The retired CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY environment is no longer read.
   // Fail closed like the retired global cap: an absent cap disables live submissions until an explicit 1 is configured.
   maxPerAccountPerDay: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY"), 0),
@@ -213,11 +198,6 @@ export type CodexBankedResetDependencies = Readonly<{
   newOwnerToken?: () => string;
   hash?: (value: string) => Promise<string>;
   telemetry?: CodexBankedResetTelemetry;
-  /**
-   * Hermetic integration-test seam for pre-shadow legacy fixtures. Production
-   * never supplies this and always requires a matching shadow decision.
-   */
-  allowLiveWithoutShadowForTest?: boolean;
 }>;
 
 export type CodexBankedResetOutcome = Readonly<{

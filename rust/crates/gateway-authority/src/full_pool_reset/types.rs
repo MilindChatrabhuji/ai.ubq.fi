@@ -87,9 +87,7 @@ pub(super) struct Facts {
 }
 pub struct FullPoolResetPlan {
     pub(super) facts: Facts,
-    pub(super) audit_revision: Option<String>,
     pub(super) audit_present: bool,
-    pub(super) prior: Option<FullPoolShadowDecision>,
 }
 impl FullPoolResetPlan {
     pub fn bindings(&self) -> impl Iterator<Item = &AccountBinding> {
@@ -104,7 +102,7 @@ impl FullPoolResetPlan {
     }
 }
 
-/// Minted only by the full current source audit transaction; never reconstructed from wire.
+/// Minted only by live evaluation in the current complete source transaction; never reconstructed from wire.
 /// ```compile_fail
 /// use gateway_authority::full_pool_reset::AutomaticResetPermit;
 /// let _: AutomaticResetPermit = serde_json::from_str("{}").unwrap();
@@ -113,7 +111,6 @@ pub struct AutomaticResetPermit {
     pub(super) facts: Facts,
     pub(super) candidate: ResetCandidate,
     pub(super) decision: FullPoolShadowDecision,
-    pub(super) audit_revision: String,
     pub(super) credit: SourceResetCredit,
     pub(super) observed_at_ms: i64,
 }
@@ -126,6 +123,9 @@ impl AutomaticResetPermit {
     }
     pub fn credit_id(&self) -> &JsString16 {
         &self.credit.credit_id
+    }
+    pub fn episode_hash(&self) -> &str {
+        &self.decision.episode_hash
     }
     pub fn original(&self) -> &RequestContext {
         &self.facts.original

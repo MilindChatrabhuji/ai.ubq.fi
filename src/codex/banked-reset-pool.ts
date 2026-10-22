@@ -163,14 +163,6 @@ export const listCodexResetShadowDecisions = async (kvOverride?: Kv | null): Pro
   return decisions;
 };
 
-/**
- * Evaluate one complete currently fenced blocked cohort. Shadow reads each
- * blocked account's inventory and persists exactly one redacted decision.
- * Live without a decision first performs that same read-only arm phase. A
- * later live evaluation repeats the fence and inventory proof; it reaches the
- * durable ledger only when the exact account and exact opaque credit still
- * match.
- */
 /** Pool candidates in ascending slot order, or the reason the pool is malformed. */
 const orderPoolCandidates = (
   candidates: readonly CodexBankedResetPoolCandidate[]
@@ -265,36 +257,10 @@ const stalePoolFenceReason = async (kv: Kv, complete: readonly ResolvedPoolCandi
   return null;
 };
 
-/** A persisted audit decision only counts while it proves this exact episode. */
-const auditedDecisionMatches = (audited: CodexResetShadowDecisionRecord, fences: CodexResetShadowDecisionRecord["fences"], nowMs: number): boolean =>
-  audited.expires_at_ms > nowMs && audited.decision_reason === "selected" && sameShadowFences(audited.fences, fences);
-
-/** Live mode reads its arm evidence; `audited === null` means arming is needed. */
-const resolveLiveArmingState = async (
-  kv: Kv,
-  config: CodexBankedResetConfig,
-  dependencies: CodexBankedResetDependencies,
-  episodeHash: string,
-  fences: CodexResetShadowDecisionRecord["fences"],
-  nowMs: number
-): Promise<
-  | Readonly<{ kind: "state"; audited: CodexResetShadowDecisionRecord | null; liveNeedsArming: boolean }>
-  | Readonly<{ kind: "outcome"; outcome: CodexBankedResetPoolOutcome }>
-> => {
-  if (config.mode !== "live" || dependencies.allowLiveWithoutShadowForTest) return { kind: "state", audited: null, liveNeedsArming: false };
-  const audited = await readShadowDecision(kv, episodeHash);
-  if (audited && !auditedDecisionMatches(audited, fences, nowMs)) {
-    return { kind: "outcome", outcome: poolOutcome("skipped", "shadow_decision_missing_or_expired") };
-  }
-  return { kind: "state", audited, liveNeedsArming: audited === null };
-};
-
-/** The episode evidence: proven contexts, fences, hash, and live arm state. */
+/** The episode evidence: proven contexts, fences, and episode hash. */
 const preparePoolEpisode = async (
   kv: Kv,
   ordered: readonly CodexBankedResetPoolCandidate[],
-  config: CodexBankedResetConfig,
-  dependencies: CodexBankedResetDependencies,
   hash: (value: string) => Promise<string>,
   nowMs: number
 ): Promise<
@@ -305,8 +271,6 @@ const preparePoolEpisode = async (
       settingsEntries: KvEntryMaybe<unknown>[];
       fences: CodexResetShadowDecisionRecord["fences"];
       episodeHash: string;
-      audited: CodexResetShadowDecisionRecord | null;
-      liveNeedsArming: boolean;
     }>
   | Readonly<{ kind: "outcome"; outcome: CodexBankedResetPoolOutcome }>
 > => {
@@ -331,8 +295,6 @@ const preparePoolEpisode = async (
   const fences = poolFences(complete);
   const episodeHash = await poolEpisodeHash(settingsVersion, fences, hash);
   if (!episodeHash) return { kind: "outcome", outcome: poolOutcome("skipped", "episode_hash_unavailable") };
-  const arming = await resolveLiveArmingState(kv, config, dependencies, episodeHash, fences, nowMs);
-  if (arming.kind === "outcome") return { kind: "outcome", outcome: arming.outcome };
   return {
     kind: "episode",
     complete,
@@ -340,8 +302,6 @@ const preparePoolEpisode = async (
     settingsEntries,
     fences,
     episodeHash,
-    audited: arming.audited,
-    liveNeedsArming: arming.liveNeedsArming,
   };
 };
 
@@ -392,12 +352,10 @@ const existingShadowDecisionOutcome = async (
 };
 
 /**
- * Evaluate one complete currently fenced blocked cohort. Shadow reads each
- * blocked account's inventory and persists exactly one redacted decision.
- * Live without a decision first performs that same read-only arm phase. A
- * later live evaluation repeats the fence and inventory proof; it reaches the
- * durable ledger only when the exact account and exact opaque credit still
- * match.
+ * Evaluate one complete currently fenced blocked cohort. Live reads each
+ * blocked account's inventory and proceeds directly to the durable submission
+ * for the selected credit. The former shadow-only branch remains for isolated
+ * fixture coverage and is unreachable from production configuration.
  */
 export const evaluateCodexBankedResetPool = async (
   candidates: readonly CodexBankedResetPoolCandidate[],
@@ -415,7 +373,7 @@ export const evaluateCodexBankedResetPool = async (
   const kv = await openResetKv(dependencies);
   if (!kv) return poolOutcome("skipped", "kv_unavailable");
   const hash = dependencies.hash ?? sha256Hex;
-  const episode = await preparePoolEpisode(kv, ordered, config, dependencies, hash, nowMs);
+  const episode = await preparePoolEpisode(kv, ordered, hash, nowMs);
   if (episode.kind === "outcome") return episode.outcome;
   const staleFence = await stalePoolFenceReason(kv, episode.complete);
   if (staleFence) return poolOutcome("skipped", staleFence);
@@ -441,7 +399,7 @@ export const evaluateCodexBankedResetPool = async (
       observed.nowMs
     );
   }
-  return await runLivePoolSubmission(kv, dependencies, episode, decision, selection, observed.nowMs);
+  return await runLivePoolSubmission(dependencies, episode, selection);
 };
 
 type PoolInventoryObservation = Readonly<{ resolvedCandidate: ResolvedPoolCandidate; inventory: ResetInventory | null }>;
@@ -602,85 +560,18 @@ const persistShadowDecisionOutcome = async (
   return poolOutcome("shadow", selected ? "shadow_selected" : selection.decisionReason, selected?.resolved.pool ?? null);
 };
 
-/** Arm a live episode with the persisted decision for its exact evidence. */
-const armLiveWithShadowDecision = async (
-  kv: Kv,
-  decision: CodexResetShadowDecisionRecord,
-  dependencies: CodexBankedResetDependencies,
-  settingsEntries: KvEntryMaybe<unknown>[],
-  selected: SelectedPoolCredit,
-  nowMs: number
-): Promise<CodexBankedResetPoolOutcome> => {
-  const persisted = await shadowDecisionRecord(kv, decision, nowMs, settingsEntries);
-  if (!persisted) return poolOutcome("skipped", "shadow_decision_unavailable");
-  if (
-    persisted.record.decision_reason !== "selected" ||
-    persisted.record.selected_account_id_hash !== selected.resolved.context.account.accountIdHash ||
-    persisted.record.selected_credit_id_hash !== selected.creditIdHash ||
-    persisted.record.selected_credit_expires_at_ms !== selected.credit.expiresAtMs ||
-    !sameShadowFences(persisted.record.fences, decision.fences)
-  )
-    return poolOutcome("skipped", "shadow_decision_drift");
-
-  const telemetry = dependencies.telemetry ?? defaultTelemetry;
-  const fields = telemetryFields(selected.resolved.context, selected.resolved.pool.candidate, {
-    episode_hash: decision.episode_hash,
-    credit_id_hash: selected.creditIdHash,
-    selected: true,
-    reason: persisted.record.decision_reason,
-  });
-  if (persisted.kind === "duplicate") {
-    emit(telemetry, "codex_reset_duplicate_prevented", { ...fields, reason: "shadow_decision_exists" });
-    metric(telemetry, "codex_reset_duplicate_prevented_total", 1, fields);
-  } else {
-    emit(telemetry, "codex_reset_eligible", fields);
-    emit(telemetry, "codex_reset_shadow_candidate", fields);
-    metric(telemetry, "codex_reset_eligible_total", 1, fields);
-    metric(telemetry, "codex_reset_shadow_candidates_total", 1, fields);
-  }
-  return poolOutcome("shadow", "live_armed", selected.resolved.pool);
-};
-
-/** The audit evidence must still name this exact account and exact credit. */
-const liveAuditMatches = (audited: CodexResetShadowDecisionRecord | null, selected: SelectedPoolCredit, nowMs: number): boolean => {
-  if (audited === null) return false;
-  if (audited.expires_at_ms <= nowMs) return false;
-  return (
-    audited.selected_account_id_hash === selected.resolved.context.account.accountIdHash &&
-    audited.selected_credit_id_hash === selected.creditIdHash &&
-    audited.selected_credit_expires_at_ms === selected.credit.expiresAtMs
-  );
-};
-
-/** The live tail: arming or audit proof, then one durable submission attempt. */
+/** The live tail: one durable submission attempt for the selected credit. */
 const runLivePoolSubmission = async (
-  kv: Kv,
   dependencies: CodexBankedResetDependencies,
-  episode: Readonly<{
-    complete: ResolvedPoolCandidate[];
-    settingsEntries: KvEntryMaybe<unknown>[];
-    episodeHash: string;
-    audited: CodexResetShadowDecisionRecord | null;
-    liveNeedsArming: boolean;
-  }>,
-  decision: CodexResetShadowDecisionRecord,
-  selection: Readonly<{ selected: SelectedPoolCredit | null; decisionReason: string }>,
-  nowMs: number
+  episode: Readonly<{ complete: ResolvedPoolCandidate[] }>,
+  selection: Readonly<{ selected: SelectedPoolCredit | null; decisionReason: string }>
 ): Promise<CodexBankedResetPoolOutcome> => {
-  // Preserve the precise inventory failure in live mode. This is especially
-  // useful for an expired credit after a valid shadow decision: it proves
-  // that no external redemption was attempted because the fresh inventory
-  // itself was no longer eligible.
   const selected = selection.selected;
   if (!selected) return poolOutcome("skipped", selection.decisionReason);
-  if (episode.liveNeedsArming) return await armLiveWithShadowDecision(kv, decision, dependencies, episode.settingsEntries, selected, nowMs);
-  if (!dependencies.allowLiveWithoutShadowForTest && !liveAuditMatches(episode.audited, selected, nowMs)) {
-    return poolOutcome("skipped", "shadow_decision_drift");
-  }
-  // The durable claim/submission path must continue to fence every blocked
-  // account that established the audited episode, not just the selected
-  // owner. Recovery or rotation after the shadow read makes the episode stale
-  // and must block the external consume.
+  // The durable claim/submission path must fence every blocked account that
+  // established this episode, not just the selected owner. Recovery or
+  // rotation after the fresh inventory read makes the episode stale and must
+  // block the external consume.
   const fullPoolFences = episode.complete.flatMap(({ pool }) => pool.candidate.fences);
   const reset = await attemptCodexBankedReset(
     { ...selected.resolved.pool.candidate, fences: fullPoolFences, selectedCredit: selected.credit },

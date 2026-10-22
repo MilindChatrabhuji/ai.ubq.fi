@@ -84,50 +84,74 @@ pub async fn sanitize_native_capture<H: NativeCustody>(
     source: &NativeCapture,
     host: &H,
 ) -> Result<NativeCapture, MigrationError> {
-    let mut candidate = source.clone();
-    for entry in &mut candidate.entries {
-        if !codex_key(&entry.raw_key)? {
-            continue;
-        }
-        let mut pool = source_pool(&entry.value)?;
-        for account in &mut pool.accounts {
-            if account.refresh_token.expose().is_empty() {
-                continue;
-            }
-            let observed = host.observe(&account.account_id).await?;
-            let local = &observed.generation;
-            if local.fence.authority_revision != entry.revision.record_revision()?
-                || local.credentials.account_id != account.account_id
-                || local.credentials.access_token != account.access_token
-                || local.credentials.refresh_token != account.refresh_token
-                || account.native_owner.as_ref().is_some_and(|o| {
-                    o.codex_home != observed.home
-                        || o.generation_hash != local.credentials.generation_hash()
-                        || o.external_user_id.is_some()
-                        || o.managed_source.is_some()
-                        || o.native_refreshed_at != local.credentials.native_refreshed_at
-                })
-            {
-                return Err(MigrationError::from(custody_error()));
-            }
-            let projection = ManagedAccessProjection::from_native(local)?;
-            account.refresh_token = gateway_auth::crypto::Secret::new(String::new());
-            account.native_owner = Some(CodexNativeOwner {
-                codex_home: observed.home,
-                generation_hash: projection.access_generation().into(),
-                native_refreshed_at: projection.native_refreshed_at().map(str::to_owned),
-                external_user_id: None,
-                managed_source: Some(ManagedNativeSource {
-                    v: 2,
-                    generation_hash: projection.native_source_generation().into(),
-                }),
-            });
-        }
-        entry.value = pool_value(&pool)?;
-    }
-    // This is the exact cloud/common-candidate gate, after local normalization.
+    let candidate = normalize_owned(source.clone(), host).await?;
     prepare_native(&candidate)?;
     Ok(candidate)
+}
+
+/// Trusted native staging consumes its input and returns the SAME complete audit
+/// result instead of constructing/discarding it and auditing it a second time.
+pub async fn prepare_native_with_custody<H: NativeCustody>(
+    source: NativeCapture,
+    host: &H,
+) -> Result<PreparedAdoption, MigrationError> {
+    prepare_native(&normalize_owned(source, host).await?)
+}
+
+async fn normalize_owned<H: NativeCustody>(
+    mut candidate: NativeCapture,
+    host: &H,
+) -> Result<NativeCapture, MigrationError> {
+    for entry in &mut candidate.entries {
+        normalize_entry(entry, host).await?;
+    }
+    // Both callers run the exact complete-candidate gate before any result exits.
+    Ok(candidate)
+}
+
+pub(crate) async fn normalize_entry<H: NativeCustody>(
+    entry: &mut NativeEntry,
+    host: &H,
+) -> Result<(), MigrationError> {
+    if !codex_key(&entry.raw_key)? {
+        return Ok(());
+    }
+    let mut pool = source_pool(&entry.value)?;
+    for account in &mut pool.accounts {
+        if account.refresh_token.expose().is_empty() {
+            continue;
+        }
+        let observed = host.observe(&account.account_id).await?;
+        let local = &observed.generation;
+        if local.fence.authority_revision != entry.revision.record_revision()?
+            || local.credentials.account_id != account.account_id
+            || local.credentials.access_token != account.access_token
+            || local.credentials.refresh_token != account.refresh_token
+            || account.native_owner.as_ref().is_some_and(|o| {
+                o.codex_home != observed.home
+                    || o.generation_hash != local.credentials.generation_hash()
+                    || o.external_user_id.is_some()
+                    || o.managed_source.is_some()
+                    || o.native_refreshed_at != local.credentials.native_refreshed_at
+            })
+        {
+            return Err(MigrationError::from(custody_error()));
+        }
+        let projection = ManagedAccessProjection::from_native(local)?;
+        account.refresh_token = gateway_auth::crypto::Secret::new(String::new());
+        account.native_owner = Some(CodexNativeOwner {
+            codex_home: observed.home,
+            generation_hash: projection.access_generation().into(),
+            native_refreshed_at: projection.native_refreshed_at().map(str::to_owned),
+            external_user_id: None,
+            managed_source: Some(ManagedNativeSource {
+                v: 2,
+                generation_hash: projection.native_source_generation().into(),
+            }),
+        });
+    }
+    entry.value = pool_value(&pool)?;
+    Ok(())
 }
 
 /// Only this opaque local result can contain restored managed refresh material.
@@ -154,44 +178,53 @@ async fn reconstruct_native<S: QueryStore, H: NativeCustody>(
     host: &H,
 ) -> Result<LocalNativeCapture, MigrationError> {
     for entry in &mut source.entries {
-        if !codex_key(&entry.raw_key)? {
-            continue;
-        }
-        let mut pool = source_pool(&entry.value)?;
-        let key = TupleKey::from_sort_bytes(entry.raw_key.clone())?.to_record_key();
-        let current = store.read(&key).await?.ok_or_else(custody_error)?;
-        for account in &mut pool.accounts {
-            let Some(owner) = &account.native_owner else {
-                continue;
-            };
-            let Some(managed) = &owner.managed_source else {
-                continue;
-            };
-            let observed = host.observe(&account.account_id).await?;
-            let local = &observed.generation;
-            let projection = ManagedAccessProjection::from_native(local)?;
-            if local.fence.authority_revision != current.revision
-                || observed.home != owner.codex_home
-                || local.credentials.account_id != account.account_id
-                || !account.refresh_token.expose().is_empty()
-                || projection.native_source_generation() != managed.generation_hash
-                || projection.access_generation() != owner.generation_hash
-                || projection.access_token() != &account.access_token
-                || local.credentials.native_refreshed_at != owner.native_refreshed_at
-            {
-                return Err(MigrationError::from(custody_error()));
-            }
-            account.refresh_token = local.credentials.refresh_token.clone();
-            let owner = account.native_owner.as_mut().ok_or_else(custody_error)?;
-            owner.generation_hash = local.credentials.generation_hash();
-            owner.managed_source = None;
-        }
-        if store.read(&key).await?.as_ref() != Some(&current) {
-            return Err(MigrationError::from(custody_error()));
-        }
-        entry.value = pool_value(&pool)?;
+        reconstruct_entry(store, entry, host).await?;
     }
     Ok(LocalNativeCapture(source))
+}
+
+pub(crate) async fn reconstruct_entry<S: QueryStore, H: NativeCustody>(
+    store: &S,
+    entry: &mut NativeEntry,
+    host: &H,
+) -> Result<(), MigrationError> {
+    if !codex_key(&entry.raw_key)? {
+        return Ok(());
+    }
+    let mut pool = source_pool(&entry.value)?;
+    let key = TupleKey::from_sort_bytes(entry.raw_key.clone())?.to_record_key();
+    let current = store.read(&key).await?.ok_or_else(custody_error)?;
+    for account in &mut pool.accounts {
+        let Some(owner) = &account.native_owner else {
+            continue;
+        };
+        let Some(managed) = &owner.managed_source else {
+            continue;
+        };
+        let observed = host.observe(&account.account_id).await?;
+        let local = &observed.generation;
+        let projection = ManagedAccessProjection::from_native(local)?;
+        if local.fence.authority_revision != current.revision
+            || observed.home != owner.codex_home
+            || local.credentials.account_id != account.account_id
+            || !account.refresh_token.expose().is_empty()
+            || projection.native_source_generation() != managed.generation_hash
+            || projection.access_generation() != owner.generation_hash
+            || projection.access_token() != &account.access_token
+            || local.credentials.native_refreshed_at != owner.native_refreshed_at
+        {
+            return Err(MigrationError::from(custody_error()));
+        }
+        account.refresh_token = local.credentials.refresh_token.clone();
+        let owner = account.native_owner.as_mut().ok_or_else(custody_error)?;
+        owner.generation_hash = local.credentials.generation_hash();
+        owner.managed_source = None;
+    }
+    if store.read(&key).await?.as_ref() != Some(&current) {
+        return Err(MigrationError::from(custody_error()));
+    }
+    entry.value = pool_value(&pool)?;
+    Ok(())
 }
 
 /// Explicit local-only source plus current private operational custody. No live

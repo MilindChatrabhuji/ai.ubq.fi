@@ -157,3 +157,78 @@ fn v2_refuses_redirectable_origins_ambiguous_owners_and_caller_selected_operatio
     value["owner_renewal"]["command"] = json!("not-an-operation");
     assert!(parse(&value).is_err());
 }
+
+#[test]
+fn v3_candidate_live_configuration_never_implies_renewal_publication_or_import() {
+    let mut value = config(3);
+    value["live_sideband"] = json!({"authority_origin":"https://rust-candidate.ai.ubq.fi"});
+    let prepared = parse(&value).unwrap();
+    assert_eq!(
+        prepared.live_sideband.as_ref().unwrap().authority_origin(),
+        "https://rust-candidate.ai.ubq.fi"
+    );
+    assert!(prepared.owner_renewal.is_none());
+    let proof = proof(&prepared);
+    for capability in [
+        NativeCapability::SupervisorRead,
+        NativeCapability::LiveSideband,
+    ] {
+        assert!(proof.require(capability, 1000).is_ok());
+    }
+    for capability in [
+        NativeCapability::OwnerRenewal,
+        NativeCapability::AccessPublish,
+        NativeCapability::ConfigurationPublish,
+        NativeCapability::CodexAuthImport,
+        NativeCapability::NativeProfileImport,
+    ] {
+        assert!(proof.require(capability, 1000).is_err());
+    }
+    assert!(
+        prepared
+            .identity
+            .sign_live_request(1000, &base64url(&[1; 32]), "action-1")
+            .is_ok()
+    );
+}
+
+#[test]
+fn live_startup_is_explicit_versioned_and_pinned_to_the_candidate_authority() {
+    let live = json!({"authority_origin":"https://rust-candidate.ai.ubq.fi"});
+    for version in [1, 2] {
+        for extra in [Value::Null, live.clone()] {
+            let mut value = config(version);
+            value["live_sideband"] = extra;
+            assert!(parse(&value).is_err());
+        }
+    }
+    assert!(parse(&config(3)).is_err());
+    let mut value = config(3);
+    value["live_sideband"] = live;
+    for origin in [
+        "http://rust-candidate.ai.ubq.fi",
+        "https://rust-candidate.ai.ubq.fi:444",
+        "https://user@rust-candidate.ai.ubq.fi",
+        "https://rust-candidate.ai.ubq.fi/route",
+        "https://rust-candidate.ai.ubq.fi?query=1",
+        "https://rust-candidate.ai.ubq.fi#fragment",
+        "https://rust-candidate.ai.ubq.fi.evil.example",
+        "https://other.example",
+        "https://uos-ai-rust-candidate.ubq.workers.dev",
+    ] {
+        let mut bad = value.clone();
+        bad["live_sideband"]["authority_origin"] = json!(origin);
+        assert!(parse(&bad).is_err(), "accepted {origin}");
+    }
+    for field in ["capabilities", "command", "account_id", "key_base64url"] {
+        let mut bad = value.clone();
+        bad["live_sideband"][field] = json!("caller-selected");
+        assert!(parse(&bad).is_err());
+    }
+    value["owner_renewal"] = renewal();
+    // Parsing does not invent a permanent capability incompatibility. The
+    // current dedicated request launcher still refuses renewal composition.
+    let mixed = parse(&value).unwrap();
+    assert!(mixed.owner_renewal.is_some());
+    assert!(mixed.live_sideband.is_some());
+}

@@ -63,7 +63,7 @@ fn named_key_pair_audit_preserves_complete_utf16_policy_and_finite_facts() {
         .iter()
         .map(|row| row.record.clone())
         .collect::<Vec<_>>();
-    let (pairs, findings) = audit::inspect_key_pairs(&rows).unwrap();
+    let (pairs, findings) = inspect_key_pairs(&rows).unwrap();
     assert!(findings.errors.is_empty());
     assert_eq!(findings.counts["api_key_ids"], 1);
     assert_eq!(findings.counts["api_key_hashes"], 1);
@@ -102,7 +102,7 @@ fn source_key_audit_keeps_malformed_pair_counter_and_model_rejections() {
     for models in [r#"[0]"#, r#"[null]"#, r#"[""]"#, r#"["\u00a0\t"]"#, "null"] {
         let (id, hash) = policies(models);
         assert!(!audit::valid_source_key_policy(&id, true), "{models}");
-        let (pairs, findings) = audit::inspect_key_pairs(&rows(&id, &hash)).unwrap();
+        let (pairs, findings) = inspect_key_pairs(&rows(&id, &hash)).unwrap();
         assert!(pairs.is_empty());
         assert!(findings.errors.iter().any(|error| {
             error
@@ -129,7 +129,7 @@ fn source_key_audit_keeps_malformed_pair_counter_and_model_rejections() {
         }
     }
     let mismatch = source::object_keys(fields).unwrap();
-    let (pairs, findings) = audit::inspect_key_pairs(&rows(&id, &mismatch)).unwrap();
+    let (pairs, findings) = inspect_key_pairs(&rows(&id, &mismatch)).unwrap();
     assert!(pairs.is_empty());
     assert!(findings.errors.iter().any(|error| {
         error
@@ -138,7 +138,7 @@ fn source_key_audit_keeps_malformed_pair_counter_and_model_rejections() {
     }));
     let mut missing = rows(&id, &hash);
     missing.pop();
-    let (pairs, findings) = audit::inspect_key_pairs(&missing).unwrap();
+    let (pairs, findings) = inspect_key_pairs(&missing).unwrap();
     assert!(pairs.is_empty());
     assert!(findings.errors.iter().any(|error| {
         error
@@ -153,7 +153,7 @@ fn named_key_audit_refuses_non_json_tree_encodings_without_global_reinterpretati
     let mut rows = rows(&id, &hash);
     rows[0].record =
         StoredRecord::profile("wrong-codec", PortableValue::String("policy".into()), None).unwrap();
-    assert!(audit::inspect_key_pairs(&rows).is_err());
+    assert!(inspect_key_pairs(&rows).is_err());
     let row = observed(
         json!(["default", "unrelated"]),
         &SourceJson::parse(r#""\ud800""#).unwrap(),
@@ -188,5 +188,38 @@ fn scalar_key_policy_stays_json_and_legacy_wrapper_matches_source_validation() {
     assert_eq!(rows[0].record.value, scalar.deserialize::<Value>().unwrap());
     assert!(audit::valid_key_policy(&rows[0].record.value, true));
     assert!(audit::valid_source_key_policy(&scalar, true));
-    assert!(audit::inspect_key_pairs(&rows).unwrap().1.errors.is_empty());
+    assert!(inspect_key_pairs(&rows).unwrap().1.errors.is_empty());
+}
+
+// Independent decoded row lifetimes model the replayable native spool contract.
+struct Replay<'a>(&'a [ObservedRow]);
+impl audit::AuditInventory for Replay<'_> {
+    fn visit(
+        &self,
+        callback: &mut dyn FnMut(&ObservedRow) -> Result<(), gateway_core::GatewayError>,
+    ) -> Result<(), gateway_core::GatewayError> {
+        for row in self.0 {
+            let decoded = row.clone();
+            callback(&decoded)?;
+        }
+        Ok(())
+    }
+}
+fn inspect_key_pairs(
+    rows: &[ObservedRow],
+) -> Result<(Vec<audit::AuditedKeyPair>, audit::Audit), gateway_core::GatewayError> {
+    let result = audit::inspect_key_pairs(rows);
+    let replay = audit::inspect_inventory(&Replay(rows), 1000);
+    match (&result, replay) {
+        (Ok((_, expected)), Ok(actual)) => {
+            for (key, count) in &expected.counts {
+                assert_eq!(actual.counts.get(key), Some(count));
+            }
+            assert!(actual.errors.starts_with(&expected.errors));
+        }
+        (Err(expected), Err(actual)) => assert_eq!(format!("{expected:?}"), format!("{actual:?}")),
+        (Ok(_), Err(error)) => panic!("replayed key audit differed: {error:?}"),
+        (Err(_), Ok(_)) => panic!("replayed key error was lost"),
+    }
+    result
 }

@@ -6,6 +6,37 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Automatic banked resets are live-only - 2026-10-21
+
+Automatic banked resets are now live-only. The `CODEX_BANKED_RESET_MODE` selector and shadow-decision arming gate are retired; `CODEX_BANKED_RESET_ENABLED` remains the immediate kill switch. When enabled, an eligible blocked cohort performs fresh inventory, selects one exact credit, claims the deterministic redemption, and submits it in the same request. The existing one-per-account-per-UTC-day and one-per-window caps, exact fence checks, at-most-once transaction, and post-reset probe remain unchanged. Historical shadow decisions remain readable for audit but do not gate a live redemption.
+
+Reason: the owner explicitly required automatic live behavior; shadow mode and arming made a redeemable reset require a prior decision and a later request.
+
+Reversal risk: removing the arming and audit gate allows an external spend on the first eligible blocked request. Exact caps and fences plus the enabled kill switch are mandatory; `unknown` remains possibly spent and is never replayed.
+
+## Merged-only CI gates expensive jobs behind portable validation - 2026-10-21
+
+This supersedes the merge-group, queue-canary, Sentinel-authored PR, and development-push trigger requirements in "Real CI checks for Sentinel and merge groups" for the current GitHub Actions quota policy. `pull_request: closed` and `workflow_dispatch` are the only triggers, and every job requires a merged pull request or explicit manual dispatch. After `scope`, the portable x64 `portable` gate must pass before `rust-native`; `rust-wasm` follows `rust-native`; `native` and macOS/Darwin work start only after their selected earlier gates pass. The `validate` job remains the required check name and fails closed when a selected portable or Rust gate is missing, skipped, cancelled, or failed. Each job has an explicit timeout, and the workflow never deploys.
+
+Reason: recent failed runs spent 70-90 job-minutes because `native`, `rust-wasm`, and macOS work started even after `rust-native` failed, while `validate` waited for both Rust jobs before running portable checks. The dependency chain preserves every selected check but skips work that cannot be accepted once an earlier selected gate fails.
+
+Reversal risk: removing the dependencies restores parallel quota consumption on failures; treating skipped or cancelled dependencies as success would hide missing checks. Manual dispatch with an explicit `scope_base` remains necessary for squash or rebase merges, whose commits are not ancestry-preserving merge commits.
+
+## Fresh capacity exhaustion reconciles a retained ambiguous reset identity - 2026-10-21
+
+A fresh `100%`-used capacity observation with a future reset deadline now reconciles an existing class block even when the
+block still carries an older future stable observation. It replaces that observation with the sample's deadline, clears
+`banked_reset_generation_ambiguous`, and preserves the credential/account fences, probe lease, and recovery-probe
+pending state. A live `429` observed after the sample remains newer and cannot be replaced by the older sample.
+
+Reason: the older identity kept a creditless sibling ambiguous while the pool was otherwise fully exhausted. The
+automatic reset evaluator rechecked every blocked account, returned `routing_fence_stale`, and the intentionally
+conservative overage fallback refused that reason. Both enabled bonus paths therefore dead-ended on a gateway quota
+refusal even though another account held an available reset.
+
+Reversal risk: allowing any stale identity to override a newer live signal can spend a reset against the wrong quota
+window. The observation timestamp, account identity, credential fence, and active probe lease remain hard gates.
+
 ## Rust audit text preserves source UTF-16 truncation - 2026-10-19
 
 API-key audit fields and target names preserve the source `slice(0, 200)` contract, including a lone surrogate when the cut splits a pair. Audit writes retain ordinary Json records when lossless and use the existing ProfileV2 encoding only when ordinary JSON values cannot represent the event. The audit-only read projection uses validated SourceJson and retains existing Json compatibility, scalar-field selection, timestamp-only visibility and event ordering. This adds no storage family, general codec reinterpretation or live-state conversion.
@@ -2347,3 +2378,11 @@ The exported shipping Worker reads only the exact `UOS_NATIVE_CARRIER` deploymen
 ## Rust candidate authentication binds its exact browser origin - 2026-10-21
 
 The isolated Rust Worker deployment explicitly enables the existing candidate passkey policy and trusts only `https://rust-candidate.ai.ubq.fi` as its additional relay origin. This trusted composition retains RP `ai.ubq.fi`, the generic source-settings translation and all existing exact-origin checks; no request header, environment switch or discovered hostname can expand it. Candidate login stays same-origin: the static remote-client relay classifier and canonical production popup remain unchanged. Actual Worker challenge, assertion, session and browser acceptance remain required before candidate authentication is accepted.
+
+## Private unpublished staged native adoption - 2026-10-21
+
+HISTORY-STAGEDv1 adds a private trusted-operator begin/append/seal path for complete captures larger than one32MiB frame. Native preparation retains the existing complete NativeCapturev2 audit, codec, index and configured native-custody checks before emitting canonical rows, inverse mappings and derived records. Append frames preserve raw tuple identities, revisions and absolute expiry, bind count/sequence/hash to the complete prepared inventory and commit each batch atomically. A partial target has no adoption manifest and cannot export as an accepted inverse. Final sealing is staged data readiness, not the old single atomic adoption receipt, live ownership or service activation; existing atomic adopt_empty is unchanged.
+
+The operator must exclusively hold a new empty common authority unpublished and quiescent throughout staging and final reconciliation; deserialized data grants no public capability. No public HTTP/admin import route, arbitrary SQL insertion, live refresh/reset/fallback or active7998/7999change is introduced. Complete preparation and latest inverse remain native-owned; the current inverse uses paginated QueryStore reads and writes directly to private file/sink, with separately held current Rust-control/nonce custody. Native memory is measured with the synthetic large capture before any private real907MBattempt; file output avoids a full WASM response, not a claim of constant native memory. Live target activation and current7998write reconciliation require a separate explicit decision.
+
+HISTORY-STAGEDv2 selects only the fixed synthetic history scenario for the assigned 360-second outer controller envelope; normal fixtures retain 120 seconds and all existing per-operation deadlines and assertions remain unchanged. Metadata-only stage markers attribute native process RSS. The measured 3.528 GiB native peak for a 40.056 MiB synthetic source forbids a real 907 MB attempt: staged transport proof does not establish bounded-memory native preparation or full-history scalability.

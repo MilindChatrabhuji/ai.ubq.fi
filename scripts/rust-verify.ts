@@ -389,7 +389,9 @@ const nativeLibrarySelection = async (
   const argv = [cargo, "test", ...flags, "--lib", "--"];
   const original = nativeTestNames((await checked({ argv: [...argv, "--list"], cwd, isolated: true })).stdout);
   if (OWNED_CHILD_CASES.some((name) => !original.includes(name))) throw new Error("Expected exact owned-child lib case is missing");
-  const filtered = [...argv, "--exact", ...OWNED_CHILD_CASES.flatMap((name) => ["--skip", name])];
+  // Same-binary diagnostics failed in parallel and passed serially; fixtures share TMPDIR ancestors
+  // whose ACL observations require stable metadata.
+  const filtered = [...argv, "--exact", ...OWNED_CHILD_CASES.flatMap((name) => ["--skip", name]), "--test-threads=1"];
   const names = nativeTestNames((await checked({ argv: [...filtered, "--list"], cwd, isolated: true })).stdout);
   requireTestNames(
     names,

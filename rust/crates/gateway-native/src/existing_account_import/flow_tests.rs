@@ -1,5 +1,6 @@
 //! Actual debug-only two-process native import fixtures. No v3 row rewriting,
 //! credential provider traffic, fake Start, raw-response issuer or live UID work.
+use super::foundation_tests::assert_owned_canonical_directory;
 use super::*;
 use crate::http_server::import_http_tests as base;
 use gateway_auth::{
@@ -276,11 +277,18 @@ fn admin_actor(store: &base::Store) -> actor::NativeRenewalActor {
     .unwrap()
 }
 struct CaseRoot(PathBuf);
+fn assert_fixture_child_binding(base: &Path, root: &Path, home: &Path) {
+    assert_owned_canonical_directory(base);
+    assert_owned_canonical_directory(root);
+    assert_eq!(root.parent(), Some(base));
+    assert_eq!(home, root.join("home"));
+    assert_owned_canonical_directory(home);
+}
 impl CaseRoot {
     fn new() -> Self {
         static N: AtomicUsize = AtomicUsize::new(0);
         let base = fs::canonicalize(std::env::temp_dir()).unwrap();
-        assert!(base.starts_with("/private/tmp/ai-rust-wasm-20261018"));
+        assert_owned_canonical_directory(&base);
         let root = base.join(format!(
             "native-flow-{}-{}",
             std::process::id(),
@@ -313,6 +321,33 @@ impl Drop for CaseRoot {
             fs::remove_dir_all(&self.0).unwrap();
         }
     }
+}
+#[test]
+fn fixture_child_paths_refuse_escaping_and_symlinked_bindings() {
+    let root = CaseRoot::new();
+    let base = fs::canonicalize(std::env::temp_dir()).unwrap();
+    let home = root.0.join("home");
+    assert_fixture_child_binding(&base, &root.0, &home);
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_fixture_child_binding(&base, &home, &home.join("home"));
+        })
+        .is_err()
+    );
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_fixture_child_binding(&base, &root.0, &base);
+        })
+        .is_err()
+    );
+    let alias = root.0.join("root-alias");
+    std::os::unix::fs::symlink(&root.0, &alias).unwrap();
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_fixture_child_binding(&base, &alias, &home);
+        })
+        .is_err()
+    );
 }
 fn artifact(name: &str) -> PathBuf {
     let path = std::env::current_exe()
@@ -673,9 +708,11 @@ struct ProcessSetup {
 fn controlled_custodian_process() {
     use std::os::fd::AsFd;
     let root = std::env::current_dir().unwrap();
-    assert!(root.starts_with("/private/tmp/ai-rust-wasm-20261018"));
+    let base = fs::canonicalize(std::env::temp_dir()).unwrap();
+    assert_fixture_child_binding(&base, &root, &root.join("home"));
     let setup: ProcessSetup =
         serde_json::from_slice(&fs::read(root.join("process.json")).unwrap()).unwrap();
+    assert_fixture_child_binding(&base, &root, &setup.home);
     let registered = RegisteredRenewalOwner::configured(
         "native-owner".into(),
         setup.home.to_str().unwrap().into(),
