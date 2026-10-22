@@ -18,8 +18,16 @@ export default defineConfig({
     env: {
       AUTHORITY: bindings.durableObject({ worker: workerName, exportName: "GatewayAuthority" }),
       ASSETS: bindings.assets(),
-      UOS_CANDIDATE_NATIVE_V1: bindings.secret(),
-      UOS_CANDIDATE_INITIAL_SEAL_V1: bindings.secret(),
+      // Isolated rust-candidate direct-provider path. Production ai.ubq.fi keeps
+      // its provider credentials on the VPS; this Worker never claims a native owner.
+      UOS_AI_TOKEN: bindings.secret(),
+      DEEPSEEK_API_KEY: bindings.secret(),
+      CEREBRAS_API_KEY: bindings.secret(),
+      LITHOSAI_API_KEY: bindings.secret(),
+      OPENROUTER_API_KEY: bindings.secret(),
+      SURPLUS_API_KEY: bindings.secret(),
+      METERED_API_KEY: bindings.secret(),
+      CLAUDE_API_KEY: bindings.secret(),
     },
     assets: { runWorkerFirst: true, notFoundHandling: "none" },
     observability: { enabled: true, traces: { enabled: true } },
