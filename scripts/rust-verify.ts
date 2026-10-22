@@ -286,6 +286,13 @@ const observeCommandResult = (command: RustCommand, result: CommandResult): numb
   return tests;
 };
 const PRELAUNCH_TARGET = "connector_confinement";
+// Prelaunch fixtures apply their own Seatbelt profile. macOS refuses a second
+// sandbox_apply from inside the outer test-network profile, so these cases run
+// in the release-shaped environment without that outer wrapper.
+export const DARWIN_NESTED_SANDBOX_CASES = [
+  "daemon_startup::live_bootstrap::tests::exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process",
+  "native_request_process::tests::actual_config_ancillary_rejected_before_service",
+] as const;
 const OWNED_CHILD_CASES = [
   "existing_account_import::foundation_tests::actual_owned_async_child_stop_wait_and_dirty_epoch_do_not_infer_external_absence",
   "existing_account_import::foundation_tests::actual_owned_child_reap_records_stopped_but_reopened_marker_grants_no_lease",
@@ -496,7 +503,11 @@ export const executeDarwinNativeTests = async (
       return checkedRuntime(command);
     });
     if (selection === "package") {
-      await pair(normalLibrary.argv, true, normalLibrary.names);
+      const nestedSandbox = normalLibrary.names.filter((name) => DARWIN_NESTED_SANDBOX_CASES.some((caseName) => caseName === name));
+      const ordinaryLibrary = normalLibrary.names.filter((name) => !nestedSandbox.includes(name));
+      await pair([...normalLibrary.argv, ...nestedSandbox.flatMap((name) => ["--skip", name])], true, ordinaryLibrary);
+      for (const name of nestedSandbox)
+        await pair([library.executable, name, "--exact", "--test-threads=1", "--nocapture"], false, [name]);
       // Cargo's actual default-selection artifacts, not a guessed test directory,
       // supply every remaining lib/bin/integration/example/bench target exactly once.
       const normal = tests.filter((item) => item !== prelaunch && item !== library);
