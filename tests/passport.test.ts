@@ -208,3 +208,57 @@ test("Passport unavailable keys fail closed, proxy origin stays fixed and logout
   setKvForTest(kvStub);
   assert.equal((await handler(request("/admin/api-keys"))).status, 401);
 });
+
+test("Passport exchange 4xx rejects expired or invalid code with 401 and clears state cookie", async () => {
+  const { state, stateCookie } = await begin();
+  globalThis.fetch = createFetchMock(async (input) => {
+    const url = urlOf(input);
+    if (url === `${ISSUER}/api/auth/sso/exchange`) {
+      return Response.json({ error: "invalid_grant", error_description: "authorization code expired" }, { status: 400 });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+  const rejected = await handler(request(`/auth/callback?state=${state}&code=expired-code`, "", { headers: { Cookie: stateCookie } }));
+  assert.equal(rejected.status, 401);
+  const payload = await rejected.json();
+  assert.equal(payload.error.code, "invalid_api_key");
+  assert.equal(payload.error.message, "Unauthorized");
+  const cookies = rejected.headers.getSetCookie();
+  assert(cookies.some((value) => value.startsWith(`${STATE_COOKIE}=; Max-Age=0;`)));
+});
+
+test("Passport exchange upstream 5xx returns 502 with passport_unavailable and clears state cookie", async () => {
+  const { state, stateCookie } = await begin();
+  globalThis.fetch = createFetchMock(async (input) => {
+    const url = urlOf(input);
+    if (url === `${ISSUER}/api/auth/sso/exchange`) {
+      return Response.json({ error: "internal_error" }, { status: 500 });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+  const failure = await handler(request(`/auth/callback?state=${state}&code=any-code`, "", { headers: { Cookie: stateCookie } }));
+  assert.equal(failure.status, 502);
+  const payload = await failure.json();
+  assert.equal(payload.error.code, "passport_unavailable");
+  assert.equal(payload.error.message, "Passport verification is unavailable.");
+  const cookies = failure.headers.getSetCookie();
+  assert(cookies.some((value) => value.startsWith(`${STATE_COOKIE}=; Max-Age=0;`)));
+});
+
+test("Passport exchange transport failure and timeout return 502 with passport_unavailable and clear state cookie", async () => {
+  const { state, stateCookie } = await begin();
+  globalThis.fetch = createFetchMock(async (input) => {
+    const url = urlOf(input);
+    if (url === `${ISSUER}/api/auth/sso/exchange`) {
+      throw new TypeError("fetch failed");
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+  const transportFailure = await handler(request(`/auth/callback?state=${state}&code=single-use-code`, "", { headers: { Cookie: stateCookie } }));
+  assert.equal(transportFailure.status, 502);
+  const payload = await transportFailure.json();
+  assert.equal(payload.error.code, "passport_unavailable");
+  assert.equal(payload.error.message, "Passport verification is unavailable.");
+  const cookies = transportFailure.headers.getSetCookie();
+  assert(cookies.some((value) => value.startsWith(`${STATE_COOKIE}=; Max-Age=0;`)));
+});
