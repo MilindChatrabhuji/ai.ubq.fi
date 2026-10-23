@@ -8,8 +8,9 @@ use gateway_authority::{
 };
 use gateway_core::{GatewayError, model::ModelId, state::AuthorityStore};
 use gateway_observability::{
-    ObservabilityHost, capacity_shapes,
+    capacity_shapes,
     host_types::{CapacityAccountRef, CapacityProbe},
+    types::ObservabilityHost,
 };
 use std::future::Future;
 

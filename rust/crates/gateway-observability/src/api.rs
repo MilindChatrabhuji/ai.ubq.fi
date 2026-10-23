@@ -1,7 +1,6 @@
 //! Finite admin adapters. Pure projections read the one source-compatible QueryStore.
-use crate::{
-    AnalyticsRequest, Context, ObservabilityHost, ObservabilityRuntime, ProviderRequest, store,
-};
+use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
+use gateway_admin_runtime::capabilities::{AnalyticsRequest, Context, ProviderRequest};
 use gateway_auth::AuthResponse;
 use gateway_core::{
     GatewayError,
@@ -62,7 +61,7 @@ pub fn resample_balance(samples: &[Value], bucket: i64, limit: usize) -> Vec<Val
 impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     /// Source /admin/errors runs one request-owned retention pass; failure is diagnostic only.
     pub async fn error_retention_diagnostics(&self) -> Value {
-        self.maintain_replays(crate::replay_retention::RetentionLimits::default())
+        self.maintain_replays(crate::replay_retention_schema::RetentionLimits::default())
             .await
             .unwrap_or_else(|_| {
                 json!({

@@ -14,7 +14,10 @@ use gateway_claude_runtime::{
     AcceptedObservation, ClaudePoolHost, HealthObservation, WorkspaceResponse,
 };
 use gateway_core::{GatewayError, state::RevisionCheck};
-use gateway_observability::{HealthEvent, HealthProvider, HealthTarget, ObservabilityRuntime};
+use gateway_observability::{
+    ObservabilityRuntime,
+    types::{HealthEvent, HealthProvider, HealthTarget},
+};
 use gateway_schema::catalog::ProviderCatalog;
 use serde_json::json;
 use std::{cmp::Ordering, rc::Rc};

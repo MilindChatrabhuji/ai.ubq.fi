@@ -1,9 +1,8 @@
 //! Source admin/kernel.ts and codex/{reset,overage}-settings.ts.
 //! Display diagnostics never authorize a redemption or mutate provider credentials.
-use crate::{
-    CodexRequest, Context, ObservabilityHost, ObservabilityRuntime, host_types::CapacityAccountRef,
-    store,
-};
+use crate::{ObservabilityRuntime, types::ObservabilityHost};
+use crate::{host_types::CapacityAccountRef, store};
+use gateway_admin_runtime::capabilities::{CodexRequest, Context};
 use gateway_auth::{
     AuthResponse,
     crypto::sha256_hex,

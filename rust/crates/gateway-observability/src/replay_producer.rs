@@ -1,12 +1,12 @@
 //! Source request-owned failure capture. No caller JSON can mint this transport input.
+use crate::{ObservabilityRuntime, types::ObservabilityHost};
 use crate::{
-    ObservabilityHost, ObservabilityRuntime,
     host_types::BuildIdentity,
     incidents::{IncidentEvidence, IncidentObservation},
     replay_crypto::{self, FingerprintInput, ReplayBody, ReplayKey},
     replay_model as model,
-    replay_retention::{Admission, RetentionLimits},
-    replay_retention_schema as schema,
+    replay_retention::Admission,
+    replay_retention_schema::{self as schema, RetentionLimits},
     replay_trace::UpstreamTrace,
     replay_values::{SourceObject, read_json_record},
     store,

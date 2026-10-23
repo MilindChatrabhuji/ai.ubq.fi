@@ -15,14 +15,15 @@ use gateway_core::{
     tuple_key::{DecodedKeyPart, TupleKey},
 };
 use gateway_observability::{
-    ObservabilityHost, ObservabilityRuntime,
+    ObservabilityRuntime,
     host_types::BuildIdentity,
     replay_crypto::{ReplayBody, ReplayKey},
     replay_producer::{
         ClientFailureObservation, FailureObservation, PersistResult, ReplayInput, ReplayRequest,
     },
-    replay_retention::RetentionLimits,
+    replay_retention_schema::RetentionLimits,
     replay_trace::UpstreamTrace,
+    types::ObservabilityHost,
 };
 use serde_json::Value;
 use std::{

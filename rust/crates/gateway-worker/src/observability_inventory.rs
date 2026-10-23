@@ -1,5 +1,6 @@
 //! Passive provider metadata over the same request-owned authority; never refreshes credentials.
 use super::RequestHost;
+use gateway_admin_runtime::capabilities::Context;
 use gateway_admin_runtime::{claude, claude_access};
 use gateway_auth::{
     crypto::sha256_hex,
@@ -10,7 +11,10 @@ use gateway_core::{
     source_json::SourceJson,
     state::{AuthorityStore, RevisionCheck},
 };
-use gateway_observability::{Context, HealthProvider, HealthTarget, host_types::*};
+use gateway_observability::{
+    host_types::*,
+    types::{HealthProvider, HealthTarget},
+};
 use gateway_schema::selection::ProviderSelection;
 use serde_json::json;
 use std::collections::BTreeSet;

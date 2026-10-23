@@ -1,5 +1,5 @@
 //! Source ba5ef05e provider/health.ts and paid-fallback/health.ts.
-use crate::{ObservabilityHost, ObservabilityRuntime, completion::Completion, store, types::*};
+use crate::{ObservabilityRuntime, completion::Completion, store, types::*};
 use gateway_core::{
     GatewayError,
     query::QueryStore,

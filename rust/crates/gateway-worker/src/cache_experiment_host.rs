@@ -19,7 +19,10 @@ use gateway_authority::{
     native_control::actor::{NativeActorScope, NativeRenewalActor},
 };
 use gateway_core::{GatewayError, identity::PoolVersionstamp, source_json::SourceJson};
-use gateway_observability::{HealthEvent, HealthTarget, ObservabilityHost, ObservabilityRuntime};
+use gateway_observability::{
+    ObservabilityRuntime,
+    types::{HealthEvent, HealthTarget, ObservabilityHost},
+};
 use gateway_providers::sse::{MAX_RESPONSES_EVENT_BYTES, SseParser};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, time::Duration};
 use worker::{Method, Response};

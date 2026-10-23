@@ -1,5 +1,6 @@
 //! Only the exact request-bound SourceJson and finite settings-selector adapters.
 mod support;
+use gateway_admin_runtime::capabilities::{CodexRequest, Context, ProviderRequest};
 use gateway_auth::crypto::sha256_hex;
 use gateway_core::{
     GatewayError,
@@ -8,9 +9,10 @@ use gateway_core::{
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, StoredRecord},
 };
 use gateway_observability::{
-    CodexRequest, Context, ObservabilityHost, ObservabilityRuntime, ProviderRequest,
+    ObservabilityRuntime,
     capacity_shapes::{history_point, unavailable_snapshot},
     host_types::CapacityAccountRef,
+    types::ObservabilityHost,
 };
 use serde_json::json;
 use std::{cell::RefCell, rc::Rc};
