@@ -62,6 +62,8 @@ export const resolveIdempotencyPrincipal = async (authResult: PrincipalAuthResul
       return `github-repo:${authResult.method.owner.toLowerCase()}/${authResult.method.repo.toLowerCase()}`;
     case "passkey_session":
       return `passkey-user:${authResult.method.user_id}`;
+    case "passport_session":
+      return authResult.method.principal;
     case "auth_tokens_allowlist":
     case "admin_allowlist":
     case "deno_deploy_token":

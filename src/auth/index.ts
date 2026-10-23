@@ -9,6 +9,7 @@ import { getKv } from "../kv.ts";
 import { isAdminAuthDisabledForRequest } from "./local-admin.ts";
 import { resolveLocalDevelopmentApiKeyPolicy } from "./local-development-key.ts";
 import { getPasskeySessionForRequest, isPasskeyUserAdmin } from "./passkeys.ts";
+import { authenticatePassportAdmin, authenticatePassportSession, type PassportAuthMethod } from "./passport.ts";
 import { sha256Base64Url, sha256Hex } from "../utils.ts";
 import type { ApiKeyRecord } from "../types.ts";
 import { getEnv, getGitHubRepoHeaders, verifyKernelAttestation } from "../kernel/attestation.ts";
@@ -52,6 +53,7 @@ const verifyGitHubTokenRepoAccess = async (token: string, owner: string, repo: s
 };
 
 type ClientAuthMethod =
+  | PassportAuthMethod
   | { kind: "disabled" }
   | { kind: "github_token"; owner: string; repo: string; state_id: string; limit_scope: "org" | "repo" }
   | { kind: "auth_tokens_allowlist" }
@@ -65,6 +67,7 @@ type AuthenticateClientResult = { ok: true; token: string | null; method: Client
 type CheckAdminTokenResult = { ok: true; kind: "admin_allowlist" | "deno_deploy_token" } | { ok: false; response: Response | null };
 
 type AdminAuthMethod =
+  | PassportAuthMethod
   | { kind: "disabled" }
   | { kind: "admin_allowlist" }
   | { kind: "deno_deploy_token" }
@@ -397,6 +400,9 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
   };
   if (localAuthMode !== null) return await authenticateLocalClient(localAuthMode, kv, token, logClientAuth);
 
+  const passport = await authenticatePassportSession(req);
+  if (passport) return passport;
+
   if (!token) return await authenticateClientWithoutToken(req, logClientAuth);
 
   if (config.authTokens.has(token)) {
@@ -635,6 +641,8 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
       method: { kind: "disabled" },
     };
   }
+  const passport = await authenticatePassportAdmin(req);
+  if (passport) return passport;
   let passkeySession = await getPasskeySessionForRequest(req);
   if (!passkeySession && token && looksLikeGitHubToken(token) && !config.adminTokens.has(token) && !config.authTokens.has(token) && req.headers.has("cookie")) {
     const githubVerification = await verifyGitHubBearer(req, token);
@@ -692,6 +700,7 @@ const v1AdminFlags = (localAdminAuth: AdminAuthResult | null, reportingMethod: R
     localAdminAuth?.ok === true ||
     reportingMethod.kind === "admin_allowlist" ||
     reportingMethod.kind === "deno_deploy_token" ||
+    (reportingMethod.kind === "passport_session" && reportingMethod.user.is_admin && reportingMethod.user.agent_token_id === null) ||
     (reportingMethod.kind === "passkey_session" && reportingMethod.is_admin);
   const isSuperAdmin = localAdminAuth?.ok
     ? localAdminAuth.is_super_admin
@@ -752,6 +761,11 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
   const method: Record<string, unknown> = { kind: reportingMethod.kind };
   const { isAdmin, isSuperAdmin } = v1AdminFlags(localAdminAuth, reportingMethod);
 
+  if (reportingMethod.kind === "passport_session") {
+    method.principal = reportingMethod.principal;
+    method.user = reportingMethod.user;
+  }
+
   if (reportingMethod.kind === "github_token") {
     method.repo = { owner: reportingMethod.owner, repo: reportingMethod.repo };
     method.state_id = reportingMethod.state_id;
@@ -782,6 +796,7 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
         mode,
         is_admin: isAdmin,
         is_super_admin: isSuperAdmin,
+        ...(reportingMethod.kind === "passport_session" ? { principal: reportingMethod.principal } : {}),
         method,
         token: tokenInfo,
       },
