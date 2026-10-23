@@ -1,7 +1,3 @@
-// Shared support is compiled by every integration test; only the projection test consumes this module.
-#[allow(dead_code)]
-pub mod source_fixture;
-
 use gateway_core::{
     GatewayError,
     query::{QueryPage, QueryRequest, QueryStore},

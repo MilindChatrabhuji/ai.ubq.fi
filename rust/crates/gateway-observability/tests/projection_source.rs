@@ -15,10 +15,12 @@ use gateway_observability::{
     ObservabilityRuntime, ledger::terminal_rollup::TerminalUsageRollup,
     records::usage_rollup_record_source, types::ObservabilityHost,
 };
+use gateway_observability_test_support::source_fixture::{
+    CapturedCollator, assert_source_eq, fixture,
+};
 use gateway_schema::aliases::SourceStringCollator;
 use serde_json::{Value, json};
 use std::sync::Arc;
-use support::source_fixture::{CapturedCollator, assert_source_eq, fixture};
 use support::{Host, Memory, run};
 struct ProjectionHost {
     base: Host,

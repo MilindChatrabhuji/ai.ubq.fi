@@ -25,3 +25,6 @@ zeroize = "=1.9.1"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+gateway-observability-test-support.workspace = true

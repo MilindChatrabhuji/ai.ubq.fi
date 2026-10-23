@@ -1067,6 +1067,7 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
+ "gateway-observability-test-support",
  "gateway-schema",
  "hkdf",
  "hmac 0.12.1",
@@ -1074,6 +1075,14 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "zeroize",
+]
+
+[[package]]
+name = "gateway-observability-test-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-schema",
 ]
 
 [[package]]

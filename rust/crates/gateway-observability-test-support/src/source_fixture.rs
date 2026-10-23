@@ -11,6 +11,11 @@ pub struct CapturedCollator {
     labels: Vec<Vec<u16>>,
     orders: Vec<Vec<i32>>,
 }
+impl Default for CapturedCollator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl CapturedCollator {
     pub fn new() -> Self {
         let raw = fixture();
