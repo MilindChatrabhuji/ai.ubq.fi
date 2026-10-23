@@ -1,7 +1,7 @@
-#[path = "../../gateway-authority/tests/paid_control_cases/original.rs"]
 mod original_request_fixture;
-#[path = "../../gateway-schema/tests/support/source_catalog.rs"]
-mod source_catalog;
+mod support;
+
+use support::source_catalog;
 type MemoryStore = Store;
 type TestAuthority = gateway_authority::Authority<Store, Tokens>;
 use gateway_authority::{keys, paid_control::*};

@@ -1,4 +1,3 @@
-#[path = "../../../gateway-schema/tests/support/source_catalog.rs"]
 mod source_catalog;
 use gateway_auth::{AuthPrincipal, crypto::Secret};
 use gateway_authority::{
