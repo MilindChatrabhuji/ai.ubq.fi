@@ -22,6 +22,10 @@ Reason: recent failed runs spent 70-90 job-minutes because `native`, `rust-wasm`
 
 Reversal risk: removing the dependencies restores parallel quota consumption on failures; treating skipped or cancelled dependencies as success would hide missing checks. Manual dispatch with an explicit `scope_base` remains necessary for squash or rebase merges, whose commits are not ancestry-preserving merge commits.
 
+## Manual complete-set verification for Sentinel pre-merge delivery - 2026-10-22
+
+The owner authorized a pre-merge verification path for Sentinel-authored AI pull requests under the manual-only quota policy. A manual `workflow_dispatch` may pass `base_ref=development` and `sentinel_pr_author=ubiquity-sentinel[bot]` with the exact PR `scope_base`; the workflow then selects the same complete check set as a Sentinel-authored pull request. This does not add an automatic trigger, a push trigger, a merge-queue trigger, or a deployment. The resulting check runs remain bound to the exact dispatched head and are accepted only when every selected job succeeds; skipped, cancelled, neutral, or missing jobs are not success. The normal `pull_request: closed` post-merge run remains the hosted receipt for ordinary merged changes.
+
 ## Fresh capacity exhaustion reconciles a retained ambiguous reset identity - 2026-10-21
 
 A fresh `100%`-used capacity observation with a future reset deadline now reconciles an existing class block even when the

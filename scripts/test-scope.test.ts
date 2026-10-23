@@ -341,7 +341,7 @@ describe("Sentinel complete CI check set", () => {
     const workflow = parse(readFileSync(join(ROOT, ".github/workflows/deno-deploy.yml"), "utf8")) as {
       on?: {
         pull_request?: { types?: string[] };
-        workflow_dispatch?: { inputs?: Record<string, { required?: boolean }> };
+        workflow_dispatch?: { inputs?: Record<string, { required?: boolean; default?: string; type?: string }> };
         push?: unknown;
         merge_group?: unknown;
       };
@@ -354,13 +354,18 @@ describe("Sentinel complete CI check set", () => {
       "github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)";
     expect(workflow.on?.pull_request?.types).toEqual(["closed"]);
     expect(workflow.on?.workflow_dispatch?.inputs?.scope_base.required).toBe(false);
+    expect(workflow.on?.workflow_dispatch?.inputs?.base_ref.default).toBe("development");
+    expect(workflow.on?.workflow_dispatch?.inputs?.sentinel_pr_author.required).toBe(false);
     expect(workflow.on?.push).toBeUndefined();
     expect(workflow.on?.merge_group).toBeUndefined();
     expect(workflow.env?.TEST_SCOPE_BASE).toContain("github.event.pull_request.base.sha");
     expect(workflow.env?.TEST_SCOPE_BASE).toContain("inputs.scope_base");
     expect(workflow.env?.GITHUB_EVENT_BEFORE).toBe("${{ github.event.before }}");
     expect(Object.values(jobs).every((job) => job.env?.GITHUB_EVENT_BEFORE === undefined)).toBe(true);
-    expect(workflow.env?.GITHUB_PR_AUTHOR).toBe("${{ github.event.pull_request.user.login }}");
+    expect(workflow.env?.GITHUB_BASE_REF).toContain("inputs.base_ref");
+    expect(workflow.env?.GITHUB_BASE_REF).toContain("github.event.pull_request.base.ref");
+    expect(workflow.env?.GITHUB_PR_AUTHOR).toContain("inputs.sentinel_pr_author");
+    expect(workflow.env?.GITHUB_PR_AUTHOR).toContain("github.event.pull_request.user.login");
     expect(Object.values(jobs).every((job) => job.env?.GITHUB_PR_AUTHOR === undefined)).toBe(true);
     for (const job of Object.values(jobs)) expect(job.if).toContain(mergedOnly);
     const jobNames = Object.keys(jobs).sort((left, right) => left.localeCompare(right));

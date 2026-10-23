@@ -83,7 +83,7 @@ fn original_request(
     let cancel = base::Cancel;
     let owner = RegisteredRenewalOwner::configured(
         "native-owner".into(),
-        root.0.join("home").to_str().unwrap().into(),
+        root.path().join("home").to_str().unwrap().into(),
     )
     .unwrap();
     let actor = admin_actor(store);
@@ -171,9 +171,9 @@ fn no_native_effect(root: &CaseRoot, servers: &Servers, response: &[u8]) {
         !response.starts_with(b"HTTP/1.1 200 "),
         "an aborted real import must never return source success"
     );
-    assert_eq!(fs::read(root.0.join("home/auth.json")).unwrap(), OLD);
+    assert_eq!(fs::read(root.path().join("home/auth.json")).unwrap(), OLD);
     assert!(
-        fs::read_dir(root.0.join("home"))
+        fs::read_dir(root.path().join("home"))
             .unwrap()
             .all(|entry| !entry
                 .unwrap()
@@ -195,7 +195,7 @@ fn revoke_admin(store: &base::Store) {
     store.seed(key, "user-revoked", user);
 }
 fn assert_writer_stopped(root: &CaseRoot) {
-    let path = root.0.join("home/async-native-write");
+    let path = root.path().join("home/async-native-write");
     let witness = fs::read(&path).unwrap();
     thread::sleep(Duration::from_millis(25));
     assert_eq!(
@@ -209,8 +209,8 @@ fn actual_quiet_client_eof_before_and_after_started_never_writes_or_publishes() 
     for phase in ["start", "started_handler"] {
         let root = CaseRoot::new();
         let store = base::Store::default();
-        let account = setup(&store, &root.0.join("home"));
-        let servers = Servers::start(store.clone(), root.0.join("home"));
+        let account = setup(&store, &root.path().join("home"));
+        let servers = Servers::start(store.clone(), root.path().join("home"));
         let pause = PauseHandle::install(&servers, phase, 1);
         let (mut child, address) = start_custodian(&root, &servers, account.clone());
         let request = original_request(&store, &root, account, address);
@@ -226,8 +226,8 @@ fn actual_quiet_client_eof_before_and_after_started_never_writes_or_publishes() 
 fn actual_custodian_death_after_stop_closes_live_actor_without_late_effect() {
     let root = CaseRoot::new();
     let store = base::Store::default();
-    let account = setup(&store, &root.0.join("home"));
-    let servers = Servers::start(store.clone(), root.0.join("home"));
+    let account = setup(&store, &root.path().join("home"));
+    let servers = Servers::start(store.clone(), root.path().join("home"));
     let pause = PauseHandle::install(&servers, "started_handler", 3);
     let (mut child, address) = start_custodian(&root, &servers, account.clone());
     let request = original_request(&store, &root, account, address);
@@ -246,8 +246,8 @@ fn actual_custodian_death_after_stop_closes_live_actor_without_late_effect() {
 fn actual_admin_revocation_before_native_write_refuses_the_same_started_claim() {
     let root = CaseRoot::new();
     let store = base::Store::default();
-    let account = setup(&store, &root.0.join("home"));
-    let servers = Servers::start(store.clone(), root.0.join("home"));
+    let account = setup(&store, &root.path().join("home"));
+    let servers = Servers::start(store.clone(), root.path().join("home"));
     let pause = PauseHandle::install(&servers, "started_handler", 3);
     let (mut child, address) = start_custodian(&root, &servers, account.clone());
     let request = original_request(&store, &root, account, address);
@@ -274,8 +274,8 @@ fn actual_admin_revocation_before_native_write_refuses_the_same_started_claim() 
 fn actual_original_deadline_expiry_after_stop_never_renews_mutation_authority() {
     let root = CaseRoot::new();
     let store = base::Store::default();
-    let account = setup(&store, &root.0.join("home"));
-    let servers = Servers::start(store.clone(), root.0.join("home"));
+    let account = setup(&store, &root.path().join("home"));
+    let servers = Servers::start(store.clone(), root.path().join("home"));
     let pause = PauseHandle::install(&servers, "started_handler", 3);
     let (mut child, address) = start_custodian(&root, &servers, account.clone());
     let request = original_request(&store, &root, account, address);
@@ -293,21 +293,25 @@ fn actual_original_deadline_expiry_after_stop_never_renews_mutation_authority() 
 fn actual_revoked_publication_retains_native_receipt_but_never_source_success() {
     let root = CaseRoot::new();
     let store = base::Store::default();
-    let account = setup(&store, &root.0.join("home"));
-    let servers = Servers::start(store.clone(), root.0.join("home"));
+    let account = setup(&store, &root.path().join("home"));
+    let servers = Servers::start(store.clone(), root.path().join("home"));
     let pause = PauseHandle::install(&servers, "publication", 1);
     let (mut child, address) = start_custodian(&root, &servers, account.clone());
     let request = original_request(&store, &root, account, address);
     pause.wait();
     assert_writer_stopped(&root);
-    assert_ne!(fs::read(root.0.join("home/auth.json")).unwrap(), OLD);
-    assert!(fs::read_dir(root.0.join("home")).unwrap().any(|entry| {
-        entry
+    assert_ne!(fs::read(root.path().join("home/auth.json")).unwrap(), OLD);
+    assert!(
+        fs::read_dir(root.path().join("home"))
             .unwrap()
-            .file_name()
-            .to_string_lossy()
-            .ends_with(".receipt")
-    }));
+            .any(|entry| {
+                entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".receipt")
+            })
+    );
     revoke_admin(&store);
     pause.resume();
     let response = request.reply.join().unwrap();
@@ -325,7 +329,7 @@ fn actual_revoked_publication_retains_native_receipt_but_never_source_success() 
         "SYNTHETIC_OLD_ACCESS"
     );
     assert_ne!(
-        fs::read(root.0.join("home/auth.json")).unwrap(),
+        fs::read(root.path().join("home/auth.json")).unwrap(),
         OLD,
         "uncertain native durability must not be rolled back or erased"
     );
@@ -343,14 +347,14 @@ fn actual_revoked_publication_retains_native_receipt_but_never_source_success() 
 fn actual_lost_publication_reply_reconciles_only_the_same_native_receipt() {
     let root = CaseRoot::new();
     let store = base::Store::default();
-    let account = setup(&store, &root.0.join("home"));
-    let servers = Servers::start(store.clone(), root.0.join("home"));
+    let account = setup(&store, &root.path().join("home"));
+    let servers = Servers::start(store.clone(), root.path().join("home"));
     servers
         .traffic
         .drop_publication
         .store(true, Ordering::SeqCst);
     let (mut child, address) = start_custodian(&root, &servers, account.clone());
-    let (response, _) = request(&store, &root.0.join("home"), account, address, NEW);
+    let (response, _) = request(&store, &root.path().join("home"), account, address, NEW);
     assert!(response.starts_with(b"HTTP/1.1 200 "));
     child.wait_clean();
     let phases = servers.traffic.phases.lock().unwrap();
@@ -364,7 +368,7 @@ fn actual_lost_publication_reply_reconciles_only_the_same_native_receipt() {
         "no HTTP publication retry or new request digest is allowed"
     );
     assert_eq!(
-        fs::read_dir(root.0.join("home"))
+        fs::read_dir(root.path().join("home"))
             .unwrap()
             .filter(|entry| entry
                 .as_ref()

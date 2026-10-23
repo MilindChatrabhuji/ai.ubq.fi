@@ -276,7 +276,18 @@ fn admin_actor(store: &base::Store) -> actor::NativeRenewalActor {
     ))
     .unwrap()
 }
-struct CaseRoot(PathBuf);
+struct CaseRoot {
+    base: PathBuf,
+    root: PathBuf,
+}
+impl CaseRoot {
+    fn base(&self) -> &Path {
+        &self.base
+    }
+    fn path(&self) -> &Path {
+        &self.root
+    }
+}
 fn assert_fixture_child_binding(base: &Path, root: &Path, home: &Path) {
     assert_owned_canonical_directory(base);
     assert_owned_canonical_directory(root);
@@ -287,13 +298,19 @@ fn assert_fixture_child_binding(base: &Path, root: &Path, home: &Path) {
 impl CaseRoot {
     fn new() -> Self {
         static N: AtomicUsize = AtomicUsize::new(0);
-        let base = fs::canonicalize(std::env::temp_dir()).unwrap();
-        assert_owned_canonical_directory(&base);
-        let root = base.join(format!(
-            "native-flow-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::SeqCst)
+        let parent = if cfg!(target_os = "macos") {
+            PathBuf::from("/private/tmp")
+        } else {
+            fs::canonicalize(std::env::temp_dir()).unwrap()
+        };
+        let sequence = N.fetch_add(1, Ordering::SeqCst);
+        let base = parent.join(format!(
+            "native-flow-base-{}-{sequence}",
+            std::process::id()
         ));
+        fs::create_dir(&base).unwrap();
+        fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
+        let root = base.join(format!("native-flow-{}-{sequence}", std::process::id()));
         fs::create_dir(&root).unwrap();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
         for name in ["home", "replay"] {
@@ -310,24 +327,24 @@ impl CaseRoot {
             f.write_all(bytes).unwrap();
             f.sync_all().unwrap();
         }
-        Self(root)
+        Self { base, root }
     }
 }
 impl Drop for CaseRoot {
     fn drop(&mut self) {
         if thread::panicking() {
-            eprintln!("PRESERVED_NATIVE_FLOW {}", self.0.display());
+            eprintln!("PRESERVED_NATIVE_FLOW {}", self.base.display());
         } else {
-            fs::remove_dir_all(&self.0).unwrap();
+            fs::remove_dir_all(&self.base).unwrap();
         }
     }
 }
 #[test]
 fn fixture_child_paths_refuse_escaping_and_symlinked_bindings() {
     let root = CaseRoot::new();
-    let base = fs::canonicalize(std::env::temp_dir()).unwrap();
-    let home = root.0.join("home");
-    assert_fixture_child_binding(&base, &root.0, &home);
+    let base = root.base().to_path_buf();
+    let home = root.path().join("home");
+    assert_fixture_child_binding(&base, root.path(), &home);
     assert!(
         std::panic::catch_unwind(|| {
             assert_fixture_child_binding(&base, &home, &home.join("home"));
@@ -336,12 +353,12 @@ fn fixture_child_paths_refuse_escaping_and_symlinked_bindings() {
     );
     assert!(
         std::panic::catch_unwind(|| {
-            assert_fixture_child_binding(&base, &root.0, &base);
+            assert_fixture_child_binding(&base, root.path(), &base);
         })
         .is_err()
     );
-    let alias = root.0.join("root-alias");
-    std::os::unix::fs::symlink(&root.0, &alias).unwrap();
+    let alias = root.path().join("root-alias");
+    std::os::unix::fs::symlink(root.path(), &alias).unwrap();
     assert!(
         std::panic::catch_unwind(|| {
             assert_fixture_child_binding(&base, &alias, &home);
@@ -708,8 +725,8 @@ struct ProcessSetup {
 fn controlled_custodian_process() {
     use std::os::fd::AsFd;
     let root = std::env::current_dir().unwrap();
-    let base = fs::canonicalize(std::env::temp_dir()).unwrap();
-    assert_fixture_child_binding(&base, &root, &root.join("home"));
+    let base = root.parent().unwrap();
+    assert_fixture_child_binding(base, &root, &root.join("home"));
     let setup: ProcessSetup =
         serde_json::from_slice(&fs::read(root.join("process.json")).unwrap()).unwrap();
     assert_fixture_child_binding(&base, &root, &setup.home);
@@ -842,8 +859,8 @@ fn start_custodian(
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
     let address = listener.local_addr().unwrap();
     let setup = ProcessSetup {
-        home: root.0.join("home"),
-        config: native_config(&root.0, address),
+        home: root.path().join("home"),
+        config: native_config(root.path(), address),
         authority: servers.authority,
         models: servers.models,
         oauth: servers.oauth,
@@ -853,7 +870,7 @@ fn start_custodian(
         .create_new(true)
         .write(true)
         .mode(0o600)
-        .open(root.0.join("process.json"))
+        .open(root.path().join("process.json"))
         .unwrap();
     file.write_all(&serde_json::to_vec(&setup).unwrap())
         .unwrap();
@@ -862,13 +879,13 @@ fn start_custodian(
         .create_new(true)
         .write(true)
         .mode(0o600)
-        .open(root.0.join("custodian.stdout"))
+        .open(root.path().join("custodian.stdout"))
         .unwrap();
     let err = fs::OpenOptions::new()
         .create_new(true)
         .write(true)
         .mode(0o600)
-        .open(root.0.join("custodian.stderr"))
+        .open(root.path().join("custodian.stderr"))
         .unwrap();
     let input: OwnedFd = listener.into();
     let child = Command::new(std::env::current_exe().unwrap())
@@ -878,7 +895,7 @@ fn start_custodian(
             "--nocapture",
             "--ignored",
         ])
-        .current_dir(&root.0)
+        .current_dir(root.path())
         .env_clear()
         .env("TMPDIR", std::env::temp_dir())
         .stdin(Stdio::from(input))
@@ -968,10 +985,10 @@ fn request(
 fn actual_existing_account_original_start_owned_child_custody_durability_and_publication() {
     let root = CaseRoot::new();
     let store = base::Store::default();
-    let account = setup(&store, &root.0.join("home"));
-    let servers = Servers::start(store.clone(), root.0.join("home"));
+    let account = setup(&store, &root.path().join("home"));
+    let servers = Servers::start(store.clone(), root.path().join("home"));
     let (mut child, address) = start_custodian(&root, &servers, account.clone());
-    let (response, _metadata) = request(&store, &root.0.join("home"), account, address, NEW);
+    let (response, _metadata) = request(&store, &root.path().join("home"), account, address, NEW);
     assert!(
         response.starts_with(b"HTTP/1.1 200 "),
         "real source success required, not a dummy200 or narrowed unavailable path: {}",
@@ -1044,7 +1061,7 @@ fn actual_existing_account_original_start_owned_child_custody_durability_and_pub
     assert!(cache["chunk_count"].as_u64().unwrap() > 0);
     assert!(cache["source_chunk_count"].as_u64().unwrap() > 0);
     assert_eq!(cache["content_type"], "application/json; charset=utf-8");
-    let bytes = fs::read(root.0.join("home/auth.json")).unwrap();
+    let bytes = fs::read(root.path().join("home/auth.json")).unwrap();
     let document = SourceJson::parse_bytes(&bytes).unwrap();
     let next = super::import_documents::credentials(&document).unwrap();
     assert_eq!(next.access_token.expose(), "SYNTHETIC_NEW_ACCESS");
@@ -1063,10 +1080,10 @@ fn actual_existing_account_original_start_owned_child_custody_durability_and_pub
             .as_str(),
         r#""\ud800""#
     );
-    let witness = fs::read(root.0.join("home/async-native-write")).unwrap();
+    let witness = fs::read(root.path().join("home/async-native-write")).unwrap();
     thread::sleep(Duration::from_millis(25));
     assert_eq!(
-        fs::read(root.0.join("home/async-native-write")).unwrap(),
+        fs::read(root.path().join("home/async-native-write")).unwrap(),
         witness,
         "actual writer must have stopped/reaped before credential mutation"
     );
