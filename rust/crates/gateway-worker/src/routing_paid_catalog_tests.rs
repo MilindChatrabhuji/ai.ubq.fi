@@ -30,8 +30,10 @@ use gateway_core::{
     },
 };
 use gateway_publication::{
-    ConfiguredPaidInputs, PreparedConfigurationPublication,
-    control_publication::{bootstrap_fixture_owner, fixture_owner_statement, runtime_config_key},
+    control_publication::{
+        ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
+        fixture_owner_statement, runtime_config_key,
+    },
     transport::{
         NativePublicationSender, PublicationCarrier, PublicationReceiver, PublicationRequest,
         PublicationResponse,

@@ -28,7 +28,7 @@ use gateway_core::{
     state::AuthorityStore,
 };
 use gateway_publication::{
-    ConfiguredPaidInputs, PreparedConfigurationPublication,
+    control_publication::{ConfiguredPaidInputs, PreparedConfigurationPublication},
     transport::{OwnedNativeAuthHeaders, PublicationReceiver, PublicationRequest},
 };
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
@@ -537,7 +537,7 @@ fn read_request(
                 .map(|v| v.parse().ok())
                 .unwrap_or(Some(0))?;
             if len
-                > gateway_publication::import_publication_max_bytes()
+                > gateway_authority::native_control::import::import_publication_max_bytes()
                     .max(gateway_auth::native::NATIVE_MAX_BODY_BYTES)
             {
                 return None;

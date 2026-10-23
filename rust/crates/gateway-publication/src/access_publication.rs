@@ -45,7 +45,6 @@ impl RegisteredAccessOwner {
 }
 
 #[cfg(test)]
-#[path = "access_owner_registration_tests.rs"]
 mod registration_tests;
 
 pub trait AccessCredentialSource {

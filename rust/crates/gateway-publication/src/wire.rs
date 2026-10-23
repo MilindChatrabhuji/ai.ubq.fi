@@ -1,4 +1,7 @@
-use crate::{PreparedAccessPublication, PreparedConfigurationPublication};
+use crate::{
+    access_publication::PreparedAccessPublication,
+    control_publication::PreparedConfigurationPublication,
+};
 use gateway_auth::{
     GatewayError,
     native_credentials::{NativeCredentials, parse_native_document},

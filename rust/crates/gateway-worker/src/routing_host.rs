@@ -420,8 +420,10 @@ impl Host {
         let configuration: gateway_authority::paid_control::PaidControlConfig =
             serde_json::from_value(configuration.json_value()?.clone())
                 .map_err(|_| unavailable("The paid control configuration is invalid."))?;
-        let binding =
-            gateway_publication::configured_paid_binding(paid, &Secret::new(secret.clone()));
+        let binding = gateway_publication::control_publication::configured_paid_binding(
+            paid,
+            &Secret::new(secret.clone()),
+        );
         let expected = if paid == PaidProvider::Surplus {
             configuration.surplus_binding.as_ref()
         } else {

@@ -16,11 +16,11 @@ use gateway_auth::{
 };
 use gateway_authority::native_control::NativeRenewalFence;
 use gateway_publication::{
-    ExpectedAccessPublication, ExpectedManagedAccessPublication, PreparedPublicationCommand,
-    PublicationDisposition,
+    managed::ExpectedManagedAccessPublication,
     transport::{
         NativePublicationSender, PublicationCarrier, PublicationRequest, PublicationResponse,
     },
+    wire::{ExpectedAccessPublication, PreparedPublicationCommand, PublicationDisposition},
 };
 use std::{net::TcpStream, time::Instant};
 

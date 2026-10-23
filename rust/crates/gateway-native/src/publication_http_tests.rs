@@ -5,8 +5,8 @@ use gateway_auth::{
 };
 use gateway_authority::paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
 use gateway_publication::{
-    PreparedPublicationCommand, PublicationDisposition, PublicationReceipt,
     transport::NativePublicationSender,
+    wire::{PreparedPublicationCommand, PublicationDisposition, PublicationReceipt},
 };
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
 use std::{
