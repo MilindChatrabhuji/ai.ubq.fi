@@ -208,3 +208,39 @@ test("Passport unavailable keys fail closed, proxy origin stays fixed and logout
   setKvForTest(kvStub);
   assert.equal((await handler(request("/admin/api-keys"))).status, 401);
 });
+test("Passport exchange transport failure and timeout return 502 with passport_unavailable and clear state cookie", async () => {
+  const { state, stateCookie } = await begin();
+  globalThis.fetch = createFetchMock(async (input) => {
+    const url = urlOf(input);
+    if (url === `${ISSUER}/api/auth/sso/exchange`) {
+      throw new TypeError("fetch failed");
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+  const transportFailure = await handler(request(`/auth/callback?state=${state}&code=single-use-code`, "", { headers: { Cookie: stateCookie } }));
+  assert.equal(transportFailure.status, 502);
+  const payload = await transportFailure.json();
+  assert.equal(payload.error.code, "passport_unavailable");
+  assert.equal(payload.error.message, "Passport verification is unavailable.");
+  const cookies = transportFailure.headers.getSetCookie();
+  assert(cookies.some((value) => value.startsWith(`${STATE_COOKIE}=; Max-Age=0;`)));
+});
+
+test("Passport exchange timeout returns 502 with passport_unavailable and clears state cookie", async () => {
+  const { state, stateCookie } = await begin();
+  globalThis.fetch = createFetchMock(async (input) => {
+    const url = urlOf(input);
+    if (url === `${ISSUER}/api/auth/sso/exchange`) {
+      const error = new Error("The operation was aborted due to timeout");
+      error.name = "TimeoutError";
+      throw error;
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+  const timeoutFailure = await handler(request(`/auth/callback?state=${state}&code=single-use-code`, "", { headers: { Cookie: stateCookie } }));
+  assert.equal(timeoutFailure.status, 502);
+  const payload = await timeoutFailure.json();
+  assert.equal(payload.error.code, "passport_unavailable");
+  const cookies = timeoutFailure.headers.getSetCookie();
+  assert(cookies.some((value) => value.startsWith(`${STATE_COOKIE}=; Max-Age=0;`)));
+});

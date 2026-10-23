@@ -265,13 +265,18 @@ const callback = async (req: Request): Promise<Response> => {
       params.getAll("code").length !== 1
     )
       throw new PassportError();
-    const response = await fetch(`${ISSUER}/api/auth/sso/exchange`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ code, clientId: "ai", audience: "ai", origin: ORIGIN, redirectUri: CALLBACK }),
-      redirect: "error",
-      signal: AbortSignal.timeout(10_000),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${ISSUER}/api/auth/sso/exchange`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ code, clientId: "ai", audience: "ai", origin: ORIGIN, redirectUri: CALLBACK }),
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      throw new PassportError(502);
+    }
     const body = await boundedJson(response, 65_536);
     if (!isRecord(body) || typeof body.accessToken !== "string") throw new PassportError();
     const claims = await verifyToken(body.accessToken);
