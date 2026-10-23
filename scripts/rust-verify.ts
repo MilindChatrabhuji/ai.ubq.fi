@@ -168,7 +168,6 @@ export const planRustVerification = (root: string, paths: readonly string[], sta
   const cargo = ["--locked", "--offline", "--target", target, ...flags];
   const commands: RustCommand[] = [
     { argv: ["cargo", "fmt", "--all", "--", "--check"], cwd, isolated: true },
-    { argv: ["cargo", "check", ...cargo, ...(stage === "native" ? ["--all-targets"] : ["--lib"])], cwd, isolated: true },
     { argv: ["cargo", "clippy", ...cargo, ...(stage === "native" ? ["--all-targets"] : ["--lib"]), "--", "-D", "warnings"], cwd, isolated: true },
   ];
   // A complete CI job still retains documentation-only zero-test selection.

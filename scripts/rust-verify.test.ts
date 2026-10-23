@@ -66,6 +66,52 @@ test("Rust source selects its real Cargo reverse dependencies without a native c
   );
 });
 
+test("plan retains fmt, clippy, native tests and the Worker build without a redundant cargo check", () => {
+  const root = fixture();
+  const paths = ["rust/crates/gateway-core/src/lib.rs"];
+  const packageFlags = (command: RustCommand): string[] => {
+    const names: string[] = [];
+    command.argv.forEach((value, index) => {
+      if (value === "-p") names.push(command.argv[index + 1]);
+    });
+    return names;
+  };
+  const native = planRustVerification(root, paths, "native");
+  const nativeFmt = native.commands.filter((command) => command.argv[0] === "cargo" && command.argv[1] === "fmt");
+  const nativeClippy = native.commands.filter((command) => command.argv[0] === "cargo" && command.argv[1] === "clippy");
+  assert.equal(nativeFmt.length, 1);
+  const nativeFmtCommand = nativeFmt[0];
+  assert.ok(nativeFmtCommand);
+  assert.deepEqual(nativeFmtCommand.argv, ["cargo", "fmt", "--all", "--", "--check"]);
+  assert.equal(nativeClippy.length, 1);
+  const nativeClippyCommand = nativeClippy[0];
+  assert.ok(nativeClippyCommand);
+  assert.deepEqual(packageFlags(nativeClippyCommand), native.packages);
+  assert.deepEqual(nativeClippyCommand.argv.slice(-4), ["--all-targets", "--", "-D", "warnings"]);
+  assert.deepEqual(native.testPackages, ["gateway-core"]);
+  const nativeTests = native.commands.filter((command) => command.testListing === true || command.testRun === true);
+  assert.equal(nativeTests.length, 2);
+  assert.ok(nativeTests.every((command) => command.argv[0] === "cargo" && command.argv[1] === "test" && packageFlags(command).includes("gateway-core")));
+  assert.ok(native.commands.every((command) => command.argv[0] !== "cargo" || command.argv[1] !== "check"));
+
+  const wasm = planRustVerification(root, paths, "wasm");
+  const wasmFmt = wasm.commands.filter((command) => command.argv[0] === "cargo" && command.argv[1] === "fmt");
+  const wasmClippy = wasm.commands.filter((command) => command.argv[0] === "cargo" && command.argv[1] === "clippy");
+  assert.equal(wasmFmt.length, 1);
+  const wasmFmtCommand = wasmFmt[0];
+  assert.ok(wasmFmtCommand);
+  assert.deepEqual(wasmFmtCommand.argv, ["cargo", "fmt", "--all", "--", "--check"]);
+  assert.equal(wasmClippy.length, 1);
+  const wasmClippyCommand = wasmClippy[0];
+  assert.ok(wasmClippyCommand);
+  assert.deepEqual(packageFlags(wasmClippyCommand), wasm.packages);
+  assert.deepEqual(wasmClippyCommand.argv.slice(-4), ["--lib", "--", "-D", "warnings"]);
+  assert.equal(wasm.buildWorker, true);
+  assert.equal(wasm.testPackages.length, 0);
+  assert.deepEqual(wasm.commands.at(-1)?.argv, ["worker-build", "--release", "--locked"]);
+  assert.ok(wasm.commands.every((command) => command.argv[0] !== "cargo" || command.argv[1] !== "check"));
+});
+
 test("native command and test targets follow the actual supported host while WASM stays portable", () => {
   const root = fixture();
   const paths = ["rust/crates/gateway-core/src/lib.rs"];
@@ -76,7 +122,7 @@ test("native command and test targets follow the actual supported host while WAS
     assert.equal(rustNativeTarget(host), expected);
     const native = planRustVerification(root, paths, "native", false, host);
     const compiled = native.commands.filter((command) => command.argv.includes("--target"));
-    assert.equal(compiled.length, 4);
+    assert.equal(compiled.length, 3);
     assert.ok(compiled.every((command) => command.argv[command.argv.indexOf("--target") + 1] === expected));
     assert.ok(native.commands.some((command) => command.testListing));
     const wasm = planRustVerification(root, paths, "wasm", false, host);
