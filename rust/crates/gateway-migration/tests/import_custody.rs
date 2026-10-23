@@ -10,7 +10,7 @@ use gateway_core::{
 };
 use gateway_migration::*;
 use serde_json::{Value, json};
-use support::*;
+use support::{fixture::*, sqlite_store::*};
 
 fn key(kind: &str, reference: &str) -> RecordKey {
     gateway_auth::store::key(json!([

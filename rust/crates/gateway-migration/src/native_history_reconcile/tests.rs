@@ -302,7 +302,7 @@ fn different_or_older_latest_header_is_not_silently_relabelled() {
 #[test]
 fn complete_merged_key_audit_runs_before_any_output() {
     let mut source: NativeCapture =
-        serde_json::from_str(include_str!("../tests/fixtures/native-source.json")).unwrap();
+        serde_json::from_str(include_str!("../../tests/fixtures/native-source.json")).unwrap();
     // Break the genuine id/hash pair in a still-well-typed native graph.
     let NativeValue::SourceGraphV1(graph) = &source.entries[0].value else {
         panic!("fixture graph")

@@ -4,7 +4,7 @@ use gateway_auth::store::key;
 use gateway_core::{state::AuthorityStore, tuple_key::TupleKey};
 use gateway_migration::{native_stage::Captured, *};
 use serde_json::{Value, json};
-use support::*;
+use support::{fixture::*, sqlite_store::*};
 
 const SOURCE: &str = "6d4d4790a7c06514b92938ff677dbfd52764461d";
 

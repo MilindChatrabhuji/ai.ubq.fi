@@ -1,9 +1,7 @@
 //! Private offline driver; no command arguments, dotenv, network or live-store discovery.
 #[cfg(all(unix, not(target_arch = "wasm32")))]
-#[path = "native-copied-store-inverse/driver.rs"]
 mod driver;
 #[cfg(all(unix, not(target_arch = "wasm32")))]
-#[path = "native-copied-store-inverse/store.rs"]
 mod store;
 
 #[cfg(all(unix, not(target_arch = "wasm32")))]

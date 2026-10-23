@@ -1,6 +1,7 @@
 #![cfg(all(unix, not(target_arch = "wasm32")))]
-#[path = "support/fixture.rs"]
-mod support;
+mod support {
+    pub mod fixture;
+}
 use gateway_auth::{
     crypto::base64url,
     native_credentials::{NativeOwnerId, OwnerFence, parse_native_document},
@@ -14,7 +15,7 @@ use std::{
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
-use support::*;
+use support::fixture::{Directory, run};
 
 fn document(account: &str, serial: u32) -> Value {
     let expiry = SystemTime::now()

@@ -16,7 +16,7 @@ use gateway_migration::{
 };
 use serde_json::{Value, json};
 use std::cell::Cell;
-use support::*;
+use support::{fixture::*, sqlite_store::*};
 
 struct Host(Cell<u64>);
 impl SourceDateHost for Host {

@@ -187,5 +187,4 @@ impl AuditInventory for Merged<'_> {
 }
 
 #[cfg(test)]
-#[path = "native_history_reconcile_tests.rs"]
 mod tests;

@@ -27,5 +27,21 @@ sha2 = "=0.10.9"
 gateway-native = { path = "../gateway-native" }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 
+[[example]]
+name = "native-copied-store-inverse"
+path = "tests/copied_store_inverse/native-copied-store-inverse.rs"
+
+[[example]]
+name = "native-offline-fixture"
+path = "tests/support/native-offline-fixture.rs"
+
+[[example]]
+name = "offline-fixture"
+path = "tests/support/offline-fixture.rs"
+
+[[example]]
+name = "worker-custody-fixture"
+path = "tests/support/worker-custody-fixture.rs"
+
 [lints]
 workspace = true
