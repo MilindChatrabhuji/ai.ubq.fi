@@ -1,8 +1,9 @@
 //! Pure request data shared by planner-only and stateful integration fixtures.
-use super::{RoutingInput, fixture_json};
+use crate::source_catalog::json as fixture_json;
 use gateway_auth::{AuthMethod, AuthPrincipal};
 use gateway_core::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
 use gateway_providers::ClientSurface;
+use gateway_routing_runtime::types::RoutingInput;
 use gateway_schema::{
     catalog::{CatalogInput, ProviderCatalog},
     snapshot::ModelSnapshot,
@@ -10,6 +11,7 @@ use gateway_schema::{
 use serde_json::json;
 
 pub const NOW: i64 = 1_800_000_000_000;
+
 pub fn input(id: &str, model: &str, providers: &[&str]) -> RoutingInput {
     let principal = AuthPrincipal {
         token: None,

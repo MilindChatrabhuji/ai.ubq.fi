@@ -15,6 +15,7 @@ members = [
   "crates/gateway-claude-runtime",
   "crates/gateway-observability",
   "crates/gateway-routing-runtime",
+  "crates/gateway-routing-runtime-test-support",
   "crates/gateway-extras-runtime",
   "crates/gateway-publication",
   "crates/gateway-native",
@@ -52,6 +53,7 @@ gateway-migration = { path = "crates/gateway-migration" }
 gateway-claude-runtime = { path = "crates/gateway-claude-runtime" }
 gateway-observability = { path = "crates/gateway-observability" }
 gateway-routing-runtime = { path = "crates/gateway-routing-runtime" }
+gateway-routing-runtime-test-support = { path = "crates/gateway-routing-runtime-test-support" }
 gateway-extras-runtime = { path = "crates/gateway-extras-runtime" }
 gateway-publication = { path = "crates/gateway-publication" }
 gateway-native = { path = "crates/gateway-native" }

@@ -5,8 +5,8 @@ use gateway_core::{
 };
 use gateway_providers::ClientSurface;
 use gateway_routing_runtime::{
-    RoutingError, RoutingInput, SourceRefusalBody,
     policy::{self, RouteHop},
+    types::{RoutingError, RoutingInput, SourceRefusalBody},
 };
 use source_input::{NOW, input};
 fn fixture_json<T: serde::Serialize + ?Sized>(value: &T) -> SourceJson {

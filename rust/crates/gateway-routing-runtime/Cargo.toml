@@ -16,5 +16,8 @@ serde_json = { workspace = true, features = ["float_roundtrip"] }
 chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
 
+[dev-dependencies]
+gateway-routing-runtime-test-support.workspace = true
+
 [lints]
 workspace = true

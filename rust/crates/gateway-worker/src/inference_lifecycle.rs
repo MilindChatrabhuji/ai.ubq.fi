@@ -6,7 +6,10 @@ use crate::{
     transport::stream::FinishHook,
 };
 use gateway_core::GatewayError;
-use gateway_routing_runtime::{AttemptUsage, PreparedAttempt, RoutingSession};
+use gateway_routing_runtime::{
+    session::RoutingSession,
+    types::{AttemptUsage, PreparedAttempt},
+};
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
 pub(crate) type Usage = Rc<RefCell<Option<Value>>>;

@@ -13,13 +13,9 @@ pub struct PendingLocalCompletion<S, I, C, H> {
     chosen_at_ms: i64,
     plan: Option<LocalCompletedJournalPlan>,
 }
-mod response;
-pub use response::{
-    BuiltLocalResponse, LocalAccountingProgress, LocalCompletionRefusal, LocalObservationSink,
-    LocalSelectedResponse, LocalWireDecision, LocalWireKind,
-};
+pub mod response;
 pub type LocalCompletionChoice<S, I, C, H> =
-    Result<BuiltLocalResponse<S, I, C, H>, LocalCompletionRefusal<S, I, C, H>>;
+    Result<response::BuiltLocalResponse<S, I, C, H>, response::LocalCompletionRefusal<S, I, C, H>>;
 
 pub enum LocalCompletionAdvance<S, I, C, H> {
     Ready(LocalDeliveryHandle<S, I, C, H>),

@@ -1,4 +1,3 @@
-mod support;
 use gateway_authority::TokenSource;
 use gateway_core::{
     js_string::JsString16,
@@ -17,9 +16,9 @@ use gateway_providers::{
     ClaudeBodyOptions, ClaudeCredentialKind, ClientSurface, OrdinaryPreparationContext,
     PreparedClaudeBody, prepare_source_request,
 };
-use gateway_routing_runtime::*;
+use gateway_routing_runtime::{currentness::*, custody, policy, session::*, types::*};
+use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use serde_json::json;
-use support::*;
 
 fn publication(workspace: Option<JsString16>, kind: ClaudeCredentialKind) -> PublishedCredential {
     let mut body_options = ClaudeBodyOptions::new(kind);

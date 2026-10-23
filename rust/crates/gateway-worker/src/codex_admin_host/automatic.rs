@@ -25,7 +25,7 @@ use gateway_core::{
     GatewayError,
     identity::{AccountBinding, RequestContext},
 };
-use gateway_routing_runtime::CodexRecovery;
+use gateway_routing_runtime::types::CodexRecovery;
 use std::cell::RefCell;
 use worker::Method;
 type RuntimeAuthority = Authority<RemoteAuthorityStore, PlatformTokens>;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::direct_credential;
+use crate::types::direct_credential;
 use gateway_auth::{AuthMethod, AuthPrincipal, crypto::Secret};
 use gateway_core::identity::{PrincipalId, RequestContext, RequestId};
 use gateway_providers::{
