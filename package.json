@@ -57,6 +57,8 @@
     "lint": "sh scripts/lint.sh",
     "lint:eslint": "sh scripts/lint.sh",
     "knip": "sh scripts/knip.sh",
+    "rust:quality": "bun --no-env-file scripts/rust-quality.ts",
+    "rust:quality:update": "bun --no-env-file scripts/rust-quality.ts --update",
     "size:check": "bun --no-env-file scripts/file-size-ratchet.ts",
     "size:update": "bun --no-env-file scripts/file-size-ratchet.ts --update",
     "spec:drift": "bun --no-env-file --no-install scripts/check-openai-spec-drift.ts",
