@@ -17,6 +17,10 @@
 - No `#[path = "..."]`. Keep the module tree conventional and move shared test or support code into a real module.
 - No `include!`. Use modules and typed constants instead of splicing source text into a crate.
 - The current port predates these rules and is not compliant. Treat existing violations as mandatory migration debt, not precedent: no change may add or enlarge a violation, new or substantially rewritten crates must comply immediately, and the port cannot be accepted as complete until every remaining violation is removed.
+- `scripts/rust-quality.ts` is the structural ratchet: `bun run rust:quality` enforces crate size and all rule violations; `bun run rust:quality:update` may only tighten the baseline.
+- Lint policy is selective. No `#[allow]` or `#[expect]` suppressions; no whole `pedantic`/`restriction` groups. Stage a noisy lint with `--force-warn` plus a baseline before making it fatal. Do not copy the TypeScript cognitive-complexity number into Clippy; use the 120-line function, 7-argument, nesting-5 thresholds in `rust/clippy.toml`.
+- Compile performance is measured, not assumed. Keep `[profile.release]` unchanged until the complete Worker build is measured; use the separate `release-candidate` profile for thin-LTO experiments, and keep dev/test debug at line tables only.
+- New crates target one cohesive responsibility at 600-850 lines. Test targets are separate crates with the same 1000-line cap. The full policy and migration order are in `docs/research/rust-quality-compile-performance-2026-10-23.md`.
 
 ## Local Credential Recovery Safety
 
