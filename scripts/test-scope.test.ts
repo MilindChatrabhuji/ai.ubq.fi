@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   ciScopeForSelection,
   classifyChangedPaths,
+  existingPaths,
   formatScopeMessage,
   isDocumentationPath,
   isTestPath,
@@ -570,6 +571,11 @@ describe("test scope", () => {
     expect(classifyChangedPaths(["AGENTS.md", "src/http.ts"]).documentationOnly).toBe(false);
     expect(isDocumentationPath("docs/guide.MDX")).toBe(true);
     expect(isDocumentationPath("docs/openapi.json")).toBe(false);
+  });
+
+  test("drops deleted changed paths before invoking the formatter", () => {
+    writeFileSync(join(fixture, "README.md"), "# Fixture\n");
+    expect(existingPaths(["README.md", "deleted.rs"], fixture)).toEqual(["README.md"]);
   });
 
   test("recognizes test files and echoes the dependency-scoped instructions", () => {

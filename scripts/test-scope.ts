@@ -63,6 +63,8 @@ const pathList = (args: readonly string[]): string[] => (git(args) ?? "").split(
 const normalizePath = (path: string): string => path.replaceAll("\\", "/").replace(/^\.\//, "").trim();
 const uniqueSorted = (paths: Iterable<string>): string[] => [...new Set(paths)].sort((left, right) => left.localeCompare(right));
 
+export const existingPaths = (paths: readonly string[], root = ROOT): string[] => paths.filter((path) => existsSync(resolve(root, path)));
+
 const isRelevantUntrackedPath = (path: string): boolean =>
   UNTRACKED_ROOTS.some((root) => path.startsWith(root)) || /^[^/]+\.(?:json|toml|ts|tsx|mts|cts|js|mjs|cjs|sh)$/i.test(path);
 
@@ -314,10 +316,11 @@ if (import.meta.main) {
   }
   if (args.includes("--check-docs")) {
     const selection = detectTestSelection();
-    if (selection.paths.length === 0) process.exit(0);
+    const paths = existingPaths(selection.paths);
+    if (paths.length === 0) process.exit(0);
     const prettier = resolve(ROOT, "tools/lint/node_modules/.bin/prettier");
     if (!existsSync(prettier)) throw new Error("Prettier is not installed; run the frozen lint dependency install first");
-    const result = spawnSync(prettier, ["--check", "--ignore-unknown", ...selection.paths], { cwd: ROOT, stdio: "inherit" });
+    const result = spawnSync(prettier, ["--check", "--ignore-unknown", ...paths], { cwd: ROOT, stdio: "inherit" });
     process.exit(result.status ?? 1);
   }
   if (process.env.TEST_SCOPE_FORCE === "1") process.exit(10);
