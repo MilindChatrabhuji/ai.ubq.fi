@@ -1,0 +1,9 @@
+too-many-lines-threshold = 120
+too-many-arguments-threshold = 7
+type-complexity-threshold = 250
+excessive-nesting-threshold = 5
+
+warn-on-all-wildcard-imports = true
+
+allow-unwrap-in-tests = false
+allow-expect-in-tests = false
