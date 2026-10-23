@@ -15,7 +15,10 @@ use gateway_extras_runtime::{
     PreparedCall, UpstreamResponse,
 };
 use gateway_providers::{AuthMaterial, PrepareOptions};
-use gateway_routing_runtime::{AdmissionHandle, ChildScope, DispatchTicket, TransportState};
+use gateway_routing_runtime::{
+    extras::{AdmissionHandle, ChildScope, DispatchTicket},
+    types::TransportState,
+};
 use serde_json::json;
 use std::{
     cell::{Cell, RefCell},

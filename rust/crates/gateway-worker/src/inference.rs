@@ -8,8 +8,11 @@ use gateway_core::{
 };
 use gateway_providers::{ClientSurface, ProviderEvent, StreamDecoder, decode_response};
 use gateway_routing_runtime::{
-    AttemptFailure, FailureOrigin, PreparedAttempt, RefusalDecision, RoutingInput, RoutingSession,
-    TransportState,
+    session::RoutingSession,
+    types::{
+        AttemptFailure, FailureOrigin, PreparedAttempt, RefusalDecision, RoutingInput,
+        TransportState,
+    },
 };
 use gateway_schema::source_request::{SourceRequestDocument, parse_http_body};
 use serde_json::json;
@@ -43,8 +46,11 @@ async fn dispatch_attempts(
     routing: routing_host::Host,
     cancellation: Rc<crate::transport::outbound::Cancellation>,
     capture: Rc<crate::inference_capture::Capture>,
-) -> Result<(Response, PreparedAttempt), gateway_routing_runtime::RoutingError> {
-    let mut pending: Option<(gateway_routing_runtime::WorkspaceContinuation, Vec<u8>)> = None;
+) -> Result<(Response, PreparedAttempt), gateway_routing_runtime::types::RoutingError> {
+    let mut pending: Option<(
+        gateway_routing_runtime::types::WorkspaceContinuation,
+        Vec<u8>,
+    )> = None;
     loop {
         let (attempt, continuation, retained_wire) =
             if let Some((continuation, wire)) = pending.take() {
@@ -76,10 +82,10 @@ async fn dispatch_attempts(
         let gate_trace = passive_trace.clone();
         // Claude actual body exists before any same-binding material/host constructor.
         let physical = match &attempt.request {
-            gateway_routing_runtime::PreparedWireRequest::Claude(_) => {
+            gateway_routing_runtime::types::PreparedWireRequest::Claude(_) => {
                 Some(routing.physical_claude(&attempt)?)
             }
-            gateway_routing_runtime::PreparedWireRequest::Ready(_) => None,
+            gateway_routing_runtime::types::PreparedWireRequest::Ready(_) => None,
         };
         let before_dispatch = || async move {
             if let Some(continuation) = continuation {
@@ -100,7 +106,7 @@ async fn dispatch_attempts(
             Ok(())
         };
         let result = match &attempt.request {
-            gateway_routing_runtime::PreparedWireRequest::Ready(request) => {
+            gateway_routing_runtime::types::PreparedWireRequest::Ready(request) => {
                 send_http(
                     &target,
                     Method::Post,
@@ -111,7 +117,7 @@ async fn dispatch_attempts(
                 )
                 .await
             }
-            gateway_routing_runtime::PreparedWireRequest::Claude(_) => {
+            gateway_routing_runtime::types::PreparedWireRequest::Claude(_) => {
                 send_constructed(
                     physical.ok_or_else(crate::inference_local_lifecycle::wrapper_error)?,
                     &cancellation,
@@ -200,7 +206,7 @@ async fn dispatch_attempts(
         let observed = session
             .observe_response(
                 &attempt,
-                gateway_routing_runtime::ResponseHead {
+                gateway_routing_runtime::types::ResponseHead {
                     status,
                     headers: headers.clone(),
                     provider_request_id: correlation(attempt.request.provider(), &headers)
@@ -271,13 +277,15 @@ async fn dispatch_attempts(
             )
             .await;
         match decision {
-            Ok(gateway_routing_runtime::ResponseDecision::Return) => {
+            Ok(gateway_routing_runtime::types::ResponseDecision::Return) => {
                 return Ok((response, attempt));
             }
-            Ok(gateway_routing_runtime::ResponseDecision::Continue) => {
+            Ok(gateway_routing_runtime::types::ResponseDecision::Continue) => {
                 body::discard_response(&mut response);
             }
-            Ok(gateway_routing_runtime::ResponseDecision::WorkspaceContinuation(continuation)) => {
+            Ok(gateway_routing_runtime::types::ResponseDecision::WorkspaceContinuation(
+                continuation,
+            )) => {
                 body::discard_response(&mut response);
                 pending = Some((*continuation, wire));
             }

@@ -1,5 +1,3 @@
-mod support;
-
 use gateway_auth::AuthMethod;
 use gateway_authority::{
     Authority, AuthorityClock, REQUEST_LEASE_MS, TokenSource, keys,
@@ -16,16 +14,20 @@ use gateway_core::{
     },
     tuple_key::{ScalarKeyPart, TupleKey},
 };
-use gateway_routing_runtime::{
-    RoutingHost, RoutingSession, custody, local_work::*, policy, recover_pending,
+use gateway_routing_runtime::local_work::completion::response::{
+    LocalAccountingProgress, LocalWireKind,
 };
+use gateway_routing_runtime::{
+    custody, local_work::*, policy, session::RoutingSession, settlement::recover_pending,
+    types::RoutingHost,
+};
+use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use gateway_schema::source_request::SourceRequestDocument;
 use serde_json::json;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use support::*;
 
 const ORIGINAL: &str = r#"{"input":"original\ud800","stream":false,"max_output_tokens":2048,"model":"unavailable-model"}"#;
 type LocalHandle = LocalWorkHandle<Store, Store, Store, Host>;
@@ -68,7 +70,7 @@ fn begin_local(store: &Store, id: &str) -> LocalHandle {
     .unwrap()
 }
 
-fn finish_built(local: LocalHandle) -> gateway_routing_runtime::RecoveredSession {
+fn finish_built(local: LocalHandle) -> gateway_routing_runtime::types::RecoveredSession {
     let mut built = local.retain_built_response().unwrap();
     let mut selected = run(built.select_response()).unwrap();
     assert_eq!(

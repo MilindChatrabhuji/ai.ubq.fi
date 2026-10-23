@@ -12,8 +12,12 @@ use futures_util::{Stream, task::AtomicWaker};
 use gateway_compaction::types::{CompactionOutcome, ResponseOptions};
 use gateway_core::lifecycle::{BodyOutcome, ReaderTermination, TransportObservation};
 use gateway_routing_runtime::{
-    RoutingError, RoutingSession,
-    local_work::{LocalAdmissionInput, LocalRequestMetadata, LocalWireKind, LocalWorkHandle},
+    local_work::{
+        LocalAdmissionInput, LocalRequestMetadata, LocalWorkHandle,
+        completion::response::LocalWireKind,
+    },
+    session::RoutingSession,
+    types::RoutingError,
 };
 use gateway_schema::source_request::SourceRequestDocument;
 use std::{
@@ -118,7 +122,7 @@ async fn start_inner(
     let built = crate::inference_currentness::run_local(&local, host.cancellation.clone(), async {
         let stream = document
             .stream()
-            .map_err(gateway_routing_runtime::RoutingError::from)?;
+            .map_err(gateway_routing_runtime::types::RoutingError::from)?;
         capture
             .begin_local(local.original_context(), document.original_source(), stream)
             .await;

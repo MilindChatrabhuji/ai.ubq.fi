@@ -2,7 +2,7 @@
 use std::rc::Rc;
 
 use gateway_core::GatewayError;
-use gateway_routing_runtime::{RoutingError, SourceRefusalBody};
+use gateway_routing_runtime::types::{RoutingError, SourceRefusalBody};
 use worker::Response;
 
 use crate::inference_capture::Capture;

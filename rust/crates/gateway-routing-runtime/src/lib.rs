@@ -1,7 +1,7 @@
 //! Source inference orchestration. Network/body ownership remains in the Worker adapter.
 mod attempt;
 pub mod classify;
-mod currentness;
+pub mod currentness;
 pub mod custody;
 mod dispatch;
 pub mod extras;
@@ -9,12 +9,7 @@ mod journal;
 pub mod local_work;
 pub mod policy;
 mod response_head;
-mod session;
-mod settlement;
+pub mod session;
+pub mod settlement;
 pub mod types;
 mod wire;
-pub use currentness::{ObservedRoutingLease, RoutingCurrentness, RoutingLeaseState};
-pub use extras::{AdmissionHandle, ChildScope, DispatchTicket, ExtrasFamily};
-pub use session::RoutingSession;
-pub use settlement::recover_pending;
-pub use types::*;

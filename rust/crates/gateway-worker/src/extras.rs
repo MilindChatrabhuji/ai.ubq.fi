@@ -25,7 +25,7 @@ use gateway_extras_runtime::{
     ExtrasRequest, ExtrasRoute, ExtrasRuntime, ImageKind, KernelDisposition,
 };
 use gateway_providers::ClientSurface;
-use gateway_routing_runtime::{ExtrasFamily, RoutingInput, RoutingSession};
+use gateway_routing_runtime::{extras::ExtrasFamily, session::RoutingSession, types::RoutingInput};
 use std::rc::Rc;
 use worker::{Method, Request, Response};
 

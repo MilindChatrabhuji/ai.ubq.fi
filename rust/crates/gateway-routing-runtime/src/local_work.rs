@@ -24,13 +24,8 @@ use gateway_core::{
 };
 use gateway_schema::{catalog::CatalogInput, source_request::SourceRequestDocument};
 
-mod completion;
+pub mod completion;
 mod coordination;
-pub use completion::{
-    BuiltLocalResponse, LocalAccountingProgress, LocalCompletionAdvance, LocalCompletionChoice,
-    LocalCompletionRefusal, LocalObservationSink, LocalSelectedResponse, LocalWireDecision,
-    LocalWireKind, PendingLocalCompletion,
-};
 
 /// Existing request metadata only. No caller supplies a replacement normalized body.
 pub struct LocalRequestMetadata {
@@ -834,6 +829,3 @@ fn local_transport(observation: LocalTerminalObservation) -> TransportObservatio
         delivery: observation.delivery,
     }
 }
-
-#[cfg(test)]
-mod factory_tests;

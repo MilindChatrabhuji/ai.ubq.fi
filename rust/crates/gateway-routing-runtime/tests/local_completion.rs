@@ -1,4 +1,3 @@
-mod support;
 use gateway_auth::AuthMethod;
 use gateway_authority::{
     Authority, REQUEST_LEASE_MS, keys,
@@ -13,7 +12,15 @@ use gateway_core::{
     },
     tuple_key::{ScalarKeyPart, TupleKey},
 };
-use gateway_routing_runtime::{RoutingSession, local_work::*, recover_pending};
+use gateway_routing_runtime::{
+    local_work::completion::response::{
+        LocalAccountingProgress, LocalSelectedResponse, LocalWireKind,
+    },
+    local_work::*,
+    session::RoutingSession,
+    settlement::recover_pending,
+};
+use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use gateway_schema::source_request::SourceRequestDocument;
 use serde_json::json;
 use std::{
@@ -21,7 +28,6 @@ use std::{
     sync::{Arc, atomic::Ordering},
     task::{Context, Waker},
 };
-use support::*;
 fn key(id: &str) -> RecordKey {
     TupleKey::from_scalar_parts(&[
         ScalarKeyPart::String("uos_ai"),

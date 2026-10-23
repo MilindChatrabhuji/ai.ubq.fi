@@ -1108,6 +1108,21 @@ dependencies = [
  "gateway-authority",
  "gateway-core",
  "gateway-providers",
+ "gateway-routing-runtime-test-support",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-routing-runtime-test-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-providers",
+ "gateway-routing-runtime",
  "gateway-schema",
  "serde",
  "serde_json",

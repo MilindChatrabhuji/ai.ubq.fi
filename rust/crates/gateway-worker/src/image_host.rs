@@ -11,7 +11,8 @@ use gateway_core::{GatewayError, model::ModelId, source_json::SourceJson};
 use gateway_extras_runtime::{DispatchFailure, DispatchFailureOrigin, ImageKind, UpstreamResponse};
 use gateway_providers::{decode_response, policy::HopFailure};
 use gateway_routing_runtime::{
-    AttemptFailure, ChildScope, DispatchTicket, RefusalDecision, TransportState,
+    extras::{ChildScope, DispatchTicket},
+    types::{AttemptFailure, RefusalDecision, TransportState},
 };
 use std::{
     cell::{Cell, RefCell},
@@ -245,7 +246,7 @@ impl Images {
                     .image_refusal(
                         &attempt,
                         AttemptFailure {
-                            origin: gateway_routing_runtime::FailureOrigin::Provider,
+                            origin: gateway_routing_runtime::types::FailureOrigin::Provider,
                             status: Some(status),
                             headers: headers.clone(),
                             body: bytes.clone(),

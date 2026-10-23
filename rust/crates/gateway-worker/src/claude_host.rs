@@ -14,7 +14,7 @@ use gateway_core::{
     GatewayError, claude::ClaudeErrorEvidence, model::ModelId, source_json::SourceJson,
 };
 use gateway_providers::replay::{ReplayContext, ReplayStore, ReplayTransport};
-use gateway_routing_runtime::{
+use gateway_routing_runtime::types::{
     ClaudeOutcome, ClaudeSelection, CredentialFence, PreparedAttempt, PreparedWireRequest,
     PublishedCredential, ResponseHead,
 };
@@ -221,8 +221,10 @@ impl Binding {
         fence: &CredentialFence,
         model: &ModelId,
         body: &gateway_providers::PreparedClaudeBody,
-    ) -> Result<crate::transport::outbound::ConstructedRequest, gateway_routing_runtime::RoutingError>
-    {
+    ) -> Result<
+        crate::transport::outbound::ConstructedRequest,
+        gateway_routing_runtime::types::RoutingError,
+    > {
         let (_request, selected) = self.selected(fence, model)?;
         platform::physical_request(selected.binding(), body)
             .map_err(|_| crate::inference_local_lifecycle::wrapper_error())
