@@ -74,6 +74,7 @@ import {
 } from "../auth/passkeys.ts";
 
 import { handleRoot, handleStaticAsset } from "../static.ts";
+import { handlePassportRoute } from "../auth/passport.ts";
 
 import { handleProviderCapacity, handleProviderCapacityRollups } from "../provider/capacity.ts";
 import {} from "../sentinel/replay-capture.ts";
@@ -227,6 +228,8 @@ const handleHealthRoute = async (req: Request, path: string): Promise<Response |
 
 /** Serves the passkey and session routes; null when no auth route matches. */
 const handleAuthRoute = async (req: Request, path: string): Promise<Response | null> => {
+  const passport = await handlePassportRoute(req, path);
+  if (passport) return passport;
   if (req.method === "POST" && path === "/api/auth/register/start") {
     const auth = await authenticateAdmin(req);
     if (!auth.ok) return auth.response;

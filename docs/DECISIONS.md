@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Bun serves the Passport browser sign-in advertised by its admin page - 2026-10-23
+
+The production Bun gateway implements the existing Passport `ai` registration at `/auth/login`, `/auth/callback`, and `/auth/logout`, matching the fixed issuer, audience, origin, callback, RS256/JWKS verification, host-only secure cookies, and cookie-only admin authority used by the Rust implementation. An administrator claim is required for admin access; agent tokens never become admin sessions, and foreign-origin cookie mutations are rejected. The admin button requests `/admin` as its return destination; that fixed choice is bound into the random login state, while ordinary chat login returns to `/chat`.
+
+Reason: the shared admin page advertised Passport sign-in while the production Bun router returned 404 for `/auth/login`; Rust-only coverage did not exercise the runtime serving the public page.
+
+Reversal risk: removing the Bun routes strands the advertised sign-in button. Accepting arbitrary callback destinations, JWT key sources, audiences, or bearer credentials as admin authority would expand the existing trust boundary.
+
 ## Automatic banked resets are live-only - 2026-10-21
 
 Automatic banked resets are now live-only. The `CODEX_BANKED_RESET_MODE` selector and shadow-decision arming gate are retired; `CODEX_BANKED_RESET_ENABLED` remains the immediate kill switch. When enabled, an eligible blocked cohort performs fresh inventory, selects one exact credit, claims the deterministic redemption, and submits it in the same request. The existing one-per-account-per-UTC-day and one-per-window caps, exact fence checks, at-most-once transaction, and post-reset probe remain unchanged. Historical shadow decisions remain readable for audit but do not gate a live redemption.

@@ -11053,7 +11053,7 @@ passkeyHandleInput.addEventListener("input", () => {
 });
 
 const openPassportLogin = () => {
-  globalThis.location.assign(buildBackendUrl("/auth/login", resolveBaseUrl()));
+  globalThis.location.assign(buildBackendUrl("/auth/login?return_to=%2Fadmin", resolveBaseUrl()));
 };
 passportLoginBtn.addEventListener("click", openPassportLogin);
 passportWidgetLoginBtn.addEventListener("click", openPassportLogin);
