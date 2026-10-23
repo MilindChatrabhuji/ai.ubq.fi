@@ -300,5 +300,4 @@ fn refused() -> GatewayError {
 }
 
 #[cfg(test)]
-#[path = "initial_control_owner_tests.rs"]
 mod tests;

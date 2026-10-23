@@ -173,5 +173,4 @@ fn kernel_snapshot_matches(
 }
 
 #[cfg(test)]
-#[path = "local_completion_tests.rs"]
 mod tests;

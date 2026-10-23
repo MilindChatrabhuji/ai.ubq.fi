@@ -15,10 +15,8 @@ use crate::{
 };
 
 pub use crate::paid_types::*;
-#[path = "paid_source_usage.rs"]
 mod source_usage;
 pub use source_usage::surplus_usage_from_source;
-#[path = "paid_source_records.rs"]
 mod source_records;
 pub use source_records::{decode_paid_attempt_record, decode_paid_rollup_record};
 

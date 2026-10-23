@@ -155,7 +155,6 @@ impl NativeRenewalAuthorityRequest {
     }
 }
 
-#[path = "response_codec.rs"]
 mod response_codec;
 
 #[derive(Serialize)]

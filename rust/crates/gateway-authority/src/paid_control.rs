@@ -17,7 +17,6 @@ use gateway_core::{
 use gateway_providers::policy::{self, DeepseekHop, PaidRoutingInput};
 use gateway_schema::{catalog_store, selection::ProviderSelection};
 use std::collections::BTreeSet;
-#[path = "paid_original_request.rs"]
 mod original;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -11,10 +11,12 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 #[cfg(not(feature = "native-import-fixture"))]
-const CA: &[u8] = include_bytes!("../../../../gateway-native/tests/fixtures/import-tls/ca.der");
-const CERT: &[u8] = include_bytes!("../../../../gateway-native/tests/fixtures/import-tls/leaf.der");
+const CA: &[u8] =
+    include_bytes!("../../../../../../../../gateway-native/tests/fixtures/import-tls/ca.der");
+const CERT: &[u8] =
+    include_bytes!("../../../../../../../../gateway-native/tests/fixtures/import-tls/leaf.der");
 const KEY: &[u8] =
-    include_bytes!("../../../../gateway-native/tests/fixtures/import-tls/leaf.pk8.der");
+    include_bytes!("../../../../../../../../gateway-native/tests/fixtures/import-tls/leaf.pk8.der");
 const PRIVATE_BODY: &[u8] = b"PRIVATE_SYNTHETIC_IMPORT_BODY_MUST_STAY_NATIVE";
 fn wall() -> i64 {
     i64::try_from(
@@ -361,5 +363,4 @@ fn lost_actual_start_reply_consumes_client_permit_and_cannot_repeat_effect() {
     assert_eq!(result.bodies.len(), 4);
 }
 
-#[path = "import_remote_terminal.rs"]
 mod terminal;
