@@ -7,7 +7,9 @@ use gateway_auth::{
     GatewayError,
     native_auth::{NativeCapability, NativeTransportIdentity},
 };
-use gateway_publication::{ConfiguredPaidInputs, transport::PublicationReceiver};
+use gateway_publication::{
+    control_publication::ConfiguredPaidInputs, transport::PublicationReceiver,
+};
 pub use gateway_worker::GatewayAuthority;
 use std::collections::BTreeSet;
 use worker::{Context, Env, Request};

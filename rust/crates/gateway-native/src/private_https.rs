@@ -268,7 +268,7 @@ impl PrivateHttps {
         if target.path() != gateway_auth::native::NATIVE_PUBLICATION_PATH {
             return Err(unavailable());
         }
-        gateway_publication::ImportPublicationCommandData::parse(body)?;
+        gateway_authority::native_control::import::ImportPublicationCommandData::parse(body)?;
         self.send_bounded(
             headers,
             body,

@@ -885,9 +885,9 @@ async fn prepare_paid_fixture_custody(store: &Store, host: &Host) {
     use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
     use gateway_authority::{keys, paid::PaidRoutingPolicy, paid_control::*};
     use gateway_core::provider::PaidProvider;
-    use gateway_publication::{
-        ConfiguredPaidInputs, PreparedConfigurationPublication,
-        control_publication::{bootstrap_fixture_owner, fixture_owner_statement},
+    use gateway_publication::control_publication::{
+        ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
+        fixture_owner_statement,
     };
     // An explicit isolated owner signs the actual configuration publication;
     // authorization below obtains the non-deserializable receipt from Authority.

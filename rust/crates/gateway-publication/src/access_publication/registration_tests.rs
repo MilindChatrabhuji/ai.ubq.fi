@@ -12,9 +12,11 @@ struct Case {
     accepted: bool,
 }
 fn cases() -> Vec<Case> {
-    serde_json::from_str::<Cases>(include_str!("../tests/fixtures/access-owner-home-v1.json"))
-        .unwrap()
-        .cases
+    serde_json::from_str::<Cases>(include_str!(
+        "../../tests/fixtures/access-owner-home-v1.json"
+    ))
+    .unwrap()
+    .cases
 }
 
 #[test]

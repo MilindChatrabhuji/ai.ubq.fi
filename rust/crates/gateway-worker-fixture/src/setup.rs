@@ -22,8 +22,10 @@ use gateway_core::{
     },
 };
 use gateway_publication::{
-    ConfiguredPaidInputs, PreparedConfigurationPublication,
-    control_publication::{bootstrap_fixture_owner, fixture_owner_statement, runtime_config_key},
+    control_publication::{
+        ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
+        fixture_owner_statement, runtime_config_key,
+    },
     transport::{
         NativePublicationSender, PublicationCarrier, PublicationReceiver, PublicationRequest,
         PublicationResponse,
@@ -370,9 +372,9 @@ mod tests {
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
     };
     use gateway_publication::{
-        PreparedConfigurationPublication,
         control_publication::{
-            bootstrap_fixture_owner, fixture_owner_statement, runtime_config_key,
+            PreparedConfigurationPublication, bootstrap_fixture_owner, fixture_owner_statement,
+            runtime_config_key,
         },
         transport::PublicationReceiver,
     };

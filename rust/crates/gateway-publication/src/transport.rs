@@ -1,8 +1,10 @@
 //! One fixed private native publication route. The HTTP adapter only carries
 //! bytes; this receiver owns parsing, authentication, durable fences and CAS.
 use crate::{
-    AccessCredentialSource, ConfiguredPaidInputs, PreparedAccessPublication,
-    PreparedConfigurationPublication, RegisteredAccessOwner,
+    access_publication::{
+        AccessCredentialSource, PreparedAccessPublication, RegisteredAccessOwner,
+    },
+    control_publication::{ConfiguredPaidInputs, PreparedConfigurationPublication},
     wire::{
         PreparedPublicationCommand, PublicationDisposition, PublicationReceipt, WireCommand,
         invalid,

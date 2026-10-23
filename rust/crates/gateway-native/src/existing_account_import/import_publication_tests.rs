@@ -174,7 +174,10 @@ impl Peer {
                         break (line, headers, bytes[end + 4..end + 4 + length].to_vec());
                     }
                 }
-                if bytes.len() > gateway_publication::import_publication_max_bytes() + 16_384 {
+                if bytes.len()
+                    > gateway_authority::native_control::import::import_publication_max_bytes()
+                        + 16_384
+                {
                     return None;
                 }
                 let mut chunk = [0; 8192];
