@@ -1,8 +1,11 @@
 //! Real platform primitives for request-owned observational reads and writes.
+use gateway_admin_runtime::capabilities::Context;
 use gateway_core::GatewayError;
 use gateway_core::identity::RequestId;
-use gateway_observability::{ObservabilityHost, host_types::BuildIdentity};
-use gateway_observability::{ObservabilityRuntime, ObservabilityState, replay_crypto::ReplayBody};
+use gateway_observability::{
+    ObservabilityRuntime, ObservabilityState, host_types::BuildIdentity, replay_crypto::ReplayBody,
+    types::ObservabilityHost,
+};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -179,7 +182,7 @@ pub async fn metered_diagnostics(runtime: &Runtime) -> Result<serde_json::Value,
 /// Retention maintenance and host-log diagnostics belong to this same administrative request.
 pub async fn error_diagnostics(
     runtime: &Runtime,
-    context: &gateway_observability::Context,
+    context: &Context,
 ) -> Result<gateway_admin_runtime::capabilities::ErrorDiagnostics, GatewayError> {
     if context.request_id != runtime.host().request_id {
         return Err(GatewayError::unavailable(
@@ -309,7 +312,7 @@ impl ObservabilityHost for RequestHost {
     }
     async fn provider_inventory(
         &self,
-        context: &gateway_observability::Context,
+        context: &Context,
     ) -> Result<gateway_observability::host_types::ProviderInventory, GatewayError> {
         self.inventory(context).await
     }
@@ -383,10 +386,7 @@ impl ObservabilityHost for RequestHost {
         .record_codex_capacity_observations(fence, observations)
         .await
     }
-    async fn capacity_observation_body(
-        &self,
-        context: &gateway_observability::Context,
-    ) -> Result<Vec<u8>, GatewayError> {
+    async fn capacity_observation_body(&self, context: &Context) -> Result<Vec<u8>, GatewayError> {
         if context.request_id != self.request_id {
             return Err(GatewayError::unavailable(
                 "The administrative body receipt does not match this request.",

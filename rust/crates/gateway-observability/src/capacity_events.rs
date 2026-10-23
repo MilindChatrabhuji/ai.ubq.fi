@@ -1,6 +1,6 @@
 //! Redacted source capacity markers and verified reset backfill; no reset execution.
+use crate::{ObservabilityRuntime, types::ObservabilityHost};
 use crate::{
-    ObservabilityHost, ObservabilityRuntime,
     capacity_shapes::{BUCKET_MS, RETENTION_MS},
     store,
 };

@@ -1,5 +1,5 @@
 //! Explicit source records: only these declared text fields may use ProfileV2 strings.
-use crate::{ObservabilityHost, ledger::ErrorObservation, store};
+use crate::{ledger::ErrorObservation, store, types::ObservabilityHost};
 use gateway_core::{
     GatewayError,
     js_string::JsString16,

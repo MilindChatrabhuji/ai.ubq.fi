@@ -1,8 +1,9 @@
 mod support;
 use gateway_core::state::{RevisionCheck, StoredRecord};
 use gateway_observability::{
-    HealthEvent as E, HealthProvider as P, HealthTarget, HealthWrite as W, ObservabilityRuntime,
+    ObservabilityRuntime,
     health::*,
+    types::{HealthEvent as E, HealthProvider as P, HealthTarget, HealthWrite as W},
 };
 use serde_json::json;
 use std::{

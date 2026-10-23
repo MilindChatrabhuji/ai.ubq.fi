@@ -1,7 +1,9 @@
 //! Source replay-retention.ts: fenced reservations, staging and exactly-once charge release.
+use crate::{ObservabilityRuntime, types::ObservabilityHost};
 use crate::{
-    ObservabilityHost, ObservabilityRuntime, replay_model as model,
-    replay_retention_schema as schema, store,
+    replay_model as model,
+    replay_retention_schema::{self as schema, RetentionLimits},
+    store,
 };
 use gateway_core::{
     GatewayError,
@@ -9,7 +11,6 @@ use gateway_core::{
     state::{RecordMutation, StoredRecord},
     value::PortableValue,
 };
-pub use schema::RetentionLimits;
 use serde_json::{Value, json};
 pub(crate) struct Reservation {
     pub row: schema::Accounting,

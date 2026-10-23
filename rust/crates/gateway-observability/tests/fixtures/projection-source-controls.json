@@ -1,0 +1,518 @@
+{
+  "fixture_only": true,
+  "source": "src/quota-projection.ts groupPaidFallbackUsageRollups/summarizePaidFallbackUsage/projectPaidFallbackRunway",
+  "now": 1792329600000,
+  "rows": [
+    {
+      "v": 1,
+      "bucket_start_at_ms": 1792326000000,
+      "model": "\ud800",
+      "provider": "metered",
+      "request_count": 1,
+      "quota_sum": 4.25,
+      "input_tokens": 10,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "spend_microcredits": 2.5,
+      "first_request_at_ms": 1792326000000,
+      "last_request_at_ms": 1792326000010,
+      "updated_at_ms": 1792329600000,
+      "reasoning": "\udc00"
+    },
+    {
+      "v": 1,
+      "bucket_start_at_ms": 1792322400000,
+      "model": "\udc00",
+      "provider": "metered",
+      "request_count": 2,
+      "quota_sum": 8.5,
+      "input_tokens": 20,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "spend_microcredits": 5,
+      "first_request_at_ms": 1792322400000,
+      "last_request_at_ms": 1792322400010,
+      "updated_at_ms": 1792329600000,
+      "reasoning": "\udc00"
+    },
+    {
+      "v": 1,
+      "bucket_start_at_ms": 1792318800000,
+      "model": "\ufffd",
+      "provider": "metered",
+      "request_count": 3,
+      "quota_sum": 12.75,
+      "input_tokens": 30,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "spend_microcredits": 7.5,
+      "first_request_at_ms": 1792318800000,
+      "last_request_at_ms": 1792318800010,
+      "updated_at_ms": 1792329600000,
+      "reasoning": "\udc00"
+    },
+    {
+      "v": 1,
+      "bucket_start_at_ms": 1792315200000,
+      "model": "\ud83d\ude00",
+      "provider": "surplus",
+      "request_count": 4,
+      "quota_sum": 17,
+      "input_tokens": 40,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "spend_microcredits": 10,
+      "first_request_at_ms": 1792315200000,
+      "last_request_at_ms": 1792315200010,
+      "updated_at_ms": 1792329600000,
+      "reasoning": "\udc00"
+    },
+    {
+      "v": 1,
+      "bucket_start_at_ms": 1792311600000,
+      "model": "\\ud800",
+      "provider": "surplus",
+      "request_count": 5,
+      "quota_sum": 21.25,
+      "input_tokens": 50,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "spend_microcredits": 12.5,
+      "first_request_at_ms": 1792311600000,
+      "last_request_at_ms": 1792311600010,
+      "updated_at_ms": 1792329600000,
+      "reasoning": "\udc00"
+    },
+    {
+      "v": 1,
+      "bucket_start_at_ms": 1792308000000,
+      "model": "a\u0000b",
+      "provider": "c",
+      "request_count": 6,
+      "quota_sum": 25.5,
+      "input_tokens": 60,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "spend_microcredits": 15,
+      "first_request_at_ms": 1792308000000,
+      "last_request_at_ms": 1792308000010,
+      "updated_at_ms": 1792329600000,
+      "reasoning": "\udc00"
+    },
+    {
+      "v": 1,
+      "bucket_start_at_ms": 1792304400000,
+      "model": "a",
+      "provider": "b\u0000c",
+      "request_count": 7,
+      "quota_sum": 29.75,
+      "input_tokens": 70,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "spend_microcredits": 17.5,
+      "first_request_at_ms": 1792304400000,
+      "last_request_at_ms": 1792304400010,
+      "updated_at_ms": 1792329600000,
+      "reasoning": "\udc00"
+    },
+    {
+      "v": 1,
+      "bucket_start_at_ms": 1792300800000,
+      "model": "a",
+      "provider": "metered",
+      "request_count": 8,
+      "quota_sum": 34,
+      "input_tokens": 80,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "spend_microcredits": 20,
+      "first_request_at_ms": 1792300800000,
+      "last_request_at_ms": 1792300800010,
+      "updated_at_ms": 1792329600000,
+      "reasoning": "\udc00"
+    },
+    {
+      "v": 1,
+      "bucket_start_at_ms": 1792297200000,
+      "model": "alien",
+      "provider": "custom\ud800",
+      "request_count": 9,
+      "quota_sum": 38.25,
+      "input_tokens": 90,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "spend_microcredits": 22.5,
+      "first_request_at_ms": 1792297200000,
+      "last_request_at_ms": 1792297200010,
+      "updated_at_ms": 1792329600000,
+      "reasoning": "\udc00"
+    },
+    {
+      "v": 1,
+      "bucket_start_at_ms": 1792293600000,
+      "model": "  model  ",
+      "provider": "surplus",
+      "request_count": 10,
+      "quota_sum": 42.5,
+      "input_tokens": 100,
+      "cached_input_tokens": 2,
+      "output_tokens": 3,
+      "spend_microcredits": 25,
+      "first_request_at_ms": 1792293600000,
+      "last_request_at_ms": 1792293600010,
+      "updated_at_ms": 1792329600000,
+      "reasoning": "\udc00"
+    }
+  ],
+  "expected": {
+    "snapshot_at_ms": 1792329600000,
+    "window_days": 30,
+    "quota": {
+      "configured": false,
+      "available": false,
+      "cache_state": null,
+      "confidence": null,
+      "unlimited_quota": false,
+      "balance_quota": null,
+      "baseline_quota": null,
+      "quota_per_credit": null,
+      "balance_credits": null,
+      "baseline_credits": null,
+      "remaining_percent": null,
+      "used_percent": null,
+      "total_available": null,
+      "total_granted": null,
+      "total_used": null,
+      "observed_at_ms": null,
+      "cycle_started_at_ms": null,
+      "last_credit_at_ms": null,
+      "latest_refill_amount_credits": null,
+      "latest_refill_completed_at_ms": null
+    },
+    "models": [
+      {
+        "model": "  model  ",
+        "provider": "surplus",
+        "quota_source": null,
+        "usage_source": "paid_fallback",
+        "usage": [
+          {
+            "window_days": 30,
+            "bucket_count": 1,
+            "request_count": 10,
+            "quota_sum": 42.5,
+            "spend_microcredits": 25,
+            "input_tokens": 100,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "avg_quota_per_request": 4.25,
+            "quota_per_hour": 0.059027777777777776,
+            "first_bucket_start_at_ms": 1792293600000,
+            "last_bucket_start_at_ms": 1792293600000
+          }
+        ],
+        "estimates": []
+      },
+      {
+        "model": "\\ud800",
+        "provider": "surplus",
+        "quota_source": null,
+        "usage_source": "paid_fallback",
+        "usage": [
+          {
+            "window_days": 30,
+            "bucket_count": 1,
+            "request_count": 5,
+            "quota_sum": 21.25,
+            "spend_microcredits": 12.5,
+            "input_tokens": 50,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "avg_quota_per_request": 4.25,
+            "quota_per_hour": 0.029513888888888888,
+            "first_bucket_start_at_ms": 1792311600000,
+            "last_bucket_start_at_ms": 1792311600000
+          }
+        ],
+        "estimates": []
+      },
+      {
+        "model": "\ud83d\ude00",
+        "provider": "surplus",
+        "quota_source": null,
+        "usage_source": "paid_fallback",
+        "usage": [
+          {
+            "window_days": 30,
+            "bucket_count": 1,
+            "request_count": 4,
+            "quota_sum": 17,
+            "spend_microcredits": 10,
+            "input_tokens": 40,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "avg_quota_per_request": 4.25,
+            "quota_per_hour": 0.02361111111111111,
+            "first_bucket_start_at_ms": 1792315200000,
+            "last_bucket_start_at_ms": 1792315200000
+          }
+        ],
+        "estimates": []
+      },
+      {
+        "model": "a",
+        "provider": "b",
+        "quota_source": null,
+        "usage_source": "observability",
+        "usage": [
+          {
+            "window_days": 30,
+            "bucket_count": 2,
+            "request_count": 13,
+            "quota_sum": 55.25,
+            "spend_microcredits": 32.5,
+            "input_tokens": 130,
+            "cached_input_tokens": 4,
+            "output_tokens": 6,
+            "avg_quota_per_request": 4.25,
+            "quota_per_hour": 0.07673611111111112,
+            "first_bucket_start_at_ms": 1792304400000,
+            "last_bucket_start_at_ms": 1792308000000
+          }
+        ],
+        "estimates": []
+      },
+      {
+        "model": "a",
+        "provider": "metered",
+        "quota_source": "metered",
+        "usage_source": "paid_fallback",
+        "usage": [
+          {
+            "window_days": 30,
+            "bucket_count": 1,
+            "request_count": 8,
+            "quota_sum": 34,
+            "spend_microcredits": 20,
+            "input_tokens": 80,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "avg_quota_per_request": 4.25,
+            "quota_per_hour": 0.04722222222222222,
+            "first_bucket_start_at_ms": 1792300800000,
+            "last_bucket_start_at_ms": 1792300800000
+          }
+        ],
+        "estimates": [
+          {
+            "window_days": 30,
+            "unlimited": false,
+            "stale_balance": false,
+            "requests_remaining": null,
+            "time_remaining_ms": null,
+            "refill_aware_status": "unknown",
+            "refill_aware_time_remaining_ms": null,
+            "refill_aware_exhausted_at_ms": null,
+            "refill_amount_credits": null,
+            "refill_cadence_ms": null,
+            "refill_rate_quota_per_hour": null,
+            "next_refill_at_ms": null,
+            "exhausted_at_ms": null,
+            "percent_per_request_vs_balance": null,
+            "percent_per_request_vs_baseline": null
+          }
+        ]
+      },
+      {
+        "model": "alien",
+        "provider": "custom\ud800",
+        "quota_source": null,
+        "usage_source": "observability",
+        "usage": [
+          {
+            "window_days": 30,
+            "bucket_count": 1,
+            "request_count": 9,
+            "quota_sum": 38.25,
+            "spend_microcredits": 22.5,
+            "input_tokens": 90,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "avg_quota_per_request": 4.25,
+            "quota_per_hour": 0.053125,
+            "first_bucket_start_at_ms": 1792297200000,
+            "last_bucket_start_at_ms": 1792297200000
+          }
+        ],
+        "estimates": []
+      },
+      {
+        "model": "\ud800",
+        "provider": "metered",
+        "quota_source": "metered",
+        "usage_source": "paid_fallback",
+        "usage": [
+          {
+            "window_days": 30,
+            "bucket_count": 1,
+            "request_count": 1,
+            "quota_sum": 4.25,
+            "spend_microcredits": 2.5,
+            "input_tokens": 10,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "avg_quota_per_request": 4.25,
+            "quota_per_hour": 0.005902777777777778,
+            "first_bucket_start_at_ms": 1792326000000,
+            "last_bucket_start_at_ms": 1792326000000
+          }
+        ],
+        "estimates": [
+          {
+            "window_days": 30,
+            "unlimited": false,
+            "stale_balance": false,
+            "requests_remaining": null,
+            "time_remaining_ms": null,
+            "refill_aware_status": "unknown",
+            "refill_aware_time_remaining_ms": null,
+            "refill_aware_exhausted_at_ms": null,
+            "refill_amount_credits": null,
+            "refill_cadence_ms": null,
+            "refill_rate_quota_per_hour": null,
+            "next_refill_at_ms": null,
+            "exhausted_at_ms": null,
+            "percent_per_request_vs_balance": null,
+            "percent_per_request_vs_baseline": null
+          }
+        ]
+      },
+      {
+        "model": "\udc00",
+        "provider": "metered",
+        "quota_source": "metered",
+        "usage_source": "paid_fallback",
+        "usage": [
+          {
+            "window_days": 30,
+            "bucket_count": 1,
+            "request_count": 2,
+            "quota_sum": 8.5,
+            "spend_microcredits": 5,
+            "input_tokens": 20,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "avg_quota_per_request": 4.25,
+            "quota_per_hour": 0.011805555555555555,
+            "first_bucket_start_at_ms": 1792322400000,
+            "last_bucket_start_at_ms": 1792322400000
+          }
+        ],
+        "estimates": [
+          {
+            "window_days": 30,
+            "unlimited": false,
+            "stale_balance": false,
+            "requests_remaining": null,
+            "time_remaining_ms": null,
+            "refill_aware_status": "unknown",
+            "refill_aware_time_remaining_ms": null,
+            "refill_aware_exhausted_at_ms": null,
+            "refill_amount_credits": null,
+            "refill_cadence_ms": null,
+            "refill_rate_quota_per_hour": null,
+            "next_refill_at_ms": null,
+            "exhausted_at_ms": null,
+            "percent_per_request_vs_balance": null,
+            "percent_per_request_vs_baseline": null
+          }
+        ]
+      },
+      {
+        "model": "\ufffd",
+        "provider": "metered",
+        "quota_source": "metered",
+        "usage_source": "paid_fallback",
+        "usage": [
+          {
+            "window_days": 30,
+            "bucket_count": 1,
+            "request_count": 3,
+            "quota_sum": 12.75,
+            "spend_microcredits": 7.5,
+            "input_tokens": 30,
+            "cached_input_tokens": 2,
+            "output_tokens": 3,
+            "avg_quota_per_request": 4.25,
+            "quota_per_hour": 0.017708333333333333,
+            "first_bucket_start_at_ms": 1792318800000,
+            "last_bucket_start_at_ms": 1792318800000
+          }
+        ],
+        "estimates": [
+          {
+            "window_days": 30,
+            "unlimited": false,
+            "stale_balance": false,
+            "requests_remaining": null,
+            "time_remaining_ms": null,
+            "refill_aware_status": "unknown",
+            "refill_aware_time_remaining_ms": null,
+            "refill_aware_exhausted_at_ms": null,
+            "refill_amount_credits": null,
+            "refill_cadence_ms": null,
+            "refill_rate_quota_per_hour": null,
+            "next_refill_at_ms": null,
+            "exhausted_at_ms": null,
+            "percent_per_request_vs_balance": null,
+            "percent_per_request_vs_baseline": null
+          }
+        ]
+      }
+    ],
+    "rollup_scan": "ok",
+    "balance_history_scan": "unavailable"
+  },
+  "nul_group": [
+    {
+      "model_units": [97],
+      "provider_units": [98],
+      "bucket_count": 2
+    }
+  ],
+  "labels": [
+    [55296],
+    [109, 101, 116, 101, 114, 101, 100],
+    [56320],
+    [65533],
+    [55357, 56832],
+    [115, 117, 114, 112, 108, 117, 115],
+    [92, 117, 100, 56, 48, 48],
+    [97, 0, 98],
+    [99],
+    [97],
+    [98, 0, 99],
+    [97, 108, 105, 101, 110],
+    [99, 117, 115, 116, 111, 109, 55296],
+    [32, 32, 109, 111, 100, 101, 108, 32, 32],
+    [98]
+  ],
+  "orders": [
+    [0, 1, -1, -1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    [-1, 0, -1, -1, 1, -1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    [1, 1, 0, -1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    [1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    [-1, -1, -1, -1, 0, -1, 1, -1, -1, -1, -1, -1, -1, 1, -1],
+    [-1, 1, -1, -1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    [-1, -1, -1, -1, -1, -1, 0, -1, -1, -1, -1, -1, -1, 1, -1],
+    [-1, -1, -1, -1, 1, -1, 1, 0, -1, 1, -1, -1, -1, 1, -1],
+    [-1, -1, -1, -1, 1, -1, 1, 1, 0, 1, 1, 1, -1, 1, 1],
+    [-1, -1, -1, -1, 1, -1, 1, -1, -1, 0, -1, -1, -1, 1, -1],
+    [-1, -1, -1, -1, 1, -1, 1, 1, -1, 1, 0, 1, -1, 1, 1],
+    [-1, -1, -1, -1, 1, -1, 1, 1, -1, 1, -1, 0, -1, 1, -1],
+    [-1, -1, -1, -1, 1, -1, 1, 1, 1, 1, 1, 1, 0, 1, 1],
+    [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, -1],
+    [-1, -1, -1, -1, 1, -1, 1, 1, -1, 1, -1, 1, -1, 1, 0]
+  ],
+  "oracle_sha256": "a0c72b72381d9e960dd94d45349c53e1a7b8042af1a8269ee1222b7be80c0f31"
+}

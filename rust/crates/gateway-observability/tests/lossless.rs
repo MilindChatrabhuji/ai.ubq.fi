@@ -1,4 +1,5 @@
 mod support;
+use gateway_admin_runtime::capabilities::{AnalyticsRequest, Context};
 use gateway_core::{
     js_string::JsString16,
     lifecycle::DeliveryOutcome,
@@ -8,8 +9,7 @@ use gateway_core::{
     value::{PortableValue, ValueEncoding},
 };
 use gateway_observability::{
-    AnalyticsRequest, Context, ObservabilityRuntime, ledger::ErrorObservation,
-    records::record_source_json,
+    ObservabilityRuntime, ledger::ErrorObservation, records::record_source_json,
 };
 use serde_json::{Value, json};
 use support::{Host, Memory, run};

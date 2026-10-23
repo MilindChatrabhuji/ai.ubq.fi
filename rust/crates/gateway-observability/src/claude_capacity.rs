@@ -1,6 +1,6 @@
 //! Post-acceptance source Claude history/rollups. Never a quota writer.
+use crate::{ObservabilityRuntime, types::ObservabilityHost};
 use crate::{
-    ObservabilityHost, ObservabilityRuntime,
     capacity_shapes::{BUCKET_MS, HOUR_MS, RETENTION_MS, STALE_MS},
     host_types::{ClaudeAcceptedObservation, ClaudeObservationState, CredentialKind},
     replay_values::SourceObject,

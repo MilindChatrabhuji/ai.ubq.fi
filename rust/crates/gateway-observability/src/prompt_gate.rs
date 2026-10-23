@@ -1,6 +1,7 @@
 //! Source cache/telemetry-gate.ts: release-bound Stage0 actual completion evidence.
+use crate::{ObservabilityRuntime, types::ObservabilityHost};
 use crate::{
-    ObservabilityHost, ObservabilityRuntime, counters,
+    counters,
     prompt::{PROVIDERS, PromptEvent, ROUTES, known_release, model_hash, model_text},
     store,
 };

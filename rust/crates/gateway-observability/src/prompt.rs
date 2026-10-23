@@ -1,5 +1,5 @@
 //! Source cache/prompt-analytics-{core,read}.ts v2 hard namespace.
-use crate::{ObservabilityHost, ObservabilityRuntime, counters, store};
+use crate::{ObservabilityRuntime, counters, store, types::ObservabilityHost};
 use gateway_auth::crypto::sha256_hex;
 use gateway_core::{
     GatewayError,

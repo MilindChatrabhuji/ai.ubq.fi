@@ -1,5 +1,5 @@
+use crate::{ObservabilityRuntime, types::ObservabilityHost};
 use crate::{
-    ObservabilityHost, ObservabilityRuntime,
     capacity_events::{event_key, valid_event},
     capacity_math, capacity_shapes as shape, store,
 };

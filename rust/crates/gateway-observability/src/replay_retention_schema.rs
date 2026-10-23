@@ -1,8 +1,9 @@
 //! Source capture-owned budget/accounting rows. This is unrelated to paid accounting.
 use crate::{
-    ObservabilityHost, replay_model as model,
+    replay_model as model,
     replay_values::{self, SourceObject},
     store,
+    types::ObservabilityHost,
 };
 use gateway_core::{
     GatewayError,

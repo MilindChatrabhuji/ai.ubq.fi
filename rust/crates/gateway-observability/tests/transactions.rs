@@ -10,8 +10,9 @@ use gateway_core::{
     tuple_key::TupleKey,
 };
 use gateway_observability::{
-    HealthEvent, HealthProvider, HealthTarget, HealthWrite, ObservabilityRuntime,
+    ObservabilityRuntime,
     ledger::ErrorObservation,
+    types::{HealthEvent, HealthProvider, HealthTarget, HealthWrite},
 };
 use std::{cell::Cell, rc::Rc};
 use support::{Host, Memory, run};

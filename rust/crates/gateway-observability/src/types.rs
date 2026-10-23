@@ -1,10 +1,7 @@
+use gateway_admin_runtime::capabilities::Context;
 use gateway_core::{GatewayError, state::RevisionCheck};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
-
-pub use gateway_admin_runtime::capabilities::{
-    AnalyticsRequest, CaptureRequest, CodexRequest, Context, ErrorDiagnostics, ProviderRequest,
-};
 
 /// Observational identities only. No credential or caller-selected URL is carried.
 #[derive(Clone, Debug, Eq, PartialEq)]

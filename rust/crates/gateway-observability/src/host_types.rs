@@ -1,5 +1,5 @@
 //! Fixed secretless receipts from native publication and the actual Worker transport.
-use crate::{HealthProvider, HealthTarget};
+use crate::types::{HealthProvider, HealthTarget};
 use gateway_core::{GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

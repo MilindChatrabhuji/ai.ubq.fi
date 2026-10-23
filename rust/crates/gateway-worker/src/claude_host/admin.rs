@@ -16,7 +16,7 @@ use gateway_core::{
     GatewayError, js_string::JsString16, source_json::SourceJson, source_serialization as source,
     state::AuthorityStore,
 };
-use gateway_observability::{ObservabilityHost, ObservabilityRuntime};
+use gateway_observability::{ObservabilityRuntime, types::ObservabilityHost};
 use serde::Serialize;
 use serde_json::Value;
 #[cfg(test)]

@@ -11,7 +11,7 @@ use gateway_authority::{
     routing::{PoolAccount, SubscriptionPool, parse_capacity_store},
 };
 use gateway_core::{GatewayError, identity::PoolVersionstamp, state::StoredRecord};
-use gateway_observability::{ObservabilityHost, ObservabilityRuntime, host_types::*};
+use gateway_observability::{ObservabilityRuntime, host_types::*, types::ObservabilityHost};
 use serde_json::{Value, json};
 use std::{
     cell::Cell,

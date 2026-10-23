@@ -1,3 +1,7 @@
+// Shared support is compiled by every integration test; only the projection test consumes this module.
+#[allow(dead_code)]
+pub mod source_fixture;
+
 use gateway_core::{
     GatewayError,
     query::{QueryPage, QueryRequest, QueryStore},
@@ -5,7 +9,7 @@ use gateway_core::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
     },
 };
-use gateway_observability::ObservabilityHost;
+use gateway_observability::types::ObservabilityHost;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,

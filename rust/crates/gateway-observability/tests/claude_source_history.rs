@@ -1,6 +1,7 @@
 //! Actual frozen Bun writer cases, plus the named post-acceptance carrier only.
 //! This fixture grants no quota, routing, native credential or live provider authority.
 mod support;
+use gateway_admin_runtime::capabilities::Context;
 use gateway_core::{
     GatewayError,
     js_string::JsString16,
@@ -12,10 +13,11 @@ use gateway_core::{
     value::ValueEncoding,
 };
 use gateway_observability::{
-    Context, HealthProvider, HealthTarget, ObservabilityHost, ObservabilityRuntime,
+    ObservabilityRuntime,
     capacity_shapes::{BUCKET_MS, RETENTION_MS, unavailable_snapshot},
     claude_capacity::*,
     host_types::*,
+    types::{HealthProvider, HealthTarget, ObservabilityHost},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};

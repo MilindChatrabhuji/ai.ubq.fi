@@ -1,11 +1,15 @@
-use crate::replay_values::SourceObject;
 use crate::{
-    Context, HealthProvider, HealthTarget, ObservabilityHost, ObservabilityRuntime,
+    ObservabilityRuntime,
+    replay_values::SourceObject,
+    types::{HealthProvider, HealthTarget, ObservabilityHost},
+};
+use crate::{
     completion::Completion,
     health::{aggregate_states, binding_current, unknown_health},
     host_types::*,
     store,
 };
+use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::AuthResponse;
 use gateway_core::{GatewayError, query::QueryStore, source_json::SourceJson};
 use serde_json::{Value, json};
