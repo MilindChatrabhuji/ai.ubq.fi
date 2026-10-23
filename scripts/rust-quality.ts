@@ -1,15 +1,27 @@
 /**
  * No-growth quality gate for the first-party Rust port.
  *
- * A crate is the total physical lines in the production `src` subtree of
- * `rust/crates/<crate>` and is capped at 1000. Every Rust file below `rust/crates`, including integration
- * tests, is scanned once for `pub use`, `#[path = ...]`, and `include!`.
+ * A crate is the total physical lines in the Rust files beneath its `src` subtree
+ * and is capped at 1000. Every authored Rust file below `rust/crates`, including integration
+ * tests, is scanned once for visible `use`/`extern crate` re-exports, `#[path]`
+ * (including nested or inactive `cfg_attr` branches), plain `include!`, and
+ * `allow`/`expect` suppressions.
+ *
+ * This gate deliberately does not model per-target source closures: the crate
+ * cap does not follow `#[path]` or `include!` into files outside `src`, and it
+ * does not charge integration tests, examples, benchmarks, or build scripts to
+ * the package. Those remain separate bounded crates under the Rust port rules.
+ * Macro expansion is also out of scope; authored first-party source and macro
+ * templates are what this lexical gate checks.
  *
  * Existing debt is recorded in `rust/quality-baseline.json`. `--check` fails on
  * new debt, growth, stale ceilings, stale violation counts, or recorded paths
  * that no longer exist. `--update` may only lower or drop debt and refuses to
  * record anything new. `--init` is the one-time bootstrap and refuses once the
- * baseline exists.
+ * baseline exists. The two known migration facts are grandfathered explicitly:
+ * `rust/crates/gateway-schema/src/catalog_cache.rs` has one
+ * `#[allow(clippy::too_many_arguments)]`, and the baseline also records legacy
+ * visibility-qualified re-exports discovered by the stricter visibility check.
  *
  * Usage:
  *   bun --no-env-file scripts/rust-quality.ts
@@ -26,22 +38,36 @@ const BASELINE_PATH = "rust/quality-baseline.json";
 const UPDATE_HINT = "`bun run rust:quality:update`";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CRATES_DIRECTORY = join(ROOT, "rust", "crates");
-const VIOLATION_CATEGORIES = ["pubUse", "path", "include"] as const;
+const VIOLATION_CATEGORIES = ["pubUse", "path", "include", "suppression"] as const;
 
 type ViolationCategory = (typeof VIOLATION_CATEGORIES)[number];
 type ViolationCounts = Record<ViolationCategory, number>;
 type RustFile = Readonly<{ path: string; violations: ViolationCounts }>;
-type Scan = Readonly<{ crates: readonly string[]; crateLines: ReadonlyMap<string, number>; files: ReadonlyMap<string, RustFile> }>;
+type TokenKind = "identifier" | "punctuation" | "literal";
+type Token = Readonly<{ kind: TokenKind; value: string; raw?: boolean }>;
+type TokenRead = Readonly<{ token: Token; next: number }>;
+type DeclarationCategory = "pubUse" | "include";
+type Scan = Readonly<{
+  crates: readonly string[];
+  crateLines: ReadonlyMap<string, number>;
+  files: ReadonlyMap<string, RustFile>;
+  manifestFailures: readonly string[];
+}>;
 type Baseline = Readonly<{ crates: ReadonlyMap<string, number>; violations: ReadonlyMap<ViolationCategory, ReadonlyMap<string, number>> }>;
 type Mode = "check" | "update" | "init";
 
 const LABELS: Readonly<Record<ViolationCategory, string>> = {
-  pubUse: "pub use",
+  pubUse: "visible re-export",
   path: "#[path]",
   include: "include!",
+  suppression: "allow/expect",
 };
 
-const compareText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0);
+const compareText = (left: string, right: string): number => {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+};
 
 const sortedEntries = (map: ReadonlyMap<string, number>): [string, number][] => [...map.entries()].sort(([left], [right]) => compareText(left, right));
 
@@ -51,14 +77,273 @@ const physicalLines = (text: string): string[] => {
   return lines;
 };
 
-const countViolations = (lines: readonly string[]): ViolationCounts => {
-  const violations: ViolationCounts = { pubUse: 0, path: 0, include: 0 };
-  for (const line of lines) {
-    if (/^\s*pub\s+use\b/.test(line)) violations.pubUse += 1;
-    if (/#\[\s*path\s*=/.test(line)) violations.path += 1;
-    violations.include += line.match(/\binclude\s*!/g)?.length ?? 0;
+const isIdentifierStart = (character: string | undefined): boolean => character !== undefined && /[A-Za-z_]/.test(character);
+
+const isIdentifierContinue = (character: string | undefined): boolean => character !== undefined && /\w/.test(character);
+
+const skipQuoted = (text: string, start: number, quote: string): number => {
+  let cursor = start + 1;
+  while (cursor < text.length) {
+    if (text[cursor] === "\\") {
+      cursor += 2;
+      continue;
+    }
+    if (text[cursor] === quote) return cursor + 1;
+    cursor += 1;
+  }
+  return text.length;
+};
+
+const skipCharLiteral = (text: string, start: number): number | null => {
+  let cursor = start + 1;
+  if (cursor >= text.length) return null;
+  if (text[cursor] === "\\") {
+    cursor += 2;
+    if (text[cursor] === "'") return cursor + 1;
+    return null;
+  }
+  if (cursor + 1 < text.length && text[cursor + 1] === "'") return cursor + 2;
+  return null;
+};
+
+const rawStringEnd = (text: string, start: number): number | null => {
+  let cursor = start;
+  if (text[cursor] === "b") cursor += 1;
+  if (text[cursor] !== "r") return null;
+  cursor += 1;
+  let hashes = 0;
+  while (text[cursor] === "#") {
+    hashes += 1;
+    cursor += 1;
+  }
+  if (text[cursor] !== '"') return null;
+  const terminator = `"${"#".repeat(hashes)}`;
+  const end = text.indexOf(terminator, cursor + 1);
+  return end < 0 ? text.length : end + terminator.length;
+};
+
+const skipBlockComment = (text: string, start: number): number => {
+  let depth = 1;
+  let cursor = start + 2;
+  while (cursor < text.length) {
+    if (text.startsWith("/*", cursor)) {
+      depth += 1;
+      cursor += 2;
+    } else if (text.startsWith("*/", cursor)) {
+      depth -= 1;
+      cursor += 2;
+      if (depth === 0) return cursor;
+    } else {
+      cursor += 1;
+    }
+  }
+  return text.length;
+};
+
+const literalRead = (next: number): TokenRead => ({ token: { kind: "literal", value: "" }, next });
+
+const identifierRead = (value: string, next: number, raw = false): TokenRead => ({
+  token: { kind: "identifier", value, ...(raw ? { raw: true } : {}) },
+  next,
+});
+
+const skipTrivia = (text: string, cursor: number): number | null => {
+  if (/\s/.test(text[cursor])) return cursor + 1;
+  if (text.startsWith("//", cursor)) {
+    const newline = text.indexOf("\n", cursor + 2);
+    return newline < 0 ? text.length : newline + 1;
+  }
+  if (text.startsWith("/*", cursor)) return skipBlockComment(text, cursor);
+  return null;
+};
+
+const readStringOrChar = (text: string, cursor: number): TokenRead | null => {
+  const rawEnd = rawStringEnd(text, cursor);
+  if (rawEnd !== null) return literalRead(rawEnd);
+  const character = text[cursor];
+  if (character === "b" && (text[cursor + 1] === '"' || text[cursor + 1] === "'")) {
+    if (text[cursor + 1] === '"') return literalRead(skipQuoted(text, cursor + 1, '"'));
+    const byteCharEnd = skipCharLiteral(text, cursor + 1);
+    return byteCharEnd === null ? null : literalRead(byteCharEnd);
+  }
+  if (character === '"') return literalRead(skipQuoted(text, cursor, '"'));
+  if (character !== "'") return null;
+  const charEnd = skipCharLiteral(text, cursor);
+  return charEnd === null ? null : literalRead(charEnd);
+};
+
+const readRawIdentifier = (text: string, cursor: number): TokenRead | null => {
+  if (!text.startsWith("r#", cursor) || !isIdentifierStart(text[cursor + 2])) return null;
+  let end = cursor + 3;
+  while (isIdentifierContinue(text[end])) end += 1;
+  return identifierRead(text.slice(cursor + 2, end), end, true);
+};
+
+const readIdentifier = (text: string, cursor: number): TokenRead | null => {
+  if (!isIdentifierStart(text[cursor])) return null;
+  let end = cursor + 1;
+  while (isIdentifierContinue(text[end])) end += 1;
+  return identifierRead(text.slice(cursor, end), end);
+};
+
+const readNumber = (text: string, cursor: number): TokenRead | null => {
+  if (!/\d/.test(text[cursor])) return null;
+  let end = cursor + 1;
+  while (end < text.length && /[\w.]/.test(text[end])) end += 1;
+  return literalRead(end);
+};
+
+const tokenizeRust = (text: string): Token[] => {
+  const tokens: Token[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const triviaEnd = skipTrivia(text, cursor);
+    if (triviaEnd !== null) {
+      cursor = triviaEnd;
+      continue;
+    }
+    const nextToken = readStringOrChar(text, cursor) ?? readRawIdentifier(text, cursor) ?? readIdentifier(text, cursor) ?? readNumber(text, cursor);
+    if (nextToken !== null) {
+      tokens.push(nextToken.token);
+      cursor = nextToken.next;
+      continue;
+    }
+    tokens.push({ kind: "punctuation", value: text[cursor] });
+    cursor += 1;
+  }
+  return tokens;
+};
+
+const matchingBackward = (tokens: readonly Token[], closeIndex: number, open: string, close: string): number | null => {
+  let depth = 0;
+  for (let index = closeIndex; index >= 0; index -= 1) {
+    const value = tokens.at(index)?.value;
+    if (value === close) depth += 1;
+    else if (value === open) {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return null;
+};
+
+const matchingForward = (tokens: readonly Token[], openIndex: number, open: string, close: string): number | null => {
+  let depth = 0;
+  for (let index = openIndex; index < tokens.length; index += 1) {
+    const value = tokens.at(index)?.value;
+    if (value === open) depth += 1;
+    else if (value === close) {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return null;
+};
+
+const hasVisiblePrefix = (tokens: readonly Token[], declarationIndex: number): boolean => {
+  const previous = tokens.at(declarationIndex - 1);
+  if (previous?.value === "pub" && previous.raw !== true) return true;
+  if (previous?.value !== ")") return false;
+  const open = matchingBackward(tokens, declarationIndex - 1, "(", ")");
+  if (open === null) return false;
+  const visibilityOwner = tokens.at(open - 1);
+  if (visibilityOwner?.value !== "pub" || visibilityOwner.raw === true) return false;
+  const visibility = tokens.slice(open + 1, declarationIndex - 1);
+  return !(visibility.length === 1 && visibility[0]?.value === "self");
+};
+
+const declarationCategory = (tokens: readonly Token[], index: number): DeclarationCategory | null => {
+  const token = tokens.at(index);
+  if (token?.kind !== "identifier") return null;
+  if (token.value === "include" && tokens.at(index + 1)?.value === "!") return "include";
+  if (token.raw === true) return null;
+  if (token.value === "use" && hasVisiblePrefix(tokens, index)) return "pubUse";
+  const next = tokens.at(index + 1);
+  if (token.value === "extern" && next?.kind === "identifier" && next.raw !== true && next.value === "crate" && hasVisiblePrefix(tokens, index)) {
+    return "pubUse";
+  }
+  return null;
+};
+
+const attributeTokens = (tokens: readonly Token[], index: number): readonly Token[] | null => {
+  const openIndex = tokens.at(index + 1)?.value === "!" ? index + 2 : index + 1;
+  if (tokens.at(openIndex)?.value !== "[") return null;
+  const closeIndex = matchingForward(tokens, openIndex, "[", "]");
+  return closeIndex === null ? null : tokens.slice(openIndex + 1, closeIndex);
+};
+
+const countAttributeViolations = (attribute: readonly Token[]): { path: number; suppression: number } => {
+  let path = 0;
+  let suppression = 0;
+  for (let index = 0; index < attribute.length; index += 1) {
+    const token = attribute.at(index);
+    if (token?.kind !== "identifier" || token.raw === true) continue;
+    const next = attribute.at(index + 1);
+    if (token.value === "path" && next?.value === "=") path += 1;
+    if ((token.value === "allow" || token.value === "expect") && next?.value === "(") suppression += 1;
+  }
+  return { path, suppression };
+};
+
+const addAttributeViolations = (tokens: readonly Token[], index: number, violations: ViolationCounts): void => {
+  const attribute = attributeTokens(tokens, index);
+  if (attribute === null) return;
+  const counts = countAttributeViolations(attribute);
+  violations.path += counts.path;
+  violations.suppression += counts.suppression;
+};
+
+const analyzeRust = (text: string): ViolationCounts => {
+  const tokens = tokenizeRust(text);
+  const violations: ViolationCounts = { pubUse: 0, path: 0, include: 0, suppression: 0 };
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens.at(index);
+    if (token === undefined) continue;
+    const category = declarationCategory(tokens, index);
+    if (category !== null) violations[category] += 1;
+    if (token.value === "#") addAttributeViolations(tokens, index, violations);
   }
   return violations;
+};
+
+const stripTomlComment = (line: string): string => {
+  let quote: string | null = null;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (quote !== null) {
+      if (character === "\\" && quote === '"') index += 1;
+      else if (character === quote) quote = null;
+    } else if (character === '"' || character === "'") quote = character;
+    else if (character === "#") return line.slice(0, index);
+  }
+  return line;
+};
+
+const sectionName = (line: string): string | null => {
+  if (line.length < 3 || !line.startsWith("[") || !line.endsWith("]")) return null;
+  const body = line.slice(1, -1).trim();
+  if (body.length === 0 || body.includes("[")) return null;
+  if (body.length > 1) {
+    const doubleQuoted = body.startsWith('"') && body.endsWith('"');
+    const singleQuoted = body.startsWith("'") && body.endsWith("'");
+    if (doubleQuoted || singleQuoted) return body.slice(1, -1);
+  }
+  return body;
+};
+
+const inheritsWorkspaceLints = (manifest: string): boolean => {
+  let section = "";
+  for (const rawLine of manifest.split(/\r?\n/)) {
+    const line = stripTomlComment(rawLine).trim();
+    if (line.length === 0) continue;
+    const header = sectionName(line);
+    if (header !== null) {
+      section = header;
+      continue;
+    }
+    if (section === "lints" && /^workspace\s*=\s*true$/.test(line)) return true;
+  }
+  return false;
 };
 
 const scan = (): Scan => {
@@ -68,8 +353,16 @@ const scan = (): Scan => {
     .sort(compareText);
   const crateLines = new Map(crates.map((crate) => [crate, 0]));
   const files = new Map<string, RustFile>();
+  const manifestFailures: string[] = [];
   for (const crate of crates) {
     const crateRoot = join(CRATES_DIRECTORY, crate);
+    const manifestPath = join(crateRoot, "Cargo.toml");
+    const manifestRelative = relative(ROOT, manifestPath).split(sep).join("/");
+    if (!existsSync(manifestPath)) {
+      manifestFailures.push(`${manifestRelative}: first-party crate has no Cargo.toml with [lints] workspace = true`);
+    } else if (!inheritsWorkspaceLints(readFileSync(manifestPath, "utf8"))) {
+      manifestFailures.push(`${manifestRelative}: missing [lints] with workspace = true; inherit the workspace lint policy`);
+    }
     const walk = (directory: string): void => {
       const entries = readdirSync(directory, { withFileTypes: true }).sort((left, right) => compareText(left.name, right.name));
       for (const entry of entries) {
@@ -81,14 +374,14 @@ const scan = (): Scan => {
         if (!entry.isFile() || !entry.name.endsWith(".rs")) continue;
         const path = relative(ROOT, full).split(sep).join("/");
         const crateRelative = relative(crateRoot, full).split(sep).join("/");
-        const lines = physicalLines(readFileSync(full, "utf8"));
-        files.set(path, { path, violations: countViolations(lines) });
-        if (crateRelative.startsWith("src/")) crateLines.set(crate, (crateLines.get(crate) ?? 0) + lines.length);
+        const text = readFileSync(full, "utf8");
+        files.set(path, { path, violations: analyzeRust(text) });
+        if (crateRelative.startsWith("src/")) crateLines.set(crate, (crateLines.get(crate) ?? 0) + physicalLines(text).length);
       }
     };
     walk(crateRoot);
   }
-  return { crates, crateLines, files };
+  return { crates, crateLines, files, manifestFailures };
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -155,17 +448,21 @@ const currentBaseline = (scanned: Scan): Baseline => {
 };
 
 const violationTotals = (scanned: Scan): { totals: ViolationCounts; files: number } => {
-  const totals: ViolationCounts = { pubUse: 0, path: 0, include: 0 };
+  const totals: ViolationCounts = { pubUse: 0, path: 0, include: 0, suppression: 0 };
   let files = 0;
   for (const file of scanned.files.values()) {
-    const count = file.violations.pubUse + file.violations.path + file.violations.include;
+    let count = 0;
+    for (const category of VIOLATION_CATEGORIES) {
+      count += file.violations[category];
+      totals[category] += file.violations[category];
+    }
     if (count > 0) files += 1;
-    for (const category of VIOLATION_CATEGORIES) totals[category] += file.violations[category];
   }
   return { totals, files };
 };
 
-const totalsText = (totals: ViolationCounts): string => `${totals.pubUse} pubUse + ${totals.path} #[path] + ${totals.include} include! violations`;
+const totalsText = (totals: ViolationCounts): string =>
+  `${totals.pubUse} visible re-exports + ${totals.path} #[path] + ${totals.include} include! + ${totals.suppression} allow/expect violations`;
 
 const oversizedCrates = (scanned: Scan): number => scanned.crates.filter((crate) => (scanned.crateLines.get(crate) ?? 0) > CRATE_CAP).length;
 
@@ -175,6 +472,11 @@ const initialize = (): void => {
     process.exit(1);
   }
   const scanned = scan();
+  if (scanned.manifestFailures.length > 0) {
+    for (const failure of scanned.manifestFailures) console.error(`FAIL ${failure}`);
+    console.error(`rust:quality:init: FAILED (${scanned.manifestFailures.length} manifest policy problems)`);
+    process.exit(1);
+  }
   const baseline = currentBaseline(scanned);
   writeBaseline(baseline);
   const { totals, files } = violationTotals(scanned);
@@ -194,7 +496,7 @@ const crateProblem = (crate: string, lines: number, recorded: number | undefined
   return null;
 };
 
-const check = (scanned: Scan, baseline: Baseline): void => {
+const crateFailures = (scanned: Scan, baseline: Baseline): string[] => {
   const failures: string[] = [];
   const crates = new Set(scanned.crates);
   for (const crate of scanned.crates) {
@@ -204,10 +506,25 @@ const check = (scanned: Scan, baseline: Baseline): void => {
   for (const crate of baseline.crates.keys()) {
     if (!crates.has(crate)) failures.push(`rust/crates/${crate}: recorded ceiling has no first-party crate; run ${UPDATE_HINT} to drop it`);
   }
+  return failures;
+};
+
+const violationProblem = (path: string, file: RustFile, category: ViolationCategory, recorded: number | undefined): string | null => {
+  const actual = file.violations[category];
+  if (recorded === undefined) {
+    return actual > 0 ? `${path}: ${LABELS[category]} count is ${actual}, but no baseline count is recorded; remove the new violation` : null;
+  }
+  if (actual > recorded) return `${path}: ${LABELS[category]} count grew to ${actual} from ${recorded}; revert the growth`;
+  if (actual < recorded) return `${path}: ${LABELS[category]} count shrank to ${actual} from ${recorded}; run ${UPDATE_HINT} to tighten it`;
+  return null;
+};
+
+const violationFailures = (scanned: Scan, baseline: Baseline): string[] => {
   const paths = new Set(scanned.files.keys());
   for (const category of VIOLATION_CATEGORIES) {
     for (const path of baseline.violations.get(category)?.keys() ?? []) paths.add(path);
   }
+  const failures: string[] = [];
   for (const path of [...paths].sort(compareText)) {
     const file = scanned.files.get(path);
     if (file === undefined) {
@@ -215,17 +532,15 @@ const check = (scanned: Scan, baseline: Baseline): void => {
       continue;
     }
     for (const category of VIOLATION_CATEGORIES) {
-      const actual = file.violations[category];
-      const recorded = baseline.violations.get(category)?.get(path);
-      if (recorded === undefined) {
-        if (actual > 0) failures.push(`${path}: ${LABELS[category]} count is ${actual}, but no baseline count is recorded; remove the new violation`);
-      } else if (actual > recorded) {
-        failures.push(`${path}: ${LABELS[category]} count grew to ${actual} from ${recorded}; revert the growth`);
-      } else if (actual < recorded) {
-        failures.push(`${path}: ${LABELS[category]} count shrank to ${actual} from ${recorded}; run ${UPDATE_HINT} to tighten it`);
-      }
+      const problem = violationProblem(path, file, category, baseline.violations.get(category)?.get(path));
+      if (problem !== null) failures.push(problem);
     }
   }
+  return failures;
+};
+
+const check = (scanned: Scan, baseline: Baseline): void => {
+  const failures = [...scanned.manifestFailures, ...crateFailures(scanned, baseline), ...violationFailures(scanned, baseline)];
   if (failures.length > 0) {
     for (const failure of failures) console.error(`FAIL ${failure}`);
     console.error(
@@ -254,25 +569,27 @@ const violationUpdateRefusal = (path: string, category: ViolationCategory, actua
   return actual > recorded ? `${path}: ${LABELS[category]} count grew to ${actual} from ${recorded}; revert the growth before tightening` : null;
 };
 
-const update = (scanned: Scan, baseline: Baseline): void => {
+const crateUpdateRefusals = (scanned: Scan, baseline: Baseline): string[] => {
   const refusals: string[] = [];
   for (const crate of scanned.crates) {
     const refusal = crateUpdateRefusal(crate, scanned.crateLines.get(crate) ?? 0, baseline.crates.get(crate));
     if (refusal !== null) refusals.push(refusal);
   }
+  return refusals;
+};
+
+const violationUpdateRefusals = (scanned: Scan, baseline: Baseline): string[] => {
+  const refusals: string[] = [];
   for (const file of scanned.files.values()) {
     for (const category of VIOLATION_CATEGORIES) {
       const refusal = violationUpdateRefusal(file.path, category, file.violations[category], baseline.violations.get(category)?.get(file.path));
       if (refusal !== null) refusals.push(refusal);
     }
   }
-  if (refusals.length > 0) {
-    for (const refusal of refusals) console.error(`REFUSED ${refusal}`);
-    console.error("rust:quality:update: no changes written");
-    process.exit(1);
-  }
+  return refusals;
+};
 
-  const next = currentBaseline(scanned);
+const crateChanges = (scanned: Scan, baseline: Baseline): string[] => {
   const changes: string[] = [];
   const crates = new Set(scanned.crates);
   for (const crate of scanned.crates) {
@@ -281,12 +598,17 @@ const update = (scanned: Scan, baseline: Baseline): void => {
     if (lines > CRATE_CAP) {
       if (recorded !== undefined && lines < recorded) changes.push(`tightened rust/crates/${crate}: ${recorded} -> ${lines}`);
     } else if (recorded !== undefined) {
-      changes.push(`dropped rust/crates/${crate}: now ${lines} production lines, within the ${CRATE_CAP}-line cap`);
+      changes.push(`dropped rust/crates/${crate}: now ${lines} production lines, within the ${CRATE_CAP}-line crate cap`);
     }
   }
   for (const crate of baseline.crates.keys()) {
     if (!crates.has(crate)) changes.push(`dropped rust/crates/${crate}: no such first-party crate`);
   }
+  return changes;
+};
+
+const fileViolationChanges = (scanned: Scan, baseline: Baseline): string[] => {
+  const changes: string[] = [];
   for (const file of scanned.files.values()) {
     for (const category of VIOLATION_CATEGORIES) {
       const actual = file.violations[category];
@@ -298,11 +620,29 @@ const update = (scanned: Scan, baseline: Baseline): void => {
       }
     }
   }
+  return changes;
+};
+
+const missingViolationPathChanges = (scanned: Scan, baseline: Baseline): string[] => {
+  const changes: string[] = [];
   for (const category of VIOLATION_CATEGORIES) {
     for (const path of baseline.violations.get(category)?.keys() ?? []) {
       if (!scanned.files.has(path)) changes.push(`dropped ${path} [${LABELS[category]}]: no such Rust source file`);
     }
   }
+  return changes;
+};
+
+const update = (scanned: Scan, baseline: Baseline): void => {
+  const refusals = [...scanned.manifestFailures, ...crateUpdateRefusals(scanned, baseline), ...violationUpdateRefusals(scanned, baseline)];
+  if (refusals.length > 0) {
+    for (const refusal of refusals) console.error(`REFUSED ${refusal}`);
+    console.error("rust:quality:update: no changes written");
+    process.exit(1);
+  }
+
+  const next = currentBaseline(scanned);
+  const changes = [...crateChanges(scanned, baseline), ...fileViolationChanges(scanned, baseline), ...missingViolationPathChanges(scanned, baseline)];
   if (changes.length === 0) {
     const { totals } = violationTotals(scanned);
     console.log(`rust:quality:update: already tight (${next.crates.size} oversized crates; ${totalsText(totals)})`);
