@@ -12,7 +12,7 @@ export const API_KEY_CHANGE_MAX_LIMIT = 50;
 export type ApiKeyChangeAction = "create" | "update" | "revoke" | "unrevoke" | "delete";
 
 export type ApiKeyChangeActor = Readonly<{
-  kind: "passkey_user" | "shared_admin_credential" | "local_admin" | "unknown";
+  kind: "passkey_user" | "passport_user" | "shared_admin_credential" | "local_admin" | "unknown";
   /** Passkey user id when an identified person acted; null for shared credentials. */
   principal_id: string | null;
   /** Passkey handle when one is known; never a token or credential secret. */
@@ -89,6 +89,17 @@ export const apiKeyChangeActorFromAuth = (auth?: AdminAuthResult): ApiKeyChangeA
       kind: "passkey_user",
       principal_id: auth.method.user_id,
       principal_label: auth.method.handle,
+      is_super_admin: isSuperAdmin,
+    };
+  }
+  if (auth.method.kind === "passport_session") {
+    const user = "user" in auth.method ? auth.method.user : undefined;
+    const principalId = user?.sub ?? ("user_id" in auth.method ? String((auth.method as Record<string, unknown>).user_id) : null);
+    const principalLabel = user?.handle ?? ("handle" in auth.method ? String((auth.method as Record<string, unknown>).handle) : null);
+    return {
+      kind: "passport_user",
+      principal_id: principalId,
+      principal_label: principalLabel,
       is_super_admin: isSuperAdmin,
     };
   }

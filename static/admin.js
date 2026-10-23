@@ -8585,6 +8585,9 @@ const formatKeyChangeActor = (actor) => {
   if (actor.kind === "passkey_user") {
     return label ? `Passkey user ${label}` : `Passkey user ${principalId ?? "unknown"}`;
   }
+  if (actor.kind === "passport_user") {
+    return label ? `Passport user ${label}` : `Passport user ${principalId ?? "unknown"}`;
+  }
   if (actor.kind === "shared_admin_credential") return "Shared admin credential";
   if (actor.kind === "local_admin") return "Local admin (admin auth disabled)";
   return "Unknown actor";

@@ -58,6 +58,30 @@ const sharedContext = (requestId = "req-shared-1"): ApiKeyAuditContext => ({
   request_id: requestId,
 });
 
+const passportContext = (sub = "passport-user-42", handle = "bob"): ApiKeyAuditContext => ({
+  auth: {
+    ok: true,
+    token: "unused-jwt-token-never-persisted",
+    is_super_admin: false,
+    method: {
+      kind: "passport_session",
+      principal: `passport-user:${sub}`,
+      user: {
+        sub,
+        handle,
+        is_admin: true,
+        scopes: [],
+        auth: "sso",
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        jti: "fixture-jti",
+        agent_token_id: null,
+      },
+    },
+  },
+  request_id: "req-passport-1",
+});
+
+
 const jsonRequest = (path: string, body: Record<string, unknown>, method = "POST"): Request =>
   new Request(`https://ai.ubq.fi${path}`, {
     method,
@@ -424,4 +448,30 @@ test("the change-history route is authenticated and fails closed without KV", as
   const unavailable = await handleAdminApiKeyChanges(new Request("https://ai.ubq.fi/admin/api-keys/changes"), null);
   assert.equal(unavailable.status, 500);
   assert.equal(((await unavailable.json()) as { error?: { message?: string } }).error?.message, "Deno KV is not available; cannot load key change history");
+});
+
+test("Passport-authenticated admin mutations retain verified Passport subject and handle without persisting JWT", async () => {
+  kvStore.clear();
+
+  const id = await createKey(
+    { name: "Passport audit key", usage_limit_requests: -1, expires_at_ms: -1 },
+    passportContext("sub-passport-user-99", "passport-alice")
+  );
+
+  const history = await listAudit();
+  assert.equal(history.status, 200);
+  assert(history.body.data && history.body.data.length > 0);
+
+  const createEvent = history.body.data.find((e) => e.target_key_id === id && e.action === "create");
+  assert(createEvent);
+  assert.equal(createEvent.actor.kind, "passport_user");
+  assert.equal(createEvent.actor.principal_id, "sub-passport-user-99");
+  assert.equal(createEvent.actor.principal_label, "passport-alice");
+  assert.equal(createEvent.actor.is_super_admin, false);
+
+  // Verify the JWT is NEVER persisted in the audit event or in stored KV values
+  const serializedEvent = JSON.stringify(createEvent);
+  assert.equal(serializedEvent.includes("unused-jwt-token-never-persisted"), false);
+  const rawKv = JSON.stringify(Array.from(kvStore.values()));
+  assert.equal(rawKv.includes("unused-jwt-token-never-persisted"), false);
 });
