@@ -1,4 +1,4 @@
-use crate::{connector_fd, connector_protocol};
+use gateway_native::{connector_fd, connector_protocol};
 
 use connector_fd::{ControlEndpoint, ReceiveProcess, Side};
 use connector_protocol::{Channel, ControlError, ControlFrame, MAX_FRAME_BYTES, WIRE_VERSION};

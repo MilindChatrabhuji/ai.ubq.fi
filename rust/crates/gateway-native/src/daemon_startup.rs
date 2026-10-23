@@ -9,7 +9,6 @@ use crate::{
 };
 use gateway_auth::GatewayError;
 use std::path::PathBuf;
-#[path = "native_live_startup.rs"]
 pub(crate) mod live_bootstrap;
 pub(crate) fn source_policy(
     config: &PreparedNativeDaemonConfig,
@@ -182,7 +181,6 @@ fn request_service_with(
 }
 
 #[cfg(test)]
-#[path = "native_live_runtime_tests.rs"]
 mod live_tests;
 fn unavailable() -> GatewayError {
     GatewayError::unavailable(

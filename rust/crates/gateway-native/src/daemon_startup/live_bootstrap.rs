@@ -256,5 +256,4 @@ fn io_error(error: std::io::Error) -> ControlError {
 }
 
 #[cfg(test)]
-#[path = "native_live_startup_tests.rs"]
 mod tests;

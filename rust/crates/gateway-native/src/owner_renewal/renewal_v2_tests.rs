@@ -321,10 +321,11 @@ fn signed_recheck<T: serde::Serialize + Send + 'static>(
     peer.set_write_timeout(Some(Duration::from_secs(3)))
         .unwrap();
     let server = thread::spawn(move || {
-        let cert =
-            CertificateDer::from(include_bytes!("../tests/fixtures/native-tls/leaf.der").to_vec());
+        let cert = CertificateDer::from(
+            include_bytes!("../../tests/fixtures/native-tls/leaf.der").to_vec(),
+        );
         let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-            include_bytes!("../tests/fixtures/native-tls/leaf.pk8.der").to_vec(),
+            include_bytes!("../../tests/fixtures/native-tls/leaf.pk8.der").to_vec(),
         ));
         let config = ServerConfig::builder()
             .with_no_client_auth()
@@ -367,7 +368,7 @@ fn signed_recheck<T: serde::Serialize + Send + 'static>(
         tls.flush().unwrap();
     });
     let ca =
-        ureq::tls::Certificate::from_der(include_bytes!("../tests/fixtures/native-tls/ca.der"))
+        ureq::tls::Certificate::from_der(include_bytes!("../../tests/fixtures/native-tls/ca.der"))
             .to_owned();
     let authority = NativeAuthorityHttp::with_roots(
         &format!("https://localhost:{port}{NATIVE_RENEWAL_AUTHORITY_PATH}"),

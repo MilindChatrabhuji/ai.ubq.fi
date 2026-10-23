@@ -11,15 +11,19 @@ pub fn require_production_artifact() -> Result<(), gateway_auth::GatewayError> {
     Ok(())
 }
 #[cfg(unix)]
-mod connector_fd;
+#[doc(hidden)]
+pub mod connector_fd;
 #[cfg(unix)]
-mod connector_policy;
+#[doc(hidden)]
+pub mod connector_policy;
 #[cfg(unix)]
-mod connector_protocol;
+#[doc(hidden)]
+pub mod connector_protocol;
 #[cfg(unix)]
 mod connector_supervisor;
 #[cfg(unix)]
-mod connector_worker;
+#[doc(hidden)]
+pub mod connector_worker;
 #[cfg(unix)]
 mod daemon_startup;
 #[cfg(unix)]

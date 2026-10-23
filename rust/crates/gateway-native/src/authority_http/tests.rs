@@ -205,10 +205,11 @@ fn isolated_reverse_tls_scenario_child() {
         socket
             .set_write_timeout(Some(Duration::from_secs(3)))
             .unwrap();
-        let cert =
-            CertificateDer::from(include_bytes!("../tests/fixtures/native-tls/leaf.der").to_vec());
+        let cert = CertificateDer::from(
+            include_bytes!("../../tests/fixtures/native-tls/leaf.der").to_vec(),
+        );
         let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-            include_bytes!("../tests/fixtures/native-tls/leaf.pk8.der").to_vec(),
+            include_bytes!("../../tests/fixtures/native-tls/leaf.pk8.der").to_vec(),
         ));
         let config = ServerConfig::builder()
             .with_no_client_auth()
@@ -240,7 +241,7 @@ fn isolated_reverse_tls_scenario_child() {
         true
     });
     let ca =
-        ureq::tls::Certificate::from_der(include_bytes!("../tests/fixtures/native-tls/ca.der"))
+        ureq::tls::Certificate::from_der(include_bytes!("../../tests/fixtures/native-tls/ca.der"))
             .to_owned();
     let roots = if trusted {
         ureq::tls::RootCerts::new_with_certs(&[ca])

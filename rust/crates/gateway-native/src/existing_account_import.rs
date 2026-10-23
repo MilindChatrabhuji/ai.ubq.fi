@@ -15,7 +15,6 @@ mod actor_channel;
 mod completion;
 mod custodian_runtime;
 mod custodian_service;
-#[path = "import_durability.rs"]
 mod durability;
 mod exclusive_owner;
 mod import_documents;
@@ -167,7 +166,6 @@ fn unavailable() -> GatewayError {
 }
 
 #[cfg(test)]
-#[path = "existing_account_import/tests.rs"]
 mod foundation_tests;
 
 #[cfg(all(test, target_os = "macos", feature = "native-import-fixture"))]

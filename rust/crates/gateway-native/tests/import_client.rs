@@ -1,7 +1,5 @@
 //! Actual in-process admin preparation + native signed construction, not HTTP,
 //! effect/provider import or verified Cloudflare completion.
-#[path = "../src/import_client.rs"]
-mod import_client;
 use gateway_auth::{
     AuthConfig, AuthHost, AuthRequest, GatewayError,
     crypto::{Secret, base64url, sha256_hex},
@@ -35,7 +33,7 @@ use gateway_core::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
     },
 };
-use import_client::{ClientError, NativeImportClient};
+use gateway_native::import_client::{ClientError, NativeImportClient};
 use serde::Serialize;
 use serde_json::json;
 use std::{

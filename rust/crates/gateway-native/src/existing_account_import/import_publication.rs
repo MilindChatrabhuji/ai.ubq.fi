@@ -318,5 +318,4 @@ impl ImportPublicationHttp {
 }
 
 #[cfg(test)]
-#[path = "import_publication_tests.rs"]
 mod tests;

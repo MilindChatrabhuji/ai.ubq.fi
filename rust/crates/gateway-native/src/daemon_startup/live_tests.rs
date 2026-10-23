@@ -27,10 +27,10 @@ use tungstenite::{
     protocol::frame::{CloseFrame, coding::CloseCode},
 };
 
-const CA: &[u8] = include_bytes!("../tests/fixtures/native-live-startup/ca.der");
-const CERT: &[u8] = include_bytes!("../tests/fixtures/native-live-startup/leaf.der");
+const CA: &[u8] = include_bytes!("../../tests/fixtures/native-live-startup/ca.der");
+const CERT: &[u8] = include_bytes!("../../tests/fixtures/native-live-startup/leaf.der");
 // Deliberately committed synthetic offline fixture key, never a runtime identity.
-const KEY: &[u8] = include_bytes!("../tests/fixtures/native-live-startup/leaf.pk8.der");
+const KEY: &[u8] = include_bytes!("../../tests/fixtures/native-live-startup/leaf.pk8.der");
 pub(super) fn authority_roots() -> ureq::tls::RootCerts {
     ureq::tls::RootCerts::new_with_certs(&[ureq::tls::Certificate::from_der(CA).to_owned()])
 }

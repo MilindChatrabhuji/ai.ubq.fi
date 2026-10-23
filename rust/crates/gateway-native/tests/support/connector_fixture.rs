@@ -1,11 +1,8 @@
 #![cfg(unix)]
+//! Named connector fixture runner. Test harness only; not a product role.
 mod connector_bootstrap_cases;
 mod connector_cases;
-#[path = "../../src/connector_policy.rs"]
-mod connector_policy;
-#[path = "../../src/connector_worker.rs"]
-mod connector_worker;
-use gateway_native::{confinement, require_production_artifact};
+use gateway_native::{confinement, connector_policy, connector_worker};
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
@@ -84,12 +81,8 @@ fn print_policy(name: &str) {
     );
 }
 
-#[path = "../../src/connector_fd.rs"]
-mod connector_fd;
-#[path = "../../src/connector_protocol.rs"]
-mod connector_protocol;
-use connector_fd::{ControlEndpoint, ReceiveProcess, Side};
-use connector_protocol::{Channel, ControlError, ControlFrame};
+use gateway_native::connector_fd::{ControlEndpoint, ReceiveProcess, Side};
+use gateway_native::connector_protocol::{Channel, ControlError, ControlFrame};
 use std::{
     os::{fd::AsFd, unix::net::UnixStream},
     time::Duration,

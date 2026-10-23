@@ -3,48 +3,48 @@ use gateway_core::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 
-pub(crate) const AUTH_MAX_BYTES: usize = 32 * 1024 * 1024;
-#[cfg(all(test, unix))]
-pub(crate) const PROFILE_MAX_BYTES: usize = 5 * 1024 * 1024;
+pub const AUTH_MAX_BYTES: usize = 32 * 1024 * 1024;
+#[cfg(unix)]
+pub const PROFILE_MAX_BYTES: usize = 5 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AuthReadFailure {
+pub enum AuthReadFailure {
     Empty,
     Invalid,
     TooLarge,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum BodyError {
+pub enum BodyError {
     AuthBody,
-    #[cfg(all(test, unix))]
+    #[cfg(unix)]
     ProfileSelector,
-    #[cfg(all(test, unix))]
+    #[cfg(unix)]
     ProfileTooLarge,
-    #[cfg(all(test, unix))]
+    #[cfg(unix)]
     ProfileWriteConflict,
 }
 impl BodyError {
-    pub(crate) fn status(self) -> u16 {
+    pub fn status(self) -> u16 {
         match self {
             Self::AuthBody => 400,
-            #[cfg(all(test, unix))]
+            #[cfg(unix)]
             Self::ProfileTooLarge => 413,
-            #[cfg(all(test, unix))]
+            #[cfg(unix)]
             Self::ProfileSelector | Self::ProfileWriteConflict => 400,
         }
     }
-    pub(crate) fn message(self) -> &'static str {
+    pub fn message(self) -> &'static str {
         match self {
             Self::AuthBody => "Body does not look like a Codex auth.json",
-            #[cfg(all(test, unix))]
+            #[cfg(unix)]
             Self::ProfileSelector => "profile must be local or prod",
-            #[cfg(all(test, unix))]
+            #[cfg(unix)]
             Self::ProfileTooLarge => "Migration body is too large",
-            #[cfg(all(test, unix))]
+            #[cfg(unix)]
             Self::ProfileWriteConflict => "dry_run and write are mutually exclusive",
         }
     }
-    pub(crate) fn code(self) -> &'static str {
+    pub fn code(self) -> &'static str {
         "invalid_request_error"
     }
 }
@@ -78,7 +78,7 @@ pub(crate) fn check_auth_content_length(
     Ok(())
 }
 
-pub(super) fn read_auth_json(
+pub fn read_auth_json(
     raw: &[u8],
     content_length: Option<&str>,
 ) -> Result<SourceJson, AuthReadFailure> {
@@ -95,23 +95,23 @@ pub(super) fn read_auth_json(
 }
 
 /// Deliberately no Debug/Serialize/Clone for a credential-bearing result.
-pub(super) struct AuthBody<'a> {
+pub struct AuthBody<'a> {
     raw: &'a [u8],
     auth: SourceJson,
     client_version: Option<JsString16>,
 }
 impl AuthBody<'_> {
-    pub(super) fn raw_body(&self) -> &[u8] {
+    pub fn raw_body(&self) -> &[u8] {
         self.raw
     }
-    pub(super) fn auth(&self) -> &SourceJson {
+    pub fn auth(&self) -> &SourceJson {
         &self.auth
     }
-    pub(super) fn client_version(&self) -> Option<&JsString16> {
+    pub fn client_version(&self) -> Option<&JsString16> {
         self.client_version.as_ref()
     }
 }
-pub(super) fn decode_auth<'a>(
+pub fn decode_auth<'a>(
     raw: &'a [u8],
     content_length: Option<&str>,
 ) -> Result<AuthBody<'a>, BodyError> {
@@ -157,8 +157,9 @@ pub(super) fn decode_auth<'a>(
 }
 
 // PROFILE has no authorized live projection/consumer in the current native scope.
-#[cfg(all(test, unix))]
-mod profile {
+#[cfg(unix)]
+#[doc(hidden)]
+pub mod profile {
     use super::*;
 
     fn js_space(value: char) -> bool {
@@ -222,19 +223,19 @@ mod profile {
         }
     }
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub(crate) struct ProfileOptions {
-        pub(crate) profile: &'static str,
-        pub(crate) include_cache: bool,
-        pub(crate) include_legacy: bool,
-        pub(crate) overwrite: bool,
-        pub(crate) dry_run: bool,
+    pub struct ProfileOptions {
+        pub profile: &'static str,
+        pub include_cache: bool,
+        pub include_legacy: bool,
+        pub overwrite: bool,
+        pub dry_run: bool,
     }
     /// Non-authoritative pre-body field data. Only profile/declared size are read.
-    pub(crate) struct ProfileBodyPlan<'a> {
+    pub struct ProfileBodyPlan<'a> {
         query: &'a str,
         profile: &'static str,
     }
-    pub(crate) fn profile_plan<'a>(
+    pub fn profile_plan<'a>(
         query: &'a str,
         content_length: Option<&str>,
     ) -> Result<ProfileBodyPlan<'a>, BodyError> {
@@ -253,10 +254,10 @@ mod profile {
         Ok(ProfileBodyPlan { query, profile })
     }
     impl ProfileBodyPlan<'_> {
-        pub(crate) fn profile(&self) -> &'static str {
+        pub fn profile(&self) -> &'static str {
             self.profile
         }
-        pub(crate) fn decode<'a>(&self, raw: &'a [u8]) -> Result<ProfileBody<'a>, BodyError> {
+        pub fn decode<'a>(&self, raw: &'a [u8]) -> Result<ProfileBody<'a>, BodyError> {
             let text = request_text(raw);
             if text.len() > PROFILE_MAX_BYTES {
                 return Err(BodyError::ProfileTooLarge);
@@ -278,22 +279,20 @@ mod profile {
         }
     }
     /// Deliberately no Debug/Serialize/Clone for native profile/refresh-bearing text.
-    pub(crate) struct ProfileBody<'a> {
+    pub struct ProfileBody<'a> {
         raw: &'a [u8],
         text: String,
         options: ProfileOptions,
     }
     impl ProfileBody<'_> {
-        pub(crate) fn raw_body(&self) -> &[u8] {
+        pub fn raw_body(&self) -> &[u8] {
             self.raw
         }
-        pub(crate) fn text(&self) -> &str {
+        pub fn text(&self) -> &str {
             &self.text
         }
-        pub(crate) fn options(&self) -> &ProfileOptions {
+        pub fn options(&self) -> &ProfileOptions {
             &self.options
         }
     }
 }
-#[cfg(all(test, unix))]
-pub(super) use profile::profile_plan;
