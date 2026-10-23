@@ -2400,3 +2400,11 @@ The profile excludes historical API request logs, paid-fallback history, provide
 The snapshot has no paid-fallback window aggregate. Its current-window 1,877 request rows and 344 matching pending markers are retained because dropping them would lose current settled, reserved, and pending accounting; this is history retained for a current counter, not full-history convenience. Adoption derives one current paid window and the reconciliation gate from those retained rows, so the admin reader sees the current totals without a source reset or historical backfill. The source gate row is excluded because source gate versions use different document shapes.
 
 This decision authorizes only offline selection, preparation and focused local tests for the reduced profile. It does not authorize live adoption, a startup conversion, credential refresh or rotation, a quota reset, production deployment, or a full 140,220-row import. Raw managed Codex credentials still require current native custody and access-only sanitization before preparation; the captured generation does not match the current local auth files and was not refreshed or rotated.
+
+## Rust port code layout is non-negotiable - 2026-10-23
+
+The owner adopted four Rust rules for the port: no first-party crate above 1000 lines, no re-exports, no `#[path = "..."]`, and no `include!` (<https://x.com/dj_d_sol/status/2113543433516421153>). A crate is measured by its owned production `src/**/*.rs`; integration tests and vendored dependencies are separate crates, and the static `include_str!` and `include_bytes!` macros are not the prohibited `include!`.
+
+Reason: the current port is dominated by very large crates, broad `pub use` forwarding, and path-spliced modules, which hide dependency edges and make agent-generated changes hard to review. The rules are a migration requirement, not a claim that the current tree complies. Existing violations are recorded debt, no change may add or enlarge one, new or substantially rewritten crates must comply immediately, and full compliance remains required before port acceptance.
+
+Reversal risk: allowing crate growth or re-exports restores implicit API surfaces and ambiguous split boundaries; `#[path]` and `include!` bypass the conventional module graph and make ownership and compilation scope harder to audit.
