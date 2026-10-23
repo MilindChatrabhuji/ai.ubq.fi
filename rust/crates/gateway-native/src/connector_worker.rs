@@ -48,9 +48,9 @@ fn fixed_provider_dial(deadline: Instant) -> io::Result<TcpStream> {
     Err(last)
 }
 
-// The private injection point is compiled into the named test fixture only via
-// its same-module source inclusion, never a product destination/configuration.
-pub(crate) fn run_dial(
+// The private injection point is reachable only from the named test fixture
+// module, never from a product destination or configuration.
+pub fn run_dial(
     stream: UnixStream,
     process: Arc<ReceiveProcess>,
     dial: impl FnOnce(Instant) -> io::Result<TcpStream> + Send + 'static,

@@ -20,7 +20,7 @@ use std::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Side {
+pub enum Side {
     Parent,
     Connector,
 }
@@ -29,11 +29,11 @@ struct Pending {
     cancelled: bool,
 }
 #[derive(Debug)]
-pub(crate) struct ReceivedFrame {
-    pub(crate) frame: ControlFrame,
-    pub(crate) descriptor: Option<OwnedFd>,
+pub struct ReceivedFrame {
+    pub frame: ControlFrame,
+    pub descriptor: Option<OwnedFd>,
 }
-pub(crate) struct ControlEndpoint {
+pub struct ControlEndpoint {
     process: Arc<ReceiveProcess>,
     peer_hung_up: bool,
     stream: Option<UnixStream>,
@@ -41,7 +41,7 @@ pub(crate) struct ControlEndpoint {
     pending: Option<Pending>,
 }
 impl ControlEndpoint {
-    pub(crate) fn new(
+    pub fn new(
         stream: UnixStream,
         side: Side,
         timeout: Duration,
@@ -106,10 +106,10 @@ impl ControlEndpoint {
             pending: None,
         })
     }
-    pub(crate) fn is_closed(&self) -> bool {
+    pub fn is_closed(&self) -> bool {
         self.stream.is_none()
     }
-    pub(crate) fn close(&mut self) {
+    pub fn close(&mut self) {
         // Closing the control socket also discards queued ancillary rights.
         // A successfully returned descriptor has independent owned lifetime.
         drop(self.stream.take());
@@ -117,7 +117,7 @@ impl ControlEndpoint {
     }
     /// Consumes the sender's descriptor even on refusal/error. A short send is
     /// unknown; never resend SCM_RIGHTS or the rest of that frame automatically.
-    pub(crate) fn send(
+    pub fn send(
         &mut self,
         frame: ControlFrame,
         descriptor: Option<OwnedFd>,
@@ -161,7 +161,7 @@ impl ControlEndpoint {
         }
         result
     }
-    pub(crate) fn receive(&mut self) -> Result<ReceivedFrame, ControlError> {
+    pub fn receive(&mut self) -> Result<ReceivedFrame, ControlError> {
         let result = (|| {
             let stream = self.stream.as_ref().ok_or(ControlError::Closed)?;
             let (body, mut descriptors) = receive_packet(stream, &self.process)?;
@@ -377,11 +377,11 @@ fn io_error(error: std::io::Error) -> ControlError {
 
 /// Unforgeable local lifetime: entering it never returns to a long-lived caller.
 /// It is not OS-confinement evidence; only the prelaunch policy provides that.
-pub(crate) struct ReceiveProcess {
+pub struct ReceiveProcess {
     _private: (),
 }
 impl ReceiveProcess {
-    pub(crate) fn run(operation: impl FnOnce(&Arc<Self>) -> Result<(), ControlError>) -> ! {
+    pub fn run(operation: impl FnOnce(&Arc<Self>) -> Result<(), ControlError>) -> ! {
         let process = Arc::new(Self { _private: () });
         match operation(&process) {
             Ok(()) => std::process::exit(0),

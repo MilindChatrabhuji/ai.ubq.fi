@@ -1102,5 +1102,4 @@ fn actual_existing_account_original_start_owned_child_custody_durability_and_pub
     }
 }
 
-#[path = "flow_negative_tests.rs"]
 mod negatives;

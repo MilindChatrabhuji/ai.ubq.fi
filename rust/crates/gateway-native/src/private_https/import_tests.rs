@@ -14,9 +14,9 @@ struct Peer {
 }
 fn roots(import: bool) -> ureq::tls::RootCerts {
     let bytes: &[u8] = if import {
-        include_bytes!("../tests/fixtures/import-tls/ca.der")
+        include_bytes!("../../tests/fixtures/import-tls/ca.der")
     } else {
-        include_bytes!("../tests/fixtures/native-tls/ca.der")
+        include_bytes!("../../tests/fixtures/native-tls/ca.der")
     };
     ureq::tls::RootCerts::new_with_certs(&[ureq::tls::Certificate::from_der(bytes).to_owned()])
 }
@@ -33,13 +33,13 @@ impl Peer {
                 .ok()?;
             let (cert, key): (&[u8], &[u8]) = if import {
                 (
-                    include_bytes!("../tests/fixtures/import-tls/leaf.der"),
-                    include_bytes!("../tests/fixtures/import-tls/leaf.pk8.der"),
+                    include_bytes!("../../tests/fixtures/import-tls/leaf.der"),
+                    include_bytes!("../../tests/fixtures/import-tls/leaf.pk8.der"),
                 )
             } else {
                 (
-                    include_bytes!("../tests/fixtures/native-tls/leaf.der"),
-                    include_bytes!("../tests/fixtures/native-tls/leaf.pk8.der"),
+                    include_bytes!("../../tests/fixtures/native-tls/leaf.der"),
+                    include_bytes!("../../tests/fixtures/native-tls/leaf.pk8.der"),
                 )
             };
             let config = ServerConfig::builder()

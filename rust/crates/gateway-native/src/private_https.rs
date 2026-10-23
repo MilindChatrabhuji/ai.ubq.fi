@@ -345,5 +345,4 @@ fn unknown() -> GatewayError {
 }
 
 #[cfg(test)]
-#[path = "import_tls_tests.rs"]
 mod import_tests;

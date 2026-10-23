@@ -3,18 +3,18 @@
 use serde::{Deserialize, Serialize};
 use std::{fmt, io};
 
-pub(crate) const MAX_FRAME_BYTES: usize = 4096;
-pub(crate) const WIRE_VERSION: u8 = 1;
+pub const MAX_FRAME_BYTES: usize = 4096;
+pub const WIRE_VERSION: u8 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Channel {
+pub enum Channel {
     ProviderLive,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum ControlFrame {
+pub enum ControlFrame {
     Connect {
         v: u8,
         channel: Channel,
@@ -41,7 +41,7 @@ pub(crate) enum ControlFrame {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ControlError {
+pub enum ControlError {
     InvalidFrame,
     FrameTooLarge,
     MissingDescriptor,
@@ -101,7 +101,7 @@ impl ControlFrame {
         }
         reference(self.connection_id())
     }
-    pub(crate) fn encode(&self) -> Result<Vec<u8>, ControlError> {
+    pub fn encode(&self) -> Result<Vec<u8>, ControlError> {
         self.validate()?;
         let data = serde_json::to_vec(self).map_err(|_| ControlError::InvalidFrame)?;
         if data.len() > MAX_FRAME_BYTES {
@@ -109,7 +109,7 @@ impl ControlFrame {
         }
         Ok(data)
     }
-    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, ControlError> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, ControlError> {
         if bytes.len() > MAX_FRAME_BYTES {
             return Err(ControlError::FrameTooLarge);
         }

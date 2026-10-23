@@ -196,5 +196,4 @@ pub fn authority_deadline(
 }
 
 #[cfg(all(test, target_os = "linux"))]
-#[path = "authority_http_tests.rs"]
 mod tests;

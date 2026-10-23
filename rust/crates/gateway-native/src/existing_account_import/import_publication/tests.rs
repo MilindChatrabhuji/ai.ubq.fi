@@ -147,8 +147,8 @@ impl Peer {
             socket
                 .set_write_timeout(Some(Duration::from_secs(3)))
                 .ok()?;
-            let cert = include_bytes!("../../tests/fixtures/native-tls/leaf.der");
-            let key = include_bytes!("../../tests/fixtures/native-tls/leaf.pk8.der");
+            let cert = include_bytes!("../../../tests/fixtures/native-tls/leaf.der");
+            let key = include_bytes!("../../../tests/fixtures/native-tls/leaf.pk8.der");
             let config = ServerConfig::builder()
                 .with_no_client_auth()
                 .with_single_cert(
@@ -263,7 +263,7 @@ fn actual_signed_publication_reply_matches_original_bytes_and_retains_old_limits
             "https://localhost/uos/native/publication",
             socket,
             identity(),
-            include_bytes!("../../tests/fixtures/native-tls/ca.der"),
+            include_bytes!("../../../tests/fixtures/native-tls/ca.der"),
         )
         .unwrap();
         let result = sender
@@ -314,7 +314,7 @@ fn actual_unsigned_dropped_redirect_and_oversized_error_never_issue_authenticate
             "https://localhost/uos/native/publication",
             socket,
             identity(),
-            include_bytes!("../../tests/fixtures/native-tls/ca.der"),
+            include_bytes!("../../../tests/fixtures/native-tls/ca.der"),
         )
         .unwrap();
         assert!(
@@ -349,7 +349,7 @@ fn actual_ordinary_private_https_reader_keeps_65536_even_for_a_new_import_body()
         NATIVE_PUBLICATION_PATH,
         socket,
         ureq::tls::RootCerts::new_with_certs(&[ureq::tls::Certificate::from_der(include_bytes!(
-            "../../tests/fixtures/native-tls/ca.der"
+            "../../../tests/fixtures/native-tls/ca.der"
         ))
         .to_owned()]),
     )

@@ -98,5 +98,4 @@ fn unknown() -> GatewayError {
 }
 
 #[cfg(test)]
-#[path = "publication_http_tests.rs"]
 mod tests;

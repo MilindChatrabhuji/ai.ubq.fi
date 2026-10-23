@@ -240,5 +240,4 @@ fn unavailable() -> GatewayError {
 }
 
 #[cfg(all(test, target_os = "macos"))]
-#[path = "native_config_ancillary_tests.rs"]
 mod tests;

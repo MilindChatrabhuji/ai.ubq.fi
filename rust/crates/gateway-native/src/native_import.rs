@@ -1,7 +1,7 @@
 //! Fixed native-only receiver and authenticated source-data boundary.
 //! No socket, refresh, provider effect or publication implementation.
-#[path = "import_body.rs"]
-pub(crate) mod import_body;
+#[doc(hidden)]
+pub mod import_body;
 use crate::owner_control::NativeControlContext;
 pub use gateway_auth::native_import::{NativeImportKind, NativeImportMetadata, NativeImportTarget};
 pub use gateway_authority::native_control::import::AuthenticatedNativeImport;
@@ -189,8 +189,4 @@ pub(crate) fn decode_context<'a>(
 }
 
 #[cfg(all(test, unix))]
-#[path = "../tests/cases/import_body_source_cases.rs"]
-mod source_cases;
-#[cfg(all(test, unix))]
-#[path = "native_import_tests.rs"]
 mod tests;

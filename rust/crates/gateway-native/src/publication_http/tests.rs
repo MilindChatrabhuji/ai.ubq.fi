@@ -110,10 +110,10 @@ impl Peer {
                 .set_write_timeout(Some(Duration::from_secs(3)))
                 .unwrap();
             let cert = CertificateDer::from(
-                include_bytes!("../tests/fixtures/native-tls/leaf.der").to_vec(),
+                include_bytes!("../../tests/fixtures/native-tls/leaf.der").to_vec(),
             );
             let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-                include_bytes!("../tests/fixtures/native-tls/leaf.pk8.der").to_vec(),
+                include_bytes!("../../tests/fixtures/native-tls/leaf.pk8.der").to_vec(),
             ));
             let config = ServerConfig::builder()
                 .with_no_client_auth()
@@ -202,7 +202,7 @@ fn real_https_transport_verifies_peer_and_signed_publication_receipts() {
         assert!(!carrier.agent.config().tls_config().disable_verification());
         if fixture_trust {
             let ca = ureq::tls::Certificate::from_der(include_bytes!(
-                "../tests/fixtures/native-tls/ca.der"
+                "../../tests/fixtures/native-tls/ca.der"
             ))
             .to_owned();
             // This private unit-only anchor changes no public constructor or

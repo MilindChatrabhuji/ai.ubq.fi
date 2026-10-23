@@ -272,5 +272,4 @@ impl Drop for LiveImportCustody<'_> {
 }
 
 #[cfg(test)]
-#[path = "custody_observation_tests.rs"]
 mod tests;

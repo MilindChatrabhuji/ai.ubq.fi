@@ -1,11 +1,10 @@
-use super::import_body;
 use gateway_auth::crypto::sha256_hex;
 use gateway_core::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
-use import_body::{
-    AUTH_MAX_BYTES, AuthReadFailure, BodyError, PROFILE_MAX_BYTES, decode_auth, profile_plan,
-    read_auth_json,
+use gateway_native::native_import::import_body::{
+    AUTH_MAX_BYTES, AuthReadFailure, BodyError, PROFILE_MAX_BYTES, decode_auth,
+    profile::profile_plan, read_auth_json,
 };
 use serde::Deserialize;
 use serde_json::Value;
