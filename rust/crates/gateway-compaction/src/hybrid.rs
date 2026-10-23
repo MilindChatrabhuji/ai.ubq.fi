@@ -1,7 +1,7 @@
 //! Source buffered chunk rewrite with mechanical identifier ledger and verbatim tail.
 use crate::{
-    CompactionFailure, CompactionHost,
     text::{self, Text, text},
+    types::{CompactionFailure, CompactionHost},
 };
 use futures_util::{StreamExt, stream};
 use gateway_core::source_json::SourceJson;

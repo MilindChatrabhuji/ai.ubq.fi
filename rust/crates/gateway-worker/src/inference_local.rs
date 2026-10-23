@@ -9,6 +9,7 @@ use crate::{
     transport::stream::{ObservationHandle, ObservedStream},
 };
 use futures_util::{Stream, task::AtomicWaker};
+use gateway_compaction::types::{CompactionOutcome, ResponseOptions};
 use gateway_core::lifecycle::{BodyOutcome, ReaderTermination, TransportObservation};
 use gateway_routing_runtime::{
     RoutingError, RoutingSession,
@@ -126,7 +127,7 @@ async fn start_inner(
                 gateway_compaction::build_compaction_response(
                     document.original_source(),
                     &builder,
-                    gateway_compaction::ResponseOptions {
+                    ResponseOptions {
                         stream,
                         hybrid: crate::host::setting(&host.env, "JEV_COMPACTION_HYBRID").as_deref()
                             != Some("0"),
@@ -203,9 +204,7 @@ async fn fallback(local: Local) -> Result<Start, RoutingError> {
         .await
         .map(|session| Start::Ordinary(Rc::new(session)))
 }
-fn built_response(
-    outcome: gateway_compaction::CompactionOutcome,
-) -> Result<Response, RoutingError> {
+fn built_response(outcome: CompactionOutcome) -> Result<Response, RoutingError> {
     let mut response = Response::from_bytes(outcome.body)
         .map_err(|_| wrapper_error())?
         .with_status(outcome.status);
