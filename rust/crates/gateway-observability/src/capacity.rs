@@ -1,9 +1,8 @@
 //! Source lease-guarded event/admin sampler. No timer, alarm, or inference operation.
 use crate::replay_values::SourceObject;
-use crate::{
-    Context, ObservabilityHost, ObservabilityRuntime, capacity_shapes as shape, health,
-    host_types::*, store,
-};
+use crate::{ObservabilityRuntime, types::ObservabilityHost};
+use crate::{capacity_shapes as shape, health, host_types::*, store};
+use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::{AuthResponse, crypto::sha256_hex};
 use gateway_core::{
     GatewayError, query::QueryStore, source_json::SourceJson, source_serialization as source,

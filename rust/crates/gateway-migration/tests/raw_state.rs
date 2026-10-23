@@ -7,7 +7,7 @@ use gateway_core::{
 };
 use gateway_migration::*;
 use serde_json::{Value, json};
-use support::*;
+use support::{fixture::*, sqlite_store::*};
 struct OracleDate;
 impl SourceDateHost for OracleDate {
     fn date_value(&self, input: Option<&Value>) -> Result<Option<i64>, GatewayError> {

@@ -385,7 +385,7 @@ pub async fn managed_publication(
         &incoming,
     );
     use gateway_authority::native_control::NativeManagedPublicationDisposition as Disposition;
-    use gateway_publication::{ManagedPublicationReceipt, PublicationDisposition};
+    use gateway_publication::{managed::ManagedPublicationReceipt, wire::PublicationDisposition};
     let applied = receiver
         .publish_managed(&proof, bytes)
         .await

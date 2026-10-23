@@ -8,7 +8,10 @@ use gateway_auth::provider_credentials::{self as codex, CodexSourceAccount};
 use gateway_core::{
     GatewayError, js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
-use gateway_observability::{HealthEvent, HealthTarget, host_types::*};
+use gateway_observability::{
+    host_types::*,
+    types::{HealthEvent, HealthTarget},
+};
 use std::collections::BTreeMap;
 use worker::{Method, Response};
 

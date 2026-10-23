@@ -9,7 +9,6 @@ use gateway_core::{
 };
 use serde::Serialize;
 use serde_json::{Value, json};
-#[path = "paid_backfill_values.rs"]
 mod values;
 
 const PAGE_SIZE: u32 = 128;
@@ -329,5 +328,4 @@ fn cursor_parts(key: &RecordKey) -> Result<Vec<Value>, GatewayError> {
         .collect()
 }
 #[cfg(test)]
-#[path = "paid_backfill_tests.rs"]
 mod tests;

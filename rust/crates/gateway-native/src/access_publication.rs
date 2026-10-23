@@ -6,9 +6,9 @@ use gateway_auth::{
 };
 use gateway_authority::routing::SubscriptionPool;
 use gateway_core::state::AuthorityStore;
-use gateway_publication::AccessCredentialSource;
+use gateway_publication::access_publication::AccessCredentialSource;
 
-pub use gateway_publication::RegisteredAccessOwner;
+pub use gateway_publication::access_publication::RegisteredAccessOwner;
 
 struct NativeAccessSource<'a, T>(&'a T);
 impl<T: NativeOwnerTransport> AccessCredentialSource for NativeAccessSource<'_, T> {
@@ -20,7 +20,9 @@ impl<T: NativeOwnerTransport> AccessCredentialSource for NativeAccessSource<'_, 
     }
 }
 
-pub struct PreparedAccessPublication(gateway_publication::PreparedAccessPublication);
+pub struct PreparedAccessPublication(
+    gateway_publication::access_publication::PreparedAccessPublication,
+);
 impl PreparedAccessPublication {
     pub async fn capture<S: AuthorityStore, T: NativeOwnerTransport>(
         store: &S,
@@ -30,7 +32,7 @@ impl PreparedAccessPublication {
         now_ms: i64,
         revision: &str,
     ) -> Result<Self, GatewayError> {
-        gateway_publication::PreparedAccessPublication::capture(
+        gateway_publication::access_publication::PreparedAccessPublication::capture(
             store,
             &NativeAccessSource(transport),
             identity,

@@ -353,15 +353,17 @@ fn normalized_catalog(
     now: i64,
 ) -> Result<CatalogValidation, GatewayError> {
     // This is the actual shared source normalizer, not a second native interpretation.
-    let prepared = gateway_publication::prepare_import_catalog(body, version, status, now)
-        .map_err(|error| {
-            if error.status == 503 {
-                invalid_catalog()
-            } else {
-                error
-            }
-        })?;
-    let gateway_publication::ImportCatalogData::Normalized {
+    let prepared = gateway_authority::native_control::import::prepare_import_catalog(
+        body, version, status, now,
+    )
+    .map_err(|error| {
+        if error.status == 503 {
+            invalid_catalog()
+        } else {
+            error
+        }
+    })?;
+    let gateway_authority::native_control::import::ImportCatalogData::Normalized {
         snapshot,
         client_version,
         upstream_status,

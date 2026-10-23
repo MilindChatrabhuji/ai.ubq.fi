@@ -3,7 +3,7 @@ use gateway_core::{
     js_string::JsString16, source_usage::extract_usage_tokens, state::StoredRecord,
     tuple_key::TupleKey,
 };
-use gateway_observability::{ObservabilityRuntime, ledger::TerminalUsageRollup};
+use gateway_observability::{ObservabilityRuntime, ledger::terminal_rollup::TerminalUsageRollup};
 use serde_json::Value;
 use support::{Host, Memory, run};
 const NOW: i64 = 1_792_329_600_000;

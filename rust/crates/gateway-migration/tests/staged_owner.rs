@@ -6,7 +6,7 @@ use gateway_core::{
 use gateway_migration::{staged::*, *};
 use serde_json::{Value, json};
 use std::cell::Cell;
-use support::*;
+use support::{fixture::*, sqlite_store::*};
 
 fn graph(value: &Value) -> SourceGraph {
     fn atom(value: &Value, nodes: &mut Vec<GraphNode>) -> GraphAtom {

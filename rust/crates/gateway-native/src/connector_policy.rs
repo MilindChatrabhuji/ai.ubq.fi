@@ -30,7 +30,7 @@ fn base(binary: &Path) -> Result<String, ControlError> {
         quoted(binary)?
     ))
 }
-pub(crate) fn connector(binary: &Path) -> Result<String, ControlError> {
+pub fn connector(binary: &Path) -> Result<String, ControlError> {
     let mut policy = base(binary)?;
     policy.push_str(r#"(allow mach-lookup (global-name "com.apple.mDNSResponder"))
 (allow file-read-data (literal "/private/etc/hosts") (literal "/private/etc/resolv.conf") (literal "/private/var/run/resolv.conf"))
@@ -38,7 +38,7 @@ pub(crate) fn connector(binary: &Path) -> Result<String, ControlError> {
 "#);
     Ok(policy)
 }
-pub(crate) fn request(
+pub fn request(
     binary: &Path,
     capabilities: &NativeConfinement,
     local: SocketAddr,
@@ -132,7 +132,7 @@ pub(crate) fn validate_unix_control(
 }
 
 /// Credential mutation belongs only to the fixed native import child, never the inference connector.
-pub(crate) fn import_actor(
+pub fn import_actor(
     binary: &Path,
     root: &Path,
     replay: &Path,
@@ -223,5 +223,4 @@ pub(crate) fn import_actor(
 }
 
 #[cfg(all(test, target_os = "macos", feature = "native-import-fixture"))]
-#[path = "import_policy_tests.rs"]
 mod import_policy_tests;

@@ -729,13 +729,10 @@ fn forbidden() -> GatewayError {
 }
 
 #[cfg(all(test, target_os = "linux"))]
-#[path = "owner_control_http_tests.rs"]
 mod owner_control_tests;
 
 #[cfg(test)]
-#[path = "live_http_tests.rs"]
 mod live_http_tests;
 
 #[cfg(test)]
-#[path = "import_http_tests.rs"]
 pub(crate) mod import_http_tests;

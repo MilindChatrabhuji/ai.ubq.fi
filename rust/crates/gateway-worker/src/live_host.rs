@@ -16,6 +16,7 @@ use gateway_core::{
     GatewayError,
     identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},
 };
+use gateway_live_runtime::protocol::{LiveRoute, live_route, principal_id};
 use std::rc::Rc;
 use worker::Context;
 
@@ -43,18 +44,17 @@ impl WorkerLiveHost {
         request_id: RequestId,
     ) -> Result<Self, GatewayError> {
         let url = worker::Url::parse(&original.url).map_err(|_| account::missing())?;
-        let route = gateway_live_runtime::live_route(&original.method, url.path())
-            .ok_or_else(account::missing)?;
+        let route = live_route(&original.method, url.path()).ok_or_else(account::missing)?;
         let request = RequestContext {
             request_id,
-            principal: PrincipalId(gateway_live_runtime::principal_id(&principal)),
+            principal: PrincipalId(principal_id(&principal)),
             key_id: match &principal.method {
                 AuthMethod::KvApiKey { key_id, .. } => Some(ApiKeyId(key_id.clone())),
                 _ => None,
             },
             route: match &route {
-                gateway_live_runtime::LiveRoute::Create => "live.create",
-                gateway_live_runtime::LiveRoute::Sideband(_) => "live.sideband",
+                LiveRoute::Create => "live.create",
+                LiveRoute::Sideband(_) => "live.sideband",
             }
             .into(),
             started_at_ms: now_ms()?,
@@ -63,7 +63,7 @@ impl WorkerLiveHost {
             Authority::with_clock(platform.store.clone(), PlatformTokens, PlatformClock);
         let actor =
             authenticate_client_actor(&authority, &platform, &config, &original, &request).await?;
-        if actor.principal() != gateway_live_runtime::principal_id(&principal) {
+        if actor.principal() != principal_id(&principal) {
             return Err(account::missing());
         }
         Ok(Self {
@@ -72,8 +72,8 @@ impl WorkerLiveHost {
             config,
             actor: Rc::new(actor),
             mapped_call_id: match route {
-                gateway_live_runtime::LiveRoute::Create => None,
-                gateway_live_runtime::LiveRoute::Sideband(call_id) => Some(call_id),
+                LiveRoute::Create => None,
+                LiveRoute::Sideband(call_id) => Some(call_id),
             },
         })
     }

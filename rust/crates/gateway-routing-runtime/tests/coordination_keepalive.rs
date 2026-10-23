@@ -1,5 +1,3 @@
-mod support;
-
 use gateway_auth::AuthMethod;
 use gateway_authority::{
     Authority, AuthorityClock, REQUEST_LEASE_MS, TokenSource, keys,
@@ -13,14 +11,14 @@ use gateway_core::{
     },
     tuple_key::{ScalarKeyPart, TupleKey},
 };
-use gateway_routing_runtime::{RoutingSession, local_work::*};
+use gateway_routing_runtime::{local_work::*, session::RoutingSession};
+use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use gateway_schema::source_request::SourceRequestDocument;
 use serde_json::json;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
-use support::*;
 
 fn key(id: &str) -> RecordKey {
     TupleKey::from_scalar_parts(&[

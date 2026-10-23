@@ -1067,6 +1067,7 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
+ "gateway-observability-test-support",
  "gateway-schema",
  "hkdf",
  "hmac 0.12.1",
@@ -1074,6 +1075,14 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "zeroize",
+]
+
+[[package]]
+name = "gateway-observability-test-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-schema",
 ]
 
 [[package]]
@@ -1108,6 +1117,21 @@ dependencies = [
  "gateway-authority",
  "gateway-core",
  "gateway-providers",
+ "gateway-routing-runtime-test-support",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-routing-runtime-test-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-providers",
+ "gateway-routing-runtime",
  "gateway-schema",
  "serde",
  "serde_json",
@@ -1163,8 +1187,21 @@ dependencies = [
  "gateway-core",
  "gateway-publication",
  "gateway-worker",
+ "gateway-worker-fixture-setup",
  "serde_json",
  "worker",
+]
+
+[[package]]
+name = "gateway-worker-fixture-setup"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-publication",
+ "gateway-worker",
+ "serde_json",
 ]
 
 [[package]]

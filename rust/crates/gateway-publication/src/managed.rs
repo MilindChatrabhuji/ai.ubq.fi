@@ -1,11 +1,10 @@
 //! Managed-source publication is separate from external access_publish v1.
 //! Only an access projection is encoded; physical refresh material stays native.
 use crate::{
-    PreparedPublicationCommand, PublicationDisposition,
     transport::{
         NativePublicationSender, OwnedNativeAuthHeaders, PublicationCarrier, PublicationRequest,
     },
-    wire::invalid,
+    wire::{PreparedPublicationCommand, PublicationDisposition, invalid},
 };
 use gateway_auth::{
     GatewayError,

@@ -2,13 +2,15 @@
 //! authority are gateway-worker; no request handler, ledger or upstream is copied.
 mod native_carrier;
 mod native_import;
-mod setup;
 use gateway_auth::{
     GatewayError,
     native_auth::{NativeCapability, NativeTransportIdentity},
 };
-use gateway_publication::{ConfiguredPaidInputs, transport::PublicationReceiver};
+use gateway_publication::{
+    control_publication::ConfiguredPaidInputs, transport::PublicationReceiver,
+};
 pub use gateway_worker::GatewayAuthority;
+use gateway_worker_fixture_setup::{initialize, invalid};
 use std::collections::BTreeSet;
 use worker::{Context, Env, Request};
 
@@ -63,17 +65,17 @@ pub async fn fetch(
     let result = async {
         let scenario = env
             .var("UOS_MATRIX_SCENARIO")
-            .map_err(|_| setup::invalid())?
+            .map_err(|_| invalid())?
             .to_string();
         if !["direct", "codex", "claude", "paid"].contains(&scenario.as_str()) {
-            return Err(setup::invalid());
+            return Err(invalid());
         }
         let identity = identity()?;
         let inputs = inputs()?;
         let receiver =
             PublicationReceiver::configured(identity.clone(), inputs.clone(), Vec::new(), now)?;
         let store = gateway_worker::authority::RemoteAuthorityStore::from_env(&env)?;
-        setup::initialize(&store, &identity, &inputs, &receiver, &scenario).await?;
+        initialize(&store, &identity, &inputs, &receiver, &scenario).await?;
         Ok(receiver)
     }
     .await;

@@ -164,5 +164,4 @@ pub(crate) fn finalize_claude(
 }
 
 #[cfg(test)]
-#[path = "response_id_tests.rs"]
 mod response_id_tests;

@@ -1,5 +1,5 @@
 //! Source analytics.ts and admin/error-log.ts. This is the existing request ledger.
-use crate::{ObservabilityHost, ObservabilityRuntime, store};
+use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
 use gateway_core::{
     GatewayError, js_string::JsString16, lifecycle::DeliveryOutcome, query::QueryStore,
     source_json::SourceJson, source_serialization as source,
@@ -7,9 +7,7 @@ use gateway_core::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-#[path = "terminal_rollup.rs"]
-mod terminal_rollup;
-pub use terminal_rollup::TerminalUsageRollup;
+pub mod terminal_rollup;
 
 pub const REQUEST_RETENTION_MS: i64 = 365 * store::DAY;
 pub const ERROR_RETENTION_MS: i64 = 7 * store::DAY;

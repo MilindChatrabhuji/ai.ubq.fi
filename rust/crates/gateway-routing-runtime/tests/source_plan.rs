@@ -1,4 +1,3 @@
-#[path = "support/input.rs"]
 mod source_input;
 use gateway_core::{
     js_string::JsString16, model::ModelId, provider::UpstreamProvider, source_json::SourceJson,
@@ -6,8 +5,8 @@ use gateway_core::{
 };
 use gateway_providers::ClientSurface;
 use gateway_routing_runtime::{
-    RoutingError, RoutingInput, SourceRefusalBody,
     policy::{self, RouteHop},
+    types::{RoutingError, RoutingInput, SourceRefusalBody},
 };
 use source_input::{NOW, input};
 fn fixture_json<T: serde::Serialize + ?Sized>(value: &T) -> SourceJson {

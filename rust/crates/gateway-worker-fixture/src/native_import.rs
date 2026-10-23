@@ -28,6 +28,7 @@ use gateway_core::{
     },
 };
 use gateway_worker::authority::RemoteAuthorityStore;
+use gateway_worker_fixture_setup::invalid;
 use std::collections::BTreeMap;
 const HOME: &str = "/tmp/worker-import-synthetic-owner";
 const OWNER: &str = "fixture-import-native-owner";
@@ -48,10 +49,10 @@ impl TokenSource for Tokens {
 struct Host;
 impl WebAuthnCrypto for Host {
     async fn validate_key(&self, _: &CosePublicKey) -> Result<(), GatewayError> {
-        Err(setup::invalid())
+        Err(invalid())
     }
     async fn verify_signature(&self, _: SignatureInput) -> Result<bool, GatewayError> {
-        Err(setup::invalid())
+        Err(invalid())
     }
 }
 impl AuthHost for Host {
@@ -65,7 +66,7 @@ impl AuthHost for Host {
         &self,
         _: AuthUpstreamRequest,
     ) -> Result<AuthUpstreamResponse, GatewayError> {
-        Err(setup::invalid())
+        Err(invalid())
     }
     async fn kernel_principal(
         &self,
@@ -74,7 +75,7 @@ impl AuthHost for Host {
         _: &str,
         _: &str,
     ) -> Result<String, GatewayError> {
-        Err(setup::invalid())
+        Err(invalid())
     }
 }
 struct Cancel;
@@ -138,7 +139,7 @@ pub(super) async fn initialize(
     if store.read(&user_key).await?.is_some() {
         return Ok(None);
     }
-    setup::initialize(&store, id, inputs, receiver, "direct").await?;
+    gateway_worker_fixture_setup::initialize(&store, id, inputs, receiver, "direct").await?;
     let time = now();
     let source_key = codex_source_pool_key();
     let source_rev = "fixture-import-source-v1";
@@ -163,7 +164,7 @@ pub(super) async fn initialize(
     account
         .native_owner
         .as_mut()
-        .ok_or_else(setup::invalid)?
+        .ok_or_else(invalid)?
         .generation_hash = credential.native_generation_hash.clone();
     let pool = CodexSourcePool {
         accounts: vec![account],
@@ -195,7 +196,7 @@ pub(super) async fn initialize(
             keys::pool(),
             StoredRecord::json(
                 "fixture-import-pool-v1",
-                serde_json::to_value(normalized).map_err(|_| setup::invalid())?,
+                serde_json::to_value(normalized).map_err(|_| invalid())?,
                 None,
             ),
         ),
@@ -211,7 +212,7 @@ pub(super) async fn initialize(
                     created_at_ms: time,
                     updated_at_ms: time,
                 })
-                .map_err(|_| setup::invalid())?,
+                .map_err(|_| invalid())?,
                 None,
             ),
         ),
@@ -219,7 +220,7 @@ pub(super) async fn initialize(
             passkeys::key("sessions", SESSION),
             StoredRecord::json(
                 "fixture-import-session-v1",
-                serde_json::to_value(&session).map_err(|_| setup::invalid())?,
+                serde_json::to_value(&session).map_err(|_| invalid())?,
                 None,
             ),
         ),
@@ -245,7 +246,7 @@ pub(super) async fn initialize(
         .await?
         != CommitOutcome::Committed
     {
-        return Err(setup::invalid());
+        return Err(invalid());
     }
     let authority = Authority::with_clock(store.clone(), Tokens, Clock);
     let cfg = config(env);
@@ -304,7 +305,7 @@ pub(super) async fn initialize(
     });
     let meta = serde_json::json!({"path_controls":path_controls,"metadata":prepared.metadata(),"account_id":account_id,"access_token":"fixture-import-new-access","access_generation":next.native_generation_hash,"native_source_generation":sha256_hex(b"physical-after-import"),"updated_at_ms":time});
     Ok(Some(gateway_auth::crypto::base64url(
-        &serde_json::to_vec(&meta).map_err(|_| setup::invalid())?,
+        &serde_json::to_vec(&meta).map_err(|_| invalid())?,
     )))
 }
 pub(super) async fn fetch(

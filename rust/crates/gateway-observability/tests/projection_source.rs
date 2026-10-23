@@ -1,5 +1,3 @@
-#[path = "../../gateway-admin-data/tests/support/source_projection.rs"]
-mod source_fixture;
 mod support;
 use gateway_core::{
     GatewayError,
@@ -14,12 +12,14 @@ use gateway_core::{
     value::{PortableValue, ValueEncoding},
 };
 use gateway_observability::{
-    ObservabilityHost, ObservabilityRuntime, ledger::TerminalUsageRollup,
-    records::usage_rollup_record_source,
+    ObservabilityRuntime, ledger::terminal_rollup::TerminalUsageRollup,
+    records::usage_rollup_record_source, types::ObservabilityHost,
+};
+use gateway_observability_test_support::source_fixture::{
+    CapturedCollator, assert_source_eq, fixture,
 };
 use gateway_schema::aliases::SourceStringCollator;
 use serde_json::{Value, json};
-use source_fixture::{CapturedCollator, assert_source_eq, fixture};
 use std::sync::Arc;
 use support::{Host, Memory, run};
 struct ProjectionHost {

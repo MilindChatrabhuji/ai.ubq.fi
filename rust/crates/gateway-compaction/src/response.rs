@@ -1,11 +1,14 @@
 //! Source summary fitting, floor acceptance and exact local Responses payloads.
 use crate::{
-    CompactionFailure, CompactionHost, CompactionOutcome, CompactionStats, FailureKind,
-    RESIDUE_TIMEOUT_MS, ResponseOptions, SUMMARY_CHAR_CAP, engine, hybrid,
+    engine, hybrid,
     model::*,
     state,
     text::{self, Text, text},
     transcript::{self, Transcript},
+    types::{
+        CompactionFailure, CompactionHost, CompactionOutcome, CompactionStats, FailureKind,
+        RESIDUE_TIMEOUT_MS, ResponseOptions, SUMMARY_CHAR_CAP,
+    },
 };
 use gateway_core::source_json::SourceJson;
 use std::collections::{BTreeMap, BTreeSet};

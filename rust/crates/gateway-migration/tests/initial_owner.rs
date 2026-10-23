@@ -11,7 +11,7 @@ use gateway_core::{
 use gateway_migration::*;
 use serde_json::{Value, json};
 use std::{cell::Cell, collections::BTreeSet};
-use support::*;
+use support::{fixture::*, sqlite_store::*};
 
 fn graph(value: &Value) -> SourceGraph {
     fn atom(value: &Value, nodes: &mut Vec<GraphNode>) -> GraphAtom {

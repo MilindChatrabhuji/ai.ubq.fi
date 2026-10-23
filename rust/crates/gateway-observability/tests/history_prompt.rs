@@ -259,7 +259,7 @@ fn fault_only_incomplete_and_explicit_failures_get_upstream_error_attribution() 
             "response.incomplete",
             &json!({"response":{"incomplete_details":{"reason":"max_output_tokens"}}})
         ),
-        Some(gateway_observability::HealthEvent::Reachable)
+        Some(gateway_observability::types::HealthEvent::Reachable)
     );
     assert_eq!(
         response_incomplete_failure_kind(
@@ -272,10 +272,10 @@ fn fault_only_incomplete_and_explicit_failures_get_upstream_error_attribution() 
             "response.incomplete",
             &json!({"response":{"incomplete_details":{"reason":"server_error"}}})
         ),
-        Some(gateway_observability::HealthEvent::UpstreamError)
+        Some(gateway_observability::types::HealthEvent::UpstreamError)
     );
     assert_eq!(
         responses_terminal_health("response.failed", &Value::Null),
-        Some(gateway_observability::HealthEvent::UpstreamError)
+        Some(gateway_observability::types::HealthEvent::UpstreamError)
     );
 }

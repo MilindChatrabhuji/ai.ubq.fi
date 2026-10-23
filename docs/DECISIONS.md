@@ -2408,3 +2408,13 @@ The owner adopted four Rust rules for the port: no first-party crate above 1000 
 Reason: the current port is dominated by very large crates, broad `pub use` forwarding, and path-spliced modules, which hide dependency edges and make agent-generated changes hard to review. The rules are a migration requirement, not a claim that the current tree complies. Existing violations are recorded debt, no change may add or enlarge one, new or substantially rewritten crates must comply immediately, and full compliance remains required before port acceptance.
 
 Reversal risk: allowing crate growth or re-exports restores implicit API surfaces and ambiguous split boundaries; `#[path]` and `include!` bypass the conventional module graph and make ownership and compilation scope harder to audit.
+
+## Rust quality and compile performance are measured separately - 2026-10-23
+
+The owner adopted the first Rust lint and compile-performance program after the four structural rules. `scripts/rust-quality.ts` is the structural ratchet: no new oversized crate, visible re-export, `#[path]`, `include!`, missing `[lints] workspace = true`, or source suppression; existing debt may only shrink. Lints are selected individually, suppressions remain forbidden, and noisy lints are staged with `--force-warn` plus a diagnostic baseline rather than weakening `-D warnings`. Development and test builds use line tables only, while production release settings remain unchanged until a separate `release-candidate` profile is measured against the complete Worker build. The detailed policy, thresholds, measurement protocol, and migration order are in `docs/research/rust-quality-compile-performance-2026-10-23.md`.
+
+Reason: the 1000-line crate cap improves reviewability but does not prove compile-time improvement. Mixing structural enforcement with release-profile changes would make both unmeasurable and could trade deployment size or request CPU for a faster build. Suppression-free, individually selected lints keep the policy enforceable without a blanket warning backlog.
+
+Reversal risk: enabling broad lint groups or lowering a lint from deny to warn under `-D warnings` stages nothing; using `--cap-lints` or `continue-on-error` hides real failures. Changing `[profile.release]` before measuring the full Worker build can regress artifact size or runtime without a build-time benefit.
+
+Provenance: one owner-authorized GPT Pro submission, job `66ca9a42-20cf-4ff8-acd2-e01653d97ea3`, 2026-10-23.

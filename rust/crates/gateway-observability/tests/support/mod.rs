@@ -5,7 +5,7 @@ use gateway_core::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
     },
 };
-use gateway_observability::ObservabilityHost;
+use gateway_observability::types::ObservabilityHost;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,

@@ -1,9 +1,9 @@
 //! Codex item mapping and source verbatim/bounded-provenance renderer.
 use crate::{
-    CompactionFailure, CompactionStats,
     engine::truncated_result,
     model::*,
     text::{self, Text, text},
+    types::{CompactionFailure, CompactionStats},
 };
 use gateway_core::{js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;

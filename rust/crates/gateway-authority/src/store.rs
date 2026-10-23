@@ -467,5 +467,4 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
 }
 
 #[cfg(test)]
-#[path = "store_source_control_tests.rs"]
 mod source_control_tests;

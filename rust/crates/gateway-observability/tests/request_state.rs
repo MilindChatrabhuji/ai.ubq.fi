@@ -1,8 +1,9 @@
 mod support;
 use gateway_core::GatewayError;
 use gateway_observability::{
-    HealthEvent as E, HealthTarget, HealthWrite as W, ObservabilityHost, ObservabilityRuntime,
-    ObservabilityState, host_types::*,
+    ObservabilityRuntime, ObservabilityState,
+    host_types::*,
+    types::{HealthEvent as E, HealthTarget, HealthWrite as W, ObservabilityHost},
 };
 use std::{
     cell::Cell,

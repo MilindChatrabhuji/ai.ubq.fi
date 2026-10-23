@@ -1,10 +1,11 @@
 #![cfg(all(unix, not(target_arch = "wasm32")))]
-#[path = "../examples/native-copied-store-inverse/driver.rs"]
-mod driver;
-#[path = "../examples/native-copied-store-inverse/store.rs"]
-mod store;
+mod copied_store_inverse {
+    pub mod driver;
+    pub mod store;
+}
 mod support;
 
+use copied_store_inverse::store::ReadonlyStore;
 use gateway_auth::{
     crypto::base64url,
     native_auth::NativeNonceAuthority,
@@ -32,8 +33,10 @@ use std::{
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
 };
-use store::ReadonlyStore;
-use support::{Directory, SqliteStore, run};
+use support::{
+    fixture::{Directory, run},
+    sqlite_store::SqliteStore,
+};
 
 const NOW: i64 = 2400;
 const METADATA: &str = "CREATE TABLE uos_authority_metadata (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), schema_version INTEGER NOT NULL, key_codec TEXT NOT NULL, value_codec TEXT NOT NULL)";
@@ -272,8 +275,8 @@ impl Fixture {
         }
     }
 
-    fn invoke(&self) -> Result<driver::Receipt, Box<dyn std::error::Error>> {
-        driver::execute(serde_json::from_value(self.input.clone()).unwrap())
+    fn invoke(&self) -> Result<copied_store_inverse::driver::Receipt, Box<dyn std::error::Error>> {
+        copied_store_inverse::driver::execute(serde_json::from_value(self.input.clone()).unwrap())
     }
 
     fn receipt_path(&self) -> PathBuf {

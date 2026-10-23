@@ -741,7 +741,6 @@ async fn kernel_before<S: AuthorityStore, I: TokenSource>(
 }
 
 #[cfg(test)]
-#[path = "actor_tests.rs"]
 mod tests;
 
 fn source_keys(stored: &StoredNativeActor) -> Result<Vec<RecordKey>, GatewayError> {

@@ -154,7 +154,7 @@ fn observational_codex_runtime_never_redeems_a_manual_reset() {
         gateway_admin_runtime::capabilities::CodexRequest::ConsumeReset {
             account_id_hash: "a".repeat(64),
         },
-        gateway_observability::Context {
+        gateway_admin_runtime::capabilities::Context {
             request_id: "read-only-diagnostics".into(),
             now_ms: 1000,
         },

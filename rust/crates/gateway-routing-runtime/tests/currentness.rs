@@ -1,5 +1,3 @@
-mod support;
-
 use gateway_auth::AuthMethod;
 use gateway_authority::{
     Authority, AuthorityClock, REQUEST_LEASE_MS, keys,
@@ -11,13 +9,15 @@ use gateway_core::{
     tuple_key::{ScalarKeyPart, TupleKey},
 };
 use gateway_routing_runtime::{
-    AttemptUsage, RoutingLeaseState, RoutingSession,
+    currentness::RoutingLeaseState,
     local_work::{LocalAdmissionInput, LocalRequestMetadata},
+    session::RoutingSession,
+    types::AttemptUsage,
 };
+use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use gateway_schema::source_request::SourceRequestDocument;
 use serde_json::json;
 use std::sync::atomic::Ordering;
-use support::*;
 
 type Session = RoutingSession<Store, Store, Store, Host>;
 fn journal_key(id: &str) -> RecordKey {
@@ -30,7 +30,7 @@ fn journal_key(id: &str) -> RecordKey {
     ])
     .to_record_key()
 }
-fn kernel_input(store: &Store, id: &str) -> gateway_routing_runtime::RoutingInput {
+fn kernel_input(store: &Store, id: &str) -> gateway_routing_runtime::types::RoutingInput {
     seed_pool(store);
     store.seed(
         keys::kernel_policy("owner", Some("repo")),

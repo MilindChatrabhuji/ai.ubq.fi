@@ -10,7 +10,9 @@ use futures_util::{
 };
 use gateway_core::GatewayError;
 use gateway_routing_runtime::{
-    ObservedRoutingLease, RoutingError, RoutingLeaseState, local_work::KERNEL_RENEWAL_INTERVAL_MS,
+    currentness::{ObservedRoutingLease, RoutingLeaseState},
+    local_work::KERNEL_RENEWAL_INTERVAL_MS,
+    types::RoutingError,
 };
 use std::{
     cell::{Cell, RefCell},

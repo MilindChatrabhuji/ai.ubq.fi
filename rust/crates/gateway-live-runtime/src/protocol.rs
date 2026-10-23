@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use gateway_auth::{AuthMethod, AuthPrincipal};
 use gateway_core::{GatewayError, js_string::JsString16, source_json::SourceJson};
 
-use crate::{LiveCreateInput, types::*};
+use crate::types::*;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LiveRoute {

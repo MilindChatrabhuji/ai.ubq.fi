@@ -2,7 +2,6 @@ mod capacity_cases;
 mod claude_cases;
 mod full_pool_reset;
 mod paid_control_cases;
-#[path = "paid_control_cases/original.rs"]
 mod paid_original;
 mod paid_retention_f13;
 mod reset_spend;

@@ -14,7 +14,7 @@ use gateway_core::{
     state::{AuthorityStore, RecordKey},
 };
 use gateway_providers::{AuthMaterial, PrepareOptions};
-use gateway_routing_runtime::{
+use gateway_routing_runtime::types::{
     ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest, PublishedCredential,
     RefreshOutcome, RoutingHost, direct_credential,
 };
@@ -64,7 +64,7 @@ impl RoutingHost for Host {
             .with_type("server_error")
         }
     }
-    async fn wait(&self, milliseconds: i64) -> gateway_routing_runtime::WaitOutcome {
+    async fn wait(&self, milliseconds: i64) -> gateway_routing_runtime::types::WaitOutcome {
         let started = crate::admission::monotonic()
             .expect("Routing requires the validated platform monotonic clock");
         let result = self.wait_result(milliseconds).await;
@@ -73,7 +73,7 @@ impl RoutingHost for Host {
         let elapsed_ms = (ended.saturating_sub(started).as_secs_f64() * 1000.0)
             .round()
             .min(i64::MAX as f64) as i64;
-        gateway_routing_runtime::WaitOutcome { elapsed_ms, result }
+        gateway_routing_runtime::types::WaitOutcome { elapsed_ms, result }
     }
     async fn credential(
         &self,
@@ -246,7 +246,7 @@ impl RoutingHost for Host {
         &self,
         fence: &CredentialFence,
         model: &gateway_core::model::ModelId,
-        response: gateway_routing_runtime::ResponseHead,
+        response: gateway_routing_runtime::types::ResponseHead,
     ) -> Result<Self::ClaudeHead, GatewayError> {
         self.claude.observe(fence, model, response).await
     }
@@ -254,7 +254,7 @@ impl RoutingHost for Host {
         &self,
         head: Self::ClaudeHead,
         evidence: gateway_core::claude::ClaudeErrorEvidence,
-    ) -> Result<gateway_routing_runtime::ClaudeOutcome, GatewayError> {
+    ) -> Result<gateway_routing_runtime::types::ClaudeOutcome, GatewayError> {
         self.claude.finish(head, evidence).await
     }
     async fn recover_codex(
@@ -324,9 +324,11 @@ impl RoutingHost for Host {
 impl Host {
     pub(crate) fn physical_claude(
         &self,
-        attempt: &gateway_routing_runtime::PreparedAttempt,
-    ) -> Result<crate::transport::outbound::ConstructedRequest, gateway_routing_runtime::RoutingError>
-    {
+        attempt: &gateway_routing_runtime::types::PreparedAttempt,
+    ) -> Result<
+        crate::transport::outbound::ConstructedRequest,
+        gateway_routing_runtime::types::RoutingError,
+    > {
         if attempt.original_request_id != self.original.request_id.0 {
             return Err(GatewayError::new(
                 400,
@@ -335,7 +337,8 @@ impl Host {
             )
             .into());
         }
-        let gateway_routing_runtime::PreparedWireRequest::Claude(body) = &attempt.request else {
+        let gateway_routing_runtime::types::PreparedWireRequest::Claude(body) = &attempt.request
+        else {
             return Err(GatewayError::new(
                 400,
                 "Claude request has another prepared kind.",
@@ -420,8 +423,10 @@ impl Host {
         let configuration: gateway_authority::paid_control::PaidControlConfig =
             serde_json::from_value(configuration.json_value()?.clone())
                 .map_err(|_| unavailable("The paid control configuration is invalid."))?;
-        let binding =
-            gateway_publication::configured_paid_binding(paid, &Secret::new(secret.clone()));
+        let binding = gateway_publication::control_publication::configured_paid_binding(
+            paid,
+            &Secret::new(secret.clone()),
+        );
         let expected = if paid == PaidProvider::Surplus {
             configuration.surplus_binding.as_ref()
         } else {

@@ -1,12 +1,11 @@
-mod support;
 use gateway_core::{
     claude::ClaudeErrorEvidence, lifecycle::TransportObservation, provider::UpstreamProvider,
 };
 use gateway_providers::{ClaudeBodyOptions, ClaudeCredentialKind, policy::HopFailure};
-use gateway_routing_runtime::*;
+use gateway_routing_runtime::{extras::*, session::*, types::*};
+use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use serde_json::json;
 use std::{collections::BTreeMap, sync::atomic::Ordering};
-use support::*;
 
 fn publication(workspace: Option<&str>) -> PublishedCredential {
     PublishedCredential::Claude {

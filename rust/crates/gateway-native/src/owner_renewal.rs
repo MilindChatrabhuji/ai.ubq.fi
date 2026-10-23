@@ -352,5 +352,4 @@ fn changed() -> GatewayError {
 }
 
 #[cfg(test)]
-#[path = "renewal_v2_tests.rs"]
 mod renewal_v2_tests;

@@ -5,6 +5,7 @@ use crate::{
     state,
     text::{self, Text, text},
     transcript,
+    types::{CompactionHost, FailureKind, ResponseOptions},
 };
 use gateway_core::{GatewayError, source_json::SourceJson};
 use serde::Deserialize;

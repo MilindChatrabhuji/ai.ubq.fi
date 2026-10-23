@@ -11,7 +11,7 @@ use gateway_core::{
 };
 use gateway_observability::{
     ObservabilityRuntime,
-    ledger::TerminalUsageRollup,
+    ledger::terminal_rollup::TerminalUsageRollup,
     records::{usage_rollup_record_source, valid_usage_rollup_source},
 };
 use serde_json::json;

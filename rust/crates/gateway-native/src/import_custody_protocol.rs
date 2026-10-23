@@ -268,5 +268,4 @@ pub(crate) fn unavailable() -> GatewayError {
     )
 }
 #[cfg(test)]
-#[path = "import_custody_protocol_tests.rs"]
 mod tests;

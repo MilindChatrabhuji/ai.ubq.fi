@@ -1,10 +1,9 @@
 //! Source analytics-only chart observations. These keys never enter routing/reset state.
-use crate::{
-    Context, ObservabilityHost, ObservabilityRuntime,
-    capacity_math::bucketed,
-    capacity_shapes::{BUCKET_MS, RETENTION_MS, read_history},
-    store,
-};
+use crate::capacity_math::bucketed;
+use crate::capacity_shapes::{BUCKET_MS, RETENTION_MS, read_history};
+use crate::store;
+use crate::{ObservabilityRuntime, types::ObservabilityHost};
+use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::AuthResponse;
 use gateway_core::{GatewayError, query::QueryStore};
 use serde_json::{Value, json};

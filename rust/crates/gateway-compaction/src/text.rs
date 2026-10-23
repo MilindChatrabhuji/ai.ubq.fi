@@ -1,5 +1,5 @@
 //! Source String/JSON operations: UTF16 units, JS property order and Number serialization.
-use crate::{CompactionFailure, FailureKind};
+use crate::types::{CompactionFailure, FailureKind};
 use gateway_core::{js_string::JsString16, source_json::SourceJson, source_serialization};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{ops::Deref, rc::Rc};

@@ -83,6 +83,8 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.0
+      - name: Rust quality ratchet
+        run: bun --no-env-file --no-install scripts/rust-quality.ts --check
       - name: Determine changed-path test scope
         id: scope
         shell: bash

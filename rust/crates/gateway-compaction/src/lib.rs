@@ -10,7 +10,7 @@ mod text;
 mod transcript;
 pub mod types;
 use gateway_core::{js_string::JsString16, source_json::SourceJson};
-pub use types::*;
+use types::{CompactionFailure, CompactionHost, CompactionOutcome, ResponseOptions};
 
 fn member(value: &SourceJson, name: &str) -> Option<SourceJson> {
     value

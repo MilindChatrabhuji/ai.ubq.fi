@@ -1,6 +1,5 @@
 #![cfg(unix)]
 //! Actual path-module transport checks, not production registration or private proof tests.
-#[path = "../src/native_control/import/remote_tls.rs"]
 mod remote_tls;
 use gateway_auth::{crypto::base64url, native::*};
 use remote_tls::{ImportAuthorityTls, Roots};

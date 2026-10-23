@@ -374,5 +374,4 @@ pub(super) fn unavailable() -> GatewayError {
 }
 
 #[cfg(test)]
-#[path = "live_bridge/tests.rs"]
 mod tests;

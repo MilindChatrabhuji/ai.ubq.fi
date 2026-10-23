@@ -9,11 +9,10 @@ use gateway_auth::{
     provider_credentials::codex_credential_identity,
 };
 use gateway_authority::native_control::import::{
-    AuthenticatedImportTerminal, AuthenticatedNativeImport, ImportPublicationCommandData,
-    NativeImportPublication,
+    AuthenticatedImportTerminal, AuthenticatedNativeImport, ImportAccessDocument,
+    ImportCatalogData, ImportPublicationCommandData, NativeImportPublication,
 };
 use gateway_core::GatewayError;
-use gateway_publication::{ImportAccessDocument, ImportCatalogData};
 
 /// Native-only producer; no JSON/receipt-DATA/Boolean constructor.
 pub(super) struct PreparedImportPublication<'a> {
@@ -319,5 +318,4 @@ impl ImportPublicationHttp {
 }
 
 #[cfg(test)]
-#[path = "import_publication_tests.rs"]
 mod tests;

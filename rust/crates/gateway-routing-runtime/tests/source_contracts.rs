@@ -1,4 +1,3 @@
-mod support;
 use gateway_core::{
     js_string::JsString16,
     lifecycle::{
@@ -11,13 +10,17 @@ use gateway_core::{
 };
 use gateway_providers::policy::HopFailure;
 use gateway_routing_runtime::{
-    AttemptFailure, AttemptUsage, PreparedWireRequest, RefusalDecision, RoutingHost, RoutingInput,
-    RoutingResult, RoutingSession, SourceRefusalBody, TransportState, classify, policy,
-    recover_pending,
+    classify, policy,
+    session::RoutingSession,
+    settlement::recover_pending,
+    types::{
+        AttemptFailure, AttemptUsage, PreparedWireRequest, RefusalDecision, RoutingHost,
+        RoutingInput, RoutingResult, SourceRefusalBody, TransportState,
+    },
 };
+use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::atomic::Ordering};
-use support::*;
 
 fn fixture(value: &Value) -> SourceJson {
     SourceJson::from_serializable(value).unwrap()
@@ -51,7 +54,11 @@ fn fixture_collator_refuses_unproven_operands_even_when_equal() {
     );
 }
 
-fn paid_input(store: &Store, id: &str, model: &str) -> gateway_routing_runtime::RoutingInput {
+fn paid_input(
+    store: &Store,
+    id: &str,
+    model: &str,
+) -> gateway_routing_runtime::types::RoutingInput {
     use gateway_authority::{keys, paid_control::*};
     use gateway_core::provider::PaidProvider;
     use gateway_core::state::AuthorityStore;
@@ -176,7 +183,7 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() {
         assert!(attempt.paid.is_some());
         assert!(matches!(
             attempt.credential,
-            gateway_routing_runtime::CredentialFence::Paid { .. }
+            gateway_routing_runtime::types::CredentialFence::Paid { .. }
         ));
         session.before_dispatch(&attempt).await.unwrap();
         session.transport_started(&attempt).await.unwrap();
@@ -366,7 +373,7 @@ fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity()
 fn extras_children_cannot_refund_started_siblings_or_finish_the_outer_kernel() {
     run(async {
         use gateway_authority::quota::KernelTerminal;
-        use gateway_routing_runtime::ExtrasFamily;
+        use gateway_routing_runtime::extras::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
         let session = RoutingSession::begin_extras(
@@ -426,7 +433,7 @@ fn extras_children_cannot_refund_started_siblings_or_finish_the_outer_kernel() {
 fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() {
     run(async {
         use gateway_authority::quota::KernelTerminal;
-        use gateway_routing_runtime::ExtrasFamily;
+        use gateway_routing_runtime::extras::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
         let session = RoutingSession::begin_extras(
@@ -493,7 +500,7 @@ fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() {
 fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() {
     run(async {
         use gateway_authority::quota::KernelTerminal;
-        use gateway_routing_runtime::ExtrasFamily;
+        use gateway_routing_runtime::extras::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
         let session = RoutingSession::begin_extras(
@@ -559,7 +566,7 @@ fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() {
 fn image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission() {
     run(async {
         use gateway_authority::quota::KernelTerminal;
-        use gateway_routing_runtime::ExtrasFamily;
+        use gateway_routing_runtime::extras::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
         seed_pool(&store);
@@ -602,7 +609,7 @@ fn image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission()
 fn embedding_job_read_without_retry_releases_and_never_commits_kernel_admission() {
     run(async {
         use gateway_authority::quota::KernelTerminal;
-        use gateway_routing_runtime::ExtrasFamily;
+        use gateway_routing_runtime::extras::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
         let session = RoutingSession::begin_extras(
@@ -638,9 +645,9 @@ fn embedding_job_read_without_retry_releases_and_never_commits_kernel_admission(
 fn refusal(status: u16, transport: TransportState) -> AttemptFailure {
     AttemptFailure {
         origin: if status == 499 {
-            gateway_routing_runtime::FailureOrigin::Transport
+            gateway_routing_runtime::types::FailureOrigin::Transport
         } else {
-            gateway_routing_runtime::FailureOrigin::Provider
+            gateway_routing_runtime::types::FailureOrigin::Provider
         },
         status: Some(status),
         headers: BTreeMap::new(),
@@ -1443,7 +1450,7 @@ fn explicit_provider_504_survives_late_abort_and_local_deadline_never_advances()
         session.before_dispatch(&attempt).await.unwrap();
         session.transport_started(&attempt).await.unwrap();
         let mut deadline = refusal(504, TransportState::Started);
-        deadline.origin = gateway_routing_runtime::FailureOrigin::GatewayDeadline;
+        deadline.origin = gateway_routing_runtime::types::FailureOrigin::GatewayDeadline;
         assert_eq!(
             session.refusal(&attempt, deadline).await.unwrap(),
             RefusalDecision::Abort

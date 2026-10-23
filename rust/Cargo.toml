@@ -15,12 +15,15 @@ members = [
   "crates/gateway-claude-runtime",
   "crates/gateway-observability",
   "crates/gateway-routing-runtime",
+  "crates/gateway-routing-runtime-test-support",
   "crates/gateway-extras-runtime",
   "crates/gateway-publication",
   "crates/gateway-native",
   "crates/gateway-live-runtime",
   "crates/gateway-worker",
   "crates/gateway-worker-fixture",
+  "crates/gateway-worker-fixture-setup",
+  "crates/gateway-observability-test-support",
 ]
 exclude = ["vendor/webauthn-rs-core-0.6.1-dev"]
 resolver = "3"
@@ -51,10 +54,23 @@ gateway-migration = { path = "crates/gateway-migration" }
 gateway-claude-runtime = { path = "crates/gateway-claude-runtime" }
 gateway-observability = { path = "crates/gateway-observability" }
 gateway-routing-runtime = { path = "crates/gateway-routing-runtime" }
+gateway-routing-runtime-test-support = { path = "crates/gateway-routing-runtime-test-support" }
 gateway-extras-runtime = { path = "crates/gateway-extras-runtime" }
 gateway-publication = { path = "crates/gateway-publication" }
 gateway-native = { path = "crates/gateway-native" }
 gateway-live-runtime = { path = "crates/gateway-live-runtime" }
+gateway-worker-fixture-setup = { path = "crates/gateway-worker-fixture-setup" }
+gateway-observability-test-support = { path = "crates/gateway-observability-test-support" }
+
+[profile.dev]
+opt-level = 0
+debug = "line-tables-only"
+incremental = true
+
+[profile.test]
+opt-level = 0
+debug = "line-tables-only"
+incremental = true
 
 [profile.release]
 lto = true
@@ -62,11 +78,32 @@ codegen-units = 1
 opt-level = "s"
 strip = "debuginfo"
 
+[profile.release-candidate]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
+unused_must_use = "deny"
+unexpected_cfgs = "deny"
+unused_lifetimes = "warn"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "warn"
 
 [workspace.lints.clippy]
-all = "warn"
+all = { level = "warn", priority = -2 }
+correctness = { level = "deny", priority = -1 }
+
+# Threshold 5 is configured in clippy.toml; existing nesting debt keeps the
+# group member deferred until the source cleanup.
+excessive_nesting = "allow"
+
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
 
 [patch.crates-io]
 webauthn-rs-core = { path = "vendor/webauthn-rs-core-0.6.1-dev" }

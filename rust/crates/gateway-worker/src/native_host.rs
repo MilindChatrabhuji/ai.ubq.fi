@@ -115,12 +115,12 @@ impl NativeBindings {
 
     pub(crate) async fn refresh_routing(
         &self,
-        fence: &gateway_routing_runtime::CredentialFence,
+        fence: &gateway_routing_runtime::types::CredentialFence,
         platform: &PlatformHost,
         original: &gateway_core::identity::RequestContext,
-    ) -> Result<gateway_routing_runtime::RefreshOutcome, GatewayError> {
+    ) -> Result<gateway_routing_runtime::types::RefreshOutcome, GatewayError> {
         use gateway_authority::{Authority, native_control::NativeRenewalAuthority};
-        let gateway_routing_runtime::CredentialFence::Codex {
+        let gateway_routing_runtime::types::CredentialFence::Codex {
             admission,
             source_revision,
             native_generation,
@@ -165,7 +165,7 @@ impl NativeBindings {
             return Err(unverified());
         }
         self.complete_renewal(&action, &receiver, platform).await?;
-        Ok(gateway_routing_runtime::RefreshOutcome::Published)
+        Ok(gateway_routing_runtime::types::RefreshOutcome::Published)
     }
 
     pub(crate) async fn renew_live_create(

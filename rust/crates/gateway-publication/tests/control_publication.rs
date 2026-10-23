@@ -33,7 +33,7 @@ use gateway_publication::transport::{
     NativePublicationSender, PublicationCarrier, PublicationReceiver, PublicationRequest,
     PublicationResponse,
 };
-use gateway_publication::{PreparedPublicationCommand, PublicationDisposition};
+use gateway_publication::wire::{PreparedPublicationCommand, PublicationDisposition};
 use serde_json::{Value, json};
 
 struct AccessRead(NativeCredentials);

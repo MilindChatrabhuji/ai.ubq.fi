@@ -222,13 +222,15 @@ impl Capture {
             .await;
         if let Err(error) = self
             .runtime
-            .record_terminal_usage_rollup(gateway_observability::ledger::TerminalUsageRollup {
-                model: request.model.as_ref(),
-                provider: Some(&provider),
-                request_id: &self.request_id,
-                request_created_at_ms: Some(request.context.started_at_ms as f64),
-                usage: extracted.as_ref(),
-            })
+            .record_terminal_usage_rollup(
+                gateway_observability::ledger::terminal_rollup::TerminalUsageRollup {
+                    model: request.model.as_ref(),
+                    provider: Some(&provider),
+                    request_id: &self.request_id,
+                    request_created_at_ms: Some(request.context.started_at_ms as f64),
+                    usage: extracted.as_ref(),
+                },
+            )
             .await
         {
             worker::console_error!(

@@ -28,7 +28,7 @@ pub mod replay_model;
 pub mod replay_producer;
 pub mod replay_read;
 pub mod replay_retention;
-mod replay_retention_schema;
+pub mod replay_retention_schema;
 pub mod replay_trace;
 mod replay_values;
 pub mod settings;
@@ -37,7 +37,6 @@ pub mod telemetry;
 pub mod types;
 
 use std::rc::Rc;
-pub use types::*;
 
 /// Isolate-owned coordination data only. It never retains a store, host, or I/O future.
 #[derive(Clone, Default)]

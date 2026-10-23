@@ -1,5 +1,4 @@
 #![cfg(target_os = "macos")]
-#[path = "support/connector_lifecycle_cases.rs"]
 mod lifecycle;
 use serde_json::{Value, json};
 use std::{

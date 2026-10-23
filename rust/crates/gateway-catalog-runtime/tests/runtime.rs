@@ -1,11 +1,5 @@
-mod source_catalog {
-    include!("../../gateway-schema/tests/support/source_catalog.rs");
-    pub fn loader_fixture() -> Collator {
-        Collator(
-            serde_json::from_str(include_str!("fixtures/catalog-loader-sort-v1.json")).unwrap(),
-        )
-    }
-}
+mod support;
+
 use gateway_catalog_runtime::{
     state::{self, source_key},
     *,
@@ -33,6 +27,10 @@ use std::{
     sync::Arc,
     task::{Context, Poll, Waker},
 };
+use support::source_catalog::{self, Collator};
+fn loader_fixture() -> Collator {
+    Collator::from_catalog_json(include_str!("fixtures/catalog-loader-sort-v1.json"))
+}
 fn run<T>(future: impl Future<Output = T>) -> T {
     let waker = Waker::noop();
     let mut cx = Context::from_waker(waker);
@@ -1313,13 +1311,10 @@ fn later_official_deepseek_public_metadata_overwrites_paid_enrichment_only_for_i
     ]})));
     run(runtime.refresh_provider(&store, &host, CatalogProvider::Openrouter, true)).unwrap();
     let state = run(runtime.load_state(&store, &host.published.borrow(), store.now.get())).unwrap();
-    let catalog = gateway_schema::catalog::build_catalog_snapshot(
-        &state.input,
-        &source_catalog::loader_fixture(),
-    )
-    .unwrap()
-    .deserialize::<Value>()
-    .unwrap();
+    let catalog = gateway_schema::catalog::build_catalog_snapshot(&state.input, &loader_fixture())
+        .unwrap()
+        .deserialize::<Value>()
+        .unwrap();
     let rows = catalog["models"].as_array().unwrap();
     let official = rows
         .iter()

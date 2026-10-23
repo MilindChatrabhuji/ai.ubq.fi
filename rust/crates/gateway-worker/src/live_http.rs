@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use futures_util::StreamExt;
 use gateway_core::GatewayError;
 use gateway_live_runtime::{
-    LIVE_CALL_BODY_TIMEOUT_MS, LIVE_CALL_MAX_BODY_BYTES, LiveCreateInput, validate_body_read,
-    validate_declared_length,
+    protocol::{validate_body_read, validate_declared_length},
+    types::{LIVE_CALL_BODY_TIMEOUT_MS, LIVE_CALL_MAX_BODY_BYTES, LiveCreateInput},
 };
 use worker::js_sys::Uint8Array;
 use worker::wasm_bindgen::{JsCast, JsValue};

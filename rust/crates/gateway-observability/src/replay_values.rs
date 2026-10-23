@@ -118,7 +118,7 @@ fn portable_json(document: &SourceJson) -> Result<PortableValue, GatewayError> {
         ),
     })
 }
-pub(crate) fn put_json<H: crate::ObservabilityHost>(
+pub(crate) fn put_json<H: crate::types::ObservabilityHost>(
     host: &H,
     key: RecordKey,
     document: &SourceJson,

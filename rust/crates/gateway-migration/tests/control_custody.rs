@@ -4,7 +4,7 @@ use gateway_admin_data::profile::{CanonicalDates, to_source_profile};
 use gateway_core::{state::*, value::PortableValue};
 use gateway_migration::*;
 use serde_json::{Value, json};
-use support::*;
+use support::{fixture::*, sqlite_store::*};
 
 fn source(parts: Value, value: Value) -> SourceEntry {
     SourceEntry {

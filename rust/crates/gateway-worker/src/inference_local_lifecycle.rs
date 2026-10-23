@@ -6,7 +6,7 @@ use crate::{
 };
 use futures_util::task::AtomicWaker;
 use gateway_core::{GatewayError, lifecycle::TransportObservation};
-use gateway_routing_runtime::local_work::{
+use gateway_routing_runtime::local_work::completion::response::{
     LocalAccountingProgress, LocalObservationSink, LocalSelectedResponse,
 };
 use std::{
@@ -146,8 +146,8 @@ impl LocalLifecycle {
 }
 
 pub(crate) fn response_error(
-    error: &gateway_routing_runtime::RoutingError,
-) -> Result<worker::Response, gateway_routing_runtime::RoutingError> {
+    error: &gateway_routing_runtime::types::RoutingError,
+) -> Result<worker::Response, gateway_routing_runtime::types::RoutingError> {
     let mut response = if let Some(body) = &error.source_body {
         let mut wire = worker::Response::from_bytes(body.as_bytes().to_vec())
             .map_err(|_| wrapper_error())?
@@ -156,8 +156,10 @@ pub(crate) fn response_error(
             .set(
                 "content-type",
                 match body {
-                    gateway_routing_runtime::SourceRefusalBody::Json(_) => "application/json",
-                    gateway_routing_runtime::SourceRefusalBody::InternalServerError => {
+                    gateway_routing_runtime::types::SourceRefusalBody::Json(_) => {
+                        "application/json"
+                    }
+                    gateway_routing_runtime::types::SourceRefusalBody::InternalServerError => {
                         "text/plain; charset=utf-8"
                     }
                 },
@@ -178,12 +180,12 @@ pub(crate) fn response_error(
     }
     Ok(response)
 }
-pub(super) fn wrapper_error() -> gateway_routing_runtime::RoutingError {
-    gateway_routing_runtime::RoutingError {
+pub(super) fn wrapper_error() -> gateway_routing_runtime::types::RoutingError {
+    gateway_routing_runtime::types::RoutingError {
         error: Box::new(
             GatewayError::new(500, "Internal Server Error", None).with_type("server_error"),
         ),
-        source_body: Some(gateway_routing_runtime::SourceRefusalBody::InternalServerError),
+        source_body: Some(gateway_routing_runtime::types::SourceRefusalBody::InternalServerError),
         headers: Default::default(),
     }
 }

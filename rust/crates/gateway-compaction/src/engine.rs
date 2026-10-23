@@ -1,9 +1,9 @@
 //! Source call decisions, request batching, local windows and projected transcript.
 use crate::{
-    CompactionFailure, CompactionHost, CompactionStats, FailureKind, JEV_TIMEOUT_MS,
     model::*,
     state::{self, estimate_tokens, fit_state},
     text::{self, Text, text},
+    types::{CompactionFailure, CompactionHost, CompactionStats, FailureKind, JEV_TIMEOUT_MS},
 };
 use futures_util::{StreamExt, TryStreamExt, future::try_join_all, stream};
 use gateway_core::source_json::SourceJson;
