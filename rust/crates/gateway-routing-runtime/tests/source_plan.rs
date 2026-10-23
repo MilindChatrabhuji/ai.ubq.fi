@@ -1,4 +1,3 @@
-#[path = "support/input.rs"]
 mod source_input;
 use gateway_core::{
     js_string::JsString16, model::ModelId, provider::UpstreamProvider, source_json::SourceJson,

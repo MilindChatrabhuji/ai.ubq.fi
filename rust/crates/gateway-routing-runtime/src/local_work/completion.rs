@@ -13,7 +13,6 @@ pub struct PendingLocalCompletion<S, I, C, H> {
     chosen_at_ms: i64,
     plan: Option<LocalCompletedJournalPlan>,
 }
-#[path = "local_response.rs"]
 mod response;
 pub use response::{
     BuiltLocalResponse, LocalAccountingProgress, LocalCompletionRefusal, LocalObservationSink,
