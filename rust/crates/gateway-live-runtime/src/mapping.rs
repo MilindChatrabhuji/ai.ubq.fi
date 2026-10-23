@@ -10,7 +10,7 @@ use gateway_core::{
 };
 use serde_json::json;
 
-use crate::LIVE_CALL_ACCOUNT_TTL_MS;
+use crate::types::LIVE_CALL_ACCOUNT_TTL_MS;
 
 pub(crate) struct State<S> {
     pub store: Rc<S>,

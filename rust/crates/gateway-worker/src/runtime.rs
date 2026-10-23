@@ -6,6 +6,10 @@ use gateway_auth::{AuthPrincipal, AuthRequest, AuthResponse, AuthService};
 use gateway_core::{
     GatewayError, identity::RequestId, source_json::SourceJson, state::AuthorityStore,
 };
+use gateway_live_runtime::{
+    mapping::LiveRuntime,
+    protocol::{LiveRoute, live_route},
+};
 use gateway_schema::{
     catalog,
     catalog_cache::{CacheState, CatalogResponse, LoadedCatalog},
@@ -206,7 +210,7 @@ pub async fn route(
     } else {
         None
     };
-    if let Some(route) = gateway_live_runtime::live_route(&auth_request.method, &path) {
+    if let Some(route) = live_route(&auth_request.method, &path) {
         let principal = principal.ok_or_else(gateway_auth::unauthorized)?;
         let live = crate::live_host::WorkerLiveHost::bind(
             host.clone(),
@@ -217,12 +221,12 @@ pub async fn route(
             request_id,
         )
         .await?;
-        let runtime = gateway_live_runtime::LiveRuntime::new(
+        let runtime = LiveRuntime::new(
             Rc::new(store),
             Rc::new(crate::transport::random::opaque_token),
         );
         return match route {
-            gateway_live_runtime::LiveRoute::Create => {
+            LiveRoute::Create => {
                 let headers = request
                     .headers()
                     .entries()
@@ -236,7 +240,7 @@ pub async fn route(
                     .await;
                 crate::live_host::into_response(response, context)
             }
-            gateway_live_runtime::LiveRoute::Sideband(call_id) => {
+            LiveRoute::Sideband(call_id) => {
                 let upgrade = request
                     .headers()
                     .get("upgrade")

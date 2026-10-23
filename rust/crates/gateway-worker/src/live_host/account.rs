@@ -3,7 +3,7 @@
 use gateway_auth::provider_credentials::{CodexSourceAccount, read_codex_source_pool};
 use gateway_authority::{Authority, routing::LiveAccountSelection};
 use gateway_core::GatewayError;
-use gateway_live_runtime::LiveAccount;
+use gateway_live_runtime::types::LiveAccount;
 
 use crate::{
     authority::RemoteAuthorityStore,

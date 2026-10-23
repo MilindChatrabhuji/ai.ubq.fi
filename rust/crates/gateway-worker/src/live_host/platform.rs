@@ -8,7 +8,8 @@ use gateway_authority::{
 };
 use gateway_core::{GatewayError, js_string::JsString16};
 use gateway_live_runtime::{
-    LiveAccount, LiveCreateRequest, LiveDispatchFailure, LiveHost, LiveResponse, PreparedSideband,
+    runtime::PreparedSideband,
+    types::{LiveAccount, LiveCreateRequest, LiveDispatchFailure, LiveHost, LiveResponse},
 };
 
 use super::{Body, CurrentLiveAccount, WorkerLiveHost, account, body, health};
