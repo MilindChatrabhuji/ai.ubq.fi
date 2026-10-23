@@ -395,8 +395,6 @@ fn unsupported_slots_profiles_and_wrong_original_actor_have_no_fake_fences() {
     });
 }
 
-#[path = "import_effects.rs"]
 mod effects;
 
-#[path = "import_custody.rs"]
 mod custody_session;

@@ -350,20 +350,14 @@ fn terminal_query_requires_exact_matching_guarded_group_and_rejects_foreign_repl
 }
 
 #[cfg(unix)]
-#[path = "import_remote.rs"]
 mod actual_tls;
 
-#[path = "import_custody_terminal.rs"]
 mod custody_terminal;
 
-#[path = "import_completion_wire.rs"]
 mod completion_wire;
 
-#[path = "import_catalog_seed.rs"]
 mod catalog_seed;
 
-#[path = "import_auth_timestamp.rs"]
 mod auth_timestamp;
 
-#[path = "import_owner_selection.rs"]
 mod owner_selection;

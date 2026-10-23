@@ -94,5 +94,4 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
 }
 
 #[cfg(test)]
-#[path = "local_api_release_tests.rs"]
 mod tests;

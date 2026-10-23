@@ -480,5 +480,4 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
 }
 
 #[cfg(test)]
-#[path = "claude_source_binding_tests.rs"]
 mod source_binding_tests;

@@ -652,7 +652,7 @@ fn source_valid_fractional_rollup_remains_settleable_without_fractional_billing(
 #[test]
 fn shared_surplus_usage_adapter_matches_all_actual_source_pricing_cases() {
     let cases: Vec<Value> =
-        serde_json::from_str(include_str!("paid_source_usage_cases.json")).unwrap();
+        serde_json::from_str(include_str!("../paid_source_usage_cases.json")).unwrap();
     assert_eq!(cases.len(), 26);
     for case in cases {
         let name = case["name"].as_str().unwrap();
@@ -743,5 +743,4 @@ fn fractional_aggregate_spend_does_not_widen_counters_request_or_window_billing(
     assert!(decode_json::<crate::paid::PaidWindow>(invalid_window).is_err());
 }
 
-#[path = "paid_source_control_tests.rs"]
 mod source_control;

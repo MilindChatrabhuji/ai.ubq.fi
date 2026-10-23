@@ -596,11 +596,8 @@ fn historical_v2_preparation_remains_lossless_without_publication_permission() {
     });
 }
 
-#[path = "import_publication.rs"]
 mod publication;
 
-#[path = "import_phase.rs"]
 mod phase;
 
-#[path = "import_completion.rs"]
 mod completion;
