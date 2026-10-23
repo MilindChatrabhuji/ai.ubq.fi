@@ -14,6 +14,7 @@ entrypoint = []
 
 [dependencies]
 gateway-worker = { path = "../gateway-worker", default-features = false }
+gateway-worker-fixture-setup.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true
 gateway-authority.workspace = true

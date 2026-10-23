@@ -7,6 +7,7 @@ use gateway_auth::{
     native_auth::{NativeCapability, NativeTransportIdentity},
 };
 use gateway_publication::transport::PublicationReceiver;
+use gateway_worker_fixture_setup::initialize;
 use worker::{Context, Env, Request};
 
 pub(super) async fn fetch(
@@ -34,7 +35,7 @@ pub(super) async fn fetch(
             super::now,
         )?;
         let store = gateway_worker::authority::RemoteAuthorityStore::from_env(&env)?;
-        super::setup::initialize(&store, &identity, &inputs, &receiver, "codex").await?;
+        initialize(&store, &identity, &inputs, &receiver, "codex").await?;
         let bindings =
             gateway_worker::NativeBindings::configured_https("https://localhost", identity)?;
         Ok((receiver, bindings))
