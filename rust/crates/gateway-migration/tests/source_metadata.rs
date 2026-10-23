@@ -7,7 +7,7 @@ use gateway_core::{
 };
 use gateway_migration::*;
 use serde_json::{Value, json};
-use support::*;
+use support::{fixture::*, sqlite_store::*};
 
 fn entry(key: Value, value: &str) -> SourceEntry {
     SourceEntry {

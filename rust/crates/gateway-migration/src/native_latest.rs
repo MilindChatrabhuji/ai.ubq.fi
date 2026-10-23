@@ -10,7 +10,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
 };
-#[path = "native_import_spool.rs"]
 mod native_import;
 const LATEST_QUERY_PAGE: u32 = 256;
 pub(super) struct DiskMap {

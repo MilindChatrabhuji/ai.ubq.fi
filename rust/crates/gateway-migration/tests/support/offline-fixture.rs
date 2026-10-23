@@ -1,13 +1,15 @@
 #[cfg(not(target_arch = "wasm32"))]
-#[path = "../tests/support/mod.rs"]
-mod support;
+mod fixture;
+#[cfg(not(target_arch = "wasm32"))]
+mod sqlite_store;
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use fixture::{Directory, run};
     use gateway_core::identity::{ApiKeyId, RequestId};
     use gateway_migration::*;
     use serde_json::json;
+    use sqlite_store::SqliteStore;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use support::*;
     if std::env::args_os().len() != 1 {
         return Err(
             "The fixture accepts no source database, credential or target path arguments".into(),
@@ -29,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let source: PrivateCapture =
-        serde_json::from_str(include_str!("../tests/fixtures/offline-source.json"))?;
+        serde_json::from_str(include_str!("../fixtures/offline-source.json"))?;
     let directory = Directory::new();
     let path = directory.file("forward.sqlite3");
     let store = SqliteStore::open(&path);

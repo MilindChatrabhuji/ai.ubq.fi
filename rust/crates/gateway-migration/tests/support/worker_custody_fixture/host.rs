@@ -318,13 +318,9 @@ impl NativeCustody for Host {
 }
 
 #[cfg(test)]
-#[path = "../../tests/support/fixture.rs"]
-mod fixture_support;
-
-#[cfg(test)]
 mod tests {
     use super::*;
-    use fixture_support::{Directory, run};
+    use crate::fixture::{Directory, run};
     use gateway_auth::{crypto::base64url, native_credentials::parse_native_document};
     use serde_json::json;
 

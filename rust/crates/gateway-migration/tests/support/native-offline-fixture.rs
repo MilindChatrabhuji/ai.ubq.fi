@@ -1,7 +1,8 @@
 //! Fixed synthetic source -> one persisted authority -> latest native inverse.
 #[cfg(not(target_arch = "wasm32"))]
-#[path = "../tests/support/mod.rs"]
-mod support;
+mod fixture;
+#[cfg(not(target_arch = "wasm32"))]
+mod sqlite_store;
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
     assert_eq!(
@@ -9,10 +10,11 @@ fn main() {
         1,
         "The fixture accepts no source, credential or target arguments"
     );
+    use fixture::{Directory, run};
     use gateway_auth::store::key;
     use gateway_core::{source_graph::GraphNode, state::*};
     use gateway_migration::*;
-    use support::*;
+    use sqlite_store::SqliteStore;
     struct Tokens(std::sync::atomic::AtomicU64);
     impl gateway_authority::TokenSource for Tokens {
         fn next_token(&self) -> Result<String, gateway_core::GatewayError> {
@@ -29,7 +31,7 @@ fn main() {
         }
     }
     let source: NativeCapture =
-        serde_json::from_str(include_str!("../tests/fixtures/native-source.json")).unwrap();
+        serde_json::from_str(include_str!("../fixtures/native-source.json")).unwrap();
     let directory = Directory::new();
     let path = directory.file("source-candidate.sqlite3");
     let store = SqliteStore::open(&path);

@@ -14,7 +14,7 @@ use gateway_core::{
 use gateway_migration::*;
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
-use support::*;
+use support::{fixture::*, sqlite_store::*};
 
 fn raw(value: Value) -> SourceJson {
     SourceJson::from_serializable(&value).unwrap()

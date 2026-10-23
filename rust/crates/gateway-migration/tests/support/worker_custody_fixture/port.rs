@@ -323,7 +323,7 @@ mod frame_tests {
     }
     #[test]
     fn actual_multiline_native_capture_retains_all_original_source_bytes() {
-        let capture = include_str!("../../tests/fixtures/native-source.json");
+        let capture = include_str!("../../fixtures/native-source.json");
         let document = format!("{{\"operation\":\"candidate\",\"capture\":{capture}}}");
         let framed = format!("{document}\n");
         for capacity in [1, 7, framed.len()] {

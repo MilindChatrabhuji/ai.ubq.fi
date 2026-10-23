@@ -11,7 +11,7 @@ use gateway_core::{
 use gateway_migration::*;
 use serde_json::{Value, json};
 use std::path::Path;
-use support::*;
+use support::{fixture::*, sqlite_store::*};
 
 const NOW: i64 = 1_800_000_000_002;
 const WRITER_SHA: &str = "9cf5f956995d832489fd694ebed17ab2f57712ea";

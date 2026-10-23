@@ -1,24 +1,14 @@
 //! Synthetic-only stdin/stdout controller; no network, child process, or live owner access.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod fixture;
 #[cfg(not(target_arch = "wasm32"))]
-#[path = "worker-custody-fixture/host.rs"]
-mod host;
-#[cfg(not(target_arch = "wasm32"))]
-#[path = "worker-custody-fixture/inputs.rs"]
-mod inputs;
-#[cfg(not(target_arch = "wasm32"))]
-#[path = "worker-custody-fixture/port.rs"]
-mod port;
-#[cfg(not(target_arch = "wasm32"))]
-#[path = "worker-custody-fixture/producers.rs"]
-mod producers;
-#[cfg(not(target_arch = "wasm32"))]
-#[path = "worker-custody-fixture/staged.rs"]
-mod staged;
+mod worker_custody_fixture;
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), gateway_migration::MigrationError> {
     use gateway_core::state::AuthorityStore;
     use gateway_migration::{operational::ArtifactInput, *};
     use serde::{Deserialize, Serialize};
+    use worker_custody_fixture::{host, inputs, port, producers, staged, support_run};
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Initialize {
@@ -95,14 +85,14 @@ fn main() -> Result<(), gateway_migration::MigrationError> {
                 directory,
                 now_ms,
             } => {
-                return crate::staged::run(&directory, now_ms, false);
+                return staged::run(&directory, now_ms, false);
             }
             Preparation::StagedPrepareOnly {
                 v: 1,
                 directory,
                 now_ms,
             } => {
-                return crate::staged::run(&directory, now_ms, true);
+                return staged::run(&directory, now_ms, true);
             }
             Preparation::PrepareInputs {
                 v: 1,
@@ -174,17 +164,6 @@ fn main() -> Result<(), gateway_migration::MigrationError> {
         artifacts,
     })?;
     Ok(())
-}
-#[cfg(not(target_arch = "wasm32"))]
-fn support_run<F: std::future::Future>(future: F) -> F::Output {
-    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-    let mut future = std::pin::pin!(future);
-    loop {
-        if let std::task::Poll::Ready(value) = future.as_mut().poll(&mut context) {
-            return value;
-        }
-        std::thread::yield_now();
-    }
 }
 #[cfg(target_arch = "wasm32")]
 fn main() {}

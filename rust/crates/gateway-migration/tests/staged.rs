@@ -2,7 +2,7 @@
 mod support;
 use gateway_core::state::AuthorityStore;
 use gateway_migration::{staged::*, *};
-use support::*;
+use support::{fixture::*, sqlite_store::*};
 fn fixture() -> NativeCapture {
     serde_json::from_str(include_str!("fixtures/native-source.json")).unwrap()
 }

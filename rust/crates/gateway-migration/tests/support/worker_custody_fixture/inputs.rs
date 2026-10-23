@@ -92,8 +92,8 @@ fn graph_value(entry: &NativeEntry) -> Result<SourceGraph, GatewayError> {
     graph_transport::from_source_graph(value)
 }
 fn source(time: FixtureTime) -> Result<NativeCapture, GatewayError> {
-    let capture = serde_json::from_str(include_str!("../../tests/fixtures/native-source.json"))
-        .map_err(error)?;
+    let capture =
+        serde_json::from_str(include_str!("../../fixtures/native-source.json")).map_err(error)?;
     rebase(capture, time)
 }
 fn rebase(mut capture: NativeCapture, time: FixtureTime) -> Result<NativeCapture, GatewayError> {
@@ -341,7 +341,7 @@ pub fn prepare(directory: &str, now_ms: i64) -> Result<Prepared, GatewayError> {
 mod tests {
     use super::*;
     fn original() -> NativeCapture {
-        serde_json::from_str(include_str!("../../tests/fixtures/native-source.json")).unwrap()
+        serde_json::from_str(include_str!("../../fixtures/native-source.json")).unwrap()
     }
     fn at(graph: &mut SourceGraph, name: &str) -> GraphAtom {
         root_entries(graph)

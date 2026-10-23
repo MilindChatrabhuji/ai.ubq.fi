@@ -4,7 +4,7 @@ use gateway_auth::store::key;
 use gateway_core::{query::*, source_graph::GraphNode, state::*, tuple_key::TupleKey};
 use gateway_migration::*;
 use serde_json::json;
-use support::*;
+use support::{fixture::*, sqlite_store::*};
 
 fn fixture() -> NativeCapture {
     serde_json::from_str(include_str!("fixtures/native-source.json")).unwrap()

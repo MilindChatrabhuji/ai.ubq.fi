@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 mod support;
 use gateway_migration::{operational::*, *};
-use support::*;
+use support::{fixture::*, sqlite_store::*};
 
 #[test]
 fn private_native_wire_refuses_unknown_actions_and_repeated_adoption() {
