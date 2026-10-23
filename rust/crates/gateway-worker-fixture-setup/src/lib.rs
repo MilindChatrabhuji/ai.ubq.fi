@@ -1,3 +1,6 @@
+//! Fixture-only authority initialization and configuration publication.
+//! HTTP protocol composition stays in gateway-worker-fixture.
+
 use gateway_auth::{
     GatewayError,
     crypto::{Secret, base64url},
@@ -378,7 +381,7 @@ mod tests {
     };
     use std::{
         cell::RefCell,
-        collections::BTreeMap,
+        collections::{BTreeMap, BTreeSet},
         future::Future,
         pin::pin,
         task::{Context, Poll, Waker},
@@ -386,6 +389,25 @@ mod tests {
     const NOW: i64 = 1_800_000_000_000;
     fn now() -> i64 {
         NOW
+    }
+    fn identity() -> Result<super::NativeTransportIdentity, GatewayError> {
+        super::NativeTransportIdentity::new(
+            "fixture-matrix-key".into(),
+            "fixture-matrix-owner".into(),
+            "fixture-matrix-epoch".into(),
+            [31; 32],
+            BTreeSet::from([gateway_auth::native_auth::NativeCapability::ConfigurationPublish]),
+        )
+    }
+    fn inputs() -> Result<super::ConfiguredPaidInputs, GatewayError> {
+        super::ConfiguredPaidInputs::new(
+            Some(super::Secret::new("fixture-matrix-surplus".into())),
+            Some(super::Secret::new(
+                "fixture-matrix-openlux-discovery".into(),
+            )),
+            Some(super::Secret::new("fixture-matrix-openlux-spend".into())),
+            serde_json::json!({"fixture":"runtime-matrix-v1"}),
+        )
     }
     #[derive(Default)]
     struct Memory(RefCell<BTreeMap<String, StoredRecord>>);
@@ -510,8 +532,8 @@ mod tests {
     fn paid_bootstrap_republishes_once_through_real_authenticated_capture_and_cas() {
         run(async {
             let store = Memory::default();
-            let identity = crate::identity().unwrap();
-            let inputs = crate::inputs().unwrap();
+            let identity = identity().unwrap();
+            let inputs = inputs().unwrap();
             let receiver =
                 PublicationReceiver::configured(identity.clone(), inputs.clone(), Vec::new(), now)
                     .unwrap();
@@ -638,8 +660,8 @@ mod tests {
     fn one_shot_requires_the_exact_initial_absence_snapshot_and_real_owner() {
         run(async {
             let store = Memory::default();
-            let identity = crate::identity().unwrap();
-            let inputs = crate::inputs().unwrap();
+            let identity = identity().unwrap();
+            let inputs = inputs().unwrap();
             let receiver =
                 PublicationReceiver::configured(identity.clone(), inputs.clone(), Vec::new(), now)
                     .unwrap();

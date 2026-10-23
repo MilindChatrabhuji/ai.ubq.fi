@@ -1,0 +1,17 @@
+[package]
+name = "gateway-worker-fixture-setup"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-auth.workspace = true
+gateway-authority.workspace = true
+gateway-core.workspace = true
+gateway-publication.workspace = true
+gateway-worker = { path = "../gateway-worker", default-features = false }
+serde_json.workspace = true
+
+[lints]
+workspace = true

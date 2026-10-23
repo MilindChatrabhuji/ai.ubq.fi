@@ -21,6 +21,7 @@ members = [
   "crates/gateway-live-runtime",
   "crates/gateway-worker",
   "crates/gateway-worker-fixture",
+  "crates/gateway-worker-fixture-setup",
 ]
 exclude = ["vendor/webauthn-rs-core-0.6.1-dev"]
 resolver = "3"
@@ -55,6 +56,7 @@ gateway-extras-runtime = { path = "crates/gateway-extras-runtime" }
 gateway-publication = { path = "crates/gateway-publication" }
 gateway-native = { path = "crates/gateway-native" }
 gateway-live-runtime = { path = "crates/gateway-live-runtime" }
+gateway-worker-fixture-setup = { path = "crates/gateway-worker-fixture-setup" }
 
 [profile.release]
 lto = true
